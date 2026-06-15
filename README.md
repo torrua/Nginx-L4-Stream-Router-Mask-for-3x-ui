@@ -24,7 +24,7 @@ Nginx L4 Stream Router & Mask for 3X-UI / Xray (v6.9.4)
 Склонируйте репозиторий или скачайте скрипт:
 
 Bash
-wget https://raw.githubusercontent.com/ВАШ_НИК/ВАШ_РЕПО/main/setup_mask.sh
+wget https://raw.githubusercontent.com/Itman75/OneScript_for_Install_3x-ui-Nginx-Certbot/refs/heads/main/setup_mask.sh
 chmod +x setup_mask.sh
 Запустите скрипт от имени root:
 

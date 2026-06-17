@@ -351,6 +351,14 @@ if [ "$DECOY_TEMPLATE" = "1" ]; then
 </body>
 </html>
 EOF
+
+    # Скачивание оригинального логотипа Cosmos Cloud
+    log "Скачивание оригинального логотипа для заглушки Cosmos Cloud..."
+    curl -fsSL "https://raw.githubusercontent.com/Itman75/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/logo.webp" -o "$WEBROOT/logo.webp" || warn "Не удалось скачать оригинальный логотип с GitHub."
+    if [ -f "$WEBROOT/logo.webp" ]; then
+        chown nginx:nginx "$WEBROOT/logo.webp"
+    fi
+
 else
     # Шаблон 2: Минималистичный Nginx
     cat << 'EOF' > /var/www/html/index.html

@@ -2,12 +2,12 @@
 set -euo pipefail
 
 #####################################
-# PROD VPS HARDENING (Ubuntu 24.04)
-# + BBR + Disable IPv6 + Block Ping
-# + IPv4 ONLY Firewall Rules
-# + SSH Keys (Auto-gen or Paste)
-# + 3x-ui
-# + Extended Utilities
+#  PROD VPS HARDENING (Ubuntu 24.04)
+#  + BBR + Disable IPv6 + Block Ping
+#  + IPv4 ONLY Firewall Rules
+#  + SSH Keys (Auto-gen or Paste)
+#  + 3x-ui (Выбор версии)
+#  + Extended Utilities
 #####################################
 
 DEFAULT_SSH_PORT=22
@@ -16,33 +16,20 @@ MAX_SSH_PORT=65535
 
 export DEBIAN_FRONTEND=noninteractive
 
-#####################################
-# ПРОВЕРКА ROOT
-#####################################
+# Проверка root-прав
 if [[ $EUID -ne 0 ]]; then
-    echo "Запусти скрипт от root"
+    echo "Ошибка: Запусти скрипт от пользователя root (sudo)" >&2
     exit 1
 fi
 
 #####################################
-# ОБНОВЛЕНИЕ И УСТАНОВКА СИСТЕМНЫХ УТИЛИТ
+# ФУНКЦИИ ВАЛИДАЦИИ И ПОДДЕРЖКИ
 #####################################
-echo "==========================================================="
-echo "ОБНОВЛЕНИЕ ПАКЕТНОЙ БАЗЫ И КОМПОНЕНТОВ ОС..."
-echo "==========================================================="
-apt update && apt upgrade -y && apt autoremove -y && apt autoclean -y
 
-echo "==========================================================="
-echo "УСТАНОВКА СИСТЕМНЫХ И СЕТЕВЫХ УТИЛИТ ДИАГНОСТИКИ..."
-echo "==========================================================="
-apt install -y curl bash systemd iproute2 openssl gawk lsb-release gnupg2 dnsutils perl build-essential btop htop iperf3 iftop net-tools tcpdump mtr-tiny
-
-#####################################
-# ФУНКЦИИ
-#####################################
 prompt_yes_no() {
     while true; do
-        read -rp "$1 (yes/no): " ans
+        # Использование "|| return 1" предотвращает завершение при EOF (Ctrl+D)
+        read -rp "$1 (yes/no): " ans || return 1
         case "$ans" in
             yes|y|Y) return 0 ;;
             no|n|N) return 1 ;;
@@ -53,86 +40,89 @@ prompt_yes_no() {
 
 validate_password() {
     local p="$1"
-    [[ ${#p} -ge 12 ]] && \
-    [[ "$p" =~ [a-z] ]] && \
-    [[ "$p" =~ [A-Z] ]] && \
-    [[ "$p" =~ [0-9] ]] && \
+    [[ ${#p} -ge 12 ]] &&
+    [[ "$p" =~ [a-z] ]] &&
+    [[ "$p" =~ [A-Z] ]] &&
+    [[ "$p" =~ [0-9] ]] &&
     [[ "$p" =~ [^a-zA-Z0-9] ]]
 }
 
 validate_port() {
-    [[ "$1" =~ ^[0-9]+$ ]] && \
+    [[ "$1" =~ ^[0-9]+$ ]] &&
     (( "$1" >= MIN_SSH_PORT && "$1" <= MAX_SSH_PORT ))
 }
 
 safe_sudoers() {
-    local file="/etc/sudoers.d/$1"
+    local target_user="$1"
+    local file="/etc/sudoers.d/$target_user"
+    
     chmod 440 "$file"
-    # Перехватываем ошибку visudo при включенном set -e
     if ! visudo -cf "$file"; then
-        echo "Ошибка: некорректный синтаксис sudoers! Удаляем поврежденный файл: $file"
+        echo "Критическая ошибка: Создан невалидный файл sudoers! Удаление файла во избежание поломки sudo." >&2
         rm -f "$file"
         return 1
     fi
+    return 0
 }
 
-restart_ssh() {
-    # Специфика Ubuntu 24.04: переключаемся с socket-activation на классический сервис
-    if systemctl is-active --quiet ssh.socket; then
-        echo "Переключаем SSH с socket-activation на classic service (Ubuntu 24.04)..."
-        systemctl stop ssh.socket
-        systemctl disable ssh.socket
-        systemctl enable ssh.service
-    fi
-    systemctl restart ssh || systemctl restart sshd
-}
-
+# Функция настройки SSH ключей
 setup_ssh_keys() {
     local target_user="$1"
     local user_home
 
-    if [ "$target_user" = "root" ]; then
-        user_home="/root"
-    else
-        user_home="/home/$target_user"
+    # Динамическое определение домашней директории пользователя
+    user_home=$(getent passwd "$target_user" | cut -d: -f6)
+    if [[ -z "$user_home" ]]; then
+        echo "Ошибка: Не удалось определить домашний каталог для пользователя $target_user" >&2
+        return 1
     fi
 
     echo "-------------------------------------"
     echo "НАСТРОЙКА SSH КЛЮЧЕЙ ДЛЯ: $target_user"
-    echo "1) Сгенерировать новую пару ключей на сервере (вы получите приватный ключ)"
-    echo "2) Ввести (вставить) уже существующий Public Key"
+    echo "1) Сгенерировать новую пару ключей на сервере (НЕ РЕКОМЕНДУЕТСЯ из соображений безопасности)"
+    echo "2) Ввести (вставить) уже существующий Public Key (РЕКОМЕНДУЕТСЯ)"
     echo "3) Пропустить"
 
     local choice
-    read -rp "Ваш выбор (1-3): " choice
+    read -rp "Ваш выбор (1-3): " choice || choice=3
 
     case "$choice" in
         1)
+            echo "ВНИМАНИЕ: Генерация ключей на сервере менее безопасна, так как приватный ключ отображается в консоли."
+            if ! prompt_yes_no "Вы действительно хотите сгенерировать ключ на сервере?"; then
+                return 1
+            fi
+            
             mkdir -p "$user_home/.ssh"
             chmod 700 "$user_home/.ssh"
+
+            # Очистка старых ключей генерации по умолчанию
             rm -f "$user_home/.ssh/id_ed25519" "$user_home/.ssh/id_ed25519.pub"
 
             echo "Генерируем ключи Ed25519..."
             ssh-keygen -t ed25519 -f "$user_home/.ssh/id_ed25519" -C "vps-$target_user" -N "" -q
 
+            # Добавление в authorized_keys
             cat "$user_home/.ssh/id_ed25519.pub" >> "$user_home/.ssh/authorized_keys"
+
+            # Настройка прав
             chmod 600 "$user_home/.ssh/authorized_keys"
             chown -R "$target_user":"$target_user" "$user_home/.ssh" 2>/dev/null || chown -R "$target_user" "$user_home/.ssh"
 
             echo ""
             echo "==========================================================="
             echo "!!! СОХРАНИТЕ ЭТОТ ПРИВАТНЫЙ КЛЮЧ ПРЯМО СЕЙЧАС !!!"
-            echo "Скопируйте всё между линиями и сохраните в файл"
+            echo "Скопируйте всё между линиями и сохраните в файл (например: myserver.key)"
             echo "==========================================================="
             cat "$user_home/.ssh/id_ed25519"
             echo "==========================================================="
             echo ""
-            read -rp "Нажмите Enter, когда сохраните ключ..."
+            read -rp "Нажмите Enter, когда сохраните ключ..." || true
             return 0
             ;;
         2)
             echo "Вставьте ваш публичный ключ (начинается с ssh-rsa или ssh-ed25519):"
-            read -r pub_key
+            read -r pub_key || pub_key=""
 
             if [[ -z "$pub_key" ]]; then
                 echo "Ключ не введен."
@@ -157,27 +147,32 @@ setup_ssh_keys() {
 }
 
 #####################################
+# НАЧАЛО ВЫПОЛНЕНИЯ И ОБНОВЛЕНИЕ APT
+#####################################
+echo "Обновление пакетной базы данных..."
+apt-get update -y
+
+#####################################
 # СЕТЕВЫЕ НАСТРОЙКИ (BBR + IPv6)
 #####################################
 if prompt_yes_no "Включить TCP BBR и отключить IPv6"; then
-    # BBR (проверка по факту наличия параметра bbr)
-    if ! grep -q "net.ipv4.tcp_congestion_control=bbr" /etc/sysctl.conf; then
-        if ! grep -q "net.core.default_qdisc=fq" /etc/sysctl.conf; then
-            echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
-        fi
-        echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
-        echo "TCP BBR добавлен в конфиг."
-    fi
+    SYSCTL_CONF="/etc/sysctl.d/99-vps-hardening.conf"
+    
+    # Записываем настройки в отдельный файл, чтобы не засорять основной sysctl.conf
+    cat > "$SYSCTL_CONF" <<EOF
+# TCP BBR Congestion Control
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
 
-    # Disable IPv6
-    if ! grep -q "net.ipv6.conf.all.disable_ipv6" /etc/sysctl.conf; then
-        echo "net.ipv6.conf.all.disable_ipv6 = 1" >> /etc/sysctl.conf
-        echo "net.ipv6.conf.default.disable_ipv6 = 1" >> /etc/sysctl.conf
-        echo "net.ipv6.conf.lo.disable_ipv6 = 1" >> /etc/sysctl.conf
-        echo "IPv6 отключен в конфиге."
-    fi
+# Disable IPv6
+net.ipv6.conf.all.disable_ipv6 = 1
+net.ipv6.conf.default.disable_ipv6 = 1
+net.ipv6.conf.lo.disable_ipv6 = 1
+EOF
 
-    sysctl --system || sysctl -p || true
+    # Использование '|| true' предотвращает аварийную остановку скрипта,
+    # если sysctl запущен в ограниченном контейнере (LXC/OpenVZ)
+    sysctl --system || echo "Предупреждение: Не все параметры sysctl были успешно применены. Это нормально для сред LXC/OpenVZ."
     echo "Сетевые настройки применены."
 fi
 
@@ -189,7 +184,7 @@ if prompt_yes_no "Сменить пароль root"; then
         read -rsp "Новый пароль root: " rp; echo
         read -rsp "Повтор: " rp2; echo
         [[ "$rp" == "$rp2" ]] || { echo "Пароли не совпадают"; continue; }
-        validate_password "$rp" || { echo "Слабый пароль! Требуется: >=12 симв., заглавные, строчные, цифры и спецсимвол."; continue; }
+        validate_password "$rp" || { echo "Слабый пароль. Требуется: минимум 12 символов, заглавные, строчные, цифры и спецсимволы."; continue; }
         echo "root:$rp" | chpasswd
         break
     done
@@ -201,18 +196,19 @@ fi
 CREATED_USER=""
 
 if prompt_yes_no "Создать обычного пользователя"; then
-    read -rp "Имя пользователя: " uname
-    if id "$uname" &>/dev/null; then
+    read -rp "Имя пользователя: " uname || uname=""
+    if [[ -z "$uname" ]]; then
+        echo "Имя пользователя не может быть пустым."
+    elif id "$uname" &>/dev/null; then
         echo "Пользователь уже существует"
         CREATED_USER="$uname"
     else
+        adduser --disabled-password --gecos "" "$uname"
         while true; do
             read -rsp "Пароль для $uname: " up; echo
             read -rsp "Повтор: " up2; echo
             [[ "$up" == "$up2" ]] || { echo "Пароли не совпадают"; continue; }
-            validate_password "$up" || { echo "Слабый пароль! Требуется: >=12 симв., заглавные, строчные, цифры и спецсимвол."; continue; }
-            
-            adduser --disabled-password --gecos "" "$uname"
+            validate_password "$up" || { echo "Слабый пароль. Требуется: минимум 12 символов, заглавные, строчные, цифры и спецсимволы."; continue; }
             echo "$uname:$up" | chpasswd
             break
         done
@@ -220,27 +216,30 @@ if prompt_yes_no "Создать обычного пользователя"; the
         CREATED_USER="$uname"
     fi
 
-    if prompt_yes_no "Разрешить sudo без пароля для $uname"; then
-        echo "$uname ALL=(ALL) NOPASSWD:ALL" > "/etc/sudoers.d/$uname"
-        safe_sudoers "$uname"
+    if [[ -n "$CREATED_USER" ]] && prompt_yes_no "Разрешить sudo без пароля для $CREATED_USER"; then
+        echo "$CREATED_USER ALL=(ALL) NOPASSWD:ALL" > "/etc/sudoers.d/$CREATED_USER"
+        if ! safe_sudoers "$CREATED_USER"; then
+            echo "Аварийное завершение работы из-за ошибки в файле sudoers." >&2
+            exit 1
+        fi
     fi
 fi
 
 #####################################
 # НАСТРОЙКА SSH КЛЮЧЕЙ
 #####################################
-KEYS_INSTALLED=false
+KEYS_INSTALLED="false"
 
 if [ -n "$CREATED_USER" ]; then
     if prompt_yes_no "Настроить SSH ключи для пользователя $CREATED_USER"; then
         if setup_ssh_keys "$CREATED_USER"; then
-            KEYS_INSTALLED=true
+            KEYS_INSTALLED="true"
         fi
     fi
 else
     if prompt_yes_no "Настроить SSH ключи для ROOT"; then
         if setup_ssh_keys "root"; then
-            KEYS_INSTALLED=true
+            KEYS_INSTALLED="true"
         fi
     fi
 fi
@@ -250,80 +249,109 @@ fi
 #####################################
 SSH_PORT="$DEFAULT_SSH_PORT"
 
+# Переключаем Ubuntu 24.04 с socket activation на стандартную службу ssh.service.
+# Это гарантирует, что ручные изменения портов и конфигураций вступят в силу.
+echo "Переключаем SSH на классический режим работы (отключение socket activation)..."
+systemctl stop ssh.socket || true
+systemctl disable ssh.socket || true
+systemctl enable ssh.service || true
+
 if prompt_yes_no "Изменить порт SSH"; then
     while true; do
-        read -rp "Новый порт SSH: " p
-        validate_port "$p" || { echo "Недопустимый порт"; continue; }
+        read -rp "Новый порт SSH: " p || p=""
+        validate_port "$p" || { echo "Недопустимый порт (выберите в диапазоне $MIN_SSH_PORT-$MAX_SSH_PORT)"; continue; }
         SSH_PORT="$p"
         break
     done
-
-    sed -i '/^#\?Port /d' /etc/ssh/sshd_config
-    echo "Port $SSH_PORT" >> /etc/ssh/sshd_config
-    sed -i '/^#\?AddressFamily /d' /etc/ssh/sshd_config
-    echo "AddressFamily inet" >> /etc/ssh/sshd_config
 fi
 
-if [ "$KEYS_INSTALLED" = true ]; then
+# Пишем конфигурацию в drop-in файл вместо изменения основного sshd_config
+SSH_DROPIN="/etc/ssh/sshd_config.d/99-hardening.conf"
+mkdir -p /etc/ssh/sshd_config.d/
+
+cat > "$SSH_DROPIN" <<EOF
+# Настройки, созданные автоматическим скриптом
+Port $SSH_PORT
+AddressFamily inet
+PubkeyAuthentication yes
+EOF
+
+# Отключение входа по паролю (Только если ключи были успешно установлены)
+if [ "$KEYS_INSTALLED" = "true" ]; then
     if prompt_yes_no "Отключить вход по паролю (PasswordAuthentication no)?"; then
-        sed -i '/^#\?PasswordAuthentication /d' /etc/ssh/sshd_config
-        echo "PasswordAuthentication no" >> /etc/ssh/sshd_config
-
-        sed -i '/^#\?KbdInteractiveAuthentication /d' /etc/ssh/sshd_config
-        echo "KbdInteractiveAuthentication no" >> /etc/ssh/sshd_config
-
-        sed -i '/^#\?UsePAM /d' /etc/ssh/sshd_config
-        echo "UsePAM no" >> /etc/ssh/sshd_config
-
-        echo "Вход по паролю ОТКЛЮЧЕН. Используйте ключи."
+        cat >> "$SSH_DROPIN" <<EOF
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+UsePAM yes
+EOF
+        echo "Вход по паролю ОТКЛЮЧЕН. Используйте ключи для авторизации."
     fi
 fi
 
-sed -i '/^#\?PubkeyAuthentication /d' /etc/ssh/sshd_config
-echo "PubkeyAuthentication yes" >> /etc/ssh/sshd_config
+# Обеспечиваем наличие директории привилегий перед проверкой sshd -t,
+# чтобы избежать ложноположительного сбоя на новых инсталляциях Ubuntu 24.04.
+mkdir -p /run/sshd
 
-# Перезапускаем службу (с учетом специфики 24.04)
-restart_ssh
+# Проверка конфигурации SSH на ошибки перед перезапуском
+echo "Проверка конфигурации SSH..."
+if sshd -t; then
+    systemctl daemon-reload
+    systemctl restart ssh.service
+    echo "Служба SSH успешно перезапущена на порту $SSH_PORT"
+else
+    echo "Критическая ошибка конфигурации SSH! Откат изменений во избежание потери доступа." >&2
+    rm -f "$SSH_DROPIN"
+    systemctl restart ssh.service
+fi
 
 #####################################
 # UFW (FIREWALL) 
 #####################################
-apt install -y ufw
+echo "Установка и настройка фаервола UFW..."
+apt-get install -y ufw
 
-sed -i 's/IPV6=yes/IPV6=no/g' /etc/default/ufw
+# Безопасное отключение IPv6 в UFW (с проверкой существования параметра)
+if grep -q "^IPV6=" /etc/default/ufw; then
+    sed -i 's/^IPV6=.*/IPV6=no/' /etc/default/ufw
+else
+    echo "IPV6=no" >> /etc/default/ufw
+fi
 
 ufw default deny incoming
 ufw default allow outgoing
 
-# Блокировка Ping (ICMP) через замену правила по умолчанию в UFW
-if [ -f /etc/ufw/before.rules ]; then
-    echo "Настройка блокировки ICMP (ping)..."
-    sed -i 's/-A ufw-before-input -p icmp --icmp-type echo-request -j ACCEPT/-A ufw-before-input -p icmp --icmp-type echo-request -j DROP/g' /etc/ufw/before.rules
-fi
-
 echo "Настраиваем порты (только IPv4)..."
 
-# Корректный синтаксис для UFW под кастомный порт
+# SSH
 ufw allow "$SSH_PORT"/tcp comment 'SSH'
 
-# Разрешаем веб-трафик (TCP)
-TCP_PORTS=(80 443 8443)
+# Дополнительные TCP порты
+TCP_PORTS=(80 443 10443)
 for port in "${TCP_PORTS[@]}"; do
     ufw allow "$port"/tcp
 done
 
-# Разрешаем UDP-трафик для Hysteria 2 / TUIC напрямую
+# Дополнительные UDP порты
 UDP_PORTS=(443 8443)
 for port in "${UDP_PORTS[@]}"; do
     ufw allow "$port"/udp
-done
+fi
+
+# Опциональная блокировка Ping (ICMP)
+if prompt_yes_no "Блокировать входящие ICMP (Ping) запросы?"; then
+    if grep -qF "-A ufw-before-input -p icmp --icmp-type echo-request -j ACCEPT" /etc/ufw/before.rules; then
+        sed -i 's/-A ufw-before-input -p icmp --icmp-type echo-request -j ACCEPT/-A ufw-before-input -p icmp --icmp-type echo-request -j DROP/g' /etc/ufw/before.rules
+        echo "Ping запросы заблокированы в настройках UFW."
+    fi
+fi
 
 ufw --force enable
 
 #####################################
-# FAIL2BAN (С установкой python3-systemd)
+# FAIL2BAN
 #####################################
-apt install -y fail2ban python3-systemd
+echo "Установка и настройка Fail2ban..."
+apt-get install -y fail2ban
 
 cat > /etc/fail2ban/jail.local <<EOF
 [sshd]
@@ -339,17 +367,52 @@ systemctl enable fail2ban
 systemctl restart fail2ban
 
 #####################################
-# 3X-UI
+# 3X-UI 
 #####################################
 if prompt_yes_no "Установить 3x-ui"; then
     if ! command -v curl &> /dev/null; then
-        apt install -y curl
+        apt-get install -y curl
     fi
-    echo "Запуск установки 3x-ui"
-    # Полностью снимаем strict mode для беспрепятственного выполнения интерактивного внешнего установщика
-    set +euo pipefail
-    bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh)
-    set -euo pipefail
+
+    # Инициализация переменной версии
+    XUI_VERSION=""
+
+    echo "-------------------------------------"
+    echo "ВЫБОР ВЕРСИИ 3X-UI"
+    echo "1) Последняя стабильная версия (Latest) - РЕКОМЕНДУЕТСЯ"
+    echo "2) Указать конкретную версию вручную (например, v2.8.5)"
+    
+    # Считывание выбора пользователя (без использования 'local', так как находимся в глобальной области)
+    v_choice=1
+    read -rp "Ваш выбор (1-2): " v_choice || v_choice=1
+
+    if [[ "$v_choice" == "2" ]]; then
+        while true; do
+            read -rp "Введите тег версии (например, v2.8.5): " tag || tag=""
+            # Проверка, что тег начинается со строчной 'v' и содержит числовой формат версии
+            if [[ "$tag" =~ ^v[0-9]+ ]]; then
+                XUI_VERSION="$tag"
+                break
+            else
+                echo "Неверный формат. Версия должна начинаться со строчной буквы 'v' (например, v2.8.5)."
+            fi
+        done
+    fi
+
+    echo "Запуск установки 3x-ui..."
+    # Скачивание скрипта локально во временный файл для корректной передачи интерактивного ввода
+    curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh -o /tmp/3x-ui-install.sh
+    
+    # Передача выбранного тега версии в качестве аргумента официальному установщику
+    if [[ -n "$XUI_VERSION" ]]; then
+        echo "Установка версии $XUI_VERSION..."
+        bash /tmp/3x-ui-install.sh "$XUI_VERSION"
+    else
+        echo "Установка версии latest..."
+        bash /tmp/3x-ui-install.sh
+    fi
+    
+    rm -f /tmp/3x-ui-install.sh
 fi
 
 #####################################
@@ -357,24 +420,15 @@ fi
 #####################################
 echo
 echo "======================================"
-echo "✔ PROD НАСТРОЙКА ЗАВЕРШЕНА"
+echo "✔ НАСТРОЙКА VPS ЗАВЕРШЕНА УСПЕШНО"
 echo "SSH порт: $SSH_PORT"
 echo "IPv6: отключён (System + UFW)"
-echo "UFW: включён (только v4 правила, входящий Ping заблокирован)"
+echo "UFW: включён (только v4 правила)"
 echo "BBR: активирован"
-echo "Fail2ban: активен (backend: systemd)"
-if [ "$KEYS_INSTALLED" = true ]; then
-    echo "SSH Ключи: УСТАНОВЛЕНЫ"
+echo "Fail2ban: активен"
+if [ "$KEYS_INSTALLED" = "true" ]; then
+    echo "SSH Ключи: УСТАНОВЛЕНЫ (вход по паролю отключен, если было выбрано)"
 else
     echo "SSH Ключи: НЕ установлены"
 fi
-echo "======================================"
-echo "ВАЖНО: Пожалуйста, НЕ закрывайте текущую сессию терминала!"
-echo "Откройте новое окно терминала на вашем компьютере и попробуйте подключиться:"
-if [ -n "$CREATED_USER" ]; then
-    echo "  ssh -p $SSH_PORT $CREATED_USER@<IP_ВАШЕГО_СЕРВЕРА>"
-else
-    echo "  ssh -p $SSH_PORT root@<IP_ВАШЕГО_СЕРВЕРА>"
-fi
-echo "Убедитесь, что доступ по новому порту успешно работает, прежде чем завершить текущую сессию."
 echo "======================================"

@@ -64,7 +64,7 @@ wget https://raw.githubusercontent.com/Itman75/Nginx-L4-Stream-Router-Mask-for-3
 chmod +x setup_mask.sh
 ./setup_mask.sh
 ```
-> **Что будет сделано:** Подключение официального репозитория Nginx, установка Certbot, выпуск SAN-сертификата Let's Encrypt для всех доменов, генерация веб-интерфейса CosmosCloud, настройка конфигурации Stream и HTTP серверов Nginx с интеграцией PROXY-протокола.
+> **Что будет сделано:** Подключение официального репозитория Nginx, установка Certbot, выпуск сертификата Let's Encrypt для ваших доменов привязанных к ip сервера, генерация веб-интерфейса CosmosCloud, настройка конфигурации Stream и HTTP серверов Nginx с интеграцией PROXY-протокола.
 
 ---
 

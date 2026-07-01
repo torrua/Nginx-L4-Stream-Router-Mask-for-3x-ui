@@ -410,7 +410,7 @@ echo "Настраиваем порты (только IPv4)..."
 ufw allow "$SSH_PORT"/tcp comment 'SSH'
 
 # Дополнительные TCP порты
-TCP_PORTS=(80 443 10443)
+TCP_PORTS=(80 443 8443)
 for port in "${TCP_PORTS[@]}"; do
     ufw allow "$port"/tcp
 done

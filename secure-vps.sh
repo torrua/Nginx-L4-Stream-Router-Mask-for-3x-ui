@@ -3,6 +3,7 @@ set -euo pipefail
 
 #####################################
 #  PROD VPS HARDENING (Ubuntu 24.04)
+#  + Optional System Upgrade & Clean
 #  + BBR + Disable IPv6 + Block Ping
 #  + IPv4 ONLY Firewall Rules
 #  + SSH Keys (Auto-gen or Paste)
@@ -21,31 +22,6 @@ if [[ $EUID -ne 0 ]]; then
     echo "Ошибка: Запусти скрипт от пользователя root (sudo)" >&2
     exit 1
 fi
-
-#####################################
-# ОПТИМИЗАЦИЯ СЕТИ (PROXY TUNING)
-#####################################
-echo "==========================================================="
-echo "Применение сетевых оптимизаций ядра (Proxy Tuning)..."
-echo "Пояснение:"
-echo " - Увеличиваются лимиты очередей подключений (somaxconn, backlog) для защиты от дропов при высокой нагрузке."
-echo " - Отключается TCP slow start после простоя для минимизации задержек."
-echo " - Расширяются TCP-буферы (rmem, wmem) для увеличения пропускной способности."
-echo "==========================================================="
-
-cat << EOF > /etc/sysctl.d/99-proxy-tuning.conf
-net.core.somaxconn = 16384
-net.ipv4.tcp_max_syn_backlog = 8192
-net.core.netdev_max_backlog = 10000
-net.ipv4.tcp_slow_start_after_idle = 0
-net.core.rmem_default = 1048576
-net.core.wmem_default = 1048576
-net.core.rmem_max = 16777216
-net.core.wmem_max = 16777216
-EOF
-sysctl --system >/dev/null 2>&1 || echo "Предупреждение: Не все параметры sysctl применены (нормально для контейнеров LXC/OpenVZ)."
-echo "Оптимизации сети успешно добавлены."
-echo ""
 
 #####################################
 # ФУНКЦИИ ВАЛИДАЦИИ И ПОДДЕРЖКИ
@@ -80,7 +56,7 @@ validate_port() {
 safe_sudoers() {
     local target_user="$1"
     local file="/etc/sudoers.d/$target_user"
-    
+
     chmod 440 "$file"
     if ! visudo -cf "$file"; then
         echo "Критическая ошибка: Создан невалидный файл sudoers! Удаление файла во избежание поломки sudo." >&2
@@ -117,7 +93,7 @@ setup_ssh_keys() {
             if ! prompt_yes_no "Вы действительно хотите сгенерировать ключ на сервере?"; then
                 return 1
             fi
-            
+
             mkdir -p "$user_home/.ssh"
             chmod 700 "$user_home/.ssh"
 
@@ -174,15 +150,90 @@ setup_ssh_keys() {
 #####################################
 # НАЧАЛО ВЫПОЛНЕНИЯ И ОБНОВЛЕНИЕ APT
 #####################################
-echo "Обновление пакетной базы данных..."
-apt-get update -y
+echo "Проверка и подключение репозитория universe..."
+apt-get install -y software-properties-common || true
+add-apt-repository -y universe || true
+
+# Интерактивное полное обновление и очистка системы
+if prompt_yes_no "Выполнить полное обновление системы (apt upgrade) и очистку?"; then
+    echo "Запуск полного обновления пакетов (это может занять некоторое время)..."
+    
+    export DEBIAN_FRONTEND=noninteractive
+    export APT_LISTCHANGES_FRONTEND=none
+    
+    apt-get update -y
+    
+    # Флаги force-confdef и force-confold исключают зависания при конфликтах конфигурационных файлов (APT сохранит старые конфиги)
+    apt-get upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
+    apt-get autoremove -y
+    apt-get autoclean -y
+    
+    echo "Обновление и очистка успешно завершены."
+    echo "ВНИМАНИЕ: Если были обновлены важные системные библиотеки или ядро, рекомендуется перезагрузить сервер после завершения работы скрипта."
+    echo ""
+else
+    echo "Пропуск обновления пакетов. Обновление базы данных репозиториев..."
+    apt-get update -y || echo "Предупреждение: Не удалось полностью обновить пакетную базу данных. Скрипт продолжит работу."
+fi
+
+#####################################
+# ОПТИМИЗАЦИЯ СЕТИ (PROXY TUNING)
+#####################################
+echo "==========================================================="
+echo "Применение сетевых оптимизаций ядра (Proxy Tuning)..."
+echo "Пояснение:"
+echo " - Увеличиваются лимиты очередей подключений (somaxconn, backlog) для защиты от дропов при высокой нагрузке."
+echo " - Отключается TCP slow start после простоя для минимизации задержек."
+echo " - Расширяются TCP-буферы (rmem, wmem) для увеличения пропускной способности."
+echo "==========================================================="
+
+mkdir -p /etc/sysctl.d/
+cat << EOF > /etc/sysctl.d/99-proxy-tuning.conf
+net.core.somaxconn = 16384
+net.ipv4.tcp_max_syn_backlog = 8192
+net.core.netdev_max_backlog = 10000
+net.ipv4.tcp_slow_start_after_idle = 0
+net.core.rmem_default = 1048576
+net.core.wmem_default = 1048576
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+EOF
+sysctl --system >/dev/null 2>&1 || echo "Предупреждение: Не все параметры sysctl применены (нормально для контейнеров LXC/OpenVZ)."
+echo "Оптимизации сети успешно добавлены."
+echo ""
+
+#####################################
+# УСТАНОВКА СИСТЕМНЫХ УТИЛИТ И МОНИТОРИНГА
+#####################################
+if prompt_yes_no "Установить системные утилиты и инструменты мониторинга (htop, btop, tcpdump, jq, tmux и др.)"; then
+    echo "Установка системных утилит..."
+    apt-get install -y \
+        curl \
+        build-essential \
+        btop \
+        htop \
+        iperf3 \
+        iftop \
+        net-tools \
+        tcpdump \
+        dnsutils \
+        mtr-tiny \
+        jq \
+        tmux \
+        ncdu \
+        vnstat
+    echo "Системные утилиты успешно установлены."
+else
+    echo "Пропуск установки дополнительных утилит."
+fi
 
 #####################################
 # СЕТЕВЫЕ НАСТРОЙКИ (BBR + IPv6)
 #####################################
 if prompt_yes_no "Включить TCP BBR и отключить IPv6"; then
     SYSCTL_CONF="/etc/sysctl.d/99-vps-hardening.conf"
-    
+    mkdir -p /etc/sysctl.d/
+
     # Записываем настройки в отдельный файл, чтобы не засорять основной sysctl.conf
     cat > "$SYSCTL_CONF" <<EOF
 # TCP BBR Congestion Control
@@ -277,9 +328,8 @@ SSH_PORT="$DEFAULT_SSH_PORT"
 # Переключаем Ubuntu 24.04 с socket activation на стандартную службу ssh.service.
 # Это гарантирует, что ручные изменения портов и конфигураций вступят в силу.
 echo "Переключаем SSH на классический режим работы (отключение socket activation)..."
-systemctl stop ssh.socket || true
-systemctl disable ssh.socket || true
-systemctl enable ssh.service || true
+systemctl disable --now ssh.socket || true
+systemctl enable --now ssh.service || true
 
 if prompt_yes_no "Изменить порт SSH"; then
     while true; do
@@ -288,6 +338,15 @@ if prompt_yes_no "Изменить порт SSH"; then
         SSH_PORT="$p"
         break
     done
+fi
+
+# Проверим, подключена ли директория drop-in в основном файле sshd_config.
+# Если директива Include отсутствует, добавим её во избежание игнорирования drop-in файлов.
+if [ -f /etc/ssh/sshd_config ]; then
+    if ! grep -Fiq "Include /etc/ssh/sshd_config.d/*.conf" /etc/ssh/sshd_config; then
+        echo "Include /etc/ssh/sshd_config.d/*.conf" | cat - /etc/ssh/sshd_config > /tmp/sshd_config.tmp
+        mv /tmp/sshd_config.tmp /etc/ssh/sshd_config
+    fi
 fi
 
 # Пишем конфигурацию в drop-in файл вместо изменения основного sshd_config
@@ -406,8 +465,8 @@ if prompt_yes_no "Установить 3x-ui"; then
     echo "ВЫБОР ВЕРСИИ 3X-UI"
     echo "1) Последняя стабильная версия (Latest) - РЕКОМЕНДУЕТСЯ"
     echo "2) Указать конкретную версию вручную (например, v2.9.4)"
-    
-    # Считывание выбора пользователя (без использования 'local', так как находимся в глобальной области)
+
+    # Считывание выбора пользователя
     v_choice=1
     read -rp "Ваш выбор (1-2): " v_choice || v_choice=1
 
@@ -427,7 +486,7 @@ if prompt_yes_no "Установить 3x-ui"; then
     echo "Запуск установки 3x-ui..."
     # Скачивание скрипта локально во временный файл для корректной передачи интерактивного ввода
     curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh -o /tmp/3x-ui-install.sh
-    
+
     # Передача выбранного тега версии в качестве аргумента официальному установщику
     if [[ -n "$XUI_VERSION" ]]; then
         echo "Установка версии $XUI_VERSION..."
@@ -436,7 +495,7 @@ if prompt_yes_no "Установить 3x-ui"; then
         echo "Установка версии latest..."
         bash /tmp/3x-ui-install.sh
     fi
-    
+
     rm -f /tmp/3x-ui-install.sh
 fi
 

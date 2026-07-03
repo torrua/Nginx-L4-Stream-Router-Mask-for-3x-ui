@@ -228,13 +228,13 @@ else
 fi
 
 #####################################
-# СЕТЕВЫЕ НАСТРОЙКИ (BBR + IPv6)
+# СЕТЕВЫЕ НАСТРОЙКИ (BBR + Полное отключение IPv6)
 #####################################
 if prompt_yes_no "Включить TCP BBR и отключить IPv6"; then
     SYSCTL_CONF="/etc/sysctl.d/99-vps-hardening.conf"
     mkdir -p /etc/sysctl.d/
 
-    # Записываем настройки в отдельный файл, чтобы не засорять основной sysctl.conf
+    # 1. Записываем настройки в sysctl.d
     cat > "$SYSCTL_CONF" <<EOF
 # TCP BBR Congestion Control
 net.core.default_qdisc = fq
@@ -246,12 +246,28 @@ net.ipv6.conf.default.disable_ipv6 = 1
 net.ipv6.conf.lo.disable_ipv6 = 1
 EOF
 
-    # Использование '|| true' предотвращает аварийную остановку скрипта,
-    # если sysctl запущен в ограниченном контейнере (LXC/OpenVZ)
+    # Применяем sysctl прямо сейчас
     sysctl --system || echo "Предупреждение: Не все параметры sysctl были успешно применены. Это нормально для сред LXC/OpenVZ."
-    echo "Сетевые настройки применены."
-fi
 
+    # 2. МЕТОД GRUB (Для полноценных серверов и KVM-виртуализации)
+    # Отключаем IPv6 на уровне загрузчика ядра, чтобы его не могли вернуть сетевые менеджеры
+    if [ -f /etc/default/grub ]; then
+        if ! grep -q "ipv6.disable=1" /etc/default/grub; then
+            # Вставляем параметр ipv6.disable=1 в параметры загрузки ядра
+            sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="/GRUB_CMDLINE_LINUX_DEFAULT="ipv6.disable=1 /' /etc/default/grub
+            sed -i 's/GRUB_CMDLINE_LINUX="/GRUB_CMDLINE_LINUX="ipv6.disable=1 /' /etc/default/grub
+            update-grub || true
+            echo "IPv6 отключен в загрузчике GRUB (применится после перезагрузки)."
+        fi
+    fi
+
+    # 3. МЕТОД CRON (Универсальный fallback для контейнеров LXC/OpenVZ и защиты от Netplan/NetworkManager)
+    # Добавляем задачу, которая через 10 сек после старта системы принудительно перенакатит sysctl
+    (crontab -l 2>/dev/null; echo "@reboot sleep 10 && sysctl --system") | sort -u | crontab -
+    echo "Создано отложенное правило применения sysctl в Cron для защиты от сброса настроек сетью."
+
+    echo "Сетевые настройки успешно применены и защищены от сброса после перезагрузки!"
+fi
 #####################################
 # ROOT PASSWORD
 #####################################

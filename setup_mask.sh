@@ -77,7 +77,7 @@ prompt_default() {
 #  ИНТЕРАКТИВНЫЙ ВВОД ПАРАМЕТРОВ С ВЫБОРОМ
 # ═════════════════════════════════════════════════════════════
 echo
-echo -e "${YELLOW}Шаг 1: Настройка Главного Домена сервера${NC}"
+echo -e "${YELLOW}Шаг 1: Настройка Главного домена сервера (PRIMARY_DOMAIN)${NC}"
 echo -e "Этот домен будет использоваться для входа в панель 3X-UI, получения подписок"
 echo -e "и отображения официального веб-сайта (декоя) для всех сторонних прохожих."
 read -rp "Введите основной домен (например, proxy-hub.ru): " PRIMARY_DOMAIN
@@ -88,9 +88,7 @@ DOMAINS=("$PRIMARY_DOMAIN")
 REALITY_PORTS=("") 
 
 echo
-echo -e "${YELLOW}Шаг 1.2: Добавление Альтернативных Доменов для REALITY (Steal-Oneself)${NC}"
-echo -e "Каждому домену будет выпущен СОБСТВЕННЫЙ, независимый SSL-сертификат."
-echo -e "Это исключает связь доменов между собой в публичных логах (No SAN Leak)."
+echo -e "${YELLOW}Шаг 1.2: Добавление альтернативных доменов для REALITY (Steal-Oneself)${NC}"
 echo -e "${CYAN}Для завершения ввода просто нажмите ENTER на пустой строке.${NC}"
 echo
 
@@ -127,7 +125,7 @@ echo
 echo -e "${YELLOW}Шаг 2: Привязка технических портов панели 3X-UI${NC}"
 echo -e "Убедитесь, что порты не заняты другими веб-службами."
 prompt_default "Внутренний порт вашей веб-панели 3X-UI" "10443" PANEL_PORT
-prompt_default "Секретный пулл-путь к веб-панели (без слэшей)" "sys-control-983" RAW_PATH
+prompt_default "Секретный пулл-путь к веб-панели (без слэшей)" "3x-dashboard" RAW_PATH
 PANEL_PATH=$(echo "/${RAW_PATH}/" | tr -s '/')
 
 prompt_default "Выделенный внутренний порт подписок 3X-UI" "55443" SUB_PORT
@@ -478,7 +476,7 @@ upstream reality_backend_$port {
 "
 done
 
-# ИСПРАВЛЕННАЯ СХЕМА: Отправка PROXY-протокола с внешних портов напрямую на HTTP/Xray
+# Отправка PROXY-протокола с внешних портов напрямую на HTTP/Xray
 cat << EOF > "/etc/nginx/stream.d/$PRIMARY_DOMAIN.conf"
 map \$ssl_preread_server_name \$backend_gate {
     ""                 nginx_http_backend;
@@ -529,7 +527,7 @@ for ((i=1; i<${#DOMAINS[@]}; i++)); do
     if [ -d "/etc/letsencrypt/live/$alt_d" ]; then
         ALT_HTTP_SERVERS+="
 server {
-    listen 127.0.0.1:9443 ssl proxy_protocol; # <--- ИСПРАВЛЕНО: Добавлен proxy_protocol
+    listen 127.0.0.1:9443 ssl proxy_protocol;
     http2 on;
     server_name $alt_d;
 
@@ -588,7 +586,7 @@ server {
 }
 
 server {
-    listen 127.0.0.1:9443 ssl proxy_protocol; # <--- ИСПРАВЛЕНО: Добавлен proxy_protocol
+    listen 127.0.0.1:9443 ssl proxy_protocol;
     http2 on;
     server_name $PRIMARY_DOMAIN;
 

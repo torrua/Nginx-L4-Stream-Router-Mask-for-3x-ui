@@ -3,7 +3,7 @@
 # Production AutoSetup (Hardened & Multi-Domain Cosmos Steal-Oneself v1.2.3-Fixed)
 # Configurable Nginx Stream L4 Router & Mask for 3X-UI
 # Supported external ports: 443 (TCP) and 8443 (TCP) simultaneously
-# Scenario B: Self-Stealing REALITY with Isolated Certificates (No SAN Leak)
+# Scenario: Self-Stealing REALITY with Isolated Certificates 
 #
 
 set -euo pipefail
@@ -23,7 +23,7 @@ die()  { echo -e "${RED}[✗] $*${NC}" >&2; exit 1; }
 trap 'die "Скрипт аварийно прерван на строке $LINENO"' ERR
 
 echo -e "${CYAN}=========================================================${NC}"
-echo -e "${GREEN}  Nginx L4 Stream Router & Mask v1.2.3 (Fixed & Verified)${NC}"
+echo -e "${GREEN}  Nginx L4 Stream Router & Mask v1.2.4 (Fixed & Verified)${NC}"
 echo -e "${CYAN}=========================================================${NC}"
 
 # ─────────────────────── Предусловия ─────────────────────────
@@ -275,7 +275,7 @@ snap install --classic certbot
 ln -sf /snap/bin/certbot /usr/bin/certbot
 
 # ═════════════════════════════════════════════════════════════
-#  ВЫПУСК СЕРТИФИКАТОВ (РАЗДЕЛЬНЫЙ — БЕЗ СВЯЗЫВАНИЯ В CT LOGS)
+#  ВЫПУСК СЕРТИФИКАТОВ (РАЗДЕЛЬНЫЙ)
 # ═════════════════════════════════════════════════════════════
 log "Генерация SSL для ОСНОВНОГО домена: $PRIMARY_DOMAIN..."
 CERTBOT_ARGS=(certonly --webroot -w "$WEBROOT" --agree-tos -n --expand -d "$PRIMARY_DOMAIN")
@@ -398,8 +398,16 @@ if [ "$DECOY_TEMPLATE" = "1" ]; then
 EOF
 
     log "Загрузка оригинальных графических ассетов Cosmos Cloud..."
-    if ! curl -fsSL --connect-timeout 10 "https://raw.githubusercontent.com/Itman75/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/logo.webp" -o "$WEBROOT/logo.webp"; then
-        curl -fsSLk --connect-timeout 10 "https://cdn.jsdelivr.net/gh/Itman75/Nginx-L4-Stream-Router-Mask-for-3x-ui@main/logo.webp" -o "$WEBROOT/logo.webp" || warn "Не удалось загрузить логотип."
+    # Пробуем скачать с GitHub, подавляя вывод системных ошибок curl в терминал
+    if curl -fsSL --connect-timeout 10 "https://raw.githubusercontent.com/Itman75/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/logo.webp" -o "$WEBROOT/logo.webp" 2>/dev/null; then
+        ok "Логотип успешно загружен из основного репозитория GitHub."
+    else
+        warn "Прямое подключение к GitHub не удалось (возможно, блокировка). Переключаемся на резервное зеркало..."
+        if curl -fsSLk --connect-timeout 10 "https://cdn.jsdelivr.net/gh/Itman75/Nginx-L4-Stream-Router-Mask-for-3x-ui@main/logo.webp" -o "$WEBROOT/logo.webp" 2>/dev/null; then
+            ok "Логотип успешно загружен из резервного зеркала CDN (jsDelivr)."
+        else
+            warn "Не удалось загрузить логотип ни из одного источника. Веб-маска будет работать в режиме текстовой заглушки."
+        fi
     fi
 else
     cat << 'EOF' > /var/www/html/index.html
@@ -678,7 +686,7 @@ systemctl restart nginx
 # ═════════════════════════════════════════════════════════════
 echo
 echo -e "${GREEN}=========================================================${NC}"
-echo -e "      СЦЕНАРИЙ Б (STEAL-ONESELF) НАСТРОЕН УСПЕШНО!"
+echo -e "      СЦЕНАРИЙ STEAL-ONESELF НАСТРОЕН УСПЕШНО!"
 echo -e "${GREEN}=========================================================${NC}"
 echo -e "Адрес Облака-заглушки:  ${CYAN}https://${PRIMARY_DOMAIN}${NC}"
 echo -e "Альтернативные домены:  ${YELLOW}${DOMAINS[@]:1}${NC} (Без связывания SSL!)"

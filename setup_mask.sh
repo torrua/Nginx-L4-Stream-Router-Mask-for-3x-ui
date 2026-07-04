@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Production AutoSetup (Hardened & Multi-Domain Cosmos Steal-Oneself v1.2.3-Fixed)
+# Production AutoSetup (Hardened & Multi-Domain Cosmos Steal-Oneself v1.2.4-Fixed)
 # Configurable Nginx Stream L4 Router & Mask for 3X-UI
 # Supported external ports: 443 (TCP) and 8443 (TCP) simultaneously
 # Scenario: Self-Stealing REALITY with Isolated Certificates 
@@ -118,7 +118,7 @@ while true; do
 done
 
 if [ ${#DOMAINS[@]} -eq 1 ]; then
-    die "Ошибка: Для Сценария Б необходимо указать хотя бы один альтернативный домен!"
+    die "Ошибка: Для Сценария STEAL-ONESELF необходимо указать хотя бы один альтернативный домен!"
 fi
 
 echo

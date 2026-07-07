@@ -512,7 +512,7 @@ if prompt_yes_no "Установить 3x-ui"; then
 
     echo "Запуск установки 3x-ui..."
     # Скачивание скрипта локально во временный файл для корректной передачи интерактивного ввода
-    curl -Ls https://raw.githubusercontent.com/coinman-dev/3ax-ui/main/install.sh -o /tmp/3x-ui-install.sh
+    curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh -o /tmp/3x-ui-install.sh
 
     # Передача выбранного тега версии в качестве аргумента официальному установщику
     if [[ -n "$XUI_VERSION" ]]; then

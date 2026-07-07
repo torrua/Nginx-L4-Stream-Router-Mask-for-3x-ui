@@ -446,7 +446,7 @@ done
 UDP_PORTS=(443 8443)
 for port in "${UDP_PORTS[@]}"; do
     ufw allow "$port"/udp
-fi
+done
 
 # Опциональная блокировка Ping (ICMP)
 if prompt_yes_no "Блокировать входящие ICMP (Ping) запросы?"; then

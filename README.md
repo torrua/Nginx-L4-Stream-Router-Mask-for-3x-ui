@@ -68,7 +68,7 @@ graph TD
 ### Шаг 1: Подготовка сервера и установка 3X-UI
 Запустите скрипт обновления системы, установки утилит и базовой настройки безопасности ОС на чистом сервере:
 ```bash
-wget https://raw.githubusercontent.com/Itman75/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/secure-vps.sh
+wget https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/secure-vps.sh
 chmod +x secure-vps.sh
 ./secure-vps.sh
 ```
@@ -77,7 +77,7 @@ chmod +x secure-vps.sh
 ### Шаг 2: Установка L4-роутера и настройка маскировки
 Запустите интерактивный скрипт маршрутизации трафика:
 ```bash
-wget https://raw.githubusercontent.com/Itman75/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/setup_mask.sh
+wget https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/setup_mask.sh
 chmod +x setup_mask.sh
 ./setup_mask.sh
 ```

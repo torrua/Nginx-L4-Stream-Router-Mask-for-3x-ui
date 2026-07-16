@@ -151,13 +151,13 @@ fi
 
 echo
 echo -e "${YELLOW}Шаг 3: Выбор визуального камуфляжа (Decoy Front)${NC}"
-echo -e " 1) Точная копия CosmosCloud (Страница входа, имитация API-запросов, кастомные заголовки)"
+echo -e " 1) Страница входа в CosmosCloud (имитация API-запросов, кастомные заголовки)"
 echo -e " 2) Стандартная заглушка Nginx (Классический 'Welcome to nginx!')"
 prompt_default "Выберите вариант (1 или 2)" "1" DECOY_TEMPLATE
 
 echo
 echo -e "${YELLOW}Шаг 4: Служебные параметры Certbot${NC}"
-prompt_default "Email для уведомлений Let's Encrypt (Оставьте пустым для отмены)" "" LE_EMAIL
+prompt_default "Email для уведомлений Let's Encrypt (Оставьте пустым для пропуска ввода)" "" LE_EMAIL
 
 # Проверка DNS
 log "Сканирование DNS-записей перед выпуском SSL..."

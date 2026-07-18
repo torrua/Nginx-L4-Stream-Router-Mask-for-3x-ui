@@ -477,11 +477,11 @@ map $http_upgrade $connection_upgrade {
 }
 EOF
 
-# Инициализация Rate Limiting (Оптимизированная схема)
+# Инициализация Rate Limiting (Оптимизированная схема с повышенными лимитами для подписок)
 cat << 'EOF' > /etc/nginx/conf.d/00-ratelimit.conf
 limit_req_zone $binary_remote_addr zone=panel_login:10m rate=15r/m;
 limit_req_zone $binary_remote_addr zone=panel_interface:10m rate=10r/s;
-limit_req_zone $binary_remote_addr zone=sub_limit:10m rate=3r/s;
+limit_req_zone $binary_remote_addr zone=sub_limit:10m rate=30r/s;
 EOF
 
 log "Сборка L4 Stream архитектуры маршрутизации..."
@@ -668,7 +668,7 @@ server {
     }
 
     location ^~ $SUB_PATH {
-        limit_req zone=sub_limit burst=10 nodelay;
+        limit_req zone=sub_limit burst=60 nodelay;
         limit_req_status 429;
         proxy_pass http://127.0.0.1:$SUB_PORT;
         proxy_set_header Host \$http_host;

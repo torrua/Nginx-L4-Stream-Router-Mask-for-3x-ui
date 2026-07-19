@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# Production AutoSetup (Hardened & Multi-Domain Cosmos Steal-Oneself v1.2.6)
-# Configurable Nginx Stream L4 Router & Mask for 3X-UI
+# Production AutoSetup (Hardened & Multi-Domain Cosmos Steal-Oneself v1.3.1)
+# Configurable Nginx Stream L4 Router & Mask for 3X-UI + xHTTP Native Support
 # Supported external ports: 443 (TCP) and 8443 (TCP) simultaneously
-# Scenario: Self-Stealing REALITY with Isolated Certificates 
+# Scenario: Self-Stealing REALITY with Isolated Certificates & Secure xHTTP
 #
 
 set -euo pipefail
@@ -23,7 +23,7 @@ die()  { echo -e "${RED}[✗] $*${NC}" >&2; exit 1; }
 trap 'die "Скрипт аварийно прерван на строке $LINENO"' ERR
 
 echo -e "${CYAN}=========================================================${NC}"
-echo -e "${GREEN}  Nginx L4 Stream Router & Mask v1.2.6 (Hardened)${NC}"
+echo -e "${GREEN}  Nginx L4 Stream Router & Mask v1.3.1 (Hardened)${NC}"
 echo -e "${CYAN}=========================================================${NC}"
 
 # ─────────────────────── Предусловия ─────────────────────────
@@ -128,7 +128,7 @@ if [ ${#DOMAINS[@]} -eq 1 ]; then
 fi
 
 echo
-echo -e "${YELLOW}Шаг 2: Привязка технических портов панели 3X-UI${NC}"
+echo -e "${YELLOW}Шаг 2: Привязка технических портов панели 3X-UI и xHTTP${NC}"
 prompt_default "Внутренний порт вашей веб-панели 3X-UI" "10443" PANEL_PORT
 prompt_default "Секретный пул-путь к веб-панели (без слэшей)" "3x-dashboard" RAW_PATH
 validate_path "$RAW_PATH" "RAW_PATH"
@@ -139,14 +139,23 @@ prompt_default "Секретный путь для подписок (без сл
 validate_path "$RAW_SUB_PATH" "RAW_SUB_PATH"
 SUB_PATH="/${RAW_SUB_PATH}/"
 
+prompt_default "Внутренний порт для инбаунда VLESS xHTTP" "50443" XHTTP_PORT
+prompt_default "Секретный путь для xHTTP (без слэшей)" "xhttp-stream" RAW_XHTTP_PATH
+validate_path "$RAW_XHTTP_PATH" "RAW_XHTTP_PATH"
+XHTTP_PATH="/${RAW_XHTTP_PATH}"
+
 if [[ ! "$PANEL_PORT" =~ ^[0-9]+$ ]] || [ "$PANEL_PORT" -le 0 ] || [ "$PANEL_PORT" -gt 65535 ]; then
     die "Некорректный порт панели: $PANEL_PORT."
 fi
 if [[ ! "$SUB_PORT" =~ ^[0-9]+$ ]] || [ "$SUB_PORT" -le 0 ] || [ "$SUB_PORT" -gt 65535 ]; then
     die "Некорректный порт подписок: $SUB_PORT."
 fi
-if [ "$PANEL_PORT" -eq "$SUB_PORT" ]; then
-    die "Конфликт: Порт панели и порт подписок должны различаться!"
+if [[ ! "$XHTTP_PORT" =~ ^[0-9]+$ ]] || [ "$XHTTP_PORT" -le 0 ] || [ "$XHTTP_PORT" -gt 65535 ]; then
+    die "Некорректный порт xHTTP: $XHTTP_PORT."
+fi
+
+if [ "$PANEL_PORT" -eq "$SUB_PORT" ] || [ "$PANEL_PORT" -eq "$XHTTP_PORT" ] || [ "$SUB_PORT" -eq "$XHTTP_PORT" ]; then
+    die "Конфликт: Порты панели, подписок и xHTTP должны различаться!"
 fi
 
 echo
@@ -635,6 +644,19 @@ server {
     $COSMOS_HEADER
     add_header Strict-Transport-Security "max-age=15768000; includeSubDomains" always;
 
+    # Изолированный высокопроизводительный шлюз xHTTP (h2c Cleartext)
+    # Настроен на реал-тайм работу (низкий пинг)
+    location ^~ $XHTTP_PATH {
+        client_max_body_size 0;
+        client_body_timeout 1h;
+        grpc_read_timeout 1h;
+        grpc_send_timeout 1h;
+        grpc_buffer_size 32k;
+        grpc_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        grpc_set_header Host \$http_host;
+        grpc_pass grpc://127.0.0.1:$XHTTP_PORT;
+    }
+
     location ^~ $PANEL_PATH {
         limit_req zone=panel_interface burst=40 delay=20;
         limit_req_status 429;
@@ -732,7 +754,7 @@ echo -e "${YELLOW}ПОДГОТОВКА ФАЙЕРВОЛА (UFW):${NC}"
 echo -e "  Выполните команды в терминале для защиты внутренних портов:"
 echo -e "  ${CYAN}ufw allow 80/tcp && ufw allow 443/tcp && ufw allow 8443/tcp${NC}"
 echo -e "  ${CYAN}ufw allow 443/udp && ufw allow 8443/udp${NC}"
-echo -e "  ${RED}ufw deny $PANEL_PORT/tcp && ufw deny $SUB_PORT/tcp${NC}"
+echo -e "  ${RED}ufw deny $PANEL_PORT/tcp && ufw deny $SUB_PORT/tcp && ufw deny $XHTTP_PORT/tcp${NC}"
 for p in "${UNIQUE_PORTS[@]}"; do
     echo -e "  ${RED}ufw deny $p/tcp${NC}"
 done
@@ -758,5 +780,14 @@ echo -e "3. Настройка безопасных подписок (Subscripti
 echo -e "   - Перейдите в настройки подписок панели 3X-UI и укажите:"
 echo -e "     • ${YELLOW}Порт подписки:${NC} ${GREEN}$SUB_PORT${NC} | ${YELLOW}Путь подписки:${NC} ${GREEN}$SUB_PATH${NC}"
 echo -e "     • ${YELLOW}URL обратного прокси:${NC} ${GREEN}https://${PRIMARY_DOMAIN}${SUB_PATH}${NC}"
+echo
+echo -e "4. Настройка инбаунда ${GREEN}VLESS xHTTP (TCP)${NC} (через Nginx):"
+echo -e "   - Создайте инбаунд в 3X-UI со следующими параметрами:"
+echo -e "     • ${YELLOW}Протокол:${NC} ${GREEN}vless${NC}"
+echo -e "     • ${YELLOW}Порт:${NC} ${GREEN}$XHTTP_PORT${NC} | ${YELLOW}Listen IP:${NC} ${GREEN}127.0.0.1${NC}"
+echo -e "     • ${YELLOW}Сеть / Транспорт (Transmission):${NC} ${GREEN}xhttp${NC}"
+echo -e "     • ${YELLOW}Настройки xHTTP:${NC} Path: ${CYAN}$XHTTP_PATH${NC} | Mode: ${CYAN}stream-one${NC} | xPaddingBytes: ${CYAN}100-1000${NC}"
+echo -e "     • ${YELLOW}Безопасность (Security):${NC} ${RED}none${NC} (Поскольку TLS терминирует Nginx)"
+echo -e "     • ${YELLOW}Accept Proxy Protocol:${NC} ${RED}Выключить${NC} <--- ОБЯЗАТЕЛЬНО!"
 echo -e "${GREEN}=========================================================${NC}"
 exit 0

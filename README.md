@@ -318,7 +318,7 @@ chmod +x setup_mask.sh
       "scMinPostsIntervalMs": "",
       "uplinkChunkSize": 0,
       "noGRPCHeader": false,
-      "enableXmux": false
+      "enableXmux": true
     },
     "security": "none"
   }

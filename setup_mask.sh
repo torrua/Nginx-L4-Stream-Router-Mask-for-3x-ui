@@ -2669,19 +2669,19 @@ echo -e "    * Порядок в подписке: ${GREEN}1${NC} | Порт: ${
 echo -e "    * Общий расход: ${GREEN}0${NC} | Сброс трафика: ${GREEN}Никогда${NC}"
 echo -e "  - ${YELLOW}Вкладка «Протокол»:${NC}"
 echo -e "    * Ключи: нажать ${CYAN}«Сгенерировать»${NC} (иконка обновления рядом с приватным ключом)"
-echo -e "    * Сеть: Подсеть: ${GREEN}10.8.1.0${NC} | Маска подсети (CIDR): ${GREEN}24${NC} | MTU: ${GREEN}1360${NC}"
-echo -e "    * DNS: Основной DNS: ${GREEN}8.8.8.8${NC} | Резервный DNS: ${GREEN}8.8.4.4${NC}"
+echo -e "    * Сервер: Подсеть: ${GREEN}10.8.0.0${NC} | Маска подсети (CIDR): ${GREEN}22${NC} (до 1022 клиентов) | MTU: ${GREEN}1280${NC}"
+echo -e "    * DNS: Основной DNS: ${GREEN}76.76.2.0${NC} (Control D Anycast) | Резервный DNS: ${GREEN}76.76.10.0${NC}"
 echo -e "    * Внешний интерфейс: ${GREEN}eth0${NC} (или оставить пустым) | Включить IPv6: ${RED}Выключить${NC}"
 echo -e "  - ${YELLOW}Параметры обфускации:${NC}"
-echo -e "    * Мусорные пакеты: ${CYAN}Jc = 4${NC}, ${CYAN}Jmin = 50${NC}, ${CYAN}Jmax = 160${NC}"
+echo -e "    * Пакеты мусора: ${CYAN}Jc = 3${NC}, ${CYAN}Jmin = 40${NC}, ${CYAN}Jmax = 80${NC} (Mobile-пресет РФ)"
 echo -e "    * Мусорные смещения: ${CYAN}S1 = 45${NC}, ${CYAN}S2 = 60${NC}, ${CYAN}S3 = 24${NC}, ${CYAN}S4 = 16${NC}"
 echo -e "    * Заголовки ${CYAN}H1 - H4${NC}: ${GREEN}Оставить ПУСТЫМИ${NC} (по умолчанию 1/2/3/4)"
 echo -e "    * Сигнатурные пакеты ${CYAN}I1 - I5${NC}: ${GREEN}Оставить ПУСТЫМИ${NC}"
-echo -e "    * Защита заголовков (${CYAN}HeaderProtectionKey${NC}): ${GREEN}Оставить ПУСТЫМ${NC}"
+echo -e "    * Защита заголовков (${CYAN}HeaderProtectionKey${NC}): ${GREEN}Оставить ПУСТЫМ${NC} (100% совместимость с клиентами)"
 echo -e "    * Паддинг содержимого (${CYAN}ContentPaddingAddition${NC}): ${GREEN}3-16${NC}"
-echo -e "    * Тайминги ключей: ${CYAN}RekeyAfterTime = 107-135${NC}, ${CYAN}RekeyTimeout = 3-4${NC}, ${CYAN}RejectAfterTime = 178-211${NC}"
-echo -e "    * Тайминги соединения: ${CYAN}KeepaliveTimeout = 8-10${NC}, ${CYAN}MaxHandshakeAttempts = 21-26${NC}"
-echo -e "    * Переключатели: ${CYAN}RandomTrailers:${NC} ${RED}Выключить${NC} | ${CYAN}DisableCookies:${NC} ${GREEN}Включить${NC}"
+echo -e "    * Таймауты сессии: ${CYAN}RekeyAfterTime = 120${NC}, ${CYAN}RekeyTimeout = 3${NC}, ${CYAN}RejectAfterTime = 180${NC}"
+echo -e "    * Keepalive: ${CYAN}KeepaliveTimeout = 10${NC}, ${CYAN}MaxHandshakeAttempts = 20${NC}"
+echo -e "    * Флаги: ${CYAN}RandomTrailers:${NC} ${RED}Выключено${NC} | ${CYAN}DisableCookies:${NC} ${RED}Выключено${NC}"
 echo
 fi
 
@@ -2690,9 +2690,9 @@ echo -e "${YELLOW}ШАГ 6: Инбаунд AmneziaWG v2.0 / Legacy (UDP $AWG_V2_
 echo -e "  - ${YELLOW}Вкладка «Основное»:${NC} Протокол: ${GREEN}amneziawg / wireguard${NC} | Адрес: ${GREEN}0.0.0.0${NC} | Порт: ${GREEN}$AWG_V2_PORT${NC} (UDP)"
 echo -e "  - ${YELLOW}Вкладка «Параметры AWG» (Для роутеров Keenetic / OpenWrt и старых клиентов):${NC}"
 echo -e "    * ${CYAN}H1-H4 (Строки):${NC} ${GREEN}\"149419586\", \"878791997\", \"1251051976\", \"1657628296\"${NC}"
-echo -e "    * ${CYAN}HeaderProtectionKey:${NC} ${RED}ПУСТО (Выключено)${NC}"
+echo -e "    * Защита заголовков (${CYAN}HeaderProtectionKey${NC}): ${GREEN}Оставить ПУСТЫМ${NC} (100% совместимость с клиентами)"
 echo -e "    * ${CYAN}Смещения (>= 12):${NC} ${GREEN}S1 = 45, S2 = 60, S3 = 24, S4 = 16${NC}"
-echo -e "    * ${CYAN}Junk packets:${NC} ${GREEN}Jc = 4, Jmin = 50, Jmax = 160${NC} | ${CYAN}MTU:${NC} ${GREEN}1360${NC}"
+echo -e "    * Пакеты мусора: ${CYAN}Jc = 3${NC}, ${CYAN}Jmin = 40${NC}, ${CYAN}Jmax = 80${NC} (Mobile-пресет РФ)"
 echo
 fi
 

@@ -16,7 +16,7 @@
 * **Резервный сокет (L4 Failover):** В Stream-апстримы Reality интегрирован резервный сокет `server unix:/dev/shm/nginx-http.sock backup;`. Если Xray временно остановлен или ещё не настроен, Nginx автоматически перехватывает трафик и отдаёт маск-сайт с валидным SSL-сертификатом конкретного домена без ошибки отказа соединения.
 
 ### 2. Сценарий 2: Classic External REALITY (Внешний камуфляж)
-* Использование доверенных внешних доменов (`swdist.microsoft.com`, `www.samsung.com`, `gateway.icloud.com` и др.) в качестве SNI.
+* Использование доверенных внешних доменов (`gateway.icloud.com`, `www.samsung.com`, `gateway.icloud.com` и др.) в качестве SNI.
 * Каждому внешнему пулу назначается независимый локальный порт (`46443`, `47443` и т.д.), исключая коллизии и балансировочные таймауты.
 
 ### 3. Шлюз VLESS xHTTP (Stream-One/Up) + VLESSENC + XTLS-Vision (Zero-Drop Engine)
@@ -31,7 +31,7 @@
 
 ### 4. Скоростные UDP-туннели: Hysteria 2 и AmneziaWG (UDP 443 / 8443 / 8444)
 * **Hysteria 2 на `443/UDP`:** Сверхскоростной транспорт на базе протокола QUIC (HTTP/3) с маскировкой под веб-сервер и контроллером перегрузок BBR.
-* **AmneziaWG v3.1 / v2.0:** Установка защиты Transport Protection для мобильных устройств, ПК и роутеров Keenetic / OpenWrt (порты `8443/UDP` и `8444/UDP`).
+* **AmneziaWG v3.1 / v2.0:** Опциональная установка защиты Transport Protection для мобильных устройств, ПК и роутеров Keenetic / OpenWrt (порты `8443/UDP` и `8444/UDP`).
 * Nginx Stream слушает только TCP, оставляя UDP-порты полностью свободными для прямого приёма пакетов серверами VPN.
 
 ### 5. Межпроцессная связь через Unix Sockets в RAM и Nginx Mainline
@@ -68,11 +68,11 @@ graph TD
 
     NginxStream -->|SNI: Главный / WWW / Доп. домены / Пустой SNI| NginxSock[Unix Socket: /dev/shm/nginx-http.sock]
     NginxStream -->|SNI: Steal-Oneself cdn.yourdomain.online| XrayStealREALITY[Xray REALITY :45443]
-    NginxStream -.->|Failover: Xray выключен / backup| NginxSock
-    NginxStream -->|SNI: Внешний SNI swdist.microsoft.com| XrayClassicREALITY[Xray REALITY :46443]
+    NginxStream -.->|Failover: Xray недоступен / backup| NginxSock
+    NginxStream -->|SNI: Внешний SNI gateway.icloud.com| XrayClassicREALITY[Xray REALITY :46443]
 
-    XrayStealREALITY -->|Fallback не-REALITY браузер / xver=1| NginxFallbackHTTP[Nginx HTTP :9443 Anti-Loop]
-    XrayClassicREALITY -->|Fallback не-REALITY / Direct xver=0| ExternalSite[Внешний ресурс swdist.microsoft.com:443]
+    XrayStealREALITY -->|Fallback Ре-REALITY / xver=1| NginxFallbackHTTP[Nginx HTTP :9443 Anti-Loop]
+    XrayClassicREALITY -->|Fallback Ре-REALITY / Direct xver=0| ExternalSite[Внешний сайт gateway.icloud.com:443]
 
     NginxSock --> NginxHTTPCore[Nginx HTTP L7 Engine]
     NginxFallbackHTTP --> NginxHTTPCore
@@ -149,7 +149,7 @@ chmod +x setup_mask.sh
   * Добавить ещё порт Steal-Oneself? `n`
 * **Classic External REALITY:** `y`
   * Локальный порт Xray: `46443`
-  * Внешний SNI: `swdist.microsoft.com`
+  * Внешний SNI: `gateway.icloud.com`
   * Добавить ещё порт Classic? `n`
 * **Дополнительные SSL-домены:** *(Enter для завершения или ввод дополнительных Direct-доменов)*
 * **Внутренний порт панели 3X-UI:** `10443`
@@ -161,6 +161,34 @@ chmod +x setup_mask.sh
 * **Настройка Hysteria 2 / AmneziaWG:** `y` (выбор желаемых портов, например 443, 8443, 8444)
 * **Вариант маскировки (DECOY_MODE):** `1` *(DataSphere Analytics Enterprise)*, `2` *(CosmosCloud)* или `3` *(Nginx Stub)*
 * **Метод сертификации:** `1` *(Certbot HTTP-01)* или `2` *(acme.sh + Cloudflare DNS-01)*
+
+### 🤖 Неинтерактивный режим и автоматизация (.env)
+
+Скрипт полностью поддерживает автоматическое развертывание и передачу параметров через конфигурационный файл без единого интерактивного вопроса.
+
+**Доступные флаги CLI:**
+* `-c, --config <FILE>` — Загрузить параметры из конфигурационного файла (.env).
+* `-y, --yes, --non-interactive` — Включить тихий режим (автоматическое подтверждение всех этапов).
+* `-d, --domain <DOMAIN>` — Быстро переопределить основной домен (PRIMARY_DOMAIN).
+* `--gen-config [FILE]` — Сгенерировать шаблон конфигурации (по умолчанию `setup_mask.env.example`) и выйти.
+* `-f, --force` — Игнорировать несоответствие DNS-записей (A-record) при проверке домена (удобно для CI/CD).
+* `-h, --help` — Вывести справку.
+
+**Примеры использования:**
+```bash
+# Шаг 1. Сгенерировать полный шаблон конфигурации (запуск без прав root):
+./setup_mask.sh --gen-config my_settings.env
+
+# Шаг 2. Отредактировать файл my_settings.env (заполнить домены, порты, токены CF)
+
+# Шаг 3. Запустить полностью автоматическую установку (например, через Ansible):
+./setup_mask.sh --config my_settings.env --non-interactive --force
+
+# Альтернативно: использовать сохраненную сессию.
+# Скрипт всегда автоматически сохраняет ваши ответы в 'setup_mask.env'.
+# Если SSH-сессия оборвалась, вы можете продолжить установку одной командой:
+./setup_mask.sh -c setup_mask.env -y
+```
 
 ---
 
@@ -178,9 +206,25 @@ ufw allow 443/udp && ufw allow 8443/udp && ufw allow 8444/udp
 ufw deny 10443/tcp && ufw deny 55443/tcp && ufw deny 50443/tcp && ufw deny 9443/tcp && ufw deny 45443/tcp && ufw deny 46443/tcp
 ```
 
+### ⚡ Автоматическая настройка базы 3X-UI (`configure_3xui.sh`)
+
+В проект включен вспомогательный скрипт **`configure_3xui.sh`**, который полностью автоматизирует конфигурирование панели 3X-UI и создание инбаундов напрямую в базе данных SQLite (`/etc/x-ui/x-ui.db`):
+* Настраивает системные пути панели и сервера подписок (`webBasePath`, `subPort`, `subURI`, `subReverseProxy`).
+* Генерирует криптографические ключи: UUID клиента, пару ключей REALITY (`x25519`), Reality Short ID, ключ дешифрования `vlessenc` (ML-KEM-768), пароль Hysteria 2 и ключи AmneziaWG.
+* Создает все необходимые инбаунды: VLESS REALITY Steal-Oneself, Classic REALITY, VLESS xHTTP Stream-One, Hysteria 2 (UDP 443), AmneziaWG v3.1 / v2.0.
+* Перезапускает службу `x-ui` (`systemctl restart x-ui`).
+
+**Использование:**
+При установке через `setup_mask.sh` мастер автоматически задает вопрос о запуске настройки 3X-UI. При ответе `y` (или наличии `AUTO_SETUP_3XUI="y"` в `.env`) скрипт выполнит всю настройку автономно.
+
+Скрипт также можно запустить отдельно в любой момент:
+```bash
+./configure_3xui.sh --config setup_mask.env -y
+```
+
 ---
 
-## ⚙️ Пошаговая настройка 3X-UI в Веб-Интерфейсе
+## ⚙️ Пошаговая настройка 3X-UI в Веб-Интерфейсе (Ручной вариант)
 
 ### 1. Синхронизация путей панели и подписок
 
@@ -223,30 +267,22 @@ ufw deny 10443/tcp && ufw deny 55443/tcp && ufw deny 50443/tcp && ufw deny 9443/
 * **Поток:** Транспорт `tcp` | Accept Proxy Protocol: `1` (Включить) ⚠️
 * **Безопасность:** `reality` | uTLS `chrome`
 * **Flow:** `xtls-rprx-vision`
-* **Цель (Target):** `swdist.microsoft.com:443`
+* **Цель (Target):** `gateway.icloud.com:443`
 * **Proxy Protocol для Dest (xver):** `0` (Выключить) ⚠️
-* **Server Names (SNI):** `swdist.microsoft.com`
+* **Server Names (SNI):** `gateway.icloud.com`
 
 ---
 
-#### C. Инбаунд `VLESS_XHTTP` (Stream-One/Up + VLESSENC + XMUX + Vision) 🚀
+#### C. Инбаунд `VLESS_XHTTP` (Stream-One + VLESSENC + XTLS-Vision) 🚀
 * **Основное:** Порт `50443` | Listen IP `127.0.0.1` | Протокол `vless`
 * **Протокол (Decryption):** Выберите **ML-KEM-768 (native)** и нажмите **Сгенерировать** *(активирует квантово-устойчивое шифрование `vlessenc`)*.
 * **Поток (Stream Settings):**
   * **Транспорт:** `xhttp` | **Режим:** `stream-one` *(при частых обрывах на длинных аплоадах смените на `stream-up`)*
   * **Путь:** `/Stream-One-Path/` | **Хост:** `yourdomain.online`
   * **Паддинг:** `100-500` | **xPaddingObfsMode:** `true` | **Ключ:** `X-Amz-Meta-Trace`
-  * **Стабилизация:** `noSSEHeader: true` *(устраняет задержки буферизации в Nginx)*
-  * **Архитектурный блок XMUX (Connection Pool):**
-    * `maxConcurrency: 0` *(отключение чрезмерного мультиплексирования в пользу пула соединений)*
-    * `maxConnections: 1-3` *(пул из 1–3 одновременных TCP-сессий)*
-    * `cMaxReuseTimes: 300-600` *(случайный разброс переиспользования)*
-    * `hKeepAlivePeriod: 600` *(редкие пинги стрима; или 0 для стандартного H2 ~45c)*
-    * `hMaxRequestTimes: 1000-2000`
-    * `hMaxReusableSecs: 1200-2400`
-  * **QUIC / UDP:** `0` *(Строго выключено, трафик идёт через Nginx H2)*
 * **Безопасность:** `none` *(TLS снимает Nginx)* | Accept Proxy Protocol: `0` (Выключить)
-* **Клиент (Client Settings):** Flow: **`xtls-rprx-vision`** ⚠️ *(в связке с VLESSENC обеспечивает 0-RTT проникновение и динамический паддинг)*, Decryption: сгенерированный ключ `vlessenc`.
+* **Протокол:** В поле **Decryption** выберите **ML-KEM-768 (native)** и сгенерируйте ключ `vlessenc`.
+* **Клиент (Client Settings):** Flow: **`xtls-rprx-vision`**, Decryption: сгенерированный ключ `vlessenc`.
 
 ---
 
@@ -381,7 +417,7 @@ nginx -t && systemctl restart nginx && systemctl restart x-ui
 
 ---
 
-## 📄 Примеры конфигов (JSON-шаблоны) инбаундов Xray:
+## 📄 Готовые JSON-шаблоны Инбаундов Xray
 
 <details>
 <summary><b>1. JSON: VLESS REALITY Steal-Oneself (Порт 45443, Anti-Loop Dest 9443)</b></summary>
@@ -459,9 +495,9 @@ nginx -t && systemctl restart nginx && systemctl restart x-ui
     "realitySettings": {
       "show": false,
       "xver": 0,
-      "dest": "swdist.microsoft.com:443",
+      "dest": "gateway.icloud.com:443",
       "serverNames": [
-        "swdist.microsoft.com"
+        "gateway.icloud.com"
       ],
       "privateKey": "ВАШ_PRIVATE_KEY",
       "shortIds": [
@@ -481,7 +517,7 @@ nginx -t && systemctl restart nginx && systemctl restart x-ui
   "listen": "127.0.0.1",
   "port": 50443,
   "protocol": "vless",
-  "tag": "in-xhttp-stream",
+  "tag": "in-xhttp-vision",
   "settings": {
     "clients": [
       {
@@ -583,8 +619,8 @@ nginx -t && systemctl restart nginx && systemctl restart x-ui
   "settings": {
     "clients": [
       {
-        "privateKey": "your privateKey",
-        "publicKey": "your publicKey",
+        "privateKey": "ВАШ_PRIVATE_KEY_СЕРВЕРА",
+        "publicKey": "PUBLIC_KEY_КЛИЕНТА",
         "allowedIPs": [
           "10.8.1.2/32"
         ],
@@ -594,7 +630,7 @@ nginx -t && systemctl restart nginx && systemctl restart x-ui
         "totalGB": 0,
         "expiryTime": 0,
         "enable": true,
-        "tgId": 471640941,
+        "tgId": 0,
         "subId": "Mine",
         "comment": "",
         "reset": 0,
@@ -616,8 +652,8 @@ nginx -t && systemctl restart nginx && systemctl restart x-ui
       "maxHandshakeAttempts": "21-26",
       "mtu": 1360,
       "primaryDns": "8.8.8.8",
-      "privateKey": "your privateKey",
-      "publicKey": "your publicKey",
+      "privateKey": "ВАШ_PRIVATE_KEY_СЕРВЕРА",
+      "publicKey": "PUBLIC_KEY_КЛИЕНТА",
       "randomTrailers": false,
       "rejectAfterTime": "178-211",
       "rekeyAfterTime": "107-135",
@@ -671,5 +707,3 @@ nginx -t && systemctl restart nginx && systemctl restart x-ui
     }
   }
 }
-```
-</details>

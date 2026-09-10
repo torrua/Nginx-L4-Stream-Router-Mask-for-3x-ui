@@ -172,9 +172,15 @@ collect_express_inputs() {
     echo -e "  ${MAGENTA}${BOLD}Ввод основных параметров:${RESET}"
     echo -e "  ${DIM}────────────────────────────────────────────────────────────${RESET}"
     
+    echo -e "  ${YELLOW}${INFO} ВАЖНО О DNS-ЗАПИСЯХ:${RESET}"
+    echo -e "  ${DIM}Для работы маскировки Nginx и Steal-Oneself REALITY в DNS нужны 2 A-записи:${RESET}"
+    echo -e "    ${DIM}1) Основной домен (напр. domain.com)  ➜ IP вашего VPS (Маска, Панель, xHTTP)${RESET}"
+    echo -e "    ${DIM}2) Поддомен (напр. cdn.domain.com)     ➜ IP вашего VPS (Steal-Oneself REALITY)${RESET}
+"
+
     # 1. Domain
     while true; do
-        echo -ne "  ${WHITE}${ARROW} Введите ваш домен или субдомен (напр. vpn.mydomain.com): ${RESET}"
+        echo -ne "  ${WHITE}${ARROW} Введите ваш основной домен (напр. domain.com или vpn.domain.com): ${RESET}"
         read -r PRIMARY_DOMAIN </dev/tty
         PRIMARY_DOMAIN=$(echo "$PRIMARY_DOMAIN" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
         

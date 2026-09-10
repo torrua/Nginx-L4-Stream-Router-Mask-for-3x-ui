@@ -606,9 +606,10 @@ if [ "$EXPRESS_MODE" -eq 1 ]; then
     echo -e "  ${GREEN}${STAR} ${BOLD}Включен режим: Экспресс-установка${NC}"
     echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}"
     
+    echo -e "  ${YELLOW}[i] Важно о DNS:${NC} ${DIM}Для маскировки требуются A-записи основного домена и поддомена cdn.<домен>${NC}"
     if [ -z "${PRIMARY_DOMAIN:-}" ]; then
         while true; do
-            echo -ne "  ${WHITE}${ARROW} Введите ваш основной домен (напр. vpn.domain.com): ${NC}"
+            echo -ne "  ${WHITE}${ARROW} Введите ваш основной домен (напр. domain.com): ${NC}"
             read -r PRIMARY_DOMAIN
             PRIMARY_DOMAIN=$(echo "$PRIMARY_DOMAIN" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
             if [[ "$PRIMARY_DOMAIN" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; then

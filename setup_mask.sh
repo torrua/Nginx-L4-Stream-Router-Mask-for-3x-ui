@@ -2699,7 +2699,7 @@ fi
 echo -e "${YELLOW}ШАГ 7: Настройки Клиента и Подписок в 3X-UI:${NC}"
 echo -e "  - ${YELLOW}В карточке Клиента (Клиенты -> Учетные данные):${NC}"
 echo -e "    * Для инбаунда REALITY: Flow: выбрать ${GREEN}xtls-rprx-vision${NC}"
-echo -e "    * Для инбаунда xHTTP: Flow: выбрать ${GREEN}xtls-rprx-vision${NC} (0-RTT через VLESSENC penetration) | Decryption: ключ ${GREEN}vlessenc${NC}"
+echo -e "    * Для инбаунда xHTTP: Flow: оставить ${GREEN}пусто (none)${NC} для широкой совместимости (Sing-box, Happ, iOS) | Decryption: ключ ${GREEN}vlessenc${NC}"
 echo -e "  - ${YELLOW}Настройки подписок (Панель -> Подписка):${NC}"
 echo -e "    * Subscription Port: ${GREEN}$SUB_PORT${NC} | Subscription Path: ${GREEN}$SUB_PATH${NC}"
 echo -e "    * Subscription URL: ${CYAN}https://${PRIMARY_DOMAIN}${SUB_PATH}${NC}"

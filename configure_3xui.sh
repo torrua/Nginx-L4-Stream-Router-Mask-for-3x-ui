@@ -159,6 +159,11 @@ AWG_V3_PORT="${AWG_V3_PORT:-8443}"
 ENABLE_AWG_V2="${ENABLE_AWG_V2:-y}"
 AWG_V2_PORT="${AWG_V2_PORT:-8444}"
 
+AWG_PRIMARY_DNS="${AWG_PRIMARY_DNS:-76.76.2.0}"
+AWG_SECONDARY_DNS="${AWG_SECONDARY_DNS:-76.76.10.0}"
+AWG_SUBNET_IP="${AWG_SUBNET_IP:-10.8.0.0}"
+AWG_SUBNET_CIDR="${AWG_SUBNET_CIDR:-22}"
+
 SSL_ENGINE_CHOICE="${SSL_ENGINE_CHOICE:-1}"
 if [ "$SSL_ENGINE_CHOICE" = "1" ]; then
     SSL_CERT_PATH="/etc/letsencrypt/live/$PRIMARY_DOMAIN/fullchain.pem"
@@ -237,6 +242,10 @@ export ENABLE_AWG_V3
 export AWG_V3_PORT
 export ENABLE_AWG_V2
 export AWG_V2_PORT
+export AWG_PRIMARY_DNS
+export AWG_SECONDARY_DNS
+export AWG_SUBNET_IP
+export AWG_SUBNET_CIDR
 export SSL_CERT_PATH
 export SSL_KEY_PATH
 
@@ -310,6 +319,10 @@ awg_v3_port = int(os.environ.get("AWG_V3_PORT") or "8443")
 
 enable_awg_v2 = os.environ.get("ENABLE_AWG_V2", "y").lower() in ("1", "y", "true")
 awg_v2_port = int(os.environ.get("AWG_V2_PORT") or "8444")
+awg_primary_dns = os.environ.get("AWG_PRIMARY_DNS") or "76.76.2.0"
+awg_secondary_dns = os.environ.get("AWG_SECONDARY_DNS") or "76.76.10.0"
+awg_subnet_ip = os.environ.get("AWG_SUBNET_IP") or "10.8.0.0"
+awg_subnet_cidr = int(os.environ.get("AWG_SUBNET_CIDR") or "22")
 
 ssl_cert = os.environ.get("SSL_CERT_PATH", "")
 ssl_key = os.environ.get("SSL_KEY_PATH", "")
@@ -665,7 +678,16 @@ x_str = {
     "network": "xhttp",
     "xhttpSettings": {
         "path": xhttp_path, "host": domain, "mode": "stream-one",
-        "xPaddingBytes": "100-500", "xPaddingObfsMode": True, "xPaddingKey": "X-Amz-Meta-Trace"
+        "noSSEHeader": True,
+        "xPaddingBytes": "100-500", "xPaddingObfsMode": True, "xPaddingKey": "X-Amz-Meta-Trace",
+        "xmux": {
+            "maxConcurrency": "0",
+            "maxConnections": "1-3",
+            "cMaxReuseTimes": "300-600",
+            "hKeepAlivePeriod": 600,
+            "hMaxRequestTimes": "1000-2000",
+            "hMaxReusableSecs": "1200-2400"
+        }
     },
     "security": "none",
     "externalProxy": [{"dest": domain, "port": 443, "forceTls": "tls", "sni": domain, "fingerprint": "chrome", "remark": "VLESS_XHTTP"}]
@@ -695,14 +717,20 @@ if enable_awg_v3:
             "allowedIPs": ["10.8.1.2/32"], "email": "Client-1", "enable": True
         }],
         "server": {
-            "contentPaddingAddition": "3-16", "disableCookies": True,
-            "h1": "", "h2": "", "h3": "", "h4": "", "jc": 4, "jmax": 160, "jmin": 50,
-            "keepaliveTimeout": "8-10", "maxHandshakeAttempts": "21-26", "mtu": 1360,
-            "primaryDns": "8.8.8.8", "secondaryDns": "8.8.4.4",
+            "h1": "", "h2": "", "h3": "", "h4": "",
+            "jc": 3, "jmin": 40, "jmax": 80,
+            "s1": 45, "s2": 60, "s3": 24, "s4": 16,
+            "mtu": 1280,
+            "primaryDns": awg_primary_dns, "secondaryDns": awg_secondary_dns,
             "privateKey": def_wg_s_priv, "publicKey": def_wg_s_pub,
-            "randomTrailers": False, "rejectAfterTime": "178-211", "rekeyAfterTime": "107-135",
-            "rekeyTimeout": "3-4", "s1": 45, "s2": 60, "s3": 24, "s4": 16,
-            "subnetCidr": 24, "subnetIp": "10.8.1.0"
+            "randomTrailers": False,
+            "disableCookies": False,
+            "keepaliveTimeout": "10",
+            "rekeyAfterTime": "120",
+            "rekeyTimeout": "3",
+            "rejectAfterTime": "180",
+            "maxHandshakeAttempts": "20",
+            "subnetCidr": awg_subnet_cidr, "subnetIp": awg_subnet_ip
         }
     }
     a3_str = {"externalProxy": [{"dest": domain, "port": awg_v3_port, "remark": "AmneziaWG v3.1"}]}
@@ -717,9 +745,11 @@ if enable_awg_v2:
         }],
         "server": {
             "h1": "149419586", "h2": "878791997", "h3": "1251051976", "h4": "1657628296",
-            "jc": 4, "jmax": 160, "jmin": 50, "mtu": 1360, "primaryDns": "8.8.8.8",
+            "jc": 3, "jmin": 40, "jmax": 80, "mtu": 1280,
+            "primaryDns": awg_primary_dns, "secondaryDns": awg_secondary_dns,
             "privateKey": def_wg_s_priv, "publicKey": def_wg_s_pub,
-            "s1": 45, "s2": 60, "s3": 24, "s4": 16, "subnetCidr": 24, "subnetIp": "10.8.2.0"
+            "s1": 45, "s2": 60, "s3": 24, "s4": 16,
+            "subnetCidr": 24, "subnetIp": "10.8.2.0"
         }
     }
     a2_str = {"externalProxy": [{"dest": domain, "port": awg_v2_port, "remark": "AmneziaWG v2.0"}]}

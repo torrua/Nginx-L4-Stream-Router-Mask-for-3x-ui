@@ -1,14 +1,12 @@
 <div align="center">
 
-<img src="logo.webp" alt="3X-UI Mask Logo" width="130" />
-
 # Личный VPN на своём сервере
 ### 3X-UI и Nginx с маскировкой под сайт
 
 Надёжный персональный VPN на VPS, устойчивый к блокировкам операторов связи.  
 Работает на смартфонах (iOS, Android), компьютерах (Windows, macOS) и роутерах.
 
-[Инструкция для новичков](docs/BEGINNER_GUIDE.md) • [Техническая архитектура](docs/ARCHITECTURE.md) • [Быстрый старт](#-пошаговая-установка-3-этапа)
+[Инструкция для новичков](docs/BEGINNER_GUIDE.md) • [Техническая архитектура](docs/ARCHITECTURE.md) • [Быстрый старт](#-быстрый-старт-установка-в-1-команду)
 
 [![Версия](https://img.shields.io/badge/версия-v6.5.3-blue?style=flat-square)](https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui)
 [![ОС](https://img.shields.io/badge/ОС-Ubuntu%20%7C%20Debian-informational?style=flat-square)](docs/BEGINNER_GUIDE.md#1-сервер-vps)

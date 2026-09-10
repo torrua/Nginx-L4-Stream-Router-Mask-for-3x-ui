@@ -1,52 +1,125 @@
 #!/usr/bin/env bash
 #
 # ==============================================================================
-# Production AutoSetup: Hardened Engine v6.5.3 Universal (Public Edition)
-# Nginx L4 Stream + 3X-UI + AdGuard Home DoH + Unix Sockets + 3 Decoys
+# Production AutoSetup: Hardened Engine v6.5.1 Universal (Public Edition)
+# Nginx L4 Stream + 3X-UI + Unix Sockets + Native proxy_http_version 2 + 3 Decoys
 # ==============================================================================
 # Архитектура:
 #   1) Nginx Mainline Branch v.1.31.4+ (Официальный репозиторий nginx.org)
-#   2) Steal-Oneself REALITY с защитой Anti-Loop (Fallback 9443) и сокетным L4 Failover
+#   2) Steal-Oneself REALITY с защитой от зацикливания (Anti-Loop Fallback 9443)
 #   3) Classic External REALITY (Выделение портов для внешних SNI)
-#   4) VLESS xHTTP (Stream-One/Up) + VLESSENC + XTLS-Vision + XMUX Connection Pool
+#   4) VLESS xHTTP (Stream-One) + VLESSENC + Native H2 Streaming (без XMUX-блокировок)
 #      (СТРОГО по TCP/HTTP/2 без QUIC — полнодуплексное H2C-проксирование Nginx)
 #   5) Опциональный скоростной UDP VPN: Hysteria 2 (по умолчанию 443/UDP)
 #   6) Опциональный двухверсионный стек AmneziaWG / WireGuard:
 #      - AmneziaWG v3.1 (WG3, по умолчанию 8443/UDP, Transport Protection)
 #      - AmneziaWG v2.0 / Legacy 1.0 (по умолчанию 8444/UDP, для роутеров)
-#   7) Опциональный модуль AdGuard Home:
-#      - Приватный DoH (DNS-over-HTTPS) с защитой ClientID для домашних роутеров
-#      - Загрузка с официального статического CDN static.adguard.com
-#      - Эталонный пул Upstream DNS: Split-DNS (РФ/СНГ -> Яндекс DoH, YouTube -> Google H3)
-#      - Скоростные апстримы DNS-over-QUIC (DoQ) и HTTP/3 (NextDNS, Quad9, Cloudflare)
-#      - Освобождение 53-го порта от systemd-resolved
-#      - Проксирование веб-панели и /dns-query через Nginx поддомен с TLS 1.3
-#   8) Гибридный SSL-движок с защитой от дублирования аккаунтов Certbot:
-#      - Certbot (HTTP-01): /etc/letsencrypt/live/ (--cert-name строгая изоляция)
-#      - acme.sh + Cloudflare (DNS-01): /etc/ssl/acme/ (права 755/644)
-#   9) 3 автономных локальных режима маскировки (Decoy Front):
-#      - 1: DataSphere Analytics Enterprise (Геометрическая сфера + Live телеметрия ±10%)
-#      - 2: Облако CosmosCloud (с эмуляцией API, ассетами и logo.webp)
+#   7) Гибридный SSL-движок с разделением каталогов:
+#      - Certbot (HTTP-01): /etc/letsencrypt/live/
+#      - acme.sh + Cloudflare (DNS-01): /etc/ssl/acme/ (изоляция от /root/ и 755/644)
+#   8) 3 автономных локальных режима маскировки (Decoy Front):
+#      - 1: DataSphere Analytics Enterprise 
+#      - 2: Облако CosmosCloud 
 #      - 3: Стандартная заглушка Nginx (Welcome to nginx)
-#  10) Полная доступность маск-сайта со ВСЕХ зарегистрированных доменов
-#  11) Полный тюнинг ядра Linux (TCP BBR, fq, somaxconn, lowat, IPC /dev/shm, UDP buffers)
-#  12) Автоопределение активного порта SSH для безопасной настройки UFW
-# ==============================================================================
+#   9) Комплексная защита от ботов, сканеров уязвимостей, AI-парсеров (444/404)
+#  10) Полный тюнинг ядра Linux (TCP BBR, fq, somaxconn, lowat, IPC /dev/shm, UDP buffers)
+#  ==============================================================================
 
 set -euo pipefail
 
-# --------------------------- Цвета вывода ---------------------------
+# --------------------------- Цвета и UI-движок ---------------------------
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+MAGENTA='\033[0;35m'
+WHITE='\033[1;37m'
+DIM='\033[2m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-log()  { echo -e "${CYAN}[+]${NC} $*"; }
-ok()   { echo -e "${GREEN}[OK]${NC} $*"; }
-warn() { echo -e "${YELLOW}[!]${NC} $*"; }
-die()  { echo -e "${RED}[X] $*${NC}" >&2; exit 1; }
+CHECK="✔"
+CROSS="✖"
+ARROW="➜"
+STAR="★"
+
+log()  { echo -e "  ${CYAN}[+]${NC} $*"; }
+ok()   { echo -e "  ${GREEN}${CHECK}${NC} $*"; }
+warn() { echo -e "  ${YELLOW}[!]${NC} $*"; }
+die()  { echo -e "  ${RED}${CROSS} $*${NC}" >&2; exit 1; }
+
+# Анимированный спиннер для фоновых операций
+run_with_spinner() {
+    local task_name="$1"
+    shift
+    local cmd=("$@")
+    local spin_chars=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+    local delay=0.08
+    local log_file="${SETUP_MASK_LOG:-/tmp/setup_mask_cmd.log}"
+    
+    "${cmd[@]}" >> "$log_file" 2>&1 &
+    local pid=$!
+    tput civis 2>/dev/null || echo -ne "\033[?25l"
+    
+    local i=0
+    while kill -0 "$pid" 2>/dev/null; do
+        i=$(( (i + 1) % 10 ))
+        printf "\r  ${CYAN}${spin_chars[$i]}${NC}  ${WHITE}%-54s${NC}" "$task_name..."
+        sleep "$delay"
+    done
+    
+    wait "$pid"
+    local exit_code=$?
+    tput cnorm 2>/dev/null || echo -ne "\033[?25h"
+    
+    if [ $exit_code -eq 0 ]; then
+        printf "\r  ${GREEN}${CHECK}${NC}  ${WHITE}%-54s${NC} ${GREEN}[ГОТОВО]${NC}\n" "$task_name"
+        return 0
+    else
+        printf "\r  ${RED}${CROSS}${NC}  ${WHITE}%-54s${NC} ${RED}[ОШИБКА]${NC}\n" "$task_name"
+        echo -e "  ${RED}Ошибка в команде:${NC} $task_name"
+        [ -f "$log_file" ] && tail -n 10 "$log_file" | sed 's/^/    /'
+        return $exit_code
+    fi
+}
+
+# Прогресс-бар шагов
+print_step_bar() {
+    local step_num="$1"
+    local total_steps="$2"
+    local step_title="$3"
+    local percent=$(( step_num * 100 / total_steps ))
+    local filled=$(( step_num * 16 / total_steps ))
+    local empty=$(( 16 - filled ))
+    local bar=""
+    for ((j=0; j<filled; j++)); do bar+="█"; done
+    for ((j=0; j<empty; j++)); do bar+="░"; done
+    
+    echo ""
+    echo -e "  ${BLUE}${BOLD}┌─[ Шаг $step_num из $total_steps ] ${WHITE}$step_title${NC}"
+    echo -e "  ${BLUE}${BOLD}└─ Прогресс: [${CYAN}$bar${BLUE}${BOLD}] ${WHITE}${percent}%${NC}"
+    echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}"
+}
+
+# Вывод карточки заголовка
+print_mask_banner() {
+    clear 2>/dev/null || true
+    echo -e "${CYAN}${BOLD}"
+    echo "  ╔════════════════════════════════════════════════════════════════════════════╗"
+    echo "  ║                                                                            ║"
+    echo "  ║      ███╗   ██╗ ██████╗ ██╗███╗   ██╗██╗  ██╗    ███████╗███████╗████████╗ ║"
+    echo "  ║      ████╗  ██║██╔════╝ ██║████╗  ██║╚██╗██╔╝    ██╔════╝██╔════╝╚══██╔══╝ ║"
+    echo "  ║      ██╔██╗ ██║██║  ███╗██║██╔██╗ ██║ ╚███╔╝     ███████╗█████╗     ██║    ║"
+    echo "  ║      ██║╚██╗██║██║   ██║██║██║╚██╗██║ ██╔██╗     ╚════██║██╔══╝     ██║    ║"
+    echo "  ║      ██║ ╚████║╚██████╔╝██║██║ ╚████║██╔╝ ██╗    ███████║███████╗   ██║    ║"
+    echo "  ║      ╚═╝  ╚═══╝ ╚═════╝ ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝    ╚══════╝╚══════╝   ╚═╝    ║"
+    echo "  ║                                                                            ║"
+    echo "  ║         🛡️  Nginx L4 Stream Router + SNI Masking for 3X-UI Engine           ║"
+    echo "  ║                Full Stealth | Active Probing Defense | 2026                ║"
+    echo "  ╚════════════════════════════════════════════════════════════════════════════╝"
+    echo -e "${NC}"
+}
 
 trap 'die "Скрипт аварийно прерван на строке $LINENO"' ERR
 
@@ -60,6 +133,7 @@ show_help() {
   -c, --config <FILE>          Загрузить параметры из конфигурационного файла (.env)
   -y, --yes, --non-interactive Запуск в неинтерактивном режиме (без вопросов пользователю)
   -d, --domain <DOMAIN>        Указать основной домен (PRIMARY_DOMAIN)
+  --express                    Запустить режим Экспресс-настройки (настройка в 2 вопроса)
   --gen-config [FILE]          Сгенерировать шаблон конфигурации (.env.example) и выйти
   -f, --force                  Игнорировать ошибки и несовпадения DNS в неинтерактивном режиме
   -h, --help                   Показать справку и выйти
@@ -192,7 +266,7 @@ done
 
 
 echo -e "${CYAN}=====================================================================${NC}"
-echo -e "${GREEN} Nginx xHTTP + REALITY + Hy2 + AWG + AdGuard DoH v6.5.3 (Public)     ${NC}"
+echo -e "${GREEN} Nginx xHTTP + REALITY + Hy2 + AWG Router v6.5.1 (Public Edition)    ${NC}"
 echo -e "${CYAN}=====================================================================${NC}"
 
 # ----------------------- Системные предусловия -----------------------
@@ -226,9 +300,6 @@ declare -A pkg_map=(
     [socat]="socat"
     [cron]="cron"
     [ufw]="ufw"
-    [ss]="iproute2"
-    [tar]="tar"
-    [htpasswd]="apache2-utils"
 )
 
 apt_updated=0
@@ -426,10 +497,6 @@ validate_path_segment() {
     fi
 }
 
-# Определение активного SSH-порта для защиты от самоблокировки в UFW
-SSH_DETECTED_PORT=$(ss -tlnp 2>/dev/null | grep -E 'sshd|ssh' | awk '{print $4}' | awk -F: '{print $NF}' | sort -u | head -n1 || echo "")
-SSH_DETECTED_PORT="${SSH_DETECTED_PORT:-22}"
-
 # ----------------- Обработка аргументов командной строки -----------------
 CONFIG_FILE=""
 NON_INTERACTIVE=${NON_INTERACTIVE:-0}
@@ -452,6 +519,10 @@ while [[ $# -gt 0 ]]; do
             [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: доменное имя."
             PRIMARY_DOMAIN="$2"
             shift 2
+            ;;
+        --express)
+            EXPRESS_MODE=1
+            shift
             ;;
         --gen-config)
             GEN_CONFIG=1
@@ -504,20 +575,119 @@ fi
 # =============================================================
 #  ИНТЕРАКТИВНАЯ КОНФИГУРАЦИЯ И СЦЕНАРИИ МАРШРУТИЗАЦИИ
 # =============================================================
-echo
-echo -e "${YELLOW}Шаг 1: Конфигурация Главного домена (PRIMARY_DOMAIN)${NC}"
-echo -e "${CYAN}Этот домен используется для входа в 3X-UI, подписок, xHTTP (VLESSENC) и Маски.${NC}"
+EXPRESS_MODE=${EXPRESS_MODE:-0}
 
-if [ "$NON_INTERACTIVE" -eq 1 ]; then
-    [ -n "${PRIMARY_DOMAIN:-}" ] || die "Ошибка: PRIMARY_DOMAIN не задан в конфигурации или аргументах!"
-    ok "Основной домен (из конфигурации): $PRIMARY_DOMAIN"
-else
-    if [ -n "${PRIMARY_DOMAIN:-}" ]; then
-        prompt_default "Введите ваш основной домен" "$PRIMARY_DOMAIN" PRIMARY_DOMAIN
-    else
-        read -rp "Введите ваш основной домен (например, yourdomain.online): " PRIMARY_DOMAIN
+if [ "$NON_INTERACTIVE" -eq 0 ]; then
+    print_mask_banner
+    if [ "$EXPRESS_MODE" -eq 0 ]; then
+        echo -e "  ${WHITE}${BOLD}Выберите режим настройки:${NC}\n"
+        echo -e "    ${CYAN}${BOLD}[1] Экспресс-установка (Рекомендуется)${NC} — Настройка в 2 вопроса"
+        echo -e "        ${DIM}• Ввод только домена и email для Let's Encrypt.${NC}"
+        echo -e "        ${DIM}• Автоматический выбор лучших протоколов (Steal-Oneself, Classic REALITY, xHTTP).${NC}"
+        echo -e "        ${DIM}• Готовый сайт-маскировка DataSphere Analytics + автогенерация безопасных путей.${NC}\n"
+        echo -e "    ${YELLOW}${BOLD}[2] Экспертная детальная настройка${NC} — Полный контроль параметров"
+        echo -e "        ${DIM}• Пошаговый выбор всех портов, путей подписок, Hysteria 2 и AmneziaWG.${NC}\n"
+        
+        while true; do
+            echo -ne "  ${WHITE}${ARROW} Ваш выбор [1/2] (по умолчанию: 1): ${NC}"
+            read -r MODE_INPUT || MODE_INPUT="1"
+            MODE_INPUT=${MODE_INPUT:-1}
+            if [[ "$MODE_INPUT" =~ ^[12]$ ]]; then
+                [ "$MODE_INPUT" = "1" ] && EXPRESS_MODE=1
+                break
+            fi
+            echo -e "  ${RED}Пожалуйста, введите 1 или 2.${NC}"
+        done
     fi
 fi
+
+if [ "$EXPRESS_MODE" -eq 1 ]; then
+    echo ""
+    echo -e "  ${GREEN}${STAR} ${BOLD}Включен режим: Экспресс-установка${NC}"
+    echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}"
+    
+    if [ -z "${PRIMARY_DOMAIN:-}" ]; then
+        while true; do
+            echo -ne "  ${WHITE}${ARROW} Введите ваш основной домен (напр. vpn.domain.com): ${NC}"
+            read -r PRIMARY_DOMAIN
+            PRIMARY_DOMAIN=$(echo "$PRIMARY_DOMAIN" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+            if [[ "$PRIMARY_DOMAIN" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; then
+                break
+            fi
+            echo -e "  ${RED}${CROSS} Некорректный формат домена. Попробуйте еще раз.${NC}"
+        done
+    fi
+    
+    if [ -z "${LE_EMAIL:-}" ]; then
+        echo -ne "  ${WHITE}${ARROW} Введите Email для сертификатов Let's Encrypt: ${NC}"
+        read -r LE_EMAIL
+        LE_EMAIL=$(echo "$LE_EMAIL" | tr -d '[:space:]')
+    fi
+    
+    # Автоматические пресеты для Экспресс-режима
+    ADD_WWW="n"
+    ENABLE_STEAL="y"
+    STEAL_PORT="45443"
+    STEAL_DOMAINS=("cdn.$PRIMARY_DOMAIN")
+    ENABLE_CLASSIC="y"
+    CLASSIC_PORT="46443"
+    CLASSIC_SNI_LIST=("gateway.icloud.com")
+    PANEL_PORT="10443"
+    RAW_PATH="panel-$(head /dev/urandom | tr -dc a-z0-9 | head -c 6)"
+    PANEL_PATH="/${RAW_PATH}/"
+    SUB_PORT="55443"
+    RAW_SUB_PATH="sub-$(head /dev/urandom | tr -dc a-z0-9 | head -c 6)"
+    SUB_PATH="/${RAW_SUB_PATH}/"
+    XHTTP_STREAM_PORT="50443"
+    RAW_XHTTP_STREAM_PATH="xhttp-stream"
+    XHTTP_STREAM_PATH="/${RAW_XHTTP_STREAM_PATH}/"
+    ENABLE_HY2="1"
+    HY2_PORT="443"
+    ENABLE_AWG_V3="1"
+    AWG_V3_PORT="8443"
+    ENABLE_AWG_V2="1"
+    AWG_V2_PORT="8444"
+    DECOY_MODE="1"
+    SSL_ENGINE_CHOICE="1"
+    AUTO_SETUP_3XUI="y"
+    
+    ALL_DOMAINS=("$PRIMARY_DOMAIN")
+    declare -A DOMAIN_TO_PORT
+    declare -A EXT_SNI_TO_PORT
+    STEAL_PORTS_LIST=("$STEAL_PORT")
+    CLASSIC_PORTS_LIST=("$CLASSIC_PORT")
+    ALL_REALITY_PORTS=("$STEAL_PORT" "$CLASSIC_PORT")
+    REALITY_FALLBACK_PORT="9443"
+    
+    ALL_DOMAINS+=("cdn.$PRIMARY_DOMAIN")
+    DOMAIN_TO_PORT["cdn.$PRIMARY_DOMAIN"]="$STEAL_PORT"
+    
+    ALL_EXT_SNIS=("gateway.icloud.com")
+    EXT_SNI_TO_PORT["gateway.icloud.com"]="$CLASSIC_PORT"
+    
+    echo -e "  ${GREEN}${CHECK} Экспресс-параметры применены:${NC}"
+    echo -e "    ${DIM}• Домен:${NC}          ${WHITE}${BOLD}$PRIMARY_DOMAIN${NC}"
+    echo -e "    ${DIM}• Steal-Oneself:${NC}  ${WHITE}cdn.$PRIMARY_DOMAIN -> 127.0.0.1:$STEAL_PORT${NC}"
+    echo -e "    ${DIM}• Classic REALITY:${NC}${WHITE}gateway.icloud.com -> 127.0.0.1:$CLASSIC_PORT${NC}"
+    echo -e "    ${DIM}• VLESS xHTTP:${NC}    ${WHITE}$XHTTP_STREAM_PATH -> 127.0.0.1:$XHTTP_STREAM_PORT${NC}"
+    echo -e "    ${DIM}• UDP Стек:${NC}       ${WHITE}Hysteria 2 (:443), AWG v3 (:8443), AWG v2 (:8444)${NC}"
+    echo -e "    ${DIM}• Веб-маска:${NC}      ${WHITE}DataSphere Analytics Enterprise${NC}"
+    echo ""
+else
+    echo
+    echo -e "${YELLOW}Шаг 1: Конфигурация Главного домена (PRIMARY_DOMAIN)${NC}"
+    echo -e "${CYAN}Этот домен используется для входа в 3X-UI, подписок, xHTTP (VLESSENC) и Маски.${NC}"
+
+    if [ "$NON_INTERACTIVE" -eq 1 ]; then
+        [ -n "${PRIMARY_DOMAIN:-}" ] || die "Ошибка: PRIMARY_DOMAIN не задан в конфигурации или аргументах!"
+        ok "Основной домен (из конфигурации): $PRIMARY_DOMAIN"
+    else
+        if [ -n "${PRIMARY_DOMAIN:-}" ]; then
+            prompt_default "Введите ваш основной домен" "$PRIMARY_DOMAIN" PRIMARY_DOMAIN
+        else
+            read -rp "Введите ваш основной домен (например, yourdomain.online): " PRIMARY_DOMAIN
+        fi
+    fi
 
 [[ "$PRIMARY_DOMAIN" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]     || die "Некорректный формат доменного имени: $PRIMARY_DOMAIN"
 
@@ -546,7 +716,6 @@ fi
 echo
 echo -e "${YELLOW}Шаг 2: Настройка Steal-Oneself REALITY (Кража у самого себя)${NC}"
 echo -e "${CYAN}SSL-сертификаты выпускаются на ваши домены, трафик которых Nginx перенаправляет на порты REALITY.${NC}"
-echo -e "${CYAN}Маск-сайт гарантированно открывается на всех этих доменах благодаря сокетному L4 Failover!${NC}"
 prompt_yes_no "Включить Steal-Oneself REALITY?" "${ENABLE_STEAL:-y}" ENABLE_STEAL
 
 if [[ "${ENABLE_STEAL,,}" == "y" ]]; then
@@ -720,7 +889,10 @@ fi
 echo
 echo -e "${YELLOW}Шаг 5: Привязка внутренних портов 3X-UI и xHTTP${NC}"
 prompt_default "Внутренний порт панели 3X-UI" "10443" PANEL_PORT
-RAW_PATH="${RAW_PATH:-${PANEL_PATH:-my-3x-panel}}"
+
+# Безопасная случайная генерация по умолчанию (защита от сканеров и перебора)
+RAND_PANEL_PATH="panel-$(head /dev/urandom | tr -dc a-z0-9 | head -c 8)"
+RAW_PATH="${RAW_PATH:-${PANEL_PATH:-$RAND_PANEL_PATH}}"
 RAW_PATH="${RAW_PATH#/}"
 RAW_PATH="${RAW_PATH%/}"
 prompt_default "Секретный URI-путь к веб-панели (без слэшей)" "$RAW_PATH" RAW_PATH
@@ -729,7 +901,8 @@ PANEL_PATH="/${RAW_PATH#/}"
 PANEL_PATH="${PANEL_PATH%/}/"
 
 prompt_default "Внутренний порт сервера подписок 3X-UI" "55443" SUB_PORT
-RAW_SUB_PATH="${RAW_SUB_PATH:-${SUB_PATH:-my-post-key}}"
+RAND_SUB_PATH="sub-$(head /dev/urandom | tr -dc a-z0-9 | head -c 8)"
+RAW_SUB_PATH="${RAW_SUB_PATH:-${SUB_PATH:-$RAND_SUB_PATH}}"
 RAW_SUB_PATH="${RAW_SUB_PATH#/}"
 RAW_SUB_PATH="${RAW_SUB_PATH%/}"
 prompt_default "Секретный URI-путь подписок (без слэшей)" "$RAW_SUB_PATH" RAW_SUB_PATH
@@ -737,18 +910,16 @@ validate_path_segment "$RAW_SUB_PATH" "URI подписок"
 SUB_PATH="/${RAW_SUB_PATH#/}"
 SUB_PATH="${SUB_PATH%/}/"
 
-prompt_default "Внутренний порт инбаунда VLESS xHTTP (HTTP/2 Stream-One/Up)" "50443" XHTTP_STREAM_PORT
-RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH:-${XHTTP_STREAM_PATH:-Stream-One-Path}}"
+prompt_default "Внутренний порт инбаунда VLESS xHTTP (HTTP/2 Stream-One)" "50443" XHTTP_STREAM_PORT
+RAND_XHTTP_PATH="vless-$(head /dev/urandom | tr -dc a-z0-9 | head -c 8)"
+RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH:-${XHTTP_STREAM_PATH:-$RAND_XHTTP_PATH}}"
 RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH#/}"
 RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH%/}"
-prompt_default "URI-путь для xHTTP Stream-One/Up" "$RAW_XHTTP_STREAM_PATH" RAW_XHTTP_STREAM_PATH
+prompt_default "URI-путь для xHTTP Stream-One" "$RAW_XHTTP_STREAM_PATH" RAW_XHTTP_STREAM_PATH
 validate_path_segment "$RAW_XHTTP_STREAM_PATH" "URI xHTTP"
 XHTTP_STREAM_PATH="/${RAW_XHTTP_STREAM_PATH#/}"
 XHTTP_STREAM_PATH="${XHTTP_STREAM_PATH%/}/"
 
-# -------------------------------------------------------------
-# ИНТЕРАКТИВНЫЙ ВЫБОР ПРОТОКОЛОВ (HYSTERIA 2 / AWG / ADGUARD)
-# -------------------------------------------------------------
 echo
 echo -e "${YELLOW}Шаг 6: Настройка скоростного протокола Hysteria 2 (UDP)${NC}"
 prompt_yes_no "Установить и настроить Hysteria 2?" "${ENABLE_HY2:-y}" ENABLE_HY2
@@ -789,53 +960,14 @@ else
 fi
 
 echo
-echo -e "${YELLOW}Шаг 9: Настройка AdGuard Home (Приватный DoH + Резка рекламы)${NC}"
-while true; do
-    read -rp "Установить и настроить AdGuard Home DoH? [y/n]: " AGH_CHOICE
-    case "${AGH_CHOICE,,}" in
-        y|yes)
-            ENABLE_AGH=1
-            prompt_default "  Поддомен для DoH и панели управления" "dns.$PRIMARY_DOMAIN" AGH_DOMAIN
-            [[ "$AGH_DOMAIN" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]] \
-                || die "Некорректный формат доменного имени: $AGH_DOMAIN"
-
-            if [[ ! " ${ALL_DOMAINS[*]} " == *" ${AGH_DOMAIN} "* ]]; then
-                ALL_DOMAINS+=("$AGH_DOMAIN")
-            fi
-
-            prompt_default "  Логин администратора AdGuard Home" "admin" AGH_USER
-            DEFAULT_AGH_PASS="AgHome_$(openssl rand -hex 4)"
-            prompt_default "  Пароль администратора AdGuard Home" "$DEFAULT_AGH_PASS" AGH_PASS
-            prompt_default "  Секретный ClientID для роутера (токен DoH)" "home-router" AGH_CLIENT_ID
-            validate_path_segment "$AGH_CLIENT_ID" "ClientID"
-
-            ok "AdGuard Home будет развёрнут на https://${AGH_DOMAIN}/ с приватным DoH!"
-            break
-            ;;
-        n|no)
-            ENABLE_AGH=0
-            AGH_DOMAIN=""
-            AGH_USER=""
-            AGH_PASS=""
-            AGH_CLIENT_ID=""
-            log "Модуль AdGuard Home отключен."
-            break
-            ;;
-        *)
-            warn "Пожалуйста, ответьте 'y' или 'n'."
-            ;;
-    esac
-done
-
-echo
-echo -e "${YELLOW}Шаг 10: Выбор темы для сайта-маскировки (Decoy Fronts Catalog)${NC}"
+echo -e "${YELLOW}Шаг 9: Выбор темы для сайта-маскировки (Decoy Fronts Catalog)${NC}"
 echo -e " 1) ${GREEN}DataSphere Analytics Enterprise${NC} (Строгий геометрический дизайн + Live телеметрия ±10%)"
 echo -e " 2) ${GREEN}CosmosCloud NextGen${NC} (Облачный диск с оригинальным логотипом и сессионными cookies)"
 echo -e " 3) Стандартная заглушка Nginx (Welcome to nginx)"
 prompt_default "Выберите вариант маскировки (1, 2 или 3)" "1" DECOY_MODE
 
 echo
-echo -e "${YELLOW}Шаг 11: Выбор метода выпуска SSL-сертификатов${NC}"
+echo -e "${YELLOW}Шаг 10: Выбор метода выпуска SSL-сертификатов${NC}"
 echo -e " 1) ${GREEN}Классический Certbot (HTTP-01)${NC} - Каталог: /etc/letsencrypt/live/"
 echo -e " 2) ${GREEN}acme.sh + Cloudflare DNS-01${NC} - Каталог: /etc/ssl/acme/ (изоляция прав 755/644)"
 prompt_default "Выберите метод сертификации (1 или 2)" "1" SSL_ENGINE_CHOICE
@@ -845,7 +977,7 @@ prompt_default "Email для Let's Encrypt уведомлений (Enter - бе�
 CF_AUTH_METHOD="${CF_AUTH_METHOD:-1}"
 if [ "$SSL_ENGINE_CHOICE" = "2" ]; then
     echo
-    echo -e "${YELLOW}Шаг 11.1: Аутентификация в Cloudflare API (acme.sh)${NC}"
+    echo -e "${YELLOW}Шаг 10.1: Аутентификация в Cloudflare API (acme.sh)${NC}"
     echo -e " 1) ${GREEN}API Token${NC} (Рекомендуется: Zone.DNS:Edit, Zone.Zone:Read)"
     echo -e " 2) ${GREEN}Global API Key${NC} (Полный доступ: Email + Global Key)"
     prompt_default "Выберите вариант (1 или 2)" "1" CF_AUTH_METHOD
@@ -870,6 +1002,7 @@ echo
 echo -e "${YELLOW}Шаг 11: Автоматическая настройка базы данных панели 3X-UI${NC}"
 echo -e "${CYAN}Скрипт может автоматически настроить пути, подписки и создать все инбаунды в базе 3X-UI через configure_3xui.sh.${NC}"
 prompt_yes_no "Автоматически настроить инбаунды и пути в панели 3X-UI?" "${AUTO_SETUP_3XUI:-y}" AUTO_SETUP_3XUI
+fi
 
 # Определение системного каталога для хранения SSL
 if [ "$SSL_ENGINE_CHOICE" = "1" ]; then
@@ -1083,15 +1216,6 @@ if [ "$SSL_ENGINE_CHOICE" = "1" ]; then
     snap install --classic certbot
     ln -sf /snap/bin/certbot /usr/bin/certbot
 
-    # Защита от ошибки выбора аккаунта (Please choose an account) при наличии нескольких старых регистраций
-    if [ -d /etc/letsencrypt/accounts ]; then
-        acc_count=$(find /etc/letsencrypt/accounts -mindepth 3 -maxdepth 3 -type d 2>/dev/null | wc -l)
-        if [ "$acc_count" -gt 1 ]; then
-            warn "Обнаружено несколько старых аккаунтов Certbot ($acc_count). Очищаем дубликаты..."
-            rm -rf /etc/letsencrypt/accounts/*/*
-        fi
-    fi
-
     mkdir -p /etc/letsencrypt
     if [ -n "$LE_EMAIL" ]; then
         cat << EOF > /etc/letsencrypt/cli.ini
@@ -1109,9 +1233,8 @@ EOF
 
     for dom in "${ALL_DOMAINS[@]}"; do
         log "Выпуск сертификата Let's Encrypt для домена: $dom..."
-        # Изоляция --cert-name исключает склеивание сертификатов разных поддоменов
-        if certbot certonly --webroot -w "$WEBROOT" --cert-name "$dom" --expand --non-interactive --agree-tos -d "$dom"; then
-            ok "Сертификат для $dom успешно получен в /etc/letsencrypt/live/$dom/"
+        if certbot certonly --webroot -w "$WEBROOT" --expand -d "$dom"; then
+            ok "Сертификат для $dom успешно получен."
         else
             warn "Не удалось выпустить сертификат для $dom."
             if [ "$dom" = "$PRIMARY_DOMAIN" ]; then
@@ -1199,102 +1322,12 @@ else
 fi
 
 # =============================================================
-#  МОДУЛЬ: УСТАНОВКА И НАСТРОЙКА ADGUARD HOME (ПРИВАТНЫЙ DOH)
-# =============================================================
-if [ "${ENABLE_AGH:-0}" -eq 1 ]; then
-    log "Развёртывание AdGuard Home (Освобождение порта 53 и настройка DoH)..."
-
-    # 1. Освобождение порта 53 от systemd-resolved
-    mkdir -p /etc/systemd/resolved.conf.d
-    cat << 'EOF' > /etc/systemd/resolved.conf.d/adguard.conf
-[Resolve]
-DNS=1.1.1.1 8.8.8.8
-DNSStubListener=no
-EOF
-    systemctl restart systemd-resolved || true
-    ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf 2>/dev/null || true
-
-    # 2. Скачивание с официального статического CDN AdGuard
-    ARCH=$(uname -m)
-    case "$ARCH" in
-        x86_64) AGH_ARCH="amd64" ;;
-        aarch64|arm64) AGH_ARCH="arm64" ;;
-        armv7l) AGH_ARCH="armv7" ;;
-        *) AGH_ARCH="amd64" ;;
-    esac
-
-    log "Загрузка бинарного архива AdGuard Home..."
-    if ! curl -fsSL "https://static.adguard.com/adguardhome/release/AdGuardHome_linux_${AGH_ARCH}.tar.gz" -o /tmp/AdGuardHome.tar.gz; then
-        warn "Не удалось загрузить со static.adguard.com, пробуем официальный GitHub релиз..."
-        curl -fsSL "https://github.com/AdguardTeam/AdGuardHome/releases/latest/download/AdGuardHome_linux_${AGH_ARCH}.tar.gz" -o /tmp/AdGuardHome.tar.gz
-    fi
-    tar -zxvf /tmp/AdGuardHome.tar.gz -C /opt/ >/dev/null
-    rm -f /tmp/AdGuardHome.tar.gz
-
-    # 3. Предварительное формирование конфигурации AdGuardHome.yaml
-    mkdir -p /opt/AdGuardHome
-    systemctl stop AdGuardHome 2>/dev/null || true
-
-    # Генерация нативного BCrypt хеша для пароля AGH
-    AGH_PASS_HASH=$(htpasswd -b -n -B -C 10 "" "$AGH_PASS" | tr -d '\n' | cut -d: -f2)
-
-    cat << EOF > /opt/AdGuardHome/AdGuardHome.yaml
-http:
-  address: 127.0.0.1:3000
-  doh:
-    insecure_enabled: true
-users:
-  - name: ${AGH_USER}
-    password: "${AGH_PASS_HASH}"
-dns:
-  bind_hosts:
-    - 127.0.0.1
-  port: 53
-  trusted_proxies:
-    - 127.0.0.1
-    - ::1
-  upstream_dns:
-    - "quic://dns.alidns.com:853"
-    - "[/ru/kz/by/su/xn--p1ai/]https://77.88.8.8:443/dns-query"
-    - "quic://dns.adguard-dns.com"
-    - "quic://dns.nextdns.io"
-    - "quic://p0.freedns.controld.com"
-    - "quic://dns.quad9.net"
-    - "[/google.com/googlevideo.com/youtube.com/ytimg.com/gstatic.com/googleapis.com/1e100.net/]h3://dns.google/dns-query"
-    - "h3://cloudflare-dns.com/dns-query"
-    - "https://1.1.1.1:443/dns-query"
-clients:
-  runtime_sources:
-    whois: false
-    dhcp: false
-  persistent:
-    - name: Home-Router
-      ids:
-        - ${AGH_CLIENT_ID}
-      use_global_settings: true
-access:
-  allowed_clients:
-    - ${AGH_CLIENT_ID}
-  disallowed_clients: []
-  blocked_hosts: []
-tls:
-  enabled: false
-  allow_unencrypted_doh: true
-schema_version: 28
-EOF
-
-    /opt/AdGuardHome/AdGuardHome -s install >/dev/null 2>&1 || true
-    systemctl restart AdGuardHome || true
-    ok "Служба AdGuard Home запущена с эталонным пулом апстримов (Веб: 127.0.0.1:3000, DNS: 127.0.0.1:53)!"
-fi
-
-# =============================================================
 #  ГЕНЕРАЦИЯ ВЫБРАННОЙ ВЕБ-МАСКИ
 # =============================================================
 log "Формирование выбранного маскировочного портала..."
 
 if [ "$DECOY_MODE" = "1" ]; then
-    # 1. DataSphere Analytics Enterprise (Строгий геометрический логотип + Dynamic Stats ±10%)
+    # 1. DataSphere Analytics Enterprise (Геометрический логотип + Dynamic Stats ±10%)
     cat << 'EOF' > /var/www/html/index.html
 <!DOCTYPE html>
 <html lang="ru">
@@ -1500,7 +1533,7 @@ if [ "$DECOY_MODE" = "1" ]; then
                 </button>
             </div>
             <div id="errorAlert" class="alert-box">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/></svg>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
                 <span id="errorMsg">Ошибка аутентификации</span>
             </div>
             <form id="authForm" onsubmit="handleDataSphereAuth(event)">
@@ -1776,11 +1809,11 @@ elif [ "$DECOY_MODE" = "2" ]; then
 EOF
 
     log "Загрузка оригинальных графических ассетов Cosmos Cloud..."
-    if curl -fsSL --connect-timeout 10 "https://raw.githubusercontent.com/Itman75/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/logo.webp" -o "$WEBROOT/logo.webp" 2>/dev/null; then
+    if curl -fsSL --connect-timeout 10 "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/logo.webp" -o "$WEBROOT/logo.webp" 2>/dev/null; then
         ok "Логотип успешно загружен из основного репозитория GitHub."
     else
         warn "Прямое подключение к GitHub не удалось. Переключаемся на резервное зеркало CDN..."
-        if curl -fsSL --connect-timeout 10 "https://cdn.jsdelivr.net/gh/Itman75/Nginx-L4-Stream-Router-Mask-for-3x-ui@main/logo.webp" -o "$WEBROOT/logo.webp" 2>/dev/null; then
+        if curl -fsSL --connect-timeout 10 "https://cdn.jsdelivr.net/gh/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui@main/logo.webp" -o "$WEBROOT/logo.webp" 2>/dev/null; then
             ok "Логотип успешно загружен из резервного зеркала CDN (jsDelivr)."
         else
             warn "Не удалось загрузить логотип. Веб-маска будет работать в режиме текстовой заглушки."
@@ -1818,9 +1851,6 @@ chmod 644 "$WEBROOT"/*.html
 #  ПОЛНАЯ КОНФИГУРАЦИЯ NGINX (STREAM + HTTP CORE + ANTI-BOT)
 # =============================================================
 log "Сборка конфигурации Nginx Mainline (Stream L4 + HTTP/2 Upstream Engine)..."
-
-# Удаление временного стартового ACME-сервера
-rm -f /etc/nginx/conf.d/00-acme.conf
 
 # 1. Глобальный файл конфигурации /etc/nginx/nginx.conf
 cat << EOF > /etc/nginx/nginx.conf
@@ -1938,7 +1968,6 @@ http {
     map "\$badbot_raw:\$is_scan_attempt:\$request_uri" \$badbot {
         ~^.*:/robots\.txt(\?|\$) 0;
         ~^.*:/.well-known/security\.txt(\?|\$) 0;
-        ~^1:[01]:/dns-query 0;
         ~^1:[01]:${PANEL_PATH} 0;
         ~^1:[01]:${SUB_PATH} 0;
         ~^1:[01]:/sub/ 0;
@@ -1952,7 +1981,7 @@ http {
     limit_req_zone \$binary_remote_addr zone=subs:1m rate=10r/s;
     limit_req_zone \$binary_remote_addr zone=scan:1m rate=1r/s;
     limit_conn_zone \$binary_remote_addr zone=addr:1m;
-    limit_req_zone \$binary_remote_addr zone=assets:1m rate=200r/s;
+    limit_req_zone \$binary_remote_addr zone=assets:1m rate=150r/s;
     limit_req_status 429;
 
     proxy_hide_header X-Proxy-Engine;
@@ -1977,14 +2006,12 @@ stream {
 }
 EOF
 
-# 2. Карта SNI для Stream L4 (с защитой отказоустойчивости backup для Steal-Oneself)
+# 2. Карта SNI для Stream L4
 STREAM_MAP_RULES=""
 REALITY_UPSTREAMS=""
 
 for dom in "${ALL_DOMAINS[@]}"; do
-    if [ "$dom" = "$PRIMARY_DOMAIN" ] || [ "$dom" = "www.$PRIMARY_DOMAIN" ] || [ "$dom" = "${AGH_DOMAIN:-}" ]; then
-        STREAM_MAP_RULES+="        ${dom}     nginx_http_backend;"$'\n'
-    elif [ "$STEAL_ENABLED" -eq 1 ] && [ -n "${DOMAIN_TO_PORT[$dom]:-}" ]; then
+    if [ "$STEAL_ENABLED" -eq 1 ] && [ -n "${DOMAIN_TO_PORT[$dom]:-}" ]; then
         port="${DOMAIN_TO_PORT[$dom]}"
         STREAM_MAP_RULES+="        ${dom}     reality_backend_${port};"$'\n'
     else
@@ -2003,8 +2030,7 @@ for port in "${ALL_REALITY_PORTS[@]:-}"; do
     if [ -n "$port" ]; then
         REALITY_UPSTREAMS+="
     upstream reality_backend_${port} {
-        server 127.0.0.1:${port} max_fails=1 fail_timeout=5s;
-        server unix:/dev/shm/nginx-http.sock backup;
+        server 127.0.0.1:${port};
     }
 "
     fi
@@ -2142,7 +2168,7 @@ fi
 
 # 4. Основной виртуальный хост в /etc/nginx/conf.d/01-main.conf
 cat << EOF > "/etc/nginx/conf.d/01-main.conf"
-# HTTP Порт 80 (Единый сервер: верификация ACME и безусловный редирект всех доменов на HTTPS)
+# HTTP Порт 80 (Проверка ACME и редирект на HTTPS)
 server {
     listen 80 default_server;
     server_name _;
@@ -2253,10 +2279,9 @@ server {
         proxy_set_header Connection \$connection_upgrade;
     }
 
-    # --- ЛОКАЦИЯ 3: VLESS xHTTP (Native HTTP/2 Stream-One/Up + VLESSENC + Безотказный сокет) ---
+    # --- ЛОКАЦИЯ 3: VLESS xHTTP (Native HTTP/2 Stream-One + VLESSENC + Безотказный сокет) ---
     location ^~ ${XHTTP_STREAM_PATH} {
-        # Поддержка POST (stream-one / stream-up uplink) и GET (stream-up downlink)
-        if (\$request_method !~ ^(GET|POST)\$) {
+        if (\$request_method != POST) {
             return 404;
         }
 
@@ -2316,78 +2341,10 @@ server {
 }
 EOF
 
-# 5. Виртуальный хост для AdGuard Home (если модуль включен)
-if [ "${ENABLE_AGH:-0}" -eq 1 ] && [ -f "${SSL_BASE_DIR}/$AGH_DOMAIN/fullchain.pem" ]; then
-    cat << EOF > "/etc/nginx/conf.d/03-adguard.conf"
-upstream adguard_backend {
-    server 127.0.0.1:3000;
-    keepalive 32;
-}
-
-server {
-    listen unix:/dev/shm/nginx-http.sock ssl proxy_protocol;
-    listen 127.0.0.1:$REALITY_FALLBACK_PORT ssl proxy_protocol;
-    http2 on;
-    server_name $AGH_DOMAIN;
-
-    ssl_certificate ${SSL_BASE_DIR}/$AGH_DOMAIN/fullchain.pem;
-    ssl_certificate_key ${SSL_BASE_DIR}/$AGH_DOMAIN/privkey.pem;
-
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
-    ssl_prefer_server_ciphers off;
-
-    ssl_buffer_size 4k;
-    ssl_session_tickets on;
-    ssl_session_cache shared:SSL_AGH:5m;
-    ssl_session_timeout 4h;
-
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-
-    # Точка входа DoH (DNS-over-HTTPS)
-    location /dns-query {
-        limit_req zone=assets burst=200 nodelay;
-
-        proxy_pass http://adguard_backend;
-        proxy_http_version 1.1;
-        proxy_set_header Connection "";
-        proxy_set_header Host \$http_host;
-        proxy_set_header X-Real-IP \$ak_real_ip;
-        proxy_set_header X-Forwarded-For \$ak_real_ip;
-        proxy_set_header X-Forwarded-Proto https;
-
-        proxy_buffering off;
-        proxy_request_buffering off;
-        proxy_read_timeout 60s;
-        proxy_send_timeout 60s;
-    }
-
-    # Веб-панель управления AdGuard Home
-    location / {
-        limit_req zone=panel burst=60 delay=30;
-
-        proxy_pass http://adguard_backend;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection \$connection_upgrade;
-        proxy_set_header Host \$http_host;
-        proxy_set_header X-Real-IP \$ak_real_ip;
-        proxy_set_header X-Forwarded-For \$ak_real_ip;
-        proxy_set_header X-Forwarded-Proto https;
-
-        proxy_buffering off;
-        proxy_read_timeout 300s;
-    }
-}
-EOF
-fi
-
-# 6. Генерация виртуальных хостов для ВСЕХ дополнительных доменов
+# 5. Генерация виртуальных хостов для дополнительных доменов
 for ((i=1; i<${#ALL_DOMAINS[@]}; i++)); do
     ext_dom="${ALL_DOMAINS[$i]}"
-    if [ "$ext_dom" != "$PRIMARY_DOMAIN" ] && [ "$ext_dom" != "${AGH_DOMAIN:-}" ] && [ -f "${SSL_BASE_DIR}/$ext_dom/fullchain.pem" ]; then
+    if [ "$ext_dom" != "$PRIMARY_DOMAIN" ] && [ -f "${SSL_BASE_DIR}/$ext_dom/fullchain.pem" ]; then
         cat << EOF > "/etc/nginx/conf.d/02-${ext_dom}.conf"
 server {
     listen unix:/dev/shm/nginx-http.sock ssl proxy_protocol;
@@ -2419,7 +2376,6 @@ server {
 
     error_page 400 403 404 405 @notfound;
 
-    # Маск-сайт открывается безусловно для любого зарегистрированного домена
     $DECOY_LOCATION_BLOCKS
 
     location ^~ ${PANEL_PATH} {
@@ -2503,8 +2459,7 @@ for port in "${ALL_REALITY_PORTS[@]:-}"; do
     fi
 done
 
-# Разрешающие правила: SSH (автоопределённый), Веб, Hysteria 2 / AWG UDP
-UFW_ALLOW_LIST="ufw allow ${SSH_DETECTED_PORT}/tcp && ufw allow 80/tcp && ufw allow 443/tcp && ufw allow 8443/tcp"
+UFW_ALLOW_LIST="ufw allow 80/tcp && ufw allow 443/tcp && ufw allow 8443/tcp"
 if [ "$ENABLE_HY2" -eq 1 ] && [ -n "$HY2_PORT" ]; then
     UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${HY2_PORT}/udp"
 fi
@@ -2572,7 +2527,7 @@ if [ "$CLASSIC_ENABLED" -eq 1 ]; then
 fi
 
 DECOY_NAME="Локальный Front"
-if [ "$DECOY_MODE" = "1" ]; then DECOY_NAME="DataSphere Analytics Enterprise (Геометрическая сфера)";
+if [ "$DECOY_MODE" = "1" ]; then DECOY_NAME="DataSphere Analytics Enterprise (Геометрическая маска)";
 elif [ "$DECOY_MODE" = "2" ]; then DECOY_NAME="CosmosCloud NextGen";
 elif [ "$DECOY_MODE" = "3" ]; then DECOY_NAME="Default Nginx Stub";
 fi
@@ -2582,7 +2537,7 @@ if [[ "${AUTO_SETUP_3XUI,,}" == "y" || "${AUTO_SETUP_3XUI:-}" == "1" ]]; then
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     if [ ! -f "$script_dir/configure_3xui.sh" ]; then
         log "Скрипт configure_3xui.sh не найден локально. Попытка загрузки из репозитория..."
-        raw_url="https://raw.githubusercontent.com/Itman75/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/configure_3xui.sh"
+        raw_url="https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/configure_3xui.sh"
         if command -v curl >/dev/null 2>&1; then
             curl -fsSL "$raw_url" -o "$script_dir/configure_3xui.sh" 2>/dev/null && chmod +x "$script_dir/configure_3xui.sh" 2>/dev/null || true
         elif command -v wget >/dev/null 2>&1; then
@@ -2605,46 +2560,32 @@ fi
 
 echo
 echo -e "${GREEN}=====================================================================${NC}"
-echo -e "   ИНФРАСТРУКТУРА УСПЕШНО РАЗВЕРНУТА (v6.5.3 PUBLIC EDITION)!       "
+echo -e "   ИНФРАСТРУКТУРА УСПЕШНО РАЗВЕРНУТА (v6.5.1 PUBLIC EDITION)!       "
 echo -e "${GREEN}=====================================================================${NC}"
 echo -e "  Главная страница:            ${CYAN}https://${PRIMARY_DOMAIN}/${NC} (${DECOY_NAME})"
 echo -e "  Вход в панель 3X-UI:         ${GREEN}https://${PRIMARY_DOMAIN}${PANEL_PATH}${NC}"
 echo -e "  Канал подписок:              ${GREEN}https://${PRIMARY_DOMAIN}${SUB_PATH}${NC}"
-
-if [ "${ENABLE_AGH:-0}" -eq 1 ]; then
-echo -e "  Панель AdGuard Home:         ${CYAN}https://${AGH_DOMAIN}/${NC} (Логин: ${GREEN}${AGH_USER}${NC} / Пароль: ${GREEN}${AGH_PASS}${NC})"
-echo -e "  Приватный DoH для роутера:   ${GREEN}https://${AGH_DOMAIN}/dns-query/${AGH_CLIENT_ID}${NC}"
-fi
 echo
 
 echo -e "${YELLOW}[SSL] ВЫПУЩЕННЫЕ СЕРТИФИКАТЫ (Базовый путь: ${SSL_BASE_DIR}):${NC}"
 echo -e "$SSL_CERT_REPORT"
 
-echo -e "${YELLOW}ШАГ 1: Настройка файервола UFW (Защита сокетов и открытие портов):${NC}"
+echo -e "${YELLOW}ШАГ 1: Настройка файервола UFW (Защита локальных сокетов и открытие VPN):${NC}"
 echo -e "  ${CYAN}${UFW_ALLOW_LIST}${NC}"
-echo -e "  ${RED}ufw deny $PANEL_PORT/tcp && ufw deny $SUB_PORT/tcp && ufw deny $XHTTP_STREAM_PORT/tcp && ufw deny $REALITY_FALLBACK_PORT/tcp && ufw deny 3000/tcp${UFW_DENY_LIST}${NC}"
+echo -e "  ${RED}ufw deny $PANEL_PORT/tcp && ufw deny $SUB_PORT/tcp && ufw deny $XHTTP_STREAM_PORT/tcp && ufw deny $REALITY_FALLBACK_PORT/tcp${UFW_DENY_LIST}${NC}"
 echo
 
 echo -e "${YELLOW}ШАГ 2: Инбаунды VLESS REALITY (3X-UI):${NC}"
 echo -e "$REALITY_INBOUNDS_REPORT"
 
-echo -e "${YELLOW}ШАГ 3: Инбаунд VLESS xHTTP (Native H2 Stream-One/Up + VLESSENC + XMUX Pool):${NC}"
+echo -e "${YELLOW}ШАГ 3: Инбаунд VLESS xHTTP (Native H2 Stream-One + VLESSENC + Анти-Дроп):${NC}"
 echo -e "  - ${YELLOW}Вкладка «Основное»:${NC} Протокол: ${GREEN}vless${NC} | Адрес: ${GREEN}127.0.0.1${NC} | Порт: ${GREEN}$XHTTP_STREAM_PORT${NC}"
 echo -e "  - ${YELLOW}Вкладка «Протокол»:${NC} Генерация ключей: выбрать ${GREEN}ML-KEM-768 (native)${NC} и нажать ${CYAN}«Сгенерировать»${NC}"
 echo -e "  - ${YELLOW}Вкладка «Поток»:${NC}"
-echo -e "    * Транспорт: ${GREEN}xHTTP${NC} | Режим: ${GREEN}stream-one${NC} (при разрывах на длинных аплоадах смените на ${CYAN}stream-up${NC})"
+echo -e "    * Транспорт: ${GREEN}xHTTP${NC} | Режим: ${GREEN}stream-one${NC}"
 echo -e "    * Хост: ${CYAN}$PRIMARY_DOMAIN${NC} | Путь: ${CYAN}$XHTTP_STREAM_PATH${NC}"
 echo -e "    * Padding Bytes: ${GREEN}100-500${NC} | Padding Obfs Mode: ${GREEN}Включить${NC} | Key: ${GREEN}X-Amz-Meta-Trace${NC}"
-echo -e "    * Стабилизация буферов: включите ${GREEN}noSSEHeader: true${NC} (устраняет задержки SSE в Nginx)"
-echo -e "    * ${BOLD}Архитектурный блок XMUX (Connection Pool & Anti-DPI Rotation):${NC}"
-echo -e "      ${CYAN}\"xmux\": {${NC}"
-echo -e "        ${CYAN}\"maxConcurrency\": \"0\",${NC}        ${YELLOW}# Отключение мультиплексирования в пользу пула соединений${NC}"
-echo -e "        ${CYAN}\"maxConnections\": \"1-3\",${NC}      ${YELLOW}# Пул из 1–3 TCP-сессий (минимум хендшейков в трафике)${NC}"
-echo -e "        ${CYAN}\"cMaxReuseTimes\": \"300-600\",${NC}  ${YELLOW}# Случайный разброс переиспользования до смены сокета${NC}"
-echo -e "        ${CYAN}\"hKeepAlivePeriod\": 600,${NC}       ${YELLOW}# Редкие пинги стрима (или 0 для нативного браузерного H2 ~45c)${NC}"
-echo -e "        ${CYAN}\"hMaxRequestTimes\": \"1000-2000\",${NC} ${YELLOW}# Лимит запросов на соединение${NC}"
-echo -e "        ${CYAN}\"hMaxReusableSecs\": \"1200-2400\"${NC} ${YELLOW}# Время жизни сессии до гарантированной ротации${NC}"
-echo -e "      ${CYAN}}${NC}"
+echo -e "    * XMUX: ${GREEN}maxConcurrency: 0 (Выключено)${NC} — исключает раздувание буферов и вылеты на iOS/ПК"
 echo -e "    * ${RED}ВНИМАНИЕ:${NC} ${YELLOW}QUIC / UDP ПАРАМЕТРЫ СТРОГО ВЫКЛЮЧИТЬ (0)${NC} — поток идёт строго по HTTP/2 TCP через Nginx!"
 echo -e "  - ${YELLOW}Вкладка «Безопасность»:${NC} ${RED}Нет (None)${NC} | Accept Proxy Protocol: ${RED}Выключить (0)${NC}"
 echo -e "  - ${YELLOW}Вкладка «Сниффинг»:${NC} Включить (${GREEN}HTTP, TLS, QUIC, FAKEDNS${NC})"
@@ -2669,19 +2610,19 @@ echo -e "    * Порядок в подписке: ${GREEN}1${NC} | Порт: ${
 echo -e "    * Общий расход: ${GREEN}0${NC} | Сброс трафика: ${GREEN}Никогда${NC}"
 echo -e "  - ${YELLOW}Вкладка «Протокол»:${NC}"
 echo -e "    * Ключи: нажать ${CYAN}«Сгенерировать»${NC} (иконка обновления рядом с приватным ключом)"
-echo -e "    * Сервер: Подсеть: ${GREEN}10.8.0.0${NC} | Маска подсети (CIDR): ${GREEN}22${NC} (до 1022 клиентов) | MTU: ${GREEN}1280${NC}"
-echo -e "    * DNS: Основной DNS: ${GREEN}76.76.2.0${NC} (Control D Anycast) | Резервный DNS: ${GREEN}76.76.10.0${NC}"
+echo -e "    * Сеть: Подсеть: ${GREEN}10.8.1.0${NC} | Маска подсети (CIDR): ${GREEN}24${NC} | MTU: ${GREEN}1360${NC}"
+echo -e "    * DNS: Основной DNS: ${GREEN}8.8.8.8${NC} | Резервный DNS: ${GREEN}8.8.4.4${NC}"
 echo -e "    * Внешний интерфейс: ${GREEN}eth0${NC} (или оставить пустым) | Включить IPv6: ${RED}Выключить${NC}"
 echo -e "  - ${YELLOW}Параметры обфускации:${NC}"
-echo -e "    * Пакеты мусора: ${CYAN}Jc = 3${NC}, ${CYAN}Jmin = 40${NC}, ${CYAN}Jmax = 80${NC} (Mobile-пресет РФ)"
+echo -e "    * Мусорные пакеты: ${CYAN}Jc = 4${NC}, ${CYAN}Jmin = 50${NC}, ${CYAN}Jmax = 160${NC}"
 echo -e "    * Мусорные смещения: ${CYAN}S1 = 45${NC}, ${CYAN}S2 = 60${NC}, ${CYAN}S3 = 24${NC}, ${CYAN}S4 = 16${NC}"
 echo -e "    * Заголовки ${CYAN}H1 - H4${NC}: ${GREEN}Оставить ПУСТЫМИ${NC} (по умолчанию 1/2/3/4)"
 echo -e "    * Сигнатурные пакеты ${CYAN}I1 - I5${NC}: ${GREEN}Оставить ПУСТЫМИ${NC}"
-echo -e "    * Защита заголовков (${CYAN}HeaderProtectionKey${NC}): ${GREEN}Оставить ПУСТЫМ${NC} (100% совместимость с клиентами)"
+echo -e "    * Защита заголовков (${CYAN}HeaderProtectionKey${NC}): ${GREEN}Оставить ПУСТЫМ${NC}"
 echo -e "    * Паддинг содержимого (${CYAN}ContentPaddingAddition${NC}): ${GREEN}3-16${NC}"
-echo -e "    * Таймауты сессии: ${CYAN}RekeyAfterTime = 120${NC}, ${CYAN}RekeyTimeout = 3${NC}, ${CYAN}RejectAfterTime = 180${NC}"
-echo -e "    * Keepalive: ${CYAN}KeepaliveTimeout = 10${NC}, ${CYAN}MaxHandshakeAttempts = 20${NC}"
-echo -e "    * Флаги: ${CYAN}RandomTrailers:${NC} ${RED}Выключено${NC} | ${CYAN}DisableCookies:${NC} ${RED}Выключено${NC}"
+echo -e "    * Тайминги ключей: ${CYAN}RekeyAfterTime = 107-135${NC}, ${CYAN}RekeyTimeout = 3-4${NC}, ${CYAN}RejectAfterTime = 178-211${NC}"
+echo -e "    * Тайминги соединения: ${CYAN}KeepaliveTimeout = 8-10${NC}, ${CYAN}MaxHandshakeAttempts = 21-26${NC}"
+echo -e "    * Переключатели: ${CYAN}RandomTrailers:${NC} ${RED}Выключить${NC} | ${CYAN}DisableCookies:${NC} ${GREEN}Включить${NC}"
 echo
 fi
 
@@ -2690,35 +2631,22 @@ echo -e "${YELLOW}ШАГ 6: Инбаунд AmneziaWG v2.0 / Legacy (UDP $AWG_V2_
 echo -e "  - ${YELLOW}Вкладка «Основное»:${NC} Протокол: ${GREEN}amneziawg / wireguard${NC} | Адрес: ${GREEN}0.0.0.0${NC} | Порт: ${GREEN}$AWG_V2_PORT${NC} (UDP)"
 echo -e "  - ${YELLOW}Вкладка «Параметры AWG» (Для роутеров Keenetic / OpenWrt и старых клиентов):${NC}"
 echo -e "    * ${CYAN}H1-H4 (Строки):${NC} ${GREEN}\"149419586\", \"878791997\", \"1251051976\", \"1657628296\"${NC}"
-echo -e "    * Защита заголовков (${CYAN}HeaderProtectionKey${NC}): ${GREEN}Оставить ПУСТЫМ${NC} (100% совместимость с клиентами)"
+echo -e "    * ${CYAN}HeaderProtectionKey:${NC} ${RED}ПУСТО (Выключено)${NC}"
 echo -e "    * ${CYAN}Смещения (>= 12):${NC} ${GREEN}S1 = 45, S2 = 60, S3 = 24, S4 = 16${NC}"
-echo -e "    * Пакеты мусора: ${CYAN}Jc = 3${NC}, ${CYAN}Jmin = 40${NC}, ${CYAN}Jmax = 80${NC} (Mobile-пресет РФ)"
+echo -e "    * ${CYAN}Junk packets:${NC} ${GREEN}Jc = 4, Jmin = 50, Jmax = 160${NC} | ${CYAN}MTU:${NC} ${GREEN}1360${NC}"
 echo
 fi
 
 echo -e "${YELLOW}ШАГ 7: Настройки Клиента и Подписок в 3X-UI:${NC}"
 echo -e "  - ${YELLOW}В карточке Клиента (Клиенты -> Учетные данные):${NC}"
 echo -e "    * Для инбаунда REALITY: Flow: выбрать ${GREEN}xtls-rprx-vision${NC}"
-echo -e "    * Для инбаунда xHTTP: Flow: оставить ${GREEN}пусто (none)${NC} для широкой совместимости (Sing-box, Happ, iOS) | Decryption: ключ ${GREEN}vlessenc${NC}"
+echo -e "    * Для инбаунда xHTTP: Flow: строго ${RED}пусто (none)${NC} | Decryption: ключ ${GREEN}vlessenc${NC}"
 echo -e "  - ${YELLOW}Настройки подписок (Панель -> Подписка):${NC}"
 echo -e "    * Subscription Port: ${GREEN}$SUB_PORT${NC} | Subscription Path: ${GREEN}$SUB_PATH${NC}"
 echo -e "    * Subscription URL: ${CYAN}https://${PRIMARY_DOMAIN}${SUB_PATH}${NC}"
 echo -e "  - ${YELLOW}В разделе «Хосты» (Hosts) добавьте 2 правила:${NC}"
 echo -e "    1) ${BOLD}MAIN_SAME_443:${NC} Инбаунды: ${CYAN}REALITY + Hysteria 2${NC} -> Порт: ${GREEN}443${NC} | Безопасность: ${GREEN}same${NC}"
 echo -e "    2) ${BOLD}XHTTP_TLS_443:${NC} Инбаунд: ${CYAN}VLESS_XHTTP${NC} -> Порт: ${GREEN}443${NC} | Безопасность: ${GREEN}tls${NC} (SNI: ${CYAN}$PRIMARY_DOMAIN${NC})"
-
-if [ "${ENABLE_AGH:-0}" -eq 1 ]; then
-echo
-echo -e "${YELLOW}ШАГ 8: Интеграция AdGuard Home с 3X-UI и Домашним Роутером:${NC}"
-echo -e "  1) ${BOLD}Фильтрация рекламы внутри VPN (3X-UI):${NC}"
-echo -e "     - Перейдите в «Настройки Xray» -> блок «DNS» и добавьте локальный адрес: ${GREEN}127.0.0.1${NC}"
-echo -e "     - Весь трафик VLESS, Hysteria 2 и AWG будет автоматически фильтроваться AdGuard Home!"
-echo -e "  2) ${BOLD}Настройка домашнего роутера (Keenetic / OpenWrt / MikroTik):${NC}"
-echo -e "     - Тип протокола: ${GREEN}DNS-over-HTTPS (DoH)${NC}"
-echo -e "     - URL-адрес DoH: ${CYAN}https://${AGH_DOMAIN}/dns-query/${AGH_CLIENT_ID}${NC}"
-echo -e "     - Имя сервера (SNI): ${CYAN}${AGH_DOMAIN}${NC} | Bootstrap IP: ${GREEN}${WAN_IP}${NC}"
-echo -e "     - Включите опцию: ${GREEN}«Игнорировать DNS провайдера»${NC}"
-fi
 echo -e "${GREEN}=====================================================================${NC}"
 
 exit 0

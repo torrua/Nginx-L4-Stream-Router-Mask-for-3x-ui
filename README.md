@@ -314,18 +314,18 @@ ufw deny 10443/tcp && ufw deny 55443/tcp && ufw deny 50443/tcp && ufw deny 9443/
   * **Адрес:** `0.0.0.0` | **Порт:** `8443` | **Сброс трафика:** `Никогда`
 * **Вкладка «Протокол»:**
   * **Ключи:** Сгенерировать новую пару ключей кнопкой обновления
-  * **Подсеть:** `10.8.1.0` | **Маска (CIDR):** `24` | **MTU:** `1360`
-  * **DNS:** `8.8.8.8` / `8.8.4.4` | **IPv6:** `Выключено`
+  * **Подсеть:** `10.8.0.0` | **Маска (CIDR):** `22` (до 1022 клиентов) | **MTU:** `1280`
+  * **DNS:** `76.76.2.0` / `76.76.10.0` *(Control D Anycast — обход DNS-блокировок)* | **IPv6:** `Выключено`
 * **Параметры обфускации:**
-  * `Jc = 4`, `Jmin = 50`, `Jmax = 160`
+  * `Jc = 3`, `Jmin = 40`, `Jmax = 80` *(оптимизированный Mobile-пресет для сотовых сетей РФ)*
   * `S1 = 45`, `S2 = 60`, `S3 = 24`, `S4 = 16`
   * `H1 – H4`: **Оставить ПУСТЫМИ** *(дефолты 1/2/3/4)*
   * `I1 – I5`: **Оставить ПУСТЫМИ**
-  * `HeaderProtectionKey`: **Оставить ПУСТЫМ**
+  * `HeaderProtectionKey`: **Оставить ПУСТЫМ** *(100% совместимость с клиентами Happ, AmneziaWG 2.0/3.1)*
   * `ContentPaddingAddition`: `3-16`
   * `RekeyAfterTime`: `107-135` | `RekeyTimeout`: `3-4` | `RejectAfterTime`: `178-211`
   * `KeepaliveTimeout`: `8-10` | `MaxHandshakeAttempts`: `21-26`
-  * `RandomTrailers`: `Выключено (OFF)` | `DisableCookies`: `Включено (ON)`
+  * `RandomTrailers`: `Выключено (OFF)` | `DisableCookies`: `Выключено (OFF)`
 
 ---
 
@@ -335,7 +335,7 @@ ufw deny 10443/tcp && ufw deny 55443/tcp && ufw deny 50443/tcp && ufw deny 9443/
   * H1-H4 (Строки): `"149419586", "878791997", "1251051976", "1657628296"`
   * HeaderProtectionKey: **ПУСТО (Выключено)**
   * S1 = 45, S2 = 60, S3 = 24, S4 = 16
-  * Jc = 4, Jmin = 50, Jmax = 160 | MTU: `1360`
+  * `Jc = 3`, `Jmin = 40`, `Jmax = 80` *(оптимизированный Mobile-пресет для сотовых сетей РФ)*
 
 ---
 
@@ -713,7 +713,7 @@ nginx -t && systemctl start nginx x-ui AdGuardHome
       "keepaliveTimeout": "8-10",
       "maxHandshakeAttempts": "21-26",
       "mtu": 1360,
-      "primaryDns": "8.8.8.8",
+      "primaryDns": "76.76.2.0",
       "privateKey": "ВАШ_PRIVATE_KEY_СЕРВЕРА",
       "publicKey": "PUBLIC_KEY_КЛИЕНТА",
       "randomTrailers": false,
@@ -724,7 +724,7 @@ nginx -t && systemctl start nginx x-ui AdGuardHome
       "s2": 60,
       "s3": 24,
       "s4": 16,
-      "secondaryDns": "8.8.4.4",
+      "secondaryDns": "76.76.10.0",
       "subnetCidr": 24,
       "subnetIp": "10.8.1.0"
     }

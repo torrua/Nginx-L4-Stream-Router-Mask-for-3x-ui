@@ -45,48 +45,44 @@
 
 ---
 
-## ⚡ Пошаговая установка (3 этапа)
+## 🚀 Быстрый старт (Установка в 1 команду)
 
 ### Подготовка: VPS и домен
 1. Арендуйте виртуальный сервер (VPS) с **Ubuntu 22.04 / 24.04** или **Debian 11 / 12**.
-2. Привяжите домен к IP сервера (A-запись в DNS).  
+2. Привяжите домен или субдомен к IP сервера (A-запись в DNS).  
    *Если используете Cloudflare: обязательно включите режим **DNS Only (Серое облако)**.*
 
----
-
-### Шаг 1. Защита сервера, ускорение TCP BBR и установка 3X-UI (`secure-vps.sh`)
-Подключитесь к серверу по SSH под пользователем `root` и выполните:
+### Бесшовный интерактивный запуск (`install.sh`)
+Подключитесь к серверу по SSH под пользователем `root` и запустите единый мастер:
 
 ```bash
-curl -sSLO https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/secure-vps.sh && sudo bash secure-vps.sh
+curl -sSL https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/install.sh | sudo bash
 ```
-*Что делает скрипт:*
-* Включает алгоритм **TCP BBR** (увеличивает скорость VPN в 2–3 раза и снижает задержки).
-* Закрывает лишние порты и настраивает файрвол UFW.
-* Переносит порт SSH для защиты от ботнет-сканеров.
-* Устанавливает чистую панель **3X-UI**.
 
----
+> **Что произойдет автоматически:**
+> 1. **Красивый CLI-интерфейс:** выберите **Express Режим** (всего 2 вопроса: домен и email).
+> 2. **Укрепление ОС:** включается **TCP BBR**, настраивается фаервол UFW, отключается утечка IPv6.
+> 3. **Развертывание стека:** устанавливается официальный **3X-UI**, Nginx mainline с модулем `stream ssl_preread`, выпускаются SSL-сертификаты Let's Encrypt и разворачивается сайт-приманка (Decoy).
+> 4. **Итоговый дашборд:** на экран выводятся персональная ссылка на защищенную панель, сгенерированные надежные пароли и статус изоляции портов (данные также сохраняются в `/root/vpn_credentials.txt`).
 
-### Шаг 2. Настройка Nginx, SSL-сертификатов и маскировки (`setup_mask.sh`)
-Выполните команду:
+<details>
+<summary><b>🔧 Ручная пошаговая установка (для экспертов)</b></summary>
 
-```bash
-curl -sSLO https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/setup_mask.sh && sudo bash setup_mask.sh
-```
-Скрипт запросит ваш домен, email для Let's Encrypt и секретные пути для панели. После этого он выпустит SSL-сертификаты, развернёт сайт-маскировку и свяжет Nginx с 3X-UI.
+Если вам требуется ручной контроль над каждым шагом и точечный ввод нестандартных параметров:
 
----
-
-### Шаг 3. Создание готовых подключений (`configure_3xui.sh`)
-Запустите скрипт автонастройки:
-
-```bash
-curl -sSL https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/configure_3xui.sh | sudo bash
-```
-Скрипт создаст готовые профили: **AmneziaWG** (для сотовых сетей), **VLESS Reality** (для дома и ПК) и **VLESS xHTTP**.
-
-Готово! Откройте панель в браузере (`https://ваш-домен/секретный_путь/`), добавьте пользователя и отсканируйте QR-код в приложении на телефоне.
+1. **Защита ОС и установка 3X-UI:**
+   ```bash
+   curl -sSLO https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/secure-vps.sh && sudo bash secure-vps.sh
+   ```
+2. **Настройка Nginx, SSL и SNI-маскировки:**
+   ```bash
+   curl -sSLO https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/setup_mask.sh && sudo bash setup_mask.sh
+   ```
+3. **Автосоздание входящих подключений (Inbounds):**
+   ```bash
+   curl -sSL https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/configure_3xui.sh | sudo bash
+   ```
+</details>
 
 ---
 

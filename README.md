@@ -1,20 +1,20 @@
-# 🛡️ Личный VPN на своём сервере
-### 3X-UI и Nginx с маскировкой под сайт (v6.5.3)
+<div align="center">
 
-<p align="center">
-  <img src="logo.webp" alt="Logo" width="160" />
-</p>
+<img src="logo.webp" alt="3X-UI Mask Logo" width="130" />
 
-<p align="center">
-  <b>Комплекс скриптов для настройки собственного быстрого VPN на VPS. Не блокируется провайдерами, работает на смартфонах, компьютерах и роутерах.</b>
-</p>
+# Личный VPN на своём сервере
+### 3X-UI и Nginx с маскировкой под сайт
 
-<p align="center">
-  <a href="docs/BEGINNER_GUIDE.md"><img src="https://img.shields.io/badge/📖_Инструкция-Для_новичков_с_нуля-success?style=for-the-badge" alt="Инструкция для новичков" /></a>
-  <a href="docs/ARCHITECTURE.md"><img src="https://img.shields.io/badge/⚙️_Архитектура-Техническое_описание-blue?style=for-the-badge" alt="Архитектура" /></a>
-  <img src="https://img.shields.io/badge/Версия-v6.5.3-orange?style=for-the-badge" alt="Версия" />
-  <img src="https://img.shields.io/badge/OS-Ubuntu_/_Debian-blueviolet?style=for-the-badge" alt="OS" />
-</p>
+Надёжный персональный VPN на VPS, устойчивый к блокировкам операторов связи.  
+Работает на смартфонах (iOS, Android), компьютерах (Windows, macOS) и роутерах.
+
+[Инструкция для новичков](docs/BEGINNER_GUIDE.md) • [Техническая архитектура](docs/ARCHITECTURE.md) • [Быстрый старт](#-пошаговая-установка-3-этапа)
+
+[![Версия](https://img.shields.io/badge/версия-v6.5.3-blue?style=flat-square)](https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui)
+[![ОС](https://img.shields.io/badge/ОС-Ubuntu%20%7C%20Debian-informational?style=flat-square)](docs/BEGINNER_GUIDE.md#1-сервер-vps)
+[![Лицензия](https://img.shields.io/badge/лицензия-MIT-success?style=flat-square)](LICENSE)
+
+</div>
 
 ---
 

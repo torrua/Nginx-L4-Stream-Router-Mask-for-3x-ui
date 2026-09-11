@@ -404,6 +404,9 @@ DECOY_MODE="1"
 # Автоматически настроить инбаунды и пути подписок в базе данных 3X-UI через configure_3xui.sh [y/n]
 AUTO_SETUP_3XUI="y"
 
+# Автоматически обновлять ядро Xray-core до последней официальной версии (v26.9.9+) [y/n]
+UPDATE_XRAY_CORE="y"
+
 # --- 7. ИСХОДЯЩИЙ ТУННЕЛЬ CLOUDFLARE WARP ---
 # Включить исходящий прокси Cloudflare WARP (WireGuard, MTU: 1280) для обхода капч Google
 # и разблокировки сервисов искусственного интеллекта (Gemini, ChatGPT, Claude) [y/n]
@@ -3212,6 +3215,7 @@ else
             export BLOCK_LAN
             export WEB_LISTEN
             export SUB_LISTEN
+            export UPDATE_XRAY_CORE="${UPDATE_XRAY_CORE:-y}"
             bash "$CONFIG_EXEC" --config "$SAVED_CONFIG_FILE" -y
         }
         run_with_spinner "Автоматическая настройка базы 3X-UI и создание инбаундов" run_configure_3xui_task

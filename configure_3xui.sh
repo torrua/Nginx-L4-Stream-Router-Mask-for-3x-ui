@@ -1742,6 +1742,72 @@ if [ "$DRY_RUN" -eq 0 ]; then
         fi
     done
 
+    # Обновление ядра Xray-core до последней актуальной версии (v26.9.9+)
+    INSTALLED_XRAY_VER=""
+    if [[ "${UPDATE_XRAY_CORE:-y}" =~ ^[Yy1] ]]; then
+        XRAY_BIN_DIR="/usr/local/x-ui/bin"
+        [ -d "$XRAY_BIN_DIR" ] || XRAY_BIN_DIR="/etc/x-ui/bin"
+        
+        ARCH=$(uname -m 2>/dev/null || echo "x86_64")
+        case "$ARCH" in
+            x86_64|amd64)   XRAY_ARCH="64"; BIN_NAME="xray-linux-amd64" ;;
+            aarch64|arm64)  XRAY_ARCH="arm64-v8a"; BIN_NAME="xray-linux-arm64-v8a" ;;
+            armv7*|armhf)   XRAY_ARCH="arm32-v7a"; BIN_NAME="xray-linux-arm32-v7a" ;;
+            *)              XRAY_ARCH="64"; BIN_NAME="xray-linux-amd64" ;;
+        esac
+        
+        TARGET_BIN="$XRAY_BIN_DIR/$BIN_NAME"
+        [ -f "$TARGET_BIN" ] || TARGET_BIN="$XRAY_BIN_DIR/xray"
+        
+        CURRENT_VER=""
+        if [ -x "$TARGET_BIN" ]; then
+            CURRENT_VER=$("$TARGET_BIN" -version 2>/dev/null | head -n 1 | awk '{print $2}')
+        fi
+
+        LATEST_TAG=""
+        if command -v curl >/dev/null 2>&1; then
+            LATEST_TAG=$(curl -fsSL --connect-timeout 5 "https://api.github.com/repos/XTLS/Xray-core/releases?per_page=1" 2>/dev/null | grep -m1 '"tag_name":' | cut -d '"' -f 4)
+        fi
+        [ -n "$LATEST_TAG" ] || LATEST_TAG="v26.9.9"
+        CLEAN_LATEST="${LATEST_TAG#v}"
+
+        if [ -z "$CURRENT_VER" ] || [ "$CURRENT_VER" != "$CLEAN_LATEST" ]; then
+            log "Обновление ядра Xray до последней версии ($CURRENT_VER -> $LATEST_TAG)..."
+            TMP_XRAY_DIR="/tmp/xray_update_$$"
+            mkdir -p "$TMP_XRAY_DIR"
+            XRAY_ZIP="$TMP_XRAY_DIR/xray.zip"
+            
+            DL_URL="https://github.com/XTLS/Xray-core/releases/download/${LATEST_TAG}/Xray-linux-${XRAY_ARCH}.zip"
+            if curl -fsSL --connect-timeout 15 "$DL_URL" -o "$XRAY_ZIP" 2>/dev/null; then
+                python3 -c "import zipfile; zipfile.ZipFile('$XRAY_ZIP').extractall('$TMP_XRAY_DIR')" 2>/dev/null || true
+                if [ -f "$TMP_XRAY_DIR/xray" ]; then
+                    chmod +x "$TMP_XRAY_DIR/xray"
+                    if "$TMP_XRAY_DIR/xray" -version >/dev/null 2>&1; then
+                        mkdir -p "$XRAY_BIN_DIR"
+                        cp -f "$TMP_XRAY_DIR/xray" "$TARGET_BIN"
+                        chmod 755 "$TARGET_BIN"
+                        
+                        [ -f "$TMP_XRAY_DIR/geosite.dat" ] && cp -f "$TMP_XRAY_DIR/geosite.dat" "$XRAY_BIN_DIR/geosite.dat"
+                        [ -f "$TMP_XRAY_DIR/geoip.dat" ] && cp -f "$TMP_XRAY_DIR/geoip.dat" "$XRAY_BIN_DIR/geoip.dat"
+                        
+                        INSTALLED_XRAY_VER="$LATEST_TAG"
+                        ok "Ядро Xray успешно обновлено до последней версии $LATEST_TAG (было: ${CURRENT_VER:-неизвестно})!"
+                    else
+                        warn "Скачанный бинарник Xray $LATEST_TAG не прошел валидацию, сохранен текущий $CURRENT_VER."
+                        INSTALLED_XRAY_VER="${CURRENT_VER:-v26.7.28}"
+                    fi
+                fi
+            else
+                warn "Не удалось скачать обновление Xray $LATEST_TAG с GitHub, используется $CURRENT_VER."
+                INSTALLED_XRAY_VER="${CURRENT_VER:-v26.7.28}"
+            fi
+            rm -rf "$TMP_XRAY_DIR"
+        else
+            INSTALLED_XRAY_VER="$LATEST_TAG"
+            ok "Ядро Xray уже актуальной версии ($LATEST_TAG)."
+        fi
+    fi
+
     # Возобновление/перезапуск службы 3X-UI
     if [ "${WAS_ACTIVE:-0}" -eq 1 ] || (command -v systemctl >/dev/null 2>&1 && systemctl is-enabled --quiet x-ui 2>/dev/null); then
         log "Перезапуск службы 3X-UI..."
@@ -1779,6 +1845,9 @@ if [ "$DRY_RUN" -eq 1 ]; then
 else
     echo -e "${GREEN}      БАЗА ДАННЫХ 3X-UI УСПЕШНО СКОНФИГУРИРОВАНА И ИСЦЕЛЕНА!         ${NC}"
     echo -e "  - ${BOLD}Единый клиент:${NC}         ${GREEN}${UNIFIED_CLIENT_TAG:-Client}${NC} (объединяет 6 протоколов в 1 профиль)"
+    if [ -n "$INSTALLED_XRAY_VER" ]; then
+        echo -e "  - ${BOLD}Ядро Xray-core:${NC}        ${GREEN}${INSTALLED_XRAY_VER}${NC} (Latest Official Release)"
+    fi
     echo -e "  - ${BOLD}Панель управления:${NC}      ${CYAN}https://${PRIMARY_DOMAIN}/${PANEL_PATH}/${NC}"
     echo -e "  - ${BOLD}Логин панели:${NC}           ${WHITE}${ADMIN_USERNAME:-admin}${NC}"
     if [ -n "${ADMIN_PASSWORD:-}" ]; then
@@ -1801,6 +1870,7 @@ if [ "$DRY_RUN" -eq 0 ] && [ -n "${ADMIN_PASSWORD:-}" ]; then
 Панель управления:     https://${PRIMARY_DOMAIN}/${PANEL_PATH}/
 Логин администратора:   ${ADMIN_USERNAME:-admin}
 Пароль администратора:  ${ADMIN_PASSWORD}
+$([ -n "$INSTALLED_XRAY_VER" ] && echo "Ядро Xray-core:        ${INSTALLED_XRAY_VER}")
 
 Единый клиент:          ${UNIFIED_CLIENT_TAG:-Client}
 Канал подписок:        https://${PRIMARY_DOMAIN}/${SUB_PATH}/

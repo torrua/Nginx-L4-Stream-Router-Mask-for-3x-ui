@@ -645,7 +645,7 @@ def sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_s
                         c_data["wg_public_key"] = client.get("publicKey")
                     if "wg_allowed_ips" in clients_cols and client.get("allowedIPs"):
                         ips = client.get("allowedIPs")
-                        c_data["wg_allowed_ips"] = json.dumps(ips) if isinstance(ips, list) else str(ips)
+                        c_data["wg_allowed_ips"] = ", ".join(ips) if isinstance(ips, list) else str(ips).strip("[]'\"")
                 cols = ", ".join(c_data.keys())
                 placeholders = ", ".join(["?"] * len(c_data))
                 cur.execute(f"INSERT INTO clients ({cols}) VALUES ({placeholders})", list(c_data.values()))
@@ -666,7 +666,13 @@ def sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_s
                         c_updates["wg_public_key"] = client.get("publicKey")
                     if "wg_allowed_ips" in clients_cols and client.get("allowedIPs"):
                         ips = client.get("allowedIPs")
-                        c_updates["wg_allowed_ips"] = json.dumps(ips) if isinstance(ips, list) else str(ips)
+                        clean_ip = ", ".join(ips) if isinstance(ips, list) else str(ips).strip("[]'\"")
+                        is_legacy_v2 = "v2" in remark.lower() or "legacy" in remark.lower()
+                        cur.execute("SELECT wg_allowed_ips FROM clients WHERE id = ?", (client_db_id,))
+                        curr_wg_ip_row = cur.fetchone()
+                        curr_wg_ip = curr_wg_ip_row[0] if curr_wg_ip_row and curr_wg_ip_row[0] else ""
+                        if not is_legacy_v2 or not curr_wg_ip or curr_wg_ip.startswith("["):
+                            c_updates["wg_allowed_ips"] = clean_ip
                 set_clause = ", ".join(f"{k} = ?" for k in c_updates.keys())
                 cur.execute(f"UPDATE clients SET {set_clause} WHERE id = ?", list(c_updates.values()) + [client_db_id])
                 

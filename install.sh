@@ -440,10 +440,10 @@ main() {
         echo -e "  ${YELLOW}${INFO} Запуск экспертного режима (setup_mask.sh)...${RESET}\n"
         cd "$SCRIPT_DIR"
         if [ -f "./setup_mask.sh" ]; then
-            bash ./setup_mask.sh "$@"
+            bash ./setup_mask.sh --expert "$@"
         else
             wget -qO /tmp/setup_mask.sh "${REPO_URL}/setup_mask.sh?v=$(date +%s)"
-            bash /tmp/setup_mask.sh "$@"
+            bash /tmp/setup_mask.sh --expert "$@"
         fi
         exit 0
     fi

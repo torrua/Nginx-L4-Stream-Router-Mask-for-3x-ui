@@ -2711,27 +2711,42 @@ fi
 
 # Автоматическая настройка 3X-UI через внешний скрипт configure_3xui.sh
 if [[ "${AUTO_SETUP_3XUI,,}" == "y" || "${AUTO_SETUP_3XUI:-}" == "1" ]]; then
-    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    if [ ! -f "$script_dir/configure_3xui.sh" ]; then
-        log "Скрипт configure_3xui.sh не найден локально. Попытка загрузки из репозитория..."
-        raw_url="https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/configure_3xui.sh"
-        if command -v curl >/dev/null 2>&1; then
-            curl -fsSL "$raw_url" -o "$script_dir/configure_3xui.sh" 2>/dev/null && chmod +x "$script_dir/configure_3xui.sh" 2>/dev/null || true
-        elif command -v wget >/dev/null 2>&1; then
-            wget -qO "$script_dir/configure_3xui.sh" "$raw_url" 2>/dev/null && chmod +x "$script_dir/configure_3xui.sh" 2>/dev/null || true
+    # 1. Проверяем наличие ядра 3X-UI на сервере, если нет - устанавливаем автоматически
+    if ! command -v x-ui >/dev/null 2>&1 && [ ! -f /etc/x-ui/x-ui.db ] && [ ! -f /usr/local/x-ui/bin/x-ui.db ]; then
+        log "Служба 3X-UI не обнаружена на сервере. Автоматическая установка официального ядра 3X-UI..."
+        export DEBIAN_FRONTEND=noninteractive
+        if curl -Ls --connect-timeout 15 https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh -o /tmp/install_3xui.sh 2>/dev/null; then
+            printf "n\n" | bash /tmp/install_3xui.sh || true
+        fi
+        if command -v x-ui >/dev/null 2>&1 || [ -f /etc/x-ui/x-ui.db ] || [ -f /usr/local/x-ui/bin/x-ui.db ]; then
+            ok "Ядро 3X-UI успешно установлено!"
+        else
+            warn "Не удалось автоматически установить 3X-UI. Попробуйте установить вручную: bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh)"
         fi
     fi
 
-    if [ -f "$script_dir/configure_3xui.sh" ]; then
+    # 2. Загружаем всегда самую актуальную версию configure_3xui.sh
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo "/root")"
+    raw_url="https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/configure_3xui.sh?v=$(date +%s)"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL "$raw_url" -o /tmp/configure_3xui.sh 2>/dev/null && chmod +x /tmp/configure_3xui.sh 2>/dev/null || true
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO /tmp/configure_3xui.sh "$raw_url" 2>/dev/null && chmod +x /tmp/configure_3xui.sh 2>/dev/null || true
+    fi
+
+    CONFIG_EXEC="/tmp/configure_3xui.sh"
+    [ -f "$CONFIG_EXEC" ] || CONFIG_EXEC="$script_dir/configure_3xui.sh"
+
+    if [ -f "$CONFIG_EXEC" ]; then
         echo
-        log "Запуск автоматической настройки базы 3X-UI ($script_dir/configure_3xui.sh)..."
-        if bash "$script_dir/configure_3xui.sh" --config "$SAVED_CONFIG_FILE" -y; then
+        log "Запуск автоматической настройки базы 3X-UI ($CONFIG_EXEC)..."
+        if bash "$CONFIG_EXEC" --config "$SAVED_CONFIG_FILE" -y; then
             ok "База данных 3X-UI успешно настроена автоматически!"
         else
             warn "Автоматическая настройка 3X-UI завершилась с ошибкой. Выполните настройку вручную."
         fi
     else
-        warn "Файл $script_dir/configure_3xui.sh не найден. Выполните настройку вручную."
+        warn "Скрипт configure_3xui.sh не найден. Выполните настройку вручную."
     fi
 fi
 

@@ -50,13 +50,40 @@ warn() { echo -e "  ${YELLOW}[!]${NC} $*"; }
 die()  { echo -e "  ${RED}${CROSS} $*${NC}" >&2; exit 1; }
 
 # Анимированный спиннер для фоновых операций
+# При DEBUG_MODE=1: отключает спиннер, выполняет команды напрямую (весь вывод виден)
+# При ошибке: выводит полный лог и вызывает die (не return), чтобы не глотать exit-code при set -euo pipefail
 run_with_spinner() {
     local task_name="$1"
     shift
+    local log_file="${SETUP_MASK_LOG:-/tmp/setup_mask_cmd.log}"
+
+    # ── DEBUG MODE: без фона, весь вывод сразу в stdout ──
+    if [ "${DEBUG_MODE:-0}" -eq 1 ]; then
+        echo -e "\n  ${CYAN}[DEBUG]${NC} ${WHITE}▶ $task_name${NC}"
+        echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
+        local exit_code=0
+        if [ "$#" -eq 1 ]; then
+            bash -c "$1" || exit_code=$?
+        else
+            "$@" || exit_code=$?
+        fi
+        if [ $exit_code -eq 0 ]; then
+            echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
+            echo -e "  ${GREEN}${CHECK}${NC}  ${WHITE}$task_name${NC} ${GREEN}[ГОТОВО]${NC}\n"
+            return 0
+        else
+            echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
+            die "Шаг завершился с ошибкой (exit $exit_code): $task_name"
+        fi
+    fi
+
+    # ── Нормальный режим: фоновый процесс + спиннер ──
     local spin_chars=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
     local delay=0.08
-    local log_file="${SETUP_MASK_LOG:-/tmp/setup_mask_cmd.log}"
-    
+
+    # Очищаем лог, чтобы при ошибке видеть только вывод текущего шага
+    : > "$log_file"
+
     if [ "$#" -eq 1 ]; then
         bash -c "$1" >> "$log_file" 2>&1 &
     else
@@ -64,26 +91,29 @@ run_with_spinner() {
     fi
     local pid=$!
     tput civis 2>/dev/null || echo -ne "\033[?25l"
-    
+
     local i=0
     while kill -0 "$pid" 2>/dev/null; do
         i=$(( (i + 1) % 10 ))
         printf "\r  ${CYAN}${spin_chars[$i]}${NC}  ${WHITE}%-54s${NC}" "$task_name..."
         sleep "$delay"
     done
-    
+
     wait "$pid"
     local exit_code=$?
     tput cnorm 2>/dev/null || echo -ne "\033[?25h"
-    
+
     if [ $exit_code -eq 0 ]; then
         printf "\r  ${GREEN}${CHECK}${NC}  ${WHITE}%-54s${NC} ${GREEN}[ГОТОВО]${NC}\n" "$task_name"
         return 0
     else
         printf "\r  ${RED}${CROSS}${NC}  ${WHITE}%-54s${NC} ${RED}[ОШИБКА]${NC}\n" "$task_name"
-        echo -e "  ${RED}Ошибка в команде:${NC} $task_name"
-        [ -f "$log_file" ] && tail -n 15 "$log_file" | sed 's/^/    /'
-        return $exit_code
+        echo -e "\n  ${RED}${BOLD}Полный лог ошибки:${NC}"
+        echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
+        [ -f "$log_file" ] && cat "$log_file" | sed 's/^/    /' || true
+        echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
+        echo -e "  ${DIM}Совет: запустите с флагом ${WHITE}--debug${DIM} для подробного вывода в реальном времени.${NC}\n"
+        die "Шаг завершился с ошибкой (exit $exit_code): $task_name"
     fi
 }
 
@@ -311,9 +341,21 @@ install_prerequisites() {
     done
 
     if [ ${#missing_pkgs[@]} -gt 0 ]; then
+        if [ "${DEBUG_MODE:-0}" -eq 1 ]; then
+            echo "  [DEBUG] Требуется установка: ${missing_pkgs[*]}"
+        fi
         export DEBIAN_FRONTEND=noninteractive
-        apt-get update -q
-        apt-get install -y "${missing_pkgs[@]}" -q
+        if [ "${DEBUG_MODE:-0}" -eq 1 ]; then
+            apt-get update
+            apt-get install -y "${missing_pkgs[@]}"
+        else
+            apt-get update -q
+            apt-get install -y "${missing_pkgs[@]}" -q
+        fi
+    else
+        if [ "${DEBUG_MODE:-0}" -eq 1 ]; then
+            echo "  [DEBUG] Все базовые утилиты уже установлены — пропускаем apt-get."
+        fi
     fi
 }
 
@@ -503,6 +545,7 @@ validate_path_segment() {
 # ----------------- Обработка аргументов командной строки -----------------
 CONFIG_FILE=""
 NON_INTERACTIVE=${NON_INTERACTIVE:-0}
+DEBUG_MODE=${DEBUG_MODE:-0}
 GEN_CONFIG=0
 FORCE_DNS=${FORCE_DNS:-0}
 SAVED_CONFIG_FILE="setup_mask.env"
@@ -536,6 +579,10 @@ while [[ $# -gt 0 ]]; do
                 TARGET_GEN_FILE="setup_mask.env.example"
                 shift
             fi
+            ;;
+        --debug)
+            DEBUG_MODE=1
+            shift
             ;;
         -f|--force)
             FORCE_DNS=1
@@ -573,6 +620,10 @@ SAVED_CONFIG_FILE="./setup_mask.env"
 
 if [ "$NON_INTERACTIVE" -eq 1 ]; then
     log "Включен НЕИНТЕРАКТИВНЫЙ режим (Ansible / Cloud-Init / CI)."
+fi
+
+if [ "${DEBUG_MODE:-0}" -eq 1 ]; then
+    warn "Включён режим отладки (--debug): спиннеры отключены, весь вывод команд виден напрямую."
 fi
 
 # =============================================================

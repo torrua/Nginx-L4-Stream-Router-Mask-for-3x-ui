@@ -1042,13 +1042,14 @@ echo -e " 3) Стандартная заглушка Nginx (Welcome to nginx)"
 prompt_default "Выберите вариант маскировки (1, 2 или 3)" "1" DECOY_MODE
 
 echo
-echo -e "${YELLOW}Шаг 9: Финальный реестр SSL-сертификатов и дополнительные домены${NC}"
-echo -e "  ${DIM}Все выбранные в процессе настройки домены автоматически включены в выпуск SSL:${NC}"
+echo -e "${YELLOW}Шаг 9: Реестр SSL-сертификатов и дополнительные домены${NC}"
+echo -e "  ${DIM}Для всех настроенных доменов сертификаты будут выпущены и подключены автоматически:${NC}"
 for d in "${ALL_DOMAINS[@]}"; do
-    echo -e "    ${GREEN}✔ $d${NC} ${DIM}(сертификат будет выпущен и подключен автоматом)${NC}"
+    echo -e "    ${GREEN}✔ ${WHITE}$d${NC}"
 done
-echo -e "  ${CYAN}[i] Вышеперечисленные домены повторно вводить НЕ нужно!${NC}"
-echo -e "  ${DIM}Этот шаг нужен ТОЛЬКО если у вас есть резервные/сторонние домены (напр. failover или прямой gRPC).${NC}"
+echo ""
+echo -e "  ${DIM}ℹ️  Вышеперечисленные домены повторно вводить не нужно.${NC}"
+echo -e "  ${DIM}Добавление требуется только при наличии сторонних доменов (напр. failover или прямой gRPC).${NC}"
 
 if [ "$NON_INTERACTIVE" -eq 1 ]; then
     if [ -n "${EXTRA_SSL_DOMAINS:-}" ]; then
@@ -1063,7 +1064,8 @@ if [ "$NON_INTERACTIVE" -eq 1 ]; then
     fi
 else
     while true; do
-        read -rp "  Добавить ЕЩЕ ОДИН сторонний домен в сертификационный стек? (Enter - пропустить): " EXTRA_DOM </dev/tty || read -r EXTRA_DOM || true
+        echo -ne "  ${WHITE}${ARROW} Добавить дополнительный домен в сертификационный стек? (Enter = пропустить): ${NC}"
+        read -r EXTRA_DOM </dev/tty || read -r EXTRA_DOM || true
         if [ -z "$EXTRA_DOM" ]; then
             break
         fi

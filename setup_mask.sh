@@ -27,6 +27,9 @@
 
 set -euo pipefail
 
+SCRIPT_VERSION="v6.6.0"
+
+
 # --------------------------- Цвета и UI-движок ---------------------------
 GREEN=$'\033[0;32m'
 CYAN=$'\033[0;36m'
@@ -136,6 +139,21 @@ print_step_bar() {
 }
 
 # Вывод карточки заголовка
+check_for_script_updates() {
+    local remote_ver=""
+    remote_ver=$(curl -fsSL --connect-timeout 2 "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/VERSION" 2>/dev/null | tr -d '[:space:]' || true)
+    if [ -n "$remote_ver" ]; then
+        if [ "$remote_ver" != "$SCRIPT_VERSION" ]; then
+            echo -e "  ${YELLOW}⚠️  Доступно обновление скрипта: ${GREEN}$remote_ver${YELLOW} (текущая версия: ${CYAN}$SCRIPT_VERSION${YELLOW})${NC}"
+            echo -e "  ${DIM}Обновить: curl -sSL "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/install.sh?v=$(date +%s)" | sudo bash${NC}\n"
+        else
+            echo -e "  ${DIM}Версия: ${GREEN}$SCRIPT_VERSION${DIM} (актуальная релизная сборка)${NC}\n"
+        fi
+    else
+        echo -e "  ${DIM}Версия: ${GREEN}$SCRIPT_VERSION${NC}\n"
+    fi
+}
+
 print_mask_banner() {
     clear 2>/dev/null || true
     echo -e "${CYAN}${BOLD}"
@@ -145,7 +163,7 @@ print_mask_banner() {
     echo "  ║    ░▀▀█░░█░░█▀▄░█▀▀░█▀█░█░█   ░█▀▄░█░█░█░█░░█░░█▀▀░█▀▄                         ║"
     echo "  ║    ░▀▀▀░░▀░░▀░▀░▀▀▀░▀░▀░▀░▀   ░▀░▀░▀▀▀░▀▀▀░░▀░░▀▀▀░▀░▀                         ║"
     echo "  ║                                                                                ║"
-    echo "  ║    Шлюз маскировки и L4/L7 распределения трафика для 3X-UI (Xray)              ║"
+    echo "  ║    Шлюз маскировки и L4/L7 распределения трафика для 3X-UI (Xray)   [v6.6.0]   ║"
     echo "  ║  ────────────────────────────────────────────────────────────────────────────  ║"
     echo "  ║  • L4 SNI Demux     : Проксирование доменов без расшифровки на уровне ядра     ║"
     echo "  ║  • Steal-Oneself    : Маскировка под свои домены с Anti-Loop защитой (9443)    ║"
@@ -154,6 +172,7 @@ print_mask_banner() {
     echo "  ║  • Decoy Shield     : SPA-маскировка DataSphere + блокировка ботов и DPI (444) ║"
     echo "  ╚════════════════════════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
+    check_for_script_updates
 }
 
 trap 'die "Скрипт аварийно прерван на строке $LINENO"' ERR
@@ -173,6 +192,7 @@ show_help() {
   --gen-config [FILE]          Сгенерировать шаблон конфигурации (.env.example) и выйти
   --debug                      Режим отладки: отключить спиннеры, вывод команд в реальном времени
   -f, --force                  Игнорировать ошибки и несовпадения DNS в неинтерактивном режиме
+  -v, --version                Показать версию скрипта и выйти
   -h, --help                   Показать справку и выйти
 
 Примеры использования:
@@ -282,6 +302,10 @@ EOF_CONF
 # Ранняя обработка флагов справки и генерации шаблона (доступны без root и проверки ОС)
 for arg in "$@"; do
     case "$arg" in
+        -v|--version)
+            echo "STREAM ROUTER $SCRIPT_VERSION"
+            exit 0
+            ;;
         -h|--help)
             show_help
             exit 0

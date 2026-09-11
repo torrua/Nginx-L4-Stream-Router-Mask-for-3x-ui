@@ -761,13 +761,17 @@ if [[ "${ENABLE_STEAL,,}" == "y" ]]; then
                 fi
             fi
 
-            echo -e "${CYAN}  Введите домены для порта $PORT_VAL (для завершения - пусто и Enter):${NC}"
             added_count_for_port=0
             while true; do
-                read -rp "    Собственный домен для порта $PORT_VAL: " STEAL_DOM </dev/tty || read -r STEAL_DOM || true
+                if [ "$added_count_for_port" -eq 0 ]; then
+                    read -rp "  ${WHITE}${ARROW} Основной поддомен для порта $PORT_VAL (напр. cdn.$PRIMARY_DOMAIN): ${NC}" STEAL_DOM </dev/tty || read -r STEAL_DOM || true
+                else
+                    read -rp "  ${DIM}• Добавить еще один поддомен на этот же порт $PORT_VAL? (Enter для завершения): ${NC}" STEAL_DOM </dev/tty || read -r STEAL_DOM || true
+                fi
+
                 if [ -z "$STEAL_DOM" ]; then
                     if [ "$added_count_for_port" -eq 0 ]; then
-                        warn "    Необходимо добавить как минимум один домен для порта $PORT_VAL!"
+                        warn "    Необходимо добавить хотя бы один поддомен (напр. cdn.$PRIMARY_DOMAIN)!"
                         continue
                     fi
                     break
@@ -779,7 +783,7 @@ if [[ "${ENABLE_STEAL,,}" == "y" ]]; then
                 fi
 
                 if [[ " ${ALL_DOMAINS[*]} " == *" ${STEAL_DOM} "* ]]; then
-                    warn "    Домен '$STEAL_DOM' уже присутствует в списке."
+                    warn "    Домен '$STEAL_DOM' уже добавлен в список."
                     continue
                 fi
 
@@ -787,10 +791,12 @@ if [[ "${ENABLE_STEAL,,}" == "y" ]]; then
                 STEAL_DOMAINS+=("$STEAL_DOM")
                 DOMAIN_TO_PORT["$STEAL_DOM"]="$PORT_VAL"
                 added_count_for_port=$((added_count_for_port + 1))
-                ok "    Домен $STEAL_DOM привязан к инбаунд-порту $PORT_VAL"
+                ok "    Домен $STEAL_DOM успешно привязан к порту $PORT_VAL"
             done
 
-            read -rp "  Сконфигурировать еще один порт Steal-Oneself? [y/N]: " ADD_MORE_STEAL </dev/tty || read -r ADD_MORE_STEAL || true
+            echo ""
+            read -rp "  Нужен ли еще один отдельный инбаунд (второй порт) Steal-Oneself? [y/N] (по умолчанию N): " ADD_MORE_STEAL </dev/tty || read -r ADD_MORE_STEAL || true
+            ADD_MORE_STEAL=${ADD_MORE_STEAL:-n}
             [[ "${ADD_MORE_STEAL,,}" == "y" ]] || break
         done
     fi
@@ -833,14 +839,16 @@ if [[ "${ENABLE_CLASSIC,,}" == "y" ]]; then
                 fi
             fi
 
-            echo -e "${CYAN}  Введите внешние SNI для порта $PORT_VAL (нажмите Enter на пустой строке для завершения):${NC}"
             added_sni_count=0
             while true; do
-                read -rp "    Внешний SNI (например, gateway.icloud.com): " EXT_SNI </dev/tty || read -r EXT_SNI || true
+                if [ "$added_sni_count" -eq 0 ]; then
+                    read -rp "  ${WHITE}${ARROW} Внешний доверенный SNI маскировки [gateway.icloud.com]: ${NC}" EXT_SNI </dev/tty || read -r EXT_SNI || true
+                    EXT_SNI="${EXT_SNI:-gateway.icloud.com}"
+                else
+                    read -rp "  ${DIM}• Добавить еще один сторонний SNI на этот же порт? (Enter для перехода дальше): ${NC}" EXT_SNI </dev/tty || read -r EXT_SNI || true
+                fi
+
                 if [ -z "$EXT_SNI" ]; then
-                    if [ "$added_sni_count" -eq 0 ]; then
-                        warn "    Порт $PORT_VAL зарегистрирован для обработки fallback-трафика."
-                    fi
                     break
                 fi
 
@@ -852,10 +860,12 @@ if [[ "${ENABLE_CLASSIC,,}" == "y" ]]; then
                 EXT_SNI_TO_PORT["$EXT_SNI"]="$PORT_VAL"
                 EXT_SNI_LIST+=("$EXT_SNI")
                 added_sni_count=$((added_sni_count + 1))
-                ok "    SNI $EXT_SNI привязан к порту $PORT_VAL"
+                ok "    Внешний SNI $EXT_SNI привязан к порту $PORT_VAL"
             done
 
-            read -rp "  Сконфигурировать еще один порт Classic REALITY? [y/N]: " ADD_MORE_CLASSIC </dev/tty || read -r ADD_MORE_CLASSIC || true
+            echo ""
+            read -rp "  Нужен ли еще один отдельный инбаунд (второй порт) Classic REALITY? [y/N] (по умолчанию N): " ADD_MORE_CLASSIC </dev/tty || read -r ADD_MORE_CLASSIC || true
+            ADD_MORE_CLASSIC=${ADD_MORE_CLASSIC:-n}
             [[ "${ADD_MORE_CLASSIC,,}" == "y" ]] || break
         done
     fi
@@ -866,32 +876,38 @@ fi
 
 echo
 echo -e "${YELLOW}Шаг 4: Дополнительные SSL-домены (Direct TLS / Hysteria 2 / Trojan)${NC}"
+echo -e "  ${DIM}В очереди на автоматический выпуск SSL уже находятся:${NC}"
+for d in "${ALL_DOMAINS[@]}"; do
+    echo -e "    ${GREEN}• $d${NC}"
+done
+echo -e "  ${CYAN}[i] Основной домен и поддомены выше повторно вводить НЕ нужно!${NC}"
+
 if [ "$NON_INTERACTIVE" -eq 1 ]; then
     if [ -n "${EXTRA_SSL_DOMAINS:-}" ]; then
         for EXTRA_DOM in $EXTRA_SSL_DOMAINS; do
             if [[ "$EXTRA_DOM" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; then
                 if [[ ! " ${ALL_DOMAINS[*]} " == *" ${EXTRA_DOM} "* ]]; then
                     ALL_DOMAINS+=("$EXTRA_DOM")
-                    ok "Добавлен SSL-домен: $EXTRA_DOM"
+                    ok "Добавлен дополнительный SSL-домен: $EXTRA_DOM"
                 fi
             fi
         done
     fi
 else
     while true; do
-        read -rp "Добавить собственный домен для выпуска SSL-сертификата? (Enter для пропуска): " EXTRA_DOM </dev/tty || read -r EXTRA_DOM || true
+        read -rp "  Добавить ЕЩЕ ОДИН сторонний домен для SSL? (Enter - пропустить): " EXTRA_DOM </dev/tty || read -r EXTRA_DOM || true
         if [ -z "$EXTRA_DOM" ]; then
             break
         fi
         if [[ "$EXTRA_DOM" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; then
             if [[ " ${ALL_DOMAINS[*]} " == *" ${EXTRA_DOM} "* ]]; then
-                warn "Домен '$EXTRA_DOM' уже присутствует в очереди."
+                warn "  Домен '$EXTRA_DOM' уже присутствует в очереди."
             else
                 ALL_DOMAINS+=("$EXTRA_DOM")
-                ok "Добавлен SSL-домен: $EXTRA_DOM"
+                ok "  Добавлен дополнительный SSL-домен: $EXTRA_DOM"
             fi
         else
-            warn "Некорректный формат доменного имени: '$EXTRA_DOM'."
+            warn "  Некорректный формат доменного имени: '$EXTRA_DOM'."
         fi
     done
 fi

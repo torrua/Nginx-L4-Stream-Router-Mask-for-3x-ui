@@ -863,7 +863,7 @@ if [[ "${ENABLE_STEAL,,}" == "y" ]]; then
 
             echo ""
             echo -e "  ${DIM}ℹ️  Одного подключения на порту $PORT_VAL достаточно для всех ваших устройств.${NC}"
-            read -rp "  Создать ЕЩЁ ОДНО входящее подключение Steal-Oneself (на другом порту)? [y/N] (Enter = пропустить): " ADD_MORE_STEAL </dev/tty || read -r ADD_MORE_STEAL || true
+            read -rp "  Хотите создать ещё одно изолированное подключение Steal-Oneself (на другом порту)? [y/N] (Enter = нет, продолжить): " ADD_MORE_STEAL </dev/tty || read -r ADD_MORE_STEAL || true
             ADD_MORE_STEAL=${ADD_MORE_STEAL:-n}
             [[ "${ADD_MORE_STEAL,,}" == "y" ]] || break
         done
@@ -937,7 +937,7 @@ if [[ "${ENABLE_CLASSIC,,}" == "y" ]]; then
 
             echo ""
             echo -e "  ${DIM}ℹ️  Одного подключения на порту $PORT_VAL достаточно для всех ваших устройств.${NC}"
-            read -rp "  Создать ЕЩЁ ОДНО входящее подключение Classic REALITY (на другом порту)? [y/N] (Enter = пропустить): " ADD_MORE_CLASSIC </dev/tty || read -r ADD_MORE_CLASSIC || true
+            read -rp "  Хотите создать ещё одно изолированное подключение Classic REALITY (на другом порту)? [y/N] (Enter = нет, продолжить): " ADD_MORE_CLASSIC </dev/tty || read -r ADD_MORE_CLASSIC || true
             ADD_MORE_CLASSIC=${ADD_MORE_CLASSIC:-n}
             [[ "${ADD_MORE_CLASSIC,,}" == "y" ]] || break
         done

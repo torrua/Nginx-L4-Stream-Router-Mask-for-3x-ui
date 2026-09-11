@@ -1065,39 +1065,91 @@ if enable_warp:
     routing = tpl.get("routing", {})
     rules = routing.get("rules", [])
 
+    bad_geosites = {
+        "geosite:ru", "geosite:yandex", "geosite:vk", "geosite:youtube",
+        "geosite:openai", "geosite:google-gemini", "geosite:anthropic", "geosite:cloudflare"
+    }
+
+    # Очистка всех существующих правил от отсутствующих/невалидных geosite меток
+    for r in rules:
+        if isinstance(r, dict) and "domain" in r and isinstance(r["domain"], list):
+            r["domain"] = [d for d in r["domain"] if d not in bad_geosites]
+
     yt_domains = [
-        "geosite:youtube",
         "domain:youtube.com",
         "domain:googlevideo.com",
         "domain:ytimg.com",
-        "domain:youtu.be"
+        "domain:youtu.be",
+        "domain:youtubei.googleapis.com",
+        "domain:yt.be"
     ]
-    ru_domains = ["geosite:ru", "geosite:yandex", "geosite:vk", "domain:ru", "domain:su", "domain:рф"]
+    ru_domains = [
+        "domain:ru",
+        "domain:su",
+        "domain:рф",
+        "domain:xn--p1ai",
+        "domain:yandex.ru",
+        "domain:yandex.net",
+        "domain:ya.ru",
+        "domain:vk.com",
+        "domain:vk.ru",
+        "domain:vkvideo.ru",
+        "domain:gosuslugi.ru",
+        "domain:sberbank.ru",
+        "domain:tbank.ru",
+        "domain:tinkoff.ru",
+        "domain:dzen.ru",
+        "domain:mail.ru",
+        "domain:rutube.ru",
+        "domain:ozon.ru",
+        "domain:wildberries.ru",
+        "domain:avito.ru"
+    ]
     warp_domains = [
-        "geosite:google",
-        "geosite:google-gemini",
-        "geosite:openai",
-        "geosite:anthropic",
-        "geosite:cloudflare",
+        "domain:openai.com",
+        "domain:chatgpt.com",
+        "domain:oaistatic.com",
+        "domain:oaiusercontent.com",
+        "domain:anthropic.com",
+        "domain:claude.ai",
         "domain:gemini.google.com",
         "domain:aistudio.google.com",
         "domain:deepmind.google",
         "domain:makersuite.google.com",
-        "domain:generativelanguage.googleapis.com"
+        "domain:generativelanguage.googleapis.com",
+        "domain:ai.google.dev",
+        "domain:google.com",
+        "domain:cloudflare.com",
+        "domain:challenges.cloudflare.com"
     ]
 
     has_yt_direct = any(r.get("outboundTag") == "direct" and any("youtube" in str(d).lower() for d in r.get("domain", [])) for r in rules if isinstance(r, dict))
-    has_ru_direct = any(r.get("outboundTag") == "direct" and ("geosite:ru" in r.get("domain", []) or "geoip:ru" in r.get("ip", [])) for r in rules if isinstance(r, dict))
+    has_ru_direct = any(r.get("outboundTag") == "direct" and ("domain:ru" in r.get("domain", []) or "geoip:ru" in r.get("ip", [])) for r in rules if isinstance(r, dict))
     has_warp_rule = False
 
     for r in rules:
         if isinstance(r, dict) and r.get("outboundTag") == "warp":
             has_warp_rule = True
-            cur_domains = set(r.get("domain", []))
-            for wd in warp_domains:
-                cur_domains.add(wd)
+            cur_domains = set(r.get("domain", [])) - bad_geosites
+            cur_domains.update(warp_domains)
             r["domain"] = list(cur_domains)
             break
+
+    # Обновление существующих правил direct (RU и YouTube)
+    for r in rules:
+        if isinstance(r, dict) and r.get("outboundTag") == "direct":
+            if any("youtube" in str(d).lower() for d in r.get("domain", [])):
+                cur_domains = set(r.get("domain", [])) - bad_geosites
+                cur_domains.update(yt_domains)
+                r["domain"] = list(cur_domains)
+            if "geoip:ru" in r.get("ip", []) or any("ru" in str(d).lower() for d in r.get("domain", [])):
+                cur_domains = set(r.get("domain", [])) - bad_geosites
+                cur_domains.update(ru_domains)
+                r["domain"] = list(cur_domains)
+                if "ip" not in r:
+                    r["ip"] = ["geoip:ru"]
+                elif "geoip:ru" not in r["ip"]:
+                    r["ip"].append("geoip:ru")
 
     new_rules = []
     # Сначала системные правила (api, blocked)
@@ -1142,6 +1194,24 @@ if enable_warp:
     tpl["routing"] = routing
 else:
     print("\n[-] Исходящий туннель Cloudflare WARP отключен в конфигурации.")
+
+# Очистка всех потенциально опасных / отсутствующих geosite из всех маршрутов шаблона
+bad_geosites = {
+    "geosite:ru", "geosite:yandex", "geosite:vk", "geosite:youtube",
+    "geosite:openai", "geosite:google-gemini", "geosite:anthropic", "geosite:cloudflare"
+}
+routing = tpl.get("routing", {})
+if isinstance(routing, dict):
+    clean_rules = []
+    for r in routing.get("rules", []):
+        if isinstance(r, dict):
+            if "domain" in r and isinstance(r["domain"], list):
+                r["domain"] = [d for d in r["domain"] if d not in bad_geosites]
+                if not r["domain"] and not r.get("ip") and not r.get("port"):
+                    continue
+            clean_rules.append(r)
+    routing["rules"] = clean_rules
+    tpl["routing"] = routing
 
 # Сохранение обновленного шаблона xrayTemplateConfig
 new_xray_json = json.dumps(tpl, indent=2, ensure_ascii=False)
@@ -1514,6 +1584,14 @@ if [ "$DRY_RUN" -eq 0 ]; then
             fi
         fi
     fi
+
+    # Очистка устаревших/невалидных geosite меток в bin/config.json во избежание сбоя парсинга ядра Xray
+    for cfg_candidate in "/usr/local/x-ui/bin/config.json" "/etc/x-ui/bin/config.json"; do
+        if [ -f "$cfg_candidate" ]; then
+            sed -i 's/"geosite:ru",*//g; s/"geosite:yandex",*//g; s/"geosite:vk",*//g; s/"geosite:youtube",*//g; s/"geosite:openai",*//g; s/"geosite:google-gemini",*//g; s/"geosite:anthropic",*//g; s/"geosite:cloudflare",*//g' "$cfg_candidate" 2>/dev/null || true
+            sed -i 's/,\s*]/]/g; s/,\s*}/}/g' "$cfg_candidate" 2>/dev/null || true
+        fi
+    done
 
     # Возобновление/перезапуск службы 3X-UI
     if [ "${WAS_ACTIVE:-0}" -eq 1 ] || (command -v systemctl >/dev/null 2>&1 && systemctl is-enabled --quiet x-ui 2>/dev/null); then

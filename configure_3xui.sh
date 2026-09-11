@@ -297,10 +297,15 @@ done
 if [ -z "$PYTHON_CMD" ]; then
     if [ "$DRY_RUN" -eq 0 ]; then
         log "Установка python3..."
-        apt-get update -q && apt-get install -y python3 -q || die "Не удалось установить python3."
+        apt-get update -q && apt-get install -y python3 python3-bcrypt -q 2>/dev/null || apt-get install -y python3 -q || die "Не удалось установить python3."
         PYTHON_CMD="python3"
     else
         die "Работоспособный Python 3 не найден в системе. Необходим для анализа базы SQLite."
+    fi
+elif [ "$DRY_RUN" -eq 0 ]; then
+    if command -v apt-get >/dev/null 2>&1 && ! "$PYTHON_CMD" -c "import bcrypt" >/dev/null 2>&1; then
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get install -y python3-bcrypt -q 2>/dev/null || true
     fi
 fi
 
@@ -502,20 +507,38 @@ def make_remark(method):
         return f"{server_prefix} ({method})"
     return method
 
+hashed_pass = None
+if admin_pass:
+    if admin_pass.startswith("$2a$") or admin_pass.startswith("$2b$") or admin_pass.startswith("$2y$"):
+        hashed_pass = admin_pass
+    else:
+        try:
+            import bcrypt
+            hashed_pass = bcrypt.hashpw(admin_pass.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+        except Exception:
+            pass
+
 cur.execute("SELECT id, username, password FROM users LIMIT 1")
 user_row = cur.fetchone()
 if user_row:
     admin_id, curr_user, curr_pass = user_row
     new_user = admin_user if admin_user else curr_user
-    new_pass = admin_pass if admin_pass else curr_pass
-    if admin_user or admin_pass:
+    new_pass = hashed_pass if hashed_pass else curr_pass
+    if admin_user or hashed_pass:
         if not dry_run:
-            cur.execute("UPDATE users SET username = ?, password = ? WHERE id = ?", (new_user, new_pass, admin_id))
-        print(f"  [ИСПРАВЛЕНО] Администратор (ID {admin_id}): логин='{new_user}', пароль обновлен.")
+            if hashed_pass:
+                cur.execute("UPDATE users SET username = ?, password = ? WHERE id = ?", (new_user, new_pass, admin_id))
+            else:
+                cur.execute("UPDATE users SET username = ? WHERE id = ?", (new_user, admin_id))
+        status_msg = "пароль обновлен (bcrypt)" if hashed_pass else "пароль будет синхронизирован через CLI x-ui"
+        print(f"  [ИСПРАВЛЕНО] Администратор (ID {admin_id}): логин='{new_user}', {status_msg}.")
+    elif admin_pass:
+        print(f"  [ИНФО] Администратор (ID {admin_id}): логин='{new_user}', пароль ожидает хэширования через CLI x-ui.")
 else:
     admin_id = 1
+    new_pass = hashed_pass if hashed_pass else "admin"
     if not dry_run:
-        cur.execute("INSERT INTO users (id, username, password) VALUES (1, ?, ?)", (admin_user or "admin", admin_pass or "admin"))
+        cur.execute("INSERT INTO users (id, username, password) VALUES (1, ?, ?)", (admin_user or "admin", new_pass))
     print(f"  [СОЗДАНО] Администратор: логин='{admin_user or 'admin'}', пароль создан.")
 
 # Инспекция существующих таблиц и колонок для гарантированной синхронизации клиентов
@@ -1465,6 +1488,32 @@ EOF_PYTHON_CONFIG
 # Нормализация прав доступа и перезапуск служб
 if [ "$DRY_RUN" -eq 0 ]; then
     chmod 644 "$DB_PATH" 2>/dev/null || true
+
+    # Синхронизация учетных данных администратора через нативный CLI 3X-UI (bcrypt + сброс login_epoch)
+    if [ -n "${ADMIN_USERNAME:-}" ] || [ -n "${ADMIN_PASSWORD:-}" ]; then
+        XUI_BIN=""
+        for candidate in "/usr/local/x-ui/x-ui" "/usr/bin/x-ui" "/usr/local/bin/x-ui"; do
+            if [ -x "$candidate" ]; then
+                XUI_BIN="$candidate"
+                break
+            fi
+        done
+        if [ -z "$XUI_BIN" ] && command -v x-ui >/dev/null 2>&1; then
+            XUI_BIN="$(command -v x-ui)"
+        fi
+
+        if [ -n "$XUI_BIN" ]; then
+            xui_user_args=()
+            [ -n "${ADMIN_USERNAME:-}" ] && xui_user_args+=("-username" "$ADMIN_USERNAME")
+            [ -n "${ADMIN_PASSWORD:-}" ] && xui_user_args+=("-password" "$ADMIN_PASSWORD")
+            log "Синхронизация учетных данных администратора через '$XUI_BIN setting' (bcrypt)..."
+            if "$XUI_BIN" setting "${xui_user_args[@]}" >/tmp/xui_setting.log 2>&1; then
+                ok "Учетные данные администратора успешно синхронизированы в 3X-UI (bcrypt)!"
+            else
+                warn "Предупреждение при вызове '$XUI_BIN setting': $(cat /tmp/xui_setting.log 2>/dev/null)"
+            fi
+        fi
+    fi
 
     # Возобновление/перезапуск службы 3X-UI
     if [ "${WAS_ACTIVE:-0}" -eq 1 ] || (command -v systemctl >/dev/null 2>&1 && systemctl is-enabled --quiet x-ui 2>/dev/null); then

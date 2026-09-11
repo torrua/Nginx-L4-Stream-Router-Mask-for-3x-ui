@@ -580,16 +580,23 @@ def sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_s
         if "enable" not in client:
             client["enable"] = True
             
-        client_uuid = client.get("id", "")
         client_flow = client.get("flow", "")
-        client_pass = client.get("id", "") if protocol == "hysteria" else client.get("password", "")
+        if protocol in ("vless", "vmess"):
+            client_uuid = client.get("id", "") or client.get("uuid", "")
+            client_pass = client.get("password", "")
+        elif protocol == "hysteria":
+            client_uuid = client.get("uuid", "")
+            client_pass = client.get("auth") or client.get("password") or client.get("id", "")
+        else:
+            client_uuid = client.get("uuid", "")
+            client_pass = client.get("password", "")
         
         if dry_run:
             continue
             
         # A. Таблица client_traffics (статистика, статус и отображение в панели 3X-UI)
         if "client_traffics" in all_tables:
-            cur.execute("SELECT id, inbound_id FROM client_traffics WHERE email = ?", (email,))
+            cur.execute("SELECT id FROM client_traffics WHERE email = ?", (email,))
             ct_row = cur.fetchone()
             if not ct_row:
                 ct_data = {
@@ -605,7 +612,13 @@ def sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_s
                 placeholders = ", ".join(["?"] * len(ct_data))
                 cur.execute(f"INSERT INTO client_traffics ({cols}) VALUES ({placeholders})", list(ct_data.values()))
             else:
-                cur.execute("UPDATE client_traffics SET enable = 1, inbound_id = ? WHERE email = ?", (inbound_id, email))
+                ct_updates = {"enable": 1}
+                for opt_col in ["uuid", "sub_id", "subId"]:
+                    if opt_col in client_traffics_cols:
+                        val = client_uuid if opt_col == "uuid" else sub_id
+                        if val: ct_updates[opt_col] = val
+                set_ct = ", ".join(f"{k} = ?" for k in ct_updates.keys())
+                cur.execute(f"UPDATE client_traffics SET {set_ct} WHERE email = ?", list(ct_updates.values()) + [email])
                 
         # B. Таблица clients (единый реестр клиентов в 3X-UI v2.5+)
         client_db_id = None
@@ -619,14 +632,17 @@ def sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_s
                     "created_at": now_ms,
                     "updated_at": now_ms
                 }
-                if "sub_id" in clients_cols: c_data["sub_id"] = sub_id
-                if "subId" in clients_cols: c_data["subId"] = sub_id
-                if "uuid" in clients_cols: c_data["uuid"] = client_uuid
-                if "password" in clients_cols: c_data["password"] = client_pass
-                if "flow" in clients_cols: c_data["flow"] = client_flow
+                if "sub_id" in clients_cols and sub_id: c_data["sub_id"] = sub_id
+                if "subId" in clients_cols and sub_id: c_data["subId"] = sub_id
+                if "uuid" in clients_cols and client_uuid: c_data["uuid"] = client_uuid
+                if "password" in clients_cols and client_pass: c_data["password"] = client_pass
+                if "auth" in clients_cols and client_pass: c_data["auth"] = client_pass
+                if "flow" in clients_cols and client_flow: c_data["flow"] = client_flow
                 if protocol == "amneziawg":
-                    if "wg_private_key" in clients_cols: c_data["wg_private_key"] = client.get("privateKey", "")
-                    if "wg_public_key" in clients_cols: c_data["wg_public_key"] = client.get("publicKey", "")
+                    if "wg_private_key" in clients_cols and client.get("privateKey"):
+                        c_data["wg_private_key"] = client.get("privateKey")
+                    if "wg_public_key" in clients_cols and client.get("publicKey"):
+                        c_data["wg_public_key"] = client.get("publicKey")
                     if "wg_allowed_ips" in clients_cols and client.get("allowedIPs"):
                         ips = client.get("allowedIPs")
                         c_data["wg_allowed_ips"] = json.dumps(ips) if isinstance(ips, list) else str(ips)
@@ -636,7 +652,23 @@ def sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_s
                 client_db_id = cur.lastrowid
             else:
                 client_db_id = c_row[0]
-                cur.execute("UPDATE clients SET enable = 1, updated_at = ? WHERE id = ?", (now_ms, client_db_id))
+                c_updates = {"enable": 1, "updated_at": now_ms}
+                if "sub_id" in clients_cols and sub_id: c_updates["sub_id"] = sub_id
+                if "subId" in clients_cols and sub_id: c_updates["subId"] = sub_id
+                if "uuid" in clients_cols and client_uuid: c_updates["uuid"] = client_uuid
+                if "password" in clients_cols and client_pass: c_updates["password"] = client_pass
+                if "auth" in clients_cols and client_pass: c_updates["auth"] = client_pass
+                if "flow" in clients_cols and client_flow: c_updates["flow"] = client_flow
+                if protocol == "amneziawg":
+                    if "wg_private_key" in clients_cols and client.get("privateKey"):
+                        c_updates["wg_private_key"] = client.get("privateKey")
+                    if "wg_public_key" in clients_cols and client.get("publicKey"):
+                        c_updates["wg_public_key"] = client.get("publicKey")
+                    if "wg_allowed_ips" in clients_cols and client.get("allowedIPs"):
+                        ips = client.get("allowedIPs")
+                        c_updates["wg_allowed_ips"] = json.dumps(ips) if isinstance(ips, list) else str(ips)
+                set_clause = ", ".join(f"{k} = ?" for k in c_updates.keys())
+                cur.execute(f"UPDATE clients SET {set_clause} WHERE id = ?", list(c_updates.values()) + [client_db_id])
                 
         # C. Таблица client_inbounds (связь клиент <-> инбаунд в 3X-UI v2.5+)
         if "client_inbounds" in all_tables and client_db_id is not None:
@@ -652,6 +684,8 @@ def sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_s
                 cols = ", ".join(valid_ci.keys())
                 placeholders = ", ".join(["?"] * len(valid_ci))
                 cur.execute(f"INSERT INTO client_inbounds ({cols}) VALUES ({placeholders})", list(valid_ci.values()))
+            else:
+                cur.execute("UPDATE client_inbounds SET flow_override = ? WHERE client_id = ? AND inbound_id = ?", (client_flow, client_db_id, inbound_id))
 
 # Curve25519 helper (RFC 7748) для генерации, валидации и починки ключей
 P = 2**255 - 19
@@ -1226,6 +1260,94 @@ print("  [ИСПРАВЛЕНО] Конфигурация xrayTemplateConfig си
 # ----------------- 2. Интеллектуальное согласование инбаундов (Smart Reconcile) -----------------
 print("\n[+] Аудит и согласование инбаундов (Smart Reconcile Engine)...")
 
+# --- Единый клиент для всех протоколов и инбаундов (консолидация реестра) ---
+client_email_env = os.environ.get("CLIENT_EMAIL", "").strip() or os.environ.get("CLIENT_NAME", "").strip()
+safe_prefix_clean = re.sub(r'[^a-zA-Z0-9_-]', '', server_prefix) if server_prefix else ""
+unified_email = client_email_env or (f"Client-{safe_prefix_clean}" if safe_prefix_clean and safe_prefix_clean.lower() != "server" else "Client")
+
+# Регулярное выражение для поиска устаревших раздельных клиентов (Client-Steal, Client-Classic и т.п.)
+obsolete_pattern = re.compile(r'-(steal|classic|xhttp|hy2|hysteria|hysteria2|awg-v3|awg-v2)$', re.IGNORECASE)
+
+# Сканирование и сбор существующих реквизитов (UUID, subId, пароли, ключи) для бесшовного обновления
+harvested_uuid = None
+harvested_sub_id = None
+harvested_hy2_pass = None
+harvested_wg_c_priv = None
+harvested_wg_c_pub = None
+
+if "clients" in all_tables:
+    cur.execute("SELECT uuid, sub_id, password, wg_private_key, wg_public_key FROM clients WHERE email = ?", (unified_email,))
+    row_c = cur.fetchone()
+    if row_c:
+        if row_c[0]: harvested_uuid = row_c[0]
+        if row_c[1]: harvested_sub_id = row_c[1]
+        if row_c[2]: harvested_hy2_pass = row_c[2]
+        if row_c[3]: harvested_wg_c_priv = row_c[3]
+        if row_c[4]: harvested_wg_c_pub = row_c[4]
+
+    if not (harvested_uuid and harvested_sub_id and harvested_hy2_pass and harvested_wg_c_priv):
+        cur.execute("SELECT email, uuid, sub_id, password, wg_private_key, wg_public_key FROM clients")
+        for r_em, r_uuid, r_sid, r_pwd, r_priv, r_pub in cur.fetchall():
+            if not harvested_uuid and r_uuid: harvested_uuid = r_uuid
+            if not harvested_sub_id and r_sid: harvested_sub_id = r_sid
+            if not harvested_hy2_pass and r_pwd: harvested_hy2_pass = r_pwd
+            if not harvested_wg_c_priv and r_priv:
+                harvested_wg_c_priv = r_priv
+                harvested_wg_c_pub = r_pub
+
+cur.execute("SELECT port, protocol, settings FROM inbounds")
+for p, proto, raw_s in cur.fetchall():
+    try:
+        s_obj = json.loads(raw_s) if raw_s else {}
+    except Exception:
+        continue
+    c_list = s_obj.get("clients", [])
+    if c_list and isinstance(c_list, list) and len(c_list) > 0:
+        c0 = c_list[0]
+        if proto == "vless":
+            if not harvested_uuid and c0.get("id"): harvested_uuid = c0.get("id")
+            if not harvested_sub_id and c0.get("subId"): harvested_sub_id = c0.get("subId")
+        elif proto == "hysteria":
+            if not harvested_hy2_pass and (c0.get("id") or c0.get("password") or c0.get("auth")):
+                harvested_hy2_pass = c0.get("id") or c0.get("password") or c0.get("auth")
+        elif proto == "amneziawg":
+            if not harvested_wg_c_priv and c0.get("privateKey"):
+                harvested_wg_c_priv = c0.get("privateKey")
+                harvested_wg_c_pub = c0.get("publicKey")
+
+# Итоговые эталонные согласованные реквизиты единого клиента
+unified_uuid = harvested_uuid or str(uuid.uuid4())
+unified_sub_id = harvested_sub_id or secrets.token_hex(8)
+unified_hy2_pass = harvested_hy2_pass or secrets.token_hex(12)
+def_reality_priv, def_reality_pub = generate_reality_keypair()
+def_reality_sid = unified_sub_id
+def_wg_s_priv, def_wg_s_pub = generate_wg_keypair()
+if harvested_wg_c_priv and harvested_wg_c_pub:
+    def_wg_c_priv, def_wg_c_pub = harvested_wg_c_priv, harvested_wg_c_pub
+else:
+    def_wg_c_priv, def_wg_c_pub = generate_wg_keypair()
+
+# Очистка устаревших раздельных клиентов из базы (консолидация в единого клиента)
+obsolete_emails = []
+if "clients" in all_tables:
+    cur.execute("SELECT id, email FROM clients")
+    for cid, em in cur.fetchall():
+        if em and em != unified_email and (obsolete_pattern.search(em) or em.lower().startswith("client-vless-") or em.lower().startswith("client-hysteria-") or em.lower().startswith("client-amneziawg-")):
+            obsolete_emails.append(em)
+            if not dry_run:
+                if "client_inbounds" in all_tables:
+                    cur.execute("DELETE FROM client_inbounds WHERE client_id = ?", (cid,))
+                cur.execute("DELETE FROM clients WHERE id = ?", (cid,))
+
+if "client_traffics" in all_tables and obsolete_emails:
+    for em in obsolete_emails:
+        if not dry_run:
+            cur.execute("DELETE FROM client_traffics WHERE email = ?", (em,))
+
+if obsolete_emails:
+    print(f"  [КОНСОЛИДАЦИЯ] Удалены устаревшие раздельные клиенты ({len(obsolete_emails)} шт.): {', '.join(obsolete_emails)}")
+print(f"  [ЕДИНЫЙ КЛИЕНТ] Профиль: '{unified_email}' (привязка ко всем 6 инбаундам, subId: {unified_sub_id[:6]}...)")
+
 def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, default_stream, listen="127.0.0.1"):
     cur.execute("SELECT id, settings, stream_settings, protocol, tag, remark, listen FROM inbounds WHERE port = ? OR tag = ?", (port, tag))
     row = cur.fetchone()
@@ -1265,13 +1387,39 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
     repairs = []
     preserved = []
 
-    # А. Сохранение пользователей (UUID, пароли, лимиты)
+    # А. Сохранение и консолидация клиентов (единый реестр)
     existing_clients = cur_settings.get("clients", [])
-    if existing_clients and len(existing_clients) > 0:
-        target_settings["clients"] = existing_clients
-        preserved.append(f"клиенты ({len(existing_clients)} польз.)")
-    else:
-        repairs.append("добавлен клиент по умолчанию")
+    consolidated_clients = []
+    has_unified = False
+    default_client = default_settings.get("clients", [])[0] if default_settings.get("clients") else None
+    
+    for ec in existing_clients:
+        ec_email = ec.get("email") or ec.get("Email") or ""
+        is_obsolete = bool(obsolete_pattern.search(ec_email) or 
+                           ec_email.lower().startswith("client-vless-") or 
+                           ec_email.lower().startswith("client-hysteria-") or 
+                           ec_email.lower().startswith("client-amneziawg-"))
+        if ec_email == unified_email or is_obsolete:
+            if not has_unified and default_client:
+                merged_c = json.loads(json.dumps(default_client))
+                for limit_field in ["totalGB", "expiryTime", "limitIp", "tgId", "reset", "resetDay", "resetMax"]:
+                    if limit_field in ec:
+                        merged_c[limit_field] = ec[limit_field]
+                consolidated_clients.append(merged_c)
+                has_unified = True
+                if is_obsolete:
+                    repairs.append(f"клиент '{ec_email}' консолидирован в '{unified_email}'")
+                else:
+                    preserved.append(f"единый клиент '{unified_email}'")
+        else:
+            consolidated_clients.append(ec)
+            preserved.append(f"кастомный клиент '{ec_email}'")
+            
+    if not has_unified and default_client:
+        consolidated_clients.insert(0, json.loads(json.dumps(default_client)))
+        repairs.append(f"добавлен единый клиент '{unified_email}'")
+        
+    target_settings["clients"] = consolidated_clients
 
     # Б. Проверка и ремонт VLESS REALITY
     if protocol == "vless" and "realitySettings" in target_stream:
@@ -1412,19 +1560,11 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
         status_str += f"\n    -> Сохранено: {', '.join(preserved)}"
     print(status_str)
 
-# --- Генерация дефолтных эталонных профилей (для отсутствующих инбаундов) ---
-def_uuid = str(uuid.uuid4())
-safe_prefix_clean = re.sub(r'[^a-zA-Z0-9_-]', '', server_prefix) if server_prefix else ""
-client_tag = f"Client-{safe_prefix_clean}" if safe_prefix_clean and safe_prefix_clean.lower() != "server" else "Client" 
-def_reality_priv, def_reality_pub = generate_reality_keypair()
-def_reality_sid = secrets.token_hex(8)
-def_hy2_pass = secrets.token_hex(12)
-def_wg_s_priv, def_wg_s_pub = generate_wg_keypair()
-def_wg_c_priv, def_wg_c_pub = generate_wg_keypair()
+# --- Применение эталонных конфигураций инбаундов с единым клиентом ---
 
 # 1. Steal-Oneself REALITY (45443)
 if enable_steal:
-    s_set = {"clients": [{"id": def_uuid, "flow": "xtls-rprx-vision", "email": f"{client_tag}-Steal", "subId": def_reality_sid, "enable": True}], "decryption": "none"}
+    s_set = {"clients": [{"id": unified_uuid, "flow": "xtls-rprx-vision", "email": unified_email, "subId": unified_sub_id, "enable": True}], "decryption": "none"}
     s_str = {
         "network": "tcp",
         "tcpSettings": {"acceptProxyProtocol": True},
@@ -1442,7 +1582,7 @@ if enable_steal:
 
 # 2. Classic REALITY (46443)
 if enable_classic:
-    c_set = {"clients": [{"id": def_uuid, "flow": "xtls-rprx-vision", "email": f"{client_tag}-Classic", "subId": def_reality_sid, "enable": True}], "decryption": "none"}
+    c_set = {"clients": [{"id": unified_uuid, "flow": "xtls-rprx-vision", "email": unified_email, "subId": unified_sub_id, "enable": True}], "decryption": "none"}
     c_str = {
         "network": "tcp",
         "tcpSettings": {"acceptProxyProtocol": True},
@@ -1459,7 +1599,7 @@ if enable_classic:
     smart_reconcile_inbound(classic_port, "vless", "in-classic-reality", classic_remark, c_set, c_str, listen="127.0.0.1")
 
 # 3. VLESS xHTTP (50443)
-x_set = {"clients": [{"id": def_uuid, "email": f"{client_tag}-xHTTP", "subId": secrets.token_hex(8), "enable": True}], "decryption": "none"}
+x_set = {"clients": [{"id": unified_uuid, "email": unified_email, "subId": unified_sub_id, "enable": True}], "decryption": "none"}
 x_str = {
     "network": "xhttp",
     "xhttpSettings": {
@@ -1483,7 +1623,7 @@ smart_reconcile_inbound(xhttp_port, "vless", "in-xhttp-stream", xhttp_remark, x_
 
 # 4. Hysteria 2 (443)
 if enable_hy2:
-    h_set = {"clients": [{"id": def_hy2_pass, "email": f"{client_tag}-Hy2", "subId": secrets.token_hex(8), "enable": True}], "version": 2}
+    h_set = {"clients": [{"id": unified_hy2_pass, "auth": unified_hy2_pass, "password": unified_hy2_pass, "email": unified_email, "subId": unified_sub_id, "enable": True}], "version": 2}
     h_str = {
         "network": "hysteria",
         "hysteriaSettings": {"version": 2, "udpIdleTimeout": 60, "masquerade": {"type": "proxy", "url": "http://127.0.0.1:80"}},
@@ -1502,7 +1642,7 @@ if enable_awg_v3:
     a3_set = {
         "clients": [{
             "privateKey": def_wg_c_priv, "publicKey": def_wg_c_pub,
-            "allowedIPs": ["10.8.1.2/32"], "email": f"{client_tag}-AWG-v3", "enable": True
+            "allowedIPs": ["10.8.1.2/32"], "email": unified_email, "subId": unified_sub_id, "enable": True
         }],
         "server": {
             "h1": "", "h2": "", "h3": "", "h4": "",
@@ -1530,7 +1670,7 @@ if enable_awg_v2:
     a2_set = {
         "clients": [{
             "privateKey": def_wg_c_priv, "publicKey": def_wg_c_pub,
-            "allowedIPs": ["10.8.2.2/32"], "email": f"{client_tag}-AWG-v2", "enable": True
+            "allowedIPs": ["10.8.2.2/32"], "email": unified_email, "subId": unified_sub_id, "enable": True
         }],
         "server": {
             "h1": "149419586", "h2": "878791997", "h3": "1251051976", "h4": "1657628296",
@@ -1551,6 +1691,15 @@ if not dry_run:
     except Exception:
         pass
     conn.commit()
+
+    # Сохранение параметров единого клиента во временный файл для отчета bash
+    try:
+        with open("/tmp/3xui_unified_client.env", "w") as f:
+            f.write(f"UNIFIED_CLIENT_TAG='{unified_email}'\n")
+            f.write(f"UNIFIED_SUB_ID='{unified_sub_id}'\n")
+            f.write(f"UNIFIED_UUID='{unified_uuid}'\n")
+    except Exception:
+        pass
 
 conn.close()
 EOF_PYTHON_CONFIG
@@ -1613,6 +1762,14 @@ if [ "$DRY_RUN" -eq 0 ]; then
     fi
 fi
 
+# Чтение параметров единого клиента, экспортированных из Python
+UNIFIED_CLIENT_TAG=""
+UNIFIED_SUB_ID=""
+if [ -f "/tmp/3xui_unified_client.env" ]; then
+    source "/tmp/3xui_unified_client.env"
+    rm -f "/tmp/3xui_unified_client.env"
+fi
+
 echo
 echo -e "${GREEN}=====================================================================${NC}"
 if [ "$DRY_RUN" -eq 1 ]; then
@@ -1621,13 +1778,16 @@ if [ "$DRY_RUN" -eq 1 ]; then
     echo -e "  ${BOLD}./configure_3xui.sh --config \"${CONFIG_FILE:-./setup_mask.env}\" -y${NC}"
 else
     echo -e "${GREEN}      БАЗА ДАННЫХ 3X-UI УСПЕШНО СКОНФИГУРИРОВАНА И ИСЦЕЛЕНА!         ${NC}"
-    echo -e "  - ${BOLD}Подключения клиентов:${NC}   ${GREEN}Сохранены и синхронизированы в реестре клиентов${NC}"
+    echo -e "  - ${BOLD}Единый клиент:${NC}         ${GREEN}${UNIFIED_CLIENT_TAG:-Client}${NC} (объединяет 6 протоколов в 1 профиль)"
     echo -e "  - ${BOLD}Панель управления:${NC}      ${CYAN}https://${PRIMARY_DOMAIN}/${PANEL_PATH}/${NC}"
     echo -e "  - ${BOLD}Логин панели:${NC}           ${WHITE}${ADMIN_USERNAME:-admin}${NC}"
     if [ -n "${ADMIN_PASSWORD:-}" ]; then
         echo -e "  - ${BOLD}Пароль панели:${NC}          ${WHITE}${ADMIN_PASSWORD}${NC}"
     fi
-    echo -e "  - ${BOLD}Ссылка на подписку:${NC}     ${CYAN}https://${PRIMARY_DOMAIN}/${SUB_PATH}/${NC}"
+    echo -e "  - ${BOLD}Канал подписок:${NC}        ${CYAN}https://${PRIMARY_DOMAIN}/${SUB_PATH}/${NC}"
+    if [ -n "${UNIFIED_SUB_ID:-}" ]; then
+        echo -e "  - ${BOLD}Прямая подписка:${NC}       ${GREEN}https://${PRIMARY_DOMAIN}/${SUB_PATH}/${UNIFIED_SUB_ID}${NC}"
+    fi
 fi
 
 # Сохранение учетных данных в защищенный файл
@@ -1642,7 +1802,10 @@ if [ "$DRY_RUN" -eq 0 ] && [ -n "${ADMIN_PASSWORD:-}" ]; then
 Логин администратора:   ${ADMIN_USERNAME:-admin}
 Пароль администратора:  ${ADMIN_PASSWORD}
 
-Ссылка на подписку:    https://${PRIMARY_DOMAIN}/${SUB_PATH}/
+Единый клиент:          ${UNIFIED_CLIENT_TAG:-Client}
+Канал подписок:        https://${PRIMARY_DOMAIN}/${SUB_PATH}/
+Прямая ссылка подписки: https://${PRIMARY_DOMAIN}/${SUB_PATH}/${UNIFIED_SUB_ID}
+(Объединяет все 6 конфигураций: Steal REALITY, Classic REALITY, xHTTP, Hysteria 2, AWG v3, AWG v2)
 =====================================================================
 EOF_CRED
     chmod 600 "$CRED_FILE" 2>/dev/null || true

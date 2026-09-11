@@ -2,7 +2,7 @@
 
 ---
 
-# 🛡️ Техническая архитектура: Hardened VPS & Nginx L4 Stream Router для 3X-UI (v6.5.3)
+# 🛡️ Техническая архитектура: Hardened VPS & Nginx L4 Stream Router для 3X-UI (v6.9.0)
 
 > **Полное техническое руководство для системных администраторов и инженеров:**  
 > Архитектура L4/L7 маршрутизации, защита от зацикливания пакетов (Anti-Loop 9443), отказоустойчивость через сокеты в оперативной памяти, тюнинг буферов HTTP/2 xHTTP, DNS-подсистема AdGuard Home, параметры мобильной обфускации AmneziaWG, ручная настройка инбаундов 3X-UI, правила файрвола UFW, диагностика, бэкапы и эталонные JSON-конфигурации.
@@ -11,18 +11,23 @@
 
 ## 📋 Содержание
 
-1. [Этап 1: Первичная подготовка и укрепление ОС (`secure-vps.sh`)](#1-этап-1-первичная-подготовка-и-укрепление-ос-secure-vpssh)
+1. [Этап 1: Первичная подготовка и укрепление ОС (`secure-vps.sh` / `install.sh`)](#1-этап-1-первичная-подготовка-и-укрепление-ос-secure-vpssh)
 2. [Этап 2: Архитектура маршрутизации Nginx Stream L4/L7 (`setup_mask.sh`)](#2-этап-2-архитектура-маршрутизации-nginx-stream-l4l7-setup_masksh)
 3. [Схема движения сетевого трафика (Mermaid)](#3-схема-движения-сетевого-трафика)
 4. [Совместимость клиентских приложений](#4-совместимость-клиентских-приложений)
 5. [Настройка брандмауэра UFW (Защита от сканирования)](#5-настройка-брандмауэра-ufw-защита-от-сканирования)
 6. [Пошаговая ручная настройка 3X-UI в веб-интерфейсе](#6-пошаговая-ручная-настройка-3x-ui-в-веб-интерфейсе)
-7. [Автоматизация клиентских ссылок в разделе «Хосты» (Hosts)](#7-автоматизация-клиентских-ссылок-в-разделе-хосты-hosts)
+   * [6.1. Синхронизация путей панели и подписок](#61-синхронизация-путей-панели-и-подписок)
+   * [6.2. Конфигурирование инбаундов](#62-конфигурирование-инбаундов)
+   * [6.3. Синхронизация реестра клиентов (Multi-Table Client Registry Sync)](#63-синхронизация-реестра-клиентов-multi-table-client-registry-sync)
+   * [6.4. Движок именования подключений и префикс сервера (`SERVER_PREFIX`)](#64-движок-именования-подключений-и-префикс-сервера-server_prefix)
+7. [Клиентские ссылки подписки (External Proxy и раздел «Хосты»)](#7-клиентские-ссылки-подписки-external-proxy-и-раздел-хосты)
 8. [Эксплуатация AdGuard Home DoH и подключение роутера](#8-эксплуатация-adguard-home-doh-и-подключение-роутера)
 9. [Экспресс-диагностика и проверка узлов (Health Check)](#9-экспресс-диагностика-и-проверка-узлов-health-check)
 10. [Автоматическое продление SSL-сертификатов](#10-автоматическое-продление-ssl-сертификатов)
 11. [Резервное копирование и восстановление (Backup & Restore)](#11-резервное-копирование-и-восстановление-backup--restore)
 12. [Эталонные JSON-шаблоны инбаундов Xray](#12-эталонные-json-шаблоны-инбаундов-xray)
+13. [Исходящая маршрутизация (Egress): Cloudflare WARP и Smart Routing](#13-исходящая-маршрутизация-egress-cloudflare-warp-и-smart-routing)
 
 ---
 
@@ -196,7 +201,7 @@ sudo ufw deny 9443/tcp comment 'Block Direct Anti-Loop Port'
 
 В разделе **«Подключения» (Inbounds)** создайте профили:
 
-#### A. Инбаунд `VLESS_STEAL` (Steal-Oneself REALITY с защитой Anti-Loop)
+#### A. Инбаунд `<Префикс> (VLESS Steal)` (Steal-Oneself REALITY с защитой Anti-Loop)
 * **Основное:** Порт: `45443` | Listen IP: `127.0.0.1` | Протокол: `vless`
 * **Поток:** Транспорт: `tcp` | Accept Proxy Protocol: `1` (Включить) ⚠️
 * **Безопасность:** `reality` | uTLS: `chrome`
@@ -205,7 +210,7 @@ sudo ufw deny 9443/tcp comment 'Block Direct Anti-Loop Port'
 * **Proxy Protocol для Dest (xver):** `1` (Включить) ⚠️
 * **Server Names (SNI):** `cdn.yourdomain.online`
 
-#### B. Инбаунд `VLESS_CLASSIC` (Classic External REALITY)
+#### B. Инбаунд `<Префикс> (VLESS Classic)` (Classic External REALITY)
 * **Основное:** Порт: `46443` | Listen IP: `127.0.0.1` | Протокол: `vless`
 * **Поток:** Транспорт: `tcp` | Accept Proxy Protocol: `1` (Включить) ⚠️
 * **Безопасность:** `reality` | uTLS: `chrome`
@@ -214,7 +219,7 @@ sudo ufw deny 9443/tcp comment 'Block Direct Anti-Loop Port'
 * **Proxy Protocol для Dest (xver):** `0` (Выключить) ⚠️
 * **Server Names (SNI):** `gateway.icloud.com`
 
-#### C. Инбаунд `VLESS_XHTTP` (Stream-One/Up + VLESSENC + XMUX)
+#### C. Инбаунд `<Префикс> (VLESS xHTTP)` (Stream-One/Up + VLESSENC + XMUX)
 * **Основное:** Порт: `50443` | Listen IP: `127.0.0.1` | Протокол: `vless`
 * **Протокол (Decryption):** Выберите **ML-KEM-768 (native)** и нажмите **Сгенерировать** *(активирует `vlessenc`)*.
 * **Поток (Stream Settings):**
@@ -233,7 +238,7 @@ sudo ufw deny 9443/tcp comment 'Block Direct Anti-Loop Port'
 * **Безопасность:** `none` (TLS терминирует Nginx) | Accept Proxy Protocol: `0`
 * **Flow:** **`none`** ⚠️ *(Важно: на xHTTP с клиентами Sing-box/Happ значение Vision не используется, защита обеспечивается vlessenc)*.
 
-#### D. Инбаунд `Hysteria 2 (UDP 443)`
+#### D. Инбаунд `<Префикс> (Hysteria 2)` (UDP 443)
 * **Основное:** Порт: `443` | Listen IP: `0.0.0.0` | Протокол: `hysteria` (v2)
 * **Поток:** Masquerade: тип `proxy` -> URL: `http://127.0.0.1:80`
 * **Безопасность:** `TLS` | SNI: `yourdomain.online` | ALPN: `h3`
@@ -241,7 +246,7 @@ sudo ufw deny 9443/tcp comment 'Block Direct Anti-Loop Port'
   * Публичный ключ: `/etc/letsencrypt/live/yourdomain.online/fullchain.pem`
   * Приватный ключ: `/etc/letsencrypt/live/yourdomain.online/privkey.pem`
 
-#### E. Инбаунд `AmneziaWG v3.1` (UDP 8443)
+#### E. Инбаунд `<Префикс> (AmneziaWG v3)` (UDP 8443)
 * **Основное:** Порт: `8443` | Listen IP: `0.0.0.0` | Протокол: `amneziawg`
 * **Протокол:**
   * Подсеть: `10.8.0.0` | Маска (CIDR): `22` (до 1022 клиентов) | MTU: `1280`
@@ -253,7 +258,7 @@ sudo ufw deny 9443/tcp comment 'Block Direct Anti-Loop Port'
   * `KeepaliveTimeout`: `10` | `RekeyAfterTime`: `120` | `RekeyTimeout`: `3` | `RejectAfterTime`: `180` | `MaxHandshakeAttempts`: `20`
   * `DisableCookies`: `Включено (ON)`
 
-#### F. Инбаунд `AmneziaWG v2.0 / Legacy` (UDP 8444)
+#### F. Инбаунд `<Префикс> (AmneziaWG v2)` (UDP 8444)
 * **Основное:** Порт: `8444` | Listen IP: `0.0.0.0` | Протокол: `amneziawg`
 * **Параметры:**
   * H1–H4: `"149419586", "878791997", "1251051976", "1657628296"`
@@ -262,19 +267,58 @@ sudo ufw deny 9443/tcp comment 'Block Direct Anti-Loop Port'
 
 ---
 
-## 7. Автоматизация клиентских ссылок в разделе «Хосты» (Hosts)
+### 6.3. Синхронизация реестра клиентов (Multi-Table Client Registry Sync)
 
-Чтобы панель 3X-UI автоматически формировала правильные ссылки с внешним портом 443 и валидным TLS, в разделе **«Хосты»** (`🌐`) панели создаются два правила:
+В панели 3X-UI архитектура хранения клиентов разделена между JSON-манифестом инбаунда (`inbounds.settings`) и реляционными таблицами SQLite (`/etc/x-ui/x-ui.db`). Для корректного отображения пользователей на веб-вкладке **«Клиенты»** требуется одновременная синхронизация 3 таблиц:
 
-### Правило 1: Для REALITY и Hysteria 2 (`MAIN_SAME_443`)
+1. **`client_traffics`:** Учет объема переданного трафика (`up`, `down`, `total`), срока действия подписки (`expiry_time`) и флага активности (`enable: 1`). Обязательно требует уникальный email для каждого инбаунда (формируется по схеме `default_<inbound_id>@client.local`).
+2. **`clients` (если таблица присутствует в структуре базы):** Реестр пользователей панели с полями `id`, `inbound_id`, `email`, `uuid`, `created_at`.
+3. **`client_inbounds` (если таблица присутствует в структуре базы):** Таблица M:N связи между клиентом и инбаундами (`client_id`, `inbound_id`).
+
+> [!TIP]
+> Скрипт `configure_3xui.sh` выполняет эту синхронизацию полностью автоматически с сохранением всех существующих UUID, приватных ключей WireGuard/AWG и паролей Hysteria 2. Если вы настраиваете базу вручную или переносите пользователей, создание записей в `client_traffics` обязательно, иначе клиент будет присутствовать внутри JSON ядра Xray, но не отобразится в веб-интерфейсе 3X-UI.
+
+---
+
+### 6.4. Движок именования подключений и префикс сервера (`SERVER_PREFIX`)
+
+Для удобства навигации пользователей в клиентских приложениях (v2rayN, Happ, FoXray, Streisand) внедрен стандарт читаемого именования профилей:
+
+```text
+<SERVER_PREFIX> (<Method>)
+```
+
+* Если задан префикс `NL` (Нидерланды): `NL (VLESS Steal)`, `NL (VLESS Classic)`, `NL (VLESS xHTTP)`, `NL (Hysteria 2)`, `NL (AmneziaWG v3)`.
+* Если префикс оставлен по умолчанию: `Server (VLESS Steal)`, `Server (VLESS Classic)`, `Server (VLESS xHTTP)`, `Server (Hysteria 2)`, `Server (AmneziaWG v3)`.
+* Если префикс отключен пользователем (`-`, `none`, `off`): имя метода без скобок — `VLESS Steal`, `VLESS Classic`, `VLESS xHTTP`, `Hysteria 2`, `AmneziaWG v3`.
+
+Имя профиля синхронизируется одновременно в поле `inbounds.remark` и в массиве `externalProxy[0].remark`, поэтому ссылки подписок и ручной экспорт профилей всегда имеют понятный пользователю вид.
+
+---
+
+## 7. Клиентские ссылки подписки (External Proxy и раздел «Хосты»)
+
+В нашей архитектуре Nginx принимает соединения на внешнем порту **443**, а инбаунды 3X-UI слушают локальные порты (`45443`, `46443`, `50443`). Чтобы клиентские ссылки `vless://` и сервер подписок формировали валидные адреса с портом `443` и правильным TLS, поддерживается два взаимодополняющих механизма:
+
+### 7.1. Автоматический режим: встроенный `externalProxy` (Рекомендуется)
+Скрипт `configure_3xui.sh` автоматически внедряет блок `externalProxy` непосредственно в конфигурацию каждого инбаунда (`streamSettings`). 
+Благодаря этому панель 3X-UI генерирует ссылки на порт 443 **полностью автономно**, и никаких ручных действий в веб-интерфейсе не требуется:
+* **VLESS Steal / Classic:** подставляется порт `443` и режим безопасности `same` (REALITY сохраняется).
+* **VLESS xHTTP:** локальный незашифрованный транспорт преобразуется в `https://` со ссылкой на порт `443`, параметром `security: tls`, ALPN `h2` и фингерпринтом `chrome`.
+* **Hysteria 2:** фиксируется внешний порт UDP `443` с протоколом TLS.
+
+### 7.2. Альтернативный ручной режим: Раздел «Хосты» (Hosts / 🌐)
+Если вы конфигурируете подключения полностью вручную через веб-панель (без скрипта `configure_3xui.sh`), эквивалентный результат достигается созданием двух правил в разделе **«Хосты»**:
+
+#### Правило 1: Для REALITY и Hysteria 2 (`MAIN_SAME_443`)
 * **Примечание:** `MAIN_SAME_443`
-* **Входящие:** Отметьте: `VLESS_STEAL`, `VLESS_CLASSIC`, `Hysteria 2`.
+* **Входящие:** Отметьте ваши инбаунды Steal, Classic и Hysteria 2 (например: `Server (VLESS Steal)`, `Server (VLESS Classic)`, `Server (Hysteria 2)`).
 * **Адрес (Target Address):** `yourdomain.online` | **Порт:** `443`
 * **Безопасность:** `same` *(Сохраняет тип: REALITY остаётся reality, Hysteria — tls)*
 
-### Правило 2: Для VLESS xHTTP (`XHTTP_TLS_443`)
+#### Правило 2: Для VLESS xHTTP (`XHTTP_TLS_443`)
 * **Примечание:** `XHTTP_TLS_443`
-* **Входящие:** Отметьте только: `VLESS_XHTTP`.
+* **Входящие:** Отметьте только инбаунд xHTTP (например: `Server (VLESS xHTTP)`).
 * **Адрес (Target Address):** `yourdomain.online` | **Порт:** `443`
 * **Безопасность:** `tls` ⚠️ *(Принудительно подставляет TLS для внешнего порта 443 Nginx)*
 * **SNI:** `yourdomain.online` | **ALPN:** `h2` | **Fingerprint:** `chrome`
@@ -427,6 +471,14 @@ nginx -t && systemctl start nginx x-ui AdGuardHome
         "0123456789abcdef"
       ]
     },
+    "externalProxy": [
+      {
+        "dest": "yourdomain.online",
+        "port": 443,
+        "forceTls": "same",
+        "remark": "Server (VLESS Steal)"
+      }
+    ],
     "sockopt": {
       "acceptProxyProtocol": true
     }
@@ -466,6 +518,14 @@ nginx -t && systemctl start nginx x-ui AdGuardHome
         "0123456789abcdef"
       ]
     },
+    "externalProxy": [
+      {
+        "dest": "yourdomain.online",
+        "port": 443,
+        "forceTls": "same",
+        "remark": "Server (VLESS Classic)"
+      }
+    ],
     "sockopt": {
       "acceptProxyProtocol": true
     }
@@ -507,7 +567,17 @@ nginx -t && systemctl start nginx x-ui AdGuardHome
         "hMaxRequestTimes": "1000-2000",
         "hMaxReusableSecs": "1200-2400"
       }
-    }
+    },
+    "externalProxy": [
+      {
+        "dest": "yourdomain.online",
+        "port": 443,
+        "forceTls": "tls",
+        "sni": "yourdomain.online",
+        "fingerprint": "chrome",
+        "remark": "Server (VLESS xHTTP)"
+      }
+    ]
   },
   "sniffing": {
     "enabled": true,
@@ -545,7 +615,15 @@ nginx -t && systemctl start nginx x-ui AdGuardHome
           "keyFile": "/etc/letsencrypt/live/yourdomain.online/privkey.pem"
         }
       ]
-    }
+    },
+    "externalProxy": [
+      {
+        "dest": "yourdomain.online",
+        "port": 443,
+        "forceTls": "tls",
+        "remark": "Server (Hysteria 2)"
+      }
+    ]
   }
 }
 ```
@@ -592,4 +670,43 @@ nginx -t && systemctl start nginx x-ui AdGuardHome
   }
 }
 ```
-</details>\n
+</details>
+
+---
+
+## 13. Исходящая маршрутизация (Egress): Cloudflare WARP и Smart Routing
+
+Стек развертывания поддерживает опциональную исходящую маршрутизацию через **Cloudflare WARP (WireGuard, MTU: 1280)** для защиты от капч и доступа к зарубежным нейросетям без ущерба для скорости и доступности отечественных сервисов.
+
+### 13.1. Разделение зон ответственности (Ingress vs Egress)
+* **Входящий контур (Ingress):** Nginx Stream Router принимает замаскированные клиентские соединения на внешнем порту `443/TCP` (VLESS REALITY / xHTTP) и перенаправляет их на локальные инбаунды Xray (`127.0.0.1:45443`, `:46443`, `:50443`). UDP-протоколы (Hysteria 2 `:443/udp`, AmneziaWG `:8443/udp`) принимаются ядром Xray напрямую.
+* **Исходящий контур (Egress):** Ядро Xray расшифровывает запрос клиента и на основе правил маршрутизации (`routing.rules`) принимает решение о точке выхода:
+  * **Тяжелое видео YouTube (`geosite:youtube`, `googlevideo.com`):** Направляется напрямую (**`direct`**) через гигабитный сетевой интерфейс VPS без промежуточных звеньев и буферизации 4K-видео.
+  * **Ресурсы РФ (`geosite:ru`, `geoip:ru`):** Направляются напрямую (**`direct`**), что исключает блокировки российскими банками (Сбер, Т-Банк) и государственными порталами (Госуслуги), блокирующими зарубежные пулы Cloudflare.
+  * **Капчи, поиск и AI (`warp`):** Google Поиск, Google Gemini, Google AI Studio, ChatGPT (OpenAI), Claude (Anthropic) и сайты под защитой Cloudflare Turnstile направляются в исходящий узел **`warp`** (WireGuard).
+
+### 13.2. Параметр MTU 1280 (Защита от фрагментации)
+При двойной инкапсуляции (клиентский туннель VLESS/REALITY -> серверный туннель WireGuard WARP) стандартный MTU 1420/1500 приводит к превышению размера кадра и фрагментации пакетов, вызывая подвисания TLS Handshake. Значение **`mtu: 1280`** в конфигурации аутбаунда гарантирует отсутствие потерь и мгновенное открытие соединений.
+
+### 13.3. Эталонный JSON аутбаунда Cloudflare WARP
+```json
+{
+  "tag": "warp",
+  "protocol": "wireguard",
+  "settings": {
+    "secretKey": "YOUR_WARP_PRIVATE_KEY",
+    "address": [
+      "172.16.0.2/32",
+      "2606:4700:110:8780:4178:f4a4:a997:2167/128"
+    ],
+    "peers": [
+      {
+        "publicKey": "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
+        "endpoint": "162.159.192.1:2408"
+      }
+    ],
+    "reserved": [0, 0, 0],
+    "mtu": 1280
+  }
+}
+```

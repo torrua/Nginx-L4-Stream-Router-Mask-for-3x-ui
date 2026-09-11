@@ -33,7 +33,7 @@ SCRIPT_VERSION="v6.9.0"
 SCRIPT_START_TIME=$(date +%s)
 SCRIPT_START_DATETIME=$(date '+%Y-%m-%d %H:%M:%S')
 
-TOTAL_STEPS=6
+TOTAL_STEPS=7
 LAST_COMPLETED_STEP=${LAST_COMPLETED_STEP:-0}
 RESUME_STEP=${RESUME_STEP:-1}
 RESUME_MODE=${RESUME_MODE:-0}
@@ -47,6 +47,7 @@ declare -A STEP_NAMES=(
     [4]="Выпуск SSL-сертификатов Let's Encrypt"
     [5]="Развертывание сайта-маскировки (Decoy Front)"
     [6]="Сборка конфигурации Nginx и активация маршрутизатора"
+    [7]="Автоматическая настройка базы данных 3X-UI"
 )
 
 format_duration() {
@@ -477,12 +478,19 @@ install_prerequisites() {
         [socat]="socat"
         [cron]="cron"
         [ufw]="ufw"
+        [python3]="python3"
     )
     for cmd in "${!pkg_map[@]}"; do
         if ! command -v "$cmd" >/dev/null 2>&1; then
             missing_pkgs+=("${pkg_map[$cmd]}")
         fi
     done
+
+    if command -v apt-get >/dev/null 2>&1; then
+        if command -v python3 >/dev/null 2>&1 && ! python3 -c "import bcrypt" >/dev/null 2>&1; then
+            missing_pkgs+=("python3-bcrypt")
+        fi
+    fi
 
     if [ ${#missing_pkgs[@]} -gt 0 ]; then
         if [ "${DEBUG_MODE:-0}" -eq 1 ]; then
@@ -1756,7 +1764,7 @@ save_session_state "$SAVED_CONFIG_FILE"
 # =============================================================
 #  ФАЗА УСТАНОВКИ И РАЗВЕРТЫВАНИЯ СИСТЕМЫ
 # =============================================================
-TOTAL_STEPS=6
+TOTAL_STEPS=7
 
 # Ожидание фоновой пред-установки (если была запущена параллельно с опросом)
 sync_background_preinstall
@@ -3159,8 +3167,16 @@ elif [ "$DECOY_MODE" = "2" ]; then DECOY_NAME="CosmosCloud NextGen";
 elif [ "$DECOY_MODE" = "3" ]; then DECOY_NAME="Default Nginx Stub";
 fi
 
-# Автоматическая настройка 3X-UI через внешний скрипт configure_3xui.sh
-if [[ "${AUTO_SETUP_3XUI,,}" == "y" || "${AUTO_SETUP_3XUI:-}" == "1" ]]; then
+# --- Шаг 7: Автоматическая настройка 3X-UI через внешний скрипт configure_3xui.sh ---
+if should_skip_step 7; then
+    :
+elif [[ "${AUTO_SETUP_3XUI,,}" != "y" && "${AUTO_SETUP_3XUI:-}" != "1" ]]; then
+    step_begin 7
+    ok "Шаг 7: Автоматическая настройка 3X-UI отключена в конфигурации — пропущено."
+    step_finish 7
+else
+    step_begin 7
+
     # 1. Проверяем наличие ядра 3X-UI на сервере, если нет - устанавливаем автоматически
     if ! command -v x-ui >/dev/null 2>&1 && [ ! -f /etc/x-ui/x-ui.db ] && [ ! -f /usr/local/x-ui/bin/x-ui.db ]; then
         install_3xui_core_task() {
@@ -3184,27 +3200,26 @@ if [[ "${AUTO_SETUP_3XUI,,}" == "y" || "${AUTO_SETUP_3XUI:-}" == "1" ]]; then
     [ -f "$CONFIG_EXEC" ] || CONFIG_EXEC="$script_dir/configure_3xui.sh"
 
     if [ -f "$CONFIG_EXEC" ]; then
-        echo
-        log "Запуск автоматической настройки базы 3X-UI ($CONFIG_EXEC)..."
-        export ENABLE_WARP
-        export WARP_LICENSE_KEY
-        export TIME_LOCATION
-        export TRAFFIC_RESET_DAY
-        export SUB_SHOW_INFO
-        export SUB_UPDATES
-        export SUB_ENCRYPT
-        export BLOCK_SMTP
-        export BLOCK_LAN
-        export WEB_LISTEN
-        export SUB_LISTEN
-        if bash "$CONFIG_EXEC" --config "$SAVED_CONFIG_FILE" -y; then
-            ok "База данных 3X-UI успешно настроена автоматически!"
-        else
-            warn "Автоматическая настройка 3X-UI завершилась с ошибкой. Выполните настройку вручную."
-        fi
+        run_configure_3xui_task() {
+            export ENABLE_WARP
+            export WARP_LICENSE_KEY
+            export TIME_LOCATION
+            export TRAFFIC_RESET_DAY
+            export SUB_SHOW_INFO
+            export SUB_UPDATES
+            export SUB_ENCRYPT
+            export BLOCK_SMTP
+            export BLOCK_LAN
+            export WEB_LISTEN
+            export SUB_LISTEN
+            bash "$CONFIG_EXEC" --config "$SAVED_CONFIG_FILE" -y
+        }
+        run_with_spinner "Автоматическая настройка базы 3X-UI и создание инбаундов" run_configure_3xui_task
     else
         warn "Скрипт configure_3xui.sh не найден. Выполните настройку вручную."
     fi
+
+    step_finish 7
 fi
 
 echo
@@ -3342,7 +3357,7 @@ echo -e "  Время завершения:     ${WHITE}${SCRIPT_END_DATETIME}${
 echo -e "  Общее время работы:   ${GREEN}${BOLD}${FORMATTED_TOTAL_TIME}${NC}"
 echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}"
 echo -e "  ${WHITE}Время по шагам:${NC}"
-for s_idx in 1 2 3 4 5 6; do
+for s_idx in 1 2 3 4 5 6 7; do
     step_t="${STEP_DURATIONS[$s_idx]:-0}"
     s_name="${STEP_NAMES[$s_idx]:-Шаг $s_idx}"
     if [ "$step_t" -gt 0 ]; then

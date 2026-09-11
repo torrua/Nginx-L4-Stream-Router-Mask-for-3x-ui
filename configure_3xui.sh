@@ -102,7 +102,7 @@ fi
 
 # Автопоиск конфигурационного файла, если не передан
 if [ -z "$CONFIG_FILE" ]; then
-    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo "/root")"
     if [ -f "$script_dir/setup_mask.env" ]; then
         CONFIG_FILE="$script_dir/setup_mask.env"
     elif [ -f "./setup_mask.env" ]; then
@@ -209,7 +209,25 @@ if [ ! -f "$DB_PATH" ]; then
         fi
     done
     if [ "$found" -eq 0 ]; then
-        die "База данных 3X-UI ($DB_PATH) не найдена. Убедитесь, что панель 3X-UI установлена."
+        if [ "$DRY_RUN" -eq 1 ]; then
+            die "База данных 3X-UI ($DB_PATH) не найдена. Убедитесь, что панель 3X-UI установлена."
+        fi
+        warn "Служба 3X-UI не обнаружена на сервере. Запуск автоматической установки 3X-UI..."
+        if curl -Ls --connect-timeout 10 https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh -o /tmp/install_3xui.sh; then
+            printf "n\n" | bash /tmp/install_3xui.sh || true
+        fi
+        for p in "$DB_PATH" "/usr/local/x-ui/bin/x-ui.db" "/etc/x-ui/db/x-ui.db"; do
+            if [ -f "$p" ]; then
+                DB_PATH="$p"
+                found=1
+                break
+            fi
+        done
+        if [ "$found" -eq 0 ]; then
+            die "Не удалось найти базу данных 3X-UI после установки. Установите вручную: bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh)"
+        fi
+        ok "Панель 3X-UI успешно установлена!"
+        WAS_ACTIVE=1
     fi
 fi
 

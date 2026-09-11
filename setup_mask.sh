@@ -828,18 +828,19 @@ if [[ "${ENABLE_STEAL,,}" == "y" ]]; then
             fi
 
             added_count_for_port=0
+            saved_first_steal=$(echo "${CONFIG_STEAL_DOMS:-}" | awk '{print $1}')
+            default_steal_dom="${saved_first_steal:-cdn.$PRIMARY_DOMAIN}"
             while true; do
                 if [ "$added_count_for_port" -eq 0 ]; then
-                    read -rp "  ${WHITE}${ARROW} Основной поддомен для порта $PORT_VAL (напр. cdn.$PRIMARY_DOMAIN): ${NC}" STEAL_DOM </dev/tty || read -r STEAL_DOM || true
+                    echo -ne "  ${WHITE}${ARROW} Основной поддомен для порта $PORT_VAL [${GREEN}${default_steal_dom}${WHITE}]: ${NC}"
+                    read -r STEAL_DOM </dev/tty || read -r STEAL_DOM || true
+                    STEAL_DOM="${STEAL_DOM:-$default_steal_dom}"
                 else
-                    read -rp "  ${DIM}• Добавить еще один поддомен на этот же порт $PORT_VAL? (Enter для завершения): ${NC}" STEAL_DOM </dev/tty || read -r STEAL_DOM || true
+                    echo -ne "  ${DIM}• Добавить еще один поддомен на этот же порт $PORT_VAL? (Enter для завершения): ${NC}"
+                    read -r STEAL_DOM </dev/tty || read -r STEAL_DOM || true
                 fi
 
                 if [ -z "$STEAL_DOM" ]; then
-                    if [ "$added_count_for_port" -eq 0 ]; then
-                        warn "    Необходимо добавить хотя бы один поддомен (напр. cdn.$PRIMARY_DOMAIN)!"
-                        continue
-                    fi
                     break
                 fi
 
@@ -906,12 +907,16 @@ if [[ "${ENABLE_CLASSIC,,}" == "y" ]]; then
             fi
 
             added_sni_count=0
+            saved_first_classic=$(echo "${CLASSIC_SNI:-}" | awk '{print $1}')
+            default_classic_sni="${saved_first_classic:-gateway.icloud.com}"
             while true; do
                 if [ "$added_sni_count" -eq 0 ]; then
-                    read -rp "  ${WHITE}${ARROW} Внешний доверенный SNI маскировки [gateway.icloud.com]: ${NC}" EXT_SNI </dev/tty || read -r EXT_SNI || true
-                    EXT_SNI="${EXT_SNI:-gateway.icloud.com}"
+                    echo -ne "  ${WHITE}${ARROW} Внешний доверенный SNI маскировки [${GREEN}${default_classic_sni}${WHITE}]: ${NC}"
+                    read -r EXT_SNI </dev/tty || read -r EXT_SNI || true
+                    EXT_SNI="${EXT_SNI:-$default_classic_sni}"
                 else
-                    read -rp "  ${DIM}• Добавить еще один сторонний SNI на этот же порт? (Enter для перехода дальше): ${NC}" EXT_SNI </dev/tty || read -r EXT_SNI || true
+                    echo -ne "  ${DIM}• Добавить еще один сторонний SNI на этот же порт? (Enter для перехода дальше): ${NC}"
+                    read -r EXT_SNI </dev/tty || read -r EXT_SNI || true
                 fi
 
                 if [ -z "$EXT_SNI" ]; then

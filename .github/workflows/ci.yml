@@ -1,0 +1,122 @@
+name: CI / Scripts Validation & Test Suite
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '**.sh'
+      - '.github/workflows/**'
+      - 'VERSION'
+      - 'setup_mask.env.example'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - '**.sh'
+      - '.github/workflows/**'
+      - 'VERSION'
+      - 'setup_mask.env.example'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  syntax-and-lint:
+    name: Bash Syntax & Version Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate Bash syntax with bash -n
+        run: |
+          echo "=== Проверка синтаксиса bash для всех shell-скриптов ==="
+          find . -maxdepth 2 -name "*.sh" -type f | while read -r script; do
+            echo "Checking syntax: $script"
+            bash -n "$script" || exit 1
+          done
+          echo "Все скрипты прошли синтаксическую проверку успешно!"
+
+      - name: Verify Version Consistency
+        run: |
+          VERSION_FILE=$(cat VERSION | tr -d '[:space:]')
+          echo "Версия из файла VERSION: $VERSION_FILE"
+          
+          SETUP_VER=$(grep -E '^SCRIPT_VERSION=' setup_mask.sh | cut -d'"' -f2)
+          INSTALL_VER=$(grep -E '^SCRIPT_VERSION=' install.sh | cut -d'"' -f2)
+          
+          echo "Версия в setup_mask.sh: $SETUP_VER"
+          echo "Версия в install.sh:    $INSTALL_VER"
+          
+          if [ "$VERSION_FILE" != "$SETUP_VER" ]; then
+            echo "::error::Несовпадение версий: VERSION ($VERSION_FILE) != setup_mask.sh ($SETUP_VER)"
+            exit 1
+          fi
+          if [ "$VERSION_FILE" != "$INSTALL_VER" ]; then
+            echo "::error::Несовпадение версий: VERSION ($VERSION_FILE) != install.sh ($INSTALL_VER)"
+            exit 1
+          fi
+          echo "Версии во всех ключевых файлах согласованы!"
+
+  cli-test:
+    name: CLI Flags & Config Generation
+    runs-on: ubuntu-latest
+    needs: syntax-and-lint
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Test --help flag
+        run: |
+          chmod +x *.sh
+          ./setup_mask.sh --help > /dev/null
+          echo "Флаг --help работает корректно (код возврата 0)"
+
+      - name: Test --version flag
+        run: |
+          VER_OUT=$(./setup_mask.sh --version)
+          echo "Вывод setup_mask.sh --version: $VER_OUT"
+          EXPECTED_VER=$(cat VERSION | tr -d '[:space:]')
+          echo "$VER_OUT" | grep -F "$EXPECTED_VER" || exit 1
+          echo "Флаг --version корректно возвращает актуальную версию"
+
+      - name: Test Config Generator (--gen-config)
+        run: |
+          ./setup_mask.sh --gen-config test_generated.env
+          [ -f test_generated.env ] || { echo "::error::Файл test_generated.env не был создан"; exit 1; }
+          
+          grep -q "PRIMARY_DOMAIN" test_generated.env || exit 1
+          grep -q "STEAL_PORT" test_generated.env || exit 1
+          grep -q "ADMIN_USERNAME" test_generated.env || exit 1
+          grep -q "ENABLE_HY2" test_generated.env || exit 1
+          grep -q "ENABLE_AWG_V3" test_generated.env || exit 1
+          
+          bash -n test_generated.env || exit 1
+          echo "Генерация шаблона конфигурации test_generated.env прошла успешно!"
+
+  matrix-dry-run:
+    name: Dry-Run Test (${{ matrix.os }})
+    runs-on: ubuntu-latest
+    needs: cli-test
+    strategy:
+      matrix:
+        os: ['ubuntu:22.04', 'ubuntu:24.04']
+    container:
+      image: ${{ matrix.os }}
+    steps:
+      - name: Install minimal dependencies
+        run: |
+          apt-get update && apt-get install -y --no-install-recommends \
+            bash curl ca-certificates coreutils gawk dnsutils git
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Test preflight checks and config validation in container
+        run: |
+          chmod +x setup_mask.sh
+          ./setup_mask.sh --help > /dev/null
+          ./setup_mask.sh --version > /dev/null
+          ./setup_mask.sh --gen-config ci_dryrun.env
+          bash -n ci_dryrun.env
+          echo "Чистый контейнер ${{ matrix.os }} успешно валидирует синтаксис и запуск скрипта!"

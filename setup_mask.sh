@@ -27,7 +27,7 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="v6.6.0"
+SCRIPT_VERSION="v6.7.0"
 
 
 # --------------------------- Цвета и UI-движок ---------------------------
@@ -163,7 +163,7 @@ print_mask_banner() {
     echo "  ║    ░▀▀█░░█░░█▀▄░█▀▀░█▀█░█░█   ░█▀▄░█░█░█░█░░█░░█▀▀░█▀▄                         ║"
     echo "  ║    ░▀▀▀░░▀░░▀░▀░▀▀▀░▀░▀░▀░▀   ░▀░▀░▀▀▀░▀▀▀░░▀░░▀▀▀░▀░▀                         ║"
     echo "  ║                                                                                ║"
-    echo "  ║    Шлюз маскировки и L4/L7 распределения трафика для 3X-UI (Xray)   [v6.6.0]   ║"
+    echo "  ║    Шлюз маскировки и L4/L7 распределения трафика для 3X-UI (Xray)   [v6.7.0]   ║"
     echo "  ║  ────────────────────────────────────────────────────────────────────────────  ║"
     echo "  ║  • L4 SNI Demux     : Проксирование доменов без расшифровки на уровне ядра     ║"
     echo "  ║  • Steal-Oneself    : Маскировка под свои домены с Anti-Loop защитой (9443)    ║"
@@ -667,6 +667,7 @@ EXPERT_MODE=${EXPERT_MODE:-0}
 
 if [ "$NON_INTERACTIVE" -eq 0 ]; then
     print_mask_banner
+    start_background_preinstall
     if [ "$EXPRESS_MODE" -eq 0 ] && [ "$EXPERT_MODE" -eq 0 ]; then
         echo -e "  ${WHITE}${BOLD}Выберите режим настройки:${NC}\n"
         echo -e "    ${CYAN}${BOLD}[1] Экспресс-установка (Рекомендуется)${NC} — Настройка в 2 вопроса"
@@ -1338,21 +1339,105 @@ nginx_reload_task() {
 }
 
 # =============================================================
+#  ФОНОВАЯ ПРЕД-УСТАНОВКА (Zero-Wait Provisioning)
+# =============================================================
+BG_PREINSTALL_PID=""
+PREINSTALL_COMPLETED=0
+
+start_background_preinstall() {
+    if [ "$NON_INTERACTIVE" -eq 0 ] && [ "${DEBUG_MODE:-0}" -eq 0 ]; then
+        local log_file="/tmp/setup_mask_preinstall.log"
+        : > "$log_file"
+        {
+            export DEBIAN_FRONTEND=noninteractive
+            # 1. Базовые утилиты
+            install_prerequisites
+            # 2. Тюнинг ядра
+            apply_sysctl_and_limits
+            # 3. Nginx Mainline
+            setup_nginx_mainline
+            # 4. Ядро 3X-UI (если ещё не установлено)
+            if ! command -v x-ui >/dev/null 2>&1 && [ ! -f /etc/x-ui/x-ui.db ] && [ ! -f /usr/local/x-ui/bin/x-ui.db ]; then
+                curl -Ls --connect-timeout 15 https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh -o /tmp/install_3xui.sh 2>/dev/null
+                printf "n\n" | bash /tmp/install_3xui.sh || true
+            fi
+        } >> "$log_file" 2>&1 &
+        BG_PREINSTALL_PID=$!
+        echo -e "  ${CYAN}⚡ [Фоновая подготовка]${NC} ${DIM}Установка Nginx, 3X-UI и сетевого стека запущена параллельно...${NC}\n"
+    fi
+}
+
+sync_background_preinstall() {
+    if [ -n "${BG_PREINSTALL_PID:-}" ]; then
+        local log_file="/tmp/setup_mask_preinstall.log"
+        if kill -0 "$BG_PREINSTALL_PID" 2>/dev/null; then
+            local spin_chars=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+            local delay=0.08
+            local i=0
+            tput civis 2>/dev/null || echo -ne "\033[?25l"
+            while kill -0 "$BG_PREINSTALL_PID" 2>/dev/null; do
+                i=$(( (i + 1) % 10 ))
+                printf "\r  ${CYAN}${spin_chars[$i]}${NC}  ${WHITE}%-54s${NC}" "Доустановка компонентов в фоне (Nginx, 3X-UI)..."
+                sleep "$delay"
+            done
+            wait "$BG_PREINSTALL_PID"
+            local exit_code=$?
+            tput cnorm 2>/dev/null || echo -ne "\033[?25h"
+            if [ $exit_code -eq 0 ]; then
+                printf "\r  ${GREEN}${CHECK}${NC}  ${WHITE}%-54s${NC} ${GREEN}[ГОТОВО]${NC}\n" "Фоновая подготовка пакетов (Nginx, 3X-UI, BBR)"
+                PREINSTALL_COMPLETED=1
+            else
+                printf "\r  ${RED}${CROSS}${NC}  ${WHITE}%-54s${NC} ${RED}[ОШИБКА]${NC}\n" "Фоновая подготовка пакетов"
+                [ -f "$log_file" ] && tail -n 25 "$log_file" | sed 's/^/    /' || true
+                die "Ошибка при фоновой установке пакетов. Подробности выше."
+            fi
+        else
+            wait "$BG_PREINSTALL_PID"
+            local exit_code=$?
+            if [ $exit_code -eq 0 ]; then
+                echo -e "  ${GREEN}${CHECK}${NC}  ${WHITE}Базовые пакеты (Nginx, 3X-UI, BBR) уже подготовлены в фоне${NC} ${GREEN}[ГОТОВО]${NC}"
+                PREINSTALL_COMPLETED=1
+            else
+                echo -e "  ${RED}${CROSS}${NC}  ${WHITE}Ошибка при фоновой подготовке пакетов${NC}"
+                [ -f "$log_file" ] && tail -n 25 "$log_file" | sed 's/^/    /' || true
+                die "Ошибка при фоновой установке пакетов. Подробности выше."
+            fi
+        fi
+        BG_PREINSTALL_PID=""
+    fi
+}
+
+# =============================================================
 #  ФАЗА УСТАНОВКИ И РАЗВЕРТЫВАНИЯ СИСТЕМЫ
 # =============================================================
 TOTAL_STEPS=6
 
+# Ожидание фоновой пред-установки (если была запущена параллельно с опросом)
+sync_background_preinstall
+
 # --- Шаг 1: Системные зависимости и утилиты ---
 print_step_bar 1 $TOTAL_STEPS "Установка базовых системных зависимостей"
-run_with_spinner "Проверка и установка базовых утилит (curl, socat, dig, ufw)" install_prerequisites
+if [ "$PREINSTALL_COMPLETED" -eq 1 ]; then
+    ok "Базовые утилиты (curl, socat, dig, ufw) установлены [В фоне]"
+else
+    run_with_spinner "Проверка и установка базовых утилит (curl, socat, dig, ufw)" install_prerequisites
+fi
 
 # --- Шаг 2: Тюнинг ядра Linux (TCP BBR & UDP Buffers) ---
 print_step_bar 2 $TOTAL_STEPS "Оптимизация сетевого стека ядра Linux (BBR + fq)"
-run_with_spinner "Применение системных параметров BBR и лимитов дескрипторов" apply_sysctl_and_limits
+if [ "$PREINSTALL_COMPLETED" -eq 1 ]; then
+    ok "Системные параметры BBR и лимиты дескрипторов применены [В фоне]"
+else
+    run_with_spinner "Применение системных параметров BBR и лимитов дескрипторов" apply_sysctl_and_limits
+fi
 
 # --- Шаг 3: Установка Nginx Mainline ---
 print_step_bar 3 $TOTAL_STEPS "Подключение репозитория и установка Nginx Mainline"
-run_with_spinner "Подключение репозитория nginx.org и установка Nginx" setup_nginx_mainline
+if [ "$PREINSTALL_COMPLETED" -eq 1 ]; then
+    ok "Репозиторий nginx.org подключен, Nginx Mainline установлен [В фоне]"
+else
+    run_with_spinner "Подключение репозитория nginx.org и установка Nginx" setup_nginx_mainline
+fi
 
 NGINX_USER="nginx"
 if ! id -u nginx >/dev/null 2>&1; then

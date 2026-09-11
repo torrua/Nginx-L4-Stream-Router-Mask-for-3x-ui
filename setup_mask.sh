@@ -170,6 +170,7 @@ show_help() {
   -d, --domain <DOMAIN>        Указать основной домен (PRIMARY_DOMAIN)
   --express                    Запустить режим Экспресс-настройки (настройка в 2 вопроса)
   --gen-config [FILE]          Сгенерировать шаблон конфигурации (.env.example) и выйти
+  --debug                      Режим отладки: отключить спиннеры, вывод команд в реальном времени
   -f, --force                  Игнорировать ошибки и несовпадения DNS в неинтерактивном режиме
   -h, --help                   Показать справку и выйти
 
@@ -253,6 +254,8 @@ XHTTP_STREAM_PATH="Stream-One-Path"
 # Hysteria 2 (UDP 443) [y/n]
 ENABLE_HY2="y"
 HY2_PORT="443"
+# Отдельный домен для Hysteria 2 (по умолчанию равен PRIMARY_DOMAIN)
+HY2_DOMAIN="yourdomain.online"
 
 # AmneziaWG v3.1 (Transport Protection) [y/n]
 ENABLE_AWG_V3="y"
@@ -709,6 +712,8 @@ if [ "$EXPRESS_MODE" -eq 1 ]; then
     DECOY_MODE="1"
     SSL_ENGINE_CHOICE="1"
     AUTO_SETUP_3XUI="y"
+    STEAL_ENABLED=1
+    CLASSIC_ENABLED=1
     
     ALL_DOMAINS=("$PRIMARY_DOMAIN")
     declare -A DOMAIN_TO_PORT
@@ -1149,16 +1154,9 @@ fi
 save_session_state "$SAVED_CONFIG_FILE"
 
 # =============================================================
-#  ФАЗА УСТАНОВКИ И РАЗВЕРТЫВАНИЯ СИСТЕМЫ
+#  ФУНКЦИИ ФАЗЫ УСТАНОВКИ (определены до фазы для читаемости и --debug)
 # =============================================================
-TOTAL_STEPS=6
 
-# --- Шаг 1: Системные зависимости и утилиты ---
-print_step_bar 1 $TOTAL_STEPS "Установка базовых системных зависимостей"
-run_with_spinner "Проверка и установка базовых утилит (curl, socat, dig, ufw)" install_prerequisites
-
-# --- Шаг 2: Тюнинг ядра Linux (TCP BBR & UDP Buffers) ---
-print_step_bar 2 $TOTAL_STEPS "Оптимизация сетевого стека ядра Linux (BBR + fq)"
 apply_sysctl_and_limits() {
     cat << 'EOF' > /etc/sysctl.d/99-vless-tuning.conf
 net.ipv4.ip_forward = 1
@@ -1218,10 +1216,7 @@ nginx soft nofile 524288
 nginx hard nofile 524288
 EOF
 }
-run_with_spinner "Применение системных параметров BBR и лимитов дескрипторов" apply_sysctl_and_limits
 
-# --- Шаг 3: Установка Nginx Mainline ---
-print_step_bar 3 $TOTAL_STEPS "Подключение репозитория и установка Nginx Mainline"
 setup_nginx_mainline() {
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -q
@@ -1246,6 +1241,76 @@ EOF
     apt-get update -q
     apt-get install -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" nginx -y -q
 }
+
+install_certbot_snap() {
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get install snapd -y -q
+    apt-get purge -y certbot || true
+    systemctl start snapd.socket || true
+    systemctl enable snapd.socket || true
+
+    for i in {1..15}; do
+        if snap version >/dev/null 2>&1; then break; fi
+        sleep 2
+    done
+
+    snap install core || true
+    snap refresh core || true
+    snap install --classic certbot
+    ln -sf /snap/bin/certbot /usr/bin/certbot
+}
+
+# Принимает $1 = домен (был closure-переменной $dom из цикла)
+obtain_cert() {
+    local dom="$1"
+    certbot certonly --webroot -w "$WEBROOT" --expand -d "$dom" --non-interactive
+}
+
+install_acmesh() {
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get install -y cron socat -q
+    local acme_mail="${LE_EMAIL:-admin@$PRIMARY_DOMAIN}"
+    curl -s https://get.acme.sh | sh -s email="$acme_mail"
+    local _acme_bin="${HOME:-/root}/.acme.sh/acme.sh"
+    chmod +x "$_acme_bin"
+    "$_acme_bin" --register-account -m "$acme_mail" --server letsencrypt
+}
+
+# Принимает $1 = домен (был closure-переменной $dom из цикла)
+# Использует глобальные $_ACME (устанавливается после install_acmesh)
+obtain_cf_cert() {
+    local dom="$1"
+    "$_ACME" --issue --dns dns_cf -d "$dom" --server letsencrypt --force && \
+    mkdir -p "/etc/ssl/acme/$dom" && \
+    chmod 755 "/etc/ssl/acme/$dom" && \
+    "$_ACME" --install-cert -d "$dom" \
+        --key-file       "/etc/ssl/acme/$dom/privkey.pem" \
+        --fullchain-file "/etc/ssl/acme/$dom/fullchain.pem" \
+        --reloadcmd     "chmod 755 /etc/ssl /etc/ssl/acme /etc/ssl/acme/$dom 2>/dev/null || true; chmod 644 /etc/ssl/acme/$dom/* 2>/dev/null || true; systemctl reload nginx"
+}
+
+nginx_reload_task() {
+    nginx -t && \
+    systemctl unmask nginx 2>/dev/null || true && \
+    systemctl enable nginx 2>/dev/null || true && \
+    systemctl restart nginx
+}
+
+# =============================================================
+#  ФАЗА УСТАНОВКИ И РАЗВЕРТЫВАНИЯ СИСТЕМЫ
+# =============================================================
+TOTAL_STEPS=6
+
+# --- Шаг 1: Системные зависимости и утилиты ---
+print_step_bar 1 $TOTAL_STEPS "Установка базовых системных зависимостей"
+run_with_spinner "Проверка и установка базовых утилит (curl, socat, dig, ufw)" install_prerequisites
+
+# --- Шаг 2: Тюнинг ядра Linux (TCP BBR & UDP Buffers) ---
+print_step_bar 2 $TOTAL_STEPS "Оптимизация сетевого стека ядра Linux (BBR + fq)"
+run_with_spinner "Применение системных параметров BBR и лимитов дескрипторов" apply_sysctl_and_limits
+
+# --- Шаг 3: Установка Nginx Mainline ---
+print_step_bar 3 $TOTAL_STEPS "Подключение репозитория и установка Nginx Mainline"
 run_with_spinner "Подключение репозитория nginx.org и установка Nginx" setup_nginx_mainline
 
 NGINX_USER="nginx"
@@ -1306,23 +1371,6 @@ systemctl restart nginx || systemctl start nginx
 print_step_bar 4 $TOTAL_STEPS "Выпуск SSL-сертификатов Let's Encrypt"
 
 if [ "$SSL_ENGINE_CHOICE" = "1" ]; then
-    install_certbot_snap() {
-        export DEBIAN_FRONTEND=noninteractive
-        apt-get install snapd -y -q
-        apt-get purge -y certbot || true
-        systemctl start snapd.socket || true
-        systemctl enable snapd.socket || true
-
-        for i in {1..15}; do
-            if snap version >/dev/null 2>&1; then break; fi
-            sleep 2
-        done
-
-        snap install core || true
-        snap refresh core || true
-        snap install --classic certbot
-        ln -sf /snap/bin/certbot /usr/bin/certbot
-    }
     run_with_spinner "Инициализация подсистемы Certbot через Snap" install_certbot_snap
 
     mkdir -p /etc/letsencrypt
@@ -1341,10 +1389,7 @@ EOF
     fi
 
     for dom in "${ALL_DOMAINS[@]}"; do
-        obtain_cert() {
-            certbot certonly --webroot -w "$WEBROOT" --expand -d "$dom" --non-interactive
-        }
-        if run_with_spinner "Выпуск SSL для домена $dom (HTTP-01)" obtain_cert; then
+        if run_with_spinner "Выпуск SSL для домена $dom (HTTP-01)" obtain_cert "$dom"; then
             :
         else
             warn "Не удалось выпустить сертификат для $dom."
@@ -1367,15 +1412,6 @@ EOF
     chmod +x /etc/letsencrypt/renewal-hooks/deploy/nginx-reload.sh
 
 else
-    install_acmesh() {
-        export DEBIAN_FRONTEND=noninteractive
-        apt-get install -y cron socat -q
-        local acme_mail="${LE_EMAIL:-admin@$PRIMARY_DOMAIN}"
-        curl -s https://get.acme.sh | sh -s email="$acme_mail"
-        local _acme_bin="${HOME:-/root}/.acme.sh/acme.sh"
-        chmod +x "$_acme_bin"
-        "$_acme_bin" --register-account -m "$acme_mail" --server letsencrypt
-    }
     run_with_spinner "Инициализация подсистемы acme.sh" install_acmesh
     _ACME="${HOME:-/root}/.acme.sh/acme.sh"
 
@@ -1391,16 +1427,7 @@ else
     chmod 755 /etc/ssl /etc/ssl/acme
 
     for dom in "${ALL_DOMAINS[@]}"; do
-        obtain_cf_cert() {
-            "$_ACME" --issue --dns dns_cf -d "$dom" --server letsencrypt --force && \
-            mkdir -p "/etc/ssl/acme/$dom" && \
-            chmod 755 "/etc/ssl/acme/$dom" && \
-            "$_ACME" --install-cert -d "$dom" \
-                --key-file       "/etc/ssl/acme/$dom/privkey.pem" \
-                --fullchain-file "/etc/ssl/acme/$dom/fullchain.pem" \
-                --reloadcmd     "chmod 755 /etc/ssl /etc/ssl/acme /etc/ssl/acme/$dom 2>/dev/null || true; chmod 644 /etc/ssl/acme/$dom/* 2>/dev/null || true; systemctl reload nginx"
-        }
-        if run_with_spinner "Выпуск SSL для домена $dom через Cloudflare DNS-01" obtain_cf_cert; then
+        if run_with_spinner "Выпуск SSL для домена $dom через Cloudflare DNS-01" obtain_cf_cert "$dom"; then
             :
         else
             warn "Ошибка при выпуске сертификата для $dom."
@@ -2556,12 +2583,6 @@ done
 #  ФИНАЛЬНОЕ ТЕСТИРОВАНИЕ И ПЕРЕЗАПУСК СЛУЖБ
 # =============================================================
 print_step_bar 6 $TOTAL_STEPS "Сборка конфигурации Nginx и активация маршрутизатора"
-nginx_reload_task() {
-    nginx -t && \
-    systemctl unmask nginx 2>/dev/null || true && \
-    systemctl enable nginx 2>/dev/null || true && \
-    systemctl restart nginx
-}
 run_with_spinner "Тестирование конфигурации и перезапуск Nginx Mainline" nginx_reload_task
 
 # =============================================================

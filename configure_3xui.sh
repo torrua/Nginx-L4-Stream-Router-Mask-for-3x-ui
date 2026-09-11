@@ -152,6 +152,7 @@ CLASSIC_SNI="${CLASSIC_SNI:-gateway.icloud.com}"
 
 ENABLE_HY2="${ENABLE_HY2:-y}"
 HY2_PORT="${HY2_PORT:-443}"
+HY2_DOMAIN="${HY2_DOMAIN:-$PRIMARY_DOMAIN}"
 
 ENABLE_AWG_V3="${ENABLE_AWG_V3:-y}"
 AWG_V3_PORT="${AWG_V3_PORT:-8443}"
@@ -168,9 +169,13 @@ SSL_ENGINE_CHOICE="${SSL_ENGINE_CHOICE:-1}"
 if [ "$SSL_ENGINE_CHOICE" = "1" ]; then
     SSL_CERT_PATH="/etc/letsencrypt/live/$PRIMARY_DOMAIN/fullchain.pem"
     SSL_KEY_PATH="/etc/letsencrypt/live/$PRIMARY_DOMAIN/privkey.pem"
+    HY2_CERT_PATH="/etc/letsencrypt/live/$HY2_DOMAIN/fullchain.pem"
+    HY2_KEY_PATH="/etc/letsencrypt/live/$HY2_DOMAIN/privkey.pem"
 else
     SSL_CERT_PATH="/etc/ssl/acme/$PRIMARY_DOMAIN/fullchain.pem"
     SSL_KEY_PATH="/etc/ssl/acme/$PRIMARY_DOMAIN/privkey.pem"
+    HY2_CERT_PATH="/etc/ssl/acme/$HY2_DOMAIN/fullchain.pem"
+    HY2_KEY_PATH="/etc/ssl/acme/$HY2_DOMAIN/privkey.pem"
 fi
 
 # Определение работоспособной команды Python
@@ -238,6 +243,9 @@ export CLASSIC_PORT
 export CLASSIC_SNI
 export ENABLE_HY2
 export HY2_PORT
+export HY2_DOMAIN
+export HY2_CERT_PATH
+export HY2_KEY_PATH
 export ENABLE_AWG_V3
 export AWG_V3_PORT
 export ENABLE_AWG_V2
@@ -313,6 +321,9 @@ classic_sni = classic_sni.split()[0] if classic_sni.strip() else "gateway.icloud
 
 enable_hy2 = os.environ.get("ENABLE_HY2", "y").lower() in ("1", "y", "true")
 hy2_port = int(os.environ.get("HY2_PORT") or "443")
+hy2_domain = (os.environ.get("HY2_DOMAIN") or domain).strip()
+hy2_cert = os.environ.get("HY2_CERT_PATH") or ssl_cert
+hy2_key = os.environ.get("HY2_KEY_PATH") or ssl_key
 
 enable_awg_v3 = os.environ.get("ENABLE_AWG_V3", "y").lower() in ("1", "y", "true")
 awg_v3_port = int(os.environ.get("AWG_V3_PORT") or "8443")
@@ -702,10 +713,10 @@ if enable_hy2:
         "hysteriaSettings": {"version": 2, "udpIdleTimeout": 60, "masquerade": {"type": "proxy", "url": "http://127.0.0.1:80"}},
         "security": "tls",
         "tlsSettings": {
-            "serverName": domain, "minVersion": "1.3", "maxVersion": "1.3",
-            "certificates": [{"certificateFile": ssl_cert, "keyFile": ssl_key}], "alpn": ["h3"]
+            "serverName": hy2_domain, "minVersion": "1.3", "maxVersion": "1.3",
+            "certificates": [{"certificateFile": hy2_cert, "keyFile": hy2_key}], "alpn": ["h3"]
         },
-        "externalProxy": [{"dest": domain, "port": hy2_port, "forceTls": "tls", "remark": "Hysteria 2"}]
+        "externalProxy": [{"dest": hy2_domain, "port": hy2_port, "forceTls": "tls", "remark": "Hysteria 2"}]
     }
     smart_reconcile_inbound(hy2_port, "hysteria", "in-hysteria2", "Hysteria 2", h_set, h_str, listen="0.0.0.0")
 

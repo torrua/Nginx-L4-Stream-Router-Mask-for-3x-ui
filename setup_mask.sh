@@ -408,6 +408,7 @@ XHTTP_STREAM_PATH="${_save_xhttp_path}"
 
 ENABLE_HY2="$hy2_save"
 HY2_PORT="${HY2_PORT:-443}"
+HY2_DOMAIN="${HY2_DOMAIN:-$PRIMARY_DOMAIN}"
 
 ENABLE_AWG_V3="$awg_v3_save"
 AWG_V3_PORT="${AWG_V3_PORT:-8443}"
@@ -649,6 +650,7 @@ if [ "$EXPRESS_MODE" -eq 1 ]; then
     XHTTP_STREAM_PATH="/${RAW_XHTTP_STREAM_PATH}/"
     ENABLE_HY2="1"
     HY2_PORT="443"
+    HY2_DOMAIN="$PRIMARY_DOMAIN"
     ENABLE_AWG_V3="1"
     AWG_V3_PORT="8443"
     ENABLE_AWG_V2="1"
@@ -874,46 +876,10 @@ else
     log "Сценарий Classic External REALITY отключен."
 fi
 
-echo
-echo -e "${YELLOW}Шаг 4: Дополнительные SSL-домены (Direct TLS / Hysteria 2 / Trojan)${NC}"
-echo -e "  ${DIM}В очереди на автоматический выпуск SSL уже находятся:${NC}"
-for d in "${ALL_DOMAINS[@]}"; do
-    echo -e "    ${GREEN}• $d${NC}"
-done
-echo -e "  ${CYAN}[i] Основной домен и поддомены выше повторно вводить НЕ нужно!${NC}"
 
-if [ "$NON_INTERACTIVE" -eq 1 ]; then
-    if [ -n "${EXTRA_SSL_DOMAINS:-}" ]; then
-        for EXTRA_DOM in $EXTRA_SSL_DOMAINS; do
-            if [[ "$EXTRA_DOM" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; then
-                if [[ ! " ${ALL_DOMAINS[*]} " == *" ${EXTRA_DOM} "* ]]; then
-                    ALL_DOMAINS+=("$EXTRA_DOM")
-                    ok "Добавлен дополнительный SSL-домен: $EXTRA_DOM"
-                fi
-            fi
-        done
-    fi
-else
-    while true; do
-        read -rp "  Добавить ЕЩЕ ОДИН сторонний домен для SSL? (Enter - пропустить): " EXTRA_DOM </dev/tty || read -r EXTRA_DOM || true
-        if [ -z "$EXTRA_DOM" ]; then
-            break
-        fi
-        if [[ "$EXTRA_DOM" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; then
-            if [[ " ${ALL_DOMAINS[*]} " == *" ${EXTRA_DOM} "* ]]; then
-                warn "  Домен '$EXTRA_DOM' уже присутствует в очереди."
-            else
-                ALL_DOMAINS+=("$EXTRA_DOM")
-                ok "  Добавлен дополнительный SSL-домен: $EXTRA_DOM"
-            fi
-        else
-            warn "  Некорректный формат доменного имени: '$EXTRA_DOM'."
-        fi
-    done
-fi
 
 echo
-echo -e "${YELLOW}Шаг 5: Привязка внутренних портов 3X-UI и xHTTP${NC}"
+echo -e "${YELLOW}Шаг 4: Настройка путей и внутренних портов (3X-UI и VLESS xHTTP)${NC}"
 prompt_default "Внутренний порт панели 3X-UI" "10443" PANEL_PORT
 
 # Безопасная случайная генерация по умолчанию (защита от сканеров и перебора)
@@ -947,20 +913,32 @@ XHTTP_STREAM_PATH="/${RAW_XHTTP_STREAM_PATH#/}"
 XHTTP_STREAM_PATH="${XHTTP_STREAM_PATH%/}/"
 
 echo
-echo -e "${YELLOW}Шаг 6: Настройка скоростного протокола Hysteria 2 (UDP)${NC}"
+echo -e "${YELLOW}Шаг 5: Настройка скоростного протокола Hysteria 2 (UDP)${NC}"
+echo -e "  ${DIM}Hysteria 2 работает по протоколу UDP/QUIC (отлично подходит при плохой связи и высоких потерях).${NC}"
 prompt_yes_no "Установить и настроить Hysteria 2?" "${ENABLE_HY2:-y}" ENABLE_HY2
 if [[ "${ENABLE_HY2,,}" == "y" ]]; then
     ENABLE_HY2=1
-    prompt_default "  Введите внешний UDP-порт для Hysteria 2" "443" HY2_PORT
-    ok "Hysteria 2 активирована на порту ${HY2_PORT}/udp"
+    prompt_default "  Внешний UDP-порт для Hysteria 2" "443" HY2_PORT
+    
+    echo -e "  ${CYAN}[i] Домен для Hysteria 2:${NC} по умолчанию используется основной домен (${WHITE}$PRIMARY_DOMAIN${NC})."
+    echo -e "      ${DIM}Вы можете указать отдельный поддомен (напр. hy2.$PRIMARY_DOMAIN), если хотите разделить трафик.${NC}"
+    prompt_default "  Домен/поддомен для подключения Hysteria 2" "${HY2_DOMAIN:-$PRIMARY_DOMAIN}" HY2_DOMAIN
+    HY2_DOMAIN=$(echo "$HY2_DOMAIN" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+    
+    if [[ ! " ${ALL_DOMAINS[*]} " == *" ${HY2_DOMAIN} "* ]]; then
+        ALL_DOMAINS+=("$HY2_DOMAIN")
+        ok "Домен Hysteria 2 ($HY2_DOMAIN) добавлен в очередь на выпуск SSL-сертификата."
+    fi
+    ok "Hysteria 2 активирована на порту ${HY2_PORT}/udp (домен: ${HY2_DOMAIN})"
 else
     ENABLE_HY2=0
     HY2_PORT=""
+    HY2_DOMAIN=""
     log "Hysteria 2 отключена."
 fi
 
 echo
-echo -e "${YELLOW}Шаг 7: Настройка протокола AmneziaWG v3.1 (Transport Protection)${NC}"
+echo -e "${YELLOW}Шаг 6: Настройка протокола AmneziaWG v3.1 (Transport Protection)${NC}"
 prompt_yes_no "Установить и настроить AmneziaWG v3.1?" "${ENABLE_AWG_V3:-y}" ENABLE_AWG_V3
 if [[ "${ENABLE_AWG_V3,,}" == "y" ]]; then
     ENABLE_AWG_V3=1
@@ -973,7 +951,7 @@ else
 fi
 
 echo
-echo -e "${YELLOW}Шаг 8: Настройка протокола AmneziaWG v2.0 / Legacy 1.0 (для роутеров)${NC}"
+echo -e "${YELLOW}Шаг 7: Настройка протокола AmneziaWG v2.0 / Legacy 1.0 (для роутеров)${NC}"
 prompt_yes_no "Установить и настроить AmneziaWG v2.0 / Legacy?" "${ENABLE_AWG_V2:-y}" ENABLE_AWG_V2
 if [[ "${ENABLE_AWG_V2,,}" == "y" ]]; then
     ENABLE_AWG_V2=1
@@ -986,14 +964,53 @@ else
 fi
 
 echo
-echo -e "${YELLOW}Шаг 9: Выбор темы для сайта-маскировки (Decoy Fronts Catalog)${NC}"
+echo -e "${YELLOW}Шаг 8: Выбор темы для сайта-маскировки (Decoy Fronts Catalog)${NC}"
 echo -e " 1) ${GREEN}DataSphere Analytics Enterprise${NC} (Строгий геометрический дизайн + Live телеметрия ±10%)"
 echo -e " 2) ${GREEN}CosmosCloud NextGen${NC} (Облачный диск с оригинальным логотипом и сессионными cookies)"
 echo -e " 3) Стандартная заглушка Nginx (Welcome to nginx)"
 prompt_default "Выберите вариант маскировки (1, 2 или 3)" "1" DECOY_MODE
 
 echo
-echo -e "${YELLOW}Шаг 10: Выбор метода выпуска SSL-сертификатов${NC}"
+echo -e "${YELLOW}Шаг 9: Финальный реестр SSL-сертификатов и дополнительные домены${NC}"
+echo -e "  ${DIM}Все выбранные в процессе настройки домены автоматически включены в выпуск SSL:${NC}"
+for d in "${ALL_DOMAINS[@]}"; do
+    echo -e "    ${GREEN}✔ $d${NC} ${DIM}(сертификат будет выпущен и подключен автоматом)${NC}"
+done
+echo -e "  ${CYAN}[i] Вышеперечисленные домены повторно вводить НЕ нужно!${NC}"
+echo -e "  ${DIM}Этот шаг нужен ТОЛЬКО если у вас есть резервные/сторонние домены (напр. failover или прямой gRPC).${NC}"
+
+if [ "$NON_INTERACTIVE" -eq 1 ]; then
+    if [ -n "${EXTRA_SSL_DOMAINS:-}" ]; then
+        for EXTRA_DOM in $EXTRA_SSL_DOMAINS; do
+            if [[ "$EXTRA_DOM" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; then
+                if [[ ! " ${ALL_DOMAINS[*]} " == *" ${EXTRA_DOM} "* ]]; then
+                    ALL_DOMAINS+=("$EXTRA_DOM")
+                    ok "Добавлен дополнительный SSL-домен: $EXTRA_DOM"
+                fi
+            fi
+        done
+    fi
+else
+    while true; do
+        read -rp "  Добавить ЕЩЕ ОДИН сторонний домен в сертификационный стек? (Enter - пропустить): " EXTRA_DOM </dev/tty || read -r EXTRA_DOM || true
+        if [ -z "$EXTRA_DOM" ]; then
+            break
+        fi
+        if [[ "$EXTRA_DOM" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; then
+            if [[ " ${ALL_DOMAINS[*]} " == *" ${EXTRA_DOM} "* ]]; then
+                warn "  Домен '$EXTRA_DOM' уже есть в списке."
+            else
+                ALL_DOMAINS+=("$EXTRA_DOM")
+                ok "  Добавлен дополнительный SSL-домен: $EXTRA_DOM"
+            fi
+        else
+            warn "  Некорректный формат доменного имени: '$EXTRA_DOM'."
+        fi
+    done
+fi
+
+echo
+echo -e "${YELLOW}Шаг 10: Выбор метода выпуска SSL-сертификатов (Certbot / acme.sh)${NC}"
 echo -e " 1) ${GREEN}Классический Certbot (HTTP-01)${NC} - Каталог: /etc/letsencrypt/live/"
 echo -e " 2) ${GREEN}acme.sh + Cloudflare DNS-01${NC} - Каталог: /etc/ssl/acme/ (изоляция прав 755/644)"
 prompt_default "Выберите метод сертификации (1 или 2)" "1" SSL_ENGINE_CHOICE
@@ -2639,12 +2656,13 @@ echo -e "  - ${YELLOW}Вкладка «Сниффинг»:${NC} Включить
 echo
 
 if [ "$ENABLE_HY2" -eq 1 ] && [ -n "$HY2_PORT" ]; then
+hy2_active_dom="${HY2_DOMAIN:-$PRIMARY_DOMAIN}"
 echo -e "${YELLOW}ШАГ 4: Инбаунд Hysteria 2 (UDP $HY2_PORT):${NC}"
 echo -e "  - ${YELLOW}Вкладка «Основное»:${NC} Протокол: ${GREEN}hysteria (v2)${NC} | Адрес: ${GREEN}0.0.0.0${NC} | Порт: ${GREEN}$HY2_PORT${NC} (UDP)"
 echo -e "  - ${YELLOW}Вкладка «Поток»:${NC} Masquerade: тип ${GREEN}proxy${NC} -> URL: ${CYAN}http://127.0.0.1:80${NC}"
-echo -e "  - ${YELLOW}Вкладка «Безопасность»:${NC} ${GREEN}TLS${NC} | SNI: ${CYAN}$PRIMARY_DOMAIN${NC} | ALPN: ${GREEN}h3${NC}"
-echo -e "    * Публичный ключ: ${CYAN}${SSL_BASE_DIR}/$PRIMARY_DOMAIN/fullchain.pem${NC}"
-echo -e "    * Приватный ключ: ${CYAN}${SSL_BASE_DIR}/$PRIMARY_DOMAIN/privkey.pem${NC}"
+echo -e "  - ${YELLOW}Вкладка «Безопасность»:${NC} ${GREEN}TLS${NC} | SNI: ${CYAN}${hy2_active_dom}${NC} | ALPN: ${GREEN}h3${NC}"
+echo -e "    * Публичный ключ: ${CYAN}${SSL_BASE_DIR}/${hy2_active_dom}/fullchain.pem${NC}"
+echo -e "    * Приватный ключ: ${CYAN}${SSL_BASE_DIR}/${hy2_active_dom}/privkey.pem${NC}"
 echo
 fi
 

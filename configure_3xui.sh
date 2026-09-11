@@ -432,6 +432,7 @@ import secrets
 import base64
 import time
 import urllib.request
+import re
 
 db_path = os.environ["DB_PATH"]
 dry_run = os.environ.get("DRY_RUN", "0") == "1"

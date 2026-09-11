@@ -3087,13 +3087,13 @@ for port in "${ALL_REALITY_PORTS[@]:-}"; do
 done
 
 UFW_ALLOW_LIST="ufw allow 80/tcp && ufw allow 443/tcp && ufw allow 8443/tcp"
-if [ "$ENABLE_HY2" -eq 1 ] && [ -n "$HY2_PORT" ]; then
+if [[ "${ENABLE_HY2:-}" == "1" || "${ENABLE_HY2,,}" == "y" ]] && [ -n "${HY2_PORT:-}" ]; then
     UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${HY2_PORT}/udp"
 fi
-if [ "$ENABLE_AWG_V3" -eq 1 ] && [ -n "$AWG_V3_PORT" ]; then
+if [[ "${ENABLE_AWG_V3:-}" == "1" || "${ENABLE_AWG_V3,,}" == "y" ]] && [ -n "${AWG_V3_PORT:-}" ]; then
     UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${AWG_V3_PORT}/udp"
 fi
-if [ "$ENABLE_AWG_V2" -eq 1 ] && [ -n "$AWG_V2_PORT" ]; then
+if [[ "${ENABLE_AWG_V2:-}" == "1" || "${ENABLE_AWG_V2,,}" == "y" ]] && [ -n "${AWG_V2_PORT:-}" ]; then
     UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${AWG_V2_PORT}/udp"
 fi
 
@@ -3266,7 +3266,7 @@ echo -e "  - ${YELLOW}Вкладка «Безопасность»:${NC} ${RED}Н
 echo -e "  - ${YELLOW}Вкладка «Сниффинг»:${NC} Включить (${GREEN}HTTP, TLS, QUIC, FAKEDNS${NC})"
 echo
 
-if [ "$ENABLE_HY2" -eq 1 ] && [ -n "$HY2_PORT" ]; then
+if [[ "${ENABLE_HY2:-}" == "1" || "${ENABLE_HY2,,}" == "y" ]] && [ -n "${HY2_PORT:-}" ]; then
 hy2_active_dom="${HY2_DOMAIN:-$PRIMARY_DOMAIN}"
 echo -e "${YELLOW}ШАГ 4: Инбаунд Hysteria 2 (UDP $HY2_PORT):${NC}"
 echo -e "  - ${YELLOW}Вкладка «Основное»:${NC} Протокол: ${GREEN}hysteria (v2)${NC} | Адрес: ${GREEN}0.0.0.0${NC} | Порт: ${GREEN}$HY2_PORT${NC} (UDP)"
@@ -3277,7 +3277,7 @@ echo -e "    * Приватный ключ: ${CYAN}${SSL_BASE_DIR}/${hy2_active_
 echo
 fi
 
-if [ "$ENABLE_AWG_V3" -eq 1 ] && [ -n "$AWG_V3_PORT" ]; then
+if [[ "${ENABLE_AWG_V3:-}" == "1" || "${ENABLE_AWG_V3,,}" == "y" ]] && [ -n "${AWG_V3_PORT:-}" ]; then
 echo -e "${YELLOW}ШАГ 5: Инбаунд AmneziaWG v3.1 (WG3 — UDP $AWG_V3_PORT):${NC}"
 echo -e "  - ${YELLOW}Вкладка «Основное»:${NC}"
 echo -e "    * Включить: ${GREEN}Включено${NC} | Примечание: ${GREEN}WG3${NC} | Протокол: ${GREEN}amneziawg${NC}"
@@ -3302,7 +3302,7 @@ echo -e "    * Переключатели: ${CYAN}RandomTrailers:${NC} ${RED}В�
 echo
 fi
 
-if [ "$ENABLE_AWG_V2" -eq 1 ] && [ -n "$AWG_V2_PORT" ]; then
+if [[ "${ENABLE_AWG_V2:-}" == "1" || "${ENABLE_AWG_V2,,}" == "y" ]] && [ -n "${AWG_V2_PORT:-}" ]; then
 echo -e "${YELLOW}ШАГ 6: Инбаунд AmneziaWG v2.0 / Legacy (UDP $AWG_V2_PORT):${NC}"
 echo -e "  - ${YELLOW}Вкладка «Основное»:${NC} Протокол: ${GREEN}amneziawg / wireguard${NC} | Адрес: ${GREEN}0.0.0.0${NC} | Порт: ${GREEN}$AWG_V2_PORT${NC} (UDP)"
 echo -e "  - ${YELLOW}Вкладка «Параметры AWG» (Для роутеров Keenetic / OpenWrt и старых клиентов):${NC}"

@@ -1453,15 +1453,111 @@ if [[ "${ENABLE_CLASSIC,,}" == "y" ]]; then
 
             added_sni_count=0
             saved_first_classic=$(echo "${CLASSIC_SNI:-}" | awk '{print $1}')
-            default_classic_sni="${saved_first_classic:-gateway.icloud.com}"
+            
+            # Автоматическое сканирование доверенных SNI-кандидатов (TLS 1.3 + HTTP/2 ALPN)
+            scan_reality_candidates() {
+                python3 -c "
+import ssl, socket, time, concurrent.futures
+
+CANDIDATES = [
+    'gateway.icloud.com',
+    'dl.google.com',
+    'www.apple.com',
+    'itunes.apple.com',
+    'www.samsung.com',
+    'www.nvidia.com',
+    'www.microsoft.com',
+    'www.amazon.com',
+    'www.amd.com',
+    'www.sony.com',
+    'cdn.discordapp.com',
+]
+
+def probe(host):
+    ctx = ssl.create_default_context()
+    ctx.set_alpn_protocols(['h2'])
+    t0 = time.time()
+    try:
+        with socket.create_connection((host, 443), timeout=3.0) as sock:
+            with ctx.wrap_socket(sock, server_hostname=host) as ssock:
+                lat = int((time.time() - t0) * 1000)
+                ver = ssock.version()
+                alpn = ssock.selected_alpn_protocol()
+                feasible = (ver == 'TLSv1.3' and alpn == 'h2')
+                return {'host': host, 'feasible': feasible, 'lat': lat}
+    except Exception:
+        return {'host': host, 'feasible': False, 'lat': 9999}
+
+with concurrent.futures.ThreadPoolExecutor(max_workers=len(CANDIDATES)) as ex:
+    res = list(ex.map(probe, CANDIDATES))
+
+res.sort(key=lambda x: (0 if x['feasible'] else 1, x['lat']))
+for item in res:
+    if item['feasible']:
+        print(item['host'] + ' ' + str(item['lat']))
+" 2>/dev/null || true
+            }
+
+            scanned_snis=()
+            scanned_lats=()
+            if command -v python3 >/dev/null 2>&1; then
+                echo -e "  ${CYAN}[*] Сканирование лучших REALITY-доменов по задержке (TLS 1.3 + h2)...${NC}"
+                while read -r s_host s_lat; do
+                    [ -n "$s_host" ] || continue
+                    scanned_snis+=("$s_host")
+                    scanned_lats+=("$s_lat")
+                done < <(scan_reality_candidates)
+            fi
+
+            if [ "${#scanned_snis[@]}" -eq 0 ]; then
+                scanned_snis=("gateway.icloud.com" "dl.google.com" "www.apple.com" "www.samsung.com" "www.nvidia.com" "www.microsoft.com")
+                scanned_lats=("fast" "fast" "fast" "fast" "fast" "fast")
+            fi
+
+            default_classic_sni="${saved_first_classic:-${scanned_snis[0]}}"
+
+            echo ""
+            echo -e "  ${BOLD}Доступные проверенные кандидаты маскировки (REALITY Targets):${NC}"
+            for idx in "${!scanned_snis[@]}"; do
+                num=$((idx + 1))
+                h="${scanned_snis[$idx]}"
+                lat="${scanned_lats[$idx]}"
+                marker="  "
+                [ "$h" = "$default_classic_sni" ] && marker="${GREEN}★ ${NC}"
+                lat_str="${DIM}(${lat} ms)${NC}"
+                [ "$lat" = "fast" ] && lat_str=""
+                echo -e "    ${CYAN}[$num]${NC} $marker${WHITE}$h${NC} $lat_str"
+            done
+            echo -e "    ${CYAN}[C]${NC}   ${DIM}Ввести свой собственный домен вручную${NC}"
+            echo ""
+
             while true; do
                 if [ "$added_sni_count" -eq 0 ]; then
-                    echo -ne "  ${WHITE}${ARROW} Внешний доверенный SNI маскировки [${GREEN}${default_classic_sni}${WHITE}]: ${NC}"
-                    read -r EXT_SNI </dev/tty || read -r EXT_SNI || true
-                    EXT_SNI="${EXT_SNI:-$default_classic_sni}"
+                    echo -ne "  ${WHITE}${ARROW} Выберите номер [1-${#scanned_snis[@]}], домен или Enter для [${GREEN}${default_classic_sni}${WHITE}]: ${NC}"
+                    read -r EXT_INPUT </dev/tty || read -r EXT_INPUT || true
+                    EXT_INPUT=$(echo "${EXT_INPUT:-}" | tr -d '[:space:]')
+                    if [ -z "$EXT_INPUT" ]; then
+                        EXT_SNI="$default_classic_sni"
+                    elif [[ "$EXT_INPUT" =~ ^[0-9]+$ ]] && [ "$EXT_INPUT" -ge 1 ] && [ "$EXT_INPUT" -le "${#scanned_snis[@]}" ]; then
+                        EXT_SNI="${scanned_snis[$((EXT_INPUT - 1))]}"
+                    elif [[ "${EXT_INPUT,,}" == "c" ]]; then
+                        echo -ne "  ${WHITE}${ARROW} Введите свой домен SNI (например, dl.google.com): ${NC}"
+                        read -r EXT_SNI </dev/tty || read -r EXT_SNI || true
+                        EXT_SNI=$(echo "${EXT_SNI:-}" | tr -d '[:space:]')
+                    else
+                        EXT_SNI="$EXT_INPUT"
+                    fi
                 else
-                    echo -ne "  ${DIM}• Добавить еще один сторонний SNI на этот же порт? (Enter для перехода дальше): ${NC}"
-                    read -r EXT_SNI </dev/tty || read -r EXT_SNI || true
+                    echo -ne "  ${DIM}• Добавить еще один сторонний SNI на этот же порт? (номер, домен или Enter для перехода дальше): ${NC}"
+                    read -r EXT_INPUT </dev/tty || read -r EXT_INPUT || true
+                    EXT_INPUT=$(echo "${EXT_INPUT:-}" | tr -d '[:space:]')
+                    if [ -z "$EXT_INPUT" ]; then
+                        break
+                    elif [[ "$EXT_INPUT" =~ ^[0-9]+$ ]] && [ "$EXT_INPUT" -ge 1 ] && [ "$EXT_INPUT" -le "${#scanned_snis[@]}" ]; then
+                        EXT_SNI="${scanned_snis[$((EXT_INPUT - 1))]}"
+                    else
+                        EXT_SNI="$EXT_INPUT"
+                    fi
                 fi
 
                 if [ -z "$EXT_SNI" ]; then

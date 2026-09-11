@@ -461,6 +461,7 @@ main() {
         fi
         chmod +x /tmp/setup_mask.sh
         [ -f "$SCRIPT_DIR/setup_mask.sh" ] && cp /tmp/setup_mask.sh "$SCRIPT_DIR/setup_mask.sh" 2>/dev/null || true
+        cp /tmp/setup_mask.sh "./setup_mask.sh" 2>/dev/null || true
         bash /tmp/setup_mask.sh --expert "$@"
         exit 0
     fi

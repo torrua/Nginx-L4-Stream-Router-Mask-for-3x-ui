@@ -7,6 +7,9 @@
 # Exit on severe unhandled errors
 set -o pipefail
 
+SCRIPT_VERSION="v6.6.0"
+
+
 # --- Color Palette & Typography ---
 BOLD=$'\033[1m'
 DIM=$'\033[2m'
@@ -39,6 +42,21 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_URL="https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main"
 
 # Clear screen & display header banner
+check_for_script_updates() {
+    local remote_ver=""
+    remote_ver=$(curl -fsSL --connect-timeout 2 "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/VERSION" 2>/dev/null | tr -d '[:space:]' || true)
+    if [ -n "$remote_ver" ]; then
+        if [ "$remote_ver" != "$SCRIPT_VERSION" ]; then
+            echo -e "  ${YELLOW}⚠️  Доступно обновление скрипта: ${GREEN}$remote_ver${YELLOW} (текущая версия: ${CYAN}$SCRIPT_VERSION${YELLOW})${RESET}"
+            echo -e "  ${DIM}Обновить: curl -sSL "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/install.sh?v=$(date +%s)" | sudo bash${RESET}\n"
+        else
+            echo -e "  ${DIM}Версия: ${GREEN}$SCRIPT_VERSION${DIM} (актуальная релизная сборка)${RESET}\n"
+        fi
+    else
+        echo -e "  ${DIM}Версия: ${GREEN}$SCRIPT_VERSION${RESET}\n"
+    fi
+}
+
 clear_banner() {
     clear 2>/dev/null || true
     echo -e "${CYAN}${BOLD}"
@@ -48,7 +66,7 @@ clear_banner() {
     echo "  ║    ░▀▀█░░█░░█▀▄░█▀▀░█▀█░█░█   ░█▀▄░█░█░█░█░░█░░█▀▀░█▀▄                         ║"
     echo "  ║    ░▀▀▀░░▀░░▀░▀░▀▀▀░▀░▀░▀░▀   ░▀░▀░▀▀▀░▀▀▀░░▀░░▀▀▀░▀░▀                         ║"
     echo "  ║                                                                                ║"
-    echo "  ║    Шлюз маскировки и L4/L7 распределения трафика для 3X-UI (Xray)              ║"
+    echo "  ║    Шлюз маскировки и L4/L7 распределения трафика для 3X-UI (Xray)   [v6.6.0]   ║"
     echo "  ║  ────────────────────────────────────────────────────────────────────────────  ║"
     echo "  ║  • L4 SNI Demux     : Проксирование доменов без расшифровки на уровне ядра     ║"
     echo "  ║  • Steal-Oneself    : Маскировка под свои домены с Anti-Loop защитой (9443)    ║"
@@ -57,6 +75,7 @@ clear_banner() {
     echo "  ║  • Decoy Shield     : SPA-маскировка DataSphere + блокировка ботов и DPI (444) ║"
     echo "  ╚════════════════════════════════════════════════════════════════════════════════╝"
     echo -e "${RESET}"
+    check_for_script_updates
 }
 
 # Spinner function for background processes
@@ -432,6 +451,10 @@ print_dashboard() {
 
 # --- Main Flow ---
 main() {
+    if [[ "${1:-}" == "-v" || "${1:-}" == "--version" ]]; then
+        echo "STREAM ROUTER $SCRIPT_VERSION"
+        exit 0
+    fi
     clear_banner
     check_prerequisites
     prompt_mode

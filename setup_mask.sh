@@ -39,7 +39,9 @@ RESUME_STEP=${RESUME_STEP:-1}
 RESUME_MODE=${RESUME_MODE:-0}
 CURRENT_STEP_START=0
 
-declare -A STEP_DURATIONS
+declare -A STEP_DURATIONS=()
+declare -A DOMAIN_TO_PORT=()
+declare -A EXT_SNI_TO_PORT=()
 declare -A STEP_NAMES=(
     [1]="Установка базовых системных зависимостей"
     [2]="Оптимизация сетевого стека ядра Linux (BBR + fq)"
@@ -1096,12 +1098,12 @@ if [ "$SKIP_INTERVIEW" -eq 1 ]; then
     done
 
     STEAL_DOMAINS=()
-    declare -A DOMAIN_TO_PORT
+    declare -A DOMAIN_TO_PORT=()
     if [[ "${ENABLE_STEAL,,}" == "y" || "${ENABLE_STEAL:-}" == "1" ]]; then
         STEAL_ENABLED=1
         STEAL_PORTS_LIST=(${STEAL_PORT:-45443})
-        IFS=',' read -r -a steal_dom_arr <<< "${STEAL_DOMAINS_STR:-${STEAL_DOMAINS:-}}"
-        for sd in "${steal_dom_arr[@]}"; do
+        steal_raw="${STEAL_DOMAINS_STR:-${STEAL_DOMAINS[*]:-}}"
+        for sd in ${steal_raw//,/ }; do
             sd=$(echo "$sd" | tr -d '[:space:]')
             if [ -n "$sd" ]; then
                 STEAL_DOMAINS+=("$sd")
@@ -1109,17 +1111,22 @@ if [ "$SKIP_INTERVIEW" -eq 1 ]; then
                 [[ " ${ALL_DOMAINS[*]} " =~ " ${sd} " ]] || ALL_DOMAINS+=("$sd")
             fi
         done
+        [ ${#STEAL_DOMAINS[@]} -gt 0 ] || {
+            STEAL_DOMAINS=("cdn.$PRIMARY_DOMAIN")
+            DOMAIN_TO_PORT["cdn.$PRIMARY_DOMAIN"]="${STEAL_PORTS_LIST[0]}"
+            ALL_DOMAINS+=("cdn.$PRIMARY_DOMAIN")
+        }
     else
         STEAL_ENABLED=0
         STEAL_PORTS_LIST=()
     fi
 
-    declare -A EXT_SNI_TO_PORT
+    declare -A EXT_SNI_TO_PORT=()
     if [[ "${ENABLE_CLASSIC,,}" == "y" || "${ENABLE_CLASSIC:-}" == "1" ]]; then
         CLASSIC_ENABLED=1
         CLASSIC_PORTS_LIST=(${CLASSIC_PORT:-46443})
-        IFS=',' read -r -a sni_arr <<< "${CLASSIC_SNI:-}"
-        for cs in "${sni_arr[@]}"; do
+        classic_raw="${CLASSIC_SNI:-gateway.icloud.com}"
+        for cs in ${classic_raw//,/ }; do
             cs=$(echo "$cs" | tr -d '[:space:]')
             if [ -n "$cs" ]; then
                 EXT_SNI_TO_PORT["$cs"]="${CLASSIC_PORTS_LIST[0]}"
@@ -1252,8 +1259,8 @@ if [ "$EXPRESS_MODE" -eq 1 ]; then
     CLASSIC_ENABLED=1
     
     ALL_DOMAINS=("$PRIMARY_DOMAIN")
-    declare -A DOMAIN_TO_PORT
-    declare -A EXT_SNI_TO_PORT
+    declare -A DOMAIN_TO_PORT=()
+    declare -A EXT_SNI_TO_PORT=()
     STEAL_PORTS_LIST=("$STEAL_PORT")
     CLASSIC_PORTS_LIST=("$CLASSIC_PORT")
     ALL_REALITY_PORTS=("$STEAL_PORT" "$CLASSIC_PORT")
@@ -1303,8 +1310,8 @@ prompt_default "Префикс названия сервера для подкл
 SERVER_PREFIX="${SERVER_PREFIX:-Server}" 
 
 ALL_DOMAINS=("$PRIMARY_DOMAIN")
-declare -A DOMAIN_TO_PORT
-declare -A EXT_SNI_TO_PORT
+declare -A DOMAIN_TO_PORT=()
+declare -A EXT_SNI_TO_PORT=()
 STEAL_PORTS_LIST=()
 CLASSIC_PORTS_LIST=()
 ALL_REALITY_PORTS=()

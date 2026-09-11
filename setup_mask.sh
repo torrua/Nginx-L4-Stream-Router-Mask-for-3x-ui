@@ -693,6 +693,218 @@ if [ "${DEBUG_MODE:-0}" -eq 1 ]; then
 fi
 
 # =============================================================
+#  ФУНКЦИИ ФАЗЫ УСТАНОВКИ (определены до фазы для читаемости и --debug)
+# =============================================================
+
+apply_sysctl_and_limits() {
+    cat << 'EOF' > /etc/sysctl.d/99-vless-tuning.conf
+net.ipv4.ip_forward = 1
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+net.ipv4.tcp_syncookies = 1
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+vm.swappiness = 10
+
+net.ipv4.ip_local_port_range = 1024 65535
+net.core.netdev_max_backlog = 16384
+net.core.somaxconn = 65535
+net.ipv4.tcp_max_syn_backlog = 65535
+
+net.ipv4.tcp_fin_timeout = 15
+net.ipv4.tcp_keepalive_time = 300
+net.ipv4.tcp_keepalive_intvl = 30
+net.ipv4.tcp_keepalive_probes = 5
+net.ipv4.tcp_max_tw_buckets = 524288
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_orphan_retries = 2
+net.ipv4.tcp_slow_start_after_idle = 0
+
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+net.core.rmem_default = 212992
+net.core.wmem_default = 212992
+net.ipv4.tcp_rmem = 4096 131072 16777216
+net.ipv4.tcp_wmem = 4096 131072 16777216
+net.ipv4.udp_mem = 65536 131072 262144
+net.ipv4.udp_rmem_min = 16384
+net.ipv4.udp_wmem_min = 16384
+
+vm.dirty_ratio = 6
+vm.dirty_background_ratio = 3
+
+net.ipv4.tcp_mtu_probing = 1
+net.ipv4.tcp_mtu_probe_floor = 1024
+
+fs.file-max = 2097152
+fs.inotify.max_user_instances = 8192
+fs.inotify.max_user_watches = 524288
+net.ipv4.tcp_notsent_lowat = 16384
+EOF
+
+    sysctl --system >/dev/null 2>&1 || true
+
+    cat << 'EOF' > /etc/security/limits.d/99-proxy-limits.conf
+* soft nofile 524288
+* hard nofile 524288
+root soft nofile 524288
+root hard nofile 524288
+www-data soft nofile 524288
+www-data hard nofile 524288
+nginx soft nofile 524288
+nginx hard nofile 524288
+EOF
+}
+
+setup_nginx_mainline() {
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -q
+    apt-get install gnupg ca-certificates lsb-release openssl -y -q
+
+    mkdir -p /usr/share/keyrings
+    curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg --yes
+
+    local os_id os_codename
+    os_id=$(lsb_release -is | tr '[:upper:]' '[:lower:]')
+    os_codename=$(lsb_release -cs)
+
+    echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] https://nginx.org/packages/mainline/$os_id $os_codename nginx" \
+        > /etc/apt/sources.list.d/nginx.list
+
+    cat << EOF > /etc/apt/preferences.d/99nginx
+Package: nginx*
+Pin: origin nginx.org
+Pin-Priority: 900
+EOF
+
+    apt-get update -q
+    apt-get install -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" nginx -y -q
+}
+
+install_certbot_snap() {
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get install snapd -y -q
+    apt-get purge -y certbot || true
+    systemctl start snapd.socket || true
+    systemctl enable snapd.socket || true
+
+    for i in {1..15}; do
+        if snap version >/dev/null 2>&1; then break; fi
+        sleep 2
+    done
+
+    snap install core || true
+    snap refresh core || true
+    snap install --classic certbot
+    ln -sf /snap/bin/certbot /usr/bin/certbot
+}
+
+# Принимает $1 = домен (был closure-переменной $dom из цикла)
+obtain_cert() {
+    local dom="$1"
+    certbot certonly --webroot -w "$WEBROOT" --expand -d "$dom" --non-interactive
+}
+
+install_acmesh() {
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get install -y cron socat -q
+    local acme_mail="${LE_EMAIL:-admin@$PRIMARY_DOMAIN}"
+    curl -s https://get.acme.sh | sh -s email="$acme_mail"
+    local _acme_bin="${HOME:-/root}/.acme.sh/acme.sh"
+    chmod +x "$_acme_bin"
+    "$_acme_bin" --register-account -m "$acme_mail" --server letsencrypt
+}
+
+# Принимает $1 = домен (был closure-переменной $dom из цикла)
+# Использует глобальные $_ACME (устанавливается после install_acmesh)
+obtain_cf_cert() {
+    local dom="$1"
+    "$_ACME" --issue --dns dns_cf -d "$dom" --server letsencrypt --force && \
+    mkdir -p "/etc/ssl/acme/$dom" && \
+    chmod 755 "/etc/ssl/acme/$dom" && \
+    "$_ACME" --install-cert -d "$dom" \
+        --key-file       "/etc/ssl/acme/$dom/privkey.pem" \
+        --fullchain-file "/etc/ssl/acme/$dom/fullchain.pem" \
+        --reloadcmd     "chmod 755 /etc/ssl /etc/ssl/acme /etc/ssl/acme/$dom 2>/dev/null || true; chmod 644 /etc/ssl/acme/$dom/* 2>/dev/null || true; systemctl reload nginx"
+}
+
+nginx_reload_task() {
+    nginx -t && \
+    systemctl unmask nginx 2>/dev/null || true && \
+    systemctl enable nginx 2>/dev/null || true && \
+    systemctl restart nginx
+}
+
+# =============================================================
+#  ФОНОВАЯ ПРЕД-УСТАНОВКА (Zero-Wait Provisioning)
+# =============================================================
+BG_PREINSTALL_PID=""
+PREINSTALL_COMPLETED=0
+
+start_background_preinstall() {
+    if [ "$NON_INTERACTIVE" -eq 0 ] && [ "${DEBUG_MODE:-0}" -eq 0 ]; then
+        local log_file="/tmp/setup_mask_preinstall.log"
+        : > "$log_file"
+        {
+            export DEBIAN_FRONTEND=noninteractive
+            # 1. Базовые утилиты
+            install_prerequisites
+            # 2. Тюнинг ядра
+            apply_sysctl_and_limits
+            # 3. Nginx Mainline
+            setup_nginx_mainline
+            # 4. Ядро 3X-UI (если ещё не установлено)
+            if ! command -v x-ui >/dev/null 2>&1 && [ ! -f /etc/x-ui/x-ui.db ] && [ ! -f /usr/local/x-ui/bin/x-ui.db ]; then
+                curl -Ls --connect-timeout 15 https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh -o /tmp/install_3xui.sh 2>/dev/null
+                printf "n\n" | bash /tmp/install_3xui.sh || true
+            fi
+        } >> "$log_file" 2>&1 &
+        BG_PREINSTALL_PID=$!
+        echo -e "  ${CYAN}⚡ [Фоновая подготовка]${NC} ${DIM}Установка Nginx, 3X-UI и сетевого стека запущена параллельно...${NC}\n"
+    fi
+}
+
+sync_background_preinstall() {
+    if [ -n "${BG_PREINSTALL_PID:-}" ]; then
+        local log_file="/tmp/setup_mask_preinstall.log"
+        if kill -0 "$BG_PREINSTALL_PID" 2>/dev/null; then
+            local spin_chars=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+            local delay=0.08
+            local i=0
+            tput civis 2>/dev/null || echo -ne "\033[?25l"
+            while kill -0 "$BG_PREINSTALL_PID" 2>/dev/null; do
+                i=$(( (i + 1) % 10 ))
+                printf "\r  ${CYAN}${spin_chars[$i]}${NC}  ${WHITE}%-54s${NC}" "Доустановка компонентов в фоне (Nginx, 3X-UI)..."
+                sleep "$delay"
+            done
+            wait "$BG_PREINSTALL_PID"
+            local exit_code=$?
+            tput cnorm 2>/dev/null || echo -ne "\033[?25h"
+            if [ $exit_code -eq 0 ]; then
+                printf "\r  ${GREEN}${CHECK}${NC}  ${WHITE}%-54s${NC} ${GREEN}[ГОТОВО]${NC}\n" "Фоновая подготовка пакетов (Nginx, 3X-UI, BBR)"
+                PREINSTALL_COMPLETED=1
+            else
+                printf "\r  ${RED}${CROSS}${NC}  ${WHITE}%-54s${NC} ${RED}[ОШИБКА]${NC}\n" "Фоновая подготовка пакетов"
+                [ -f "$log_file" ] && tail -n 25 "$log_file" | sed 's/^/    /' || true
+                die "Ошибка при фоновой установке пакетов. Подробности выше."
+            fi
+        else
+            wait "$BG_PREINSTALL_PID"
+            local exit_code=$?
+            if [ $exit_code -eq 0 ]; then
+                echo -e "  ${GREEN}${CHECK}${NC}  ${WHITE}Базовые пакеты (Nginx, 3X-UI, BBR) уже подготовлены в фоне${NC} ${GREEN}[ГОТОВО]${NC}"
+                PREINSTALL_COMPLETED=1
+            else
+                echo -e "  ${RED}${CROSS}${NC}  ${WHITE}Ошибка при фоновой подготовке пакетов${NC}"
+                [ -f "$log_file" ] && tail -n 25 "$log_file" | sed 's/^/    /' || true
+                die "Ошибка при фоновой установке пакетов. Подробности выше."
+            fi
+        fi
+        BG_PREINSTALL_PID=""
+    fi
+}
+
+# =============================================================
 #  ИНТЕРАКТИВНАЯ КОНФИГУРАЦИЯ И СЦЕНАРИИ МАРШРУТИЗАЦИИ
 # =============================================================
 EXPRESS_MODE=${EXPRESS_MODE:-0}
@@ -1260,218 +1472,6 @@ fi
 
 # Сохраняем состояние сессии в файл конфигурации для защиты от обрыва SSH или повторного вызова
 save_session_state "$SAVED_CONFIG_FILE"
-
-# =============================================================
-#  ФУНКЦИИ ФАЗЫ УСТАНОВКИ (определены до фазы для читаемости и --debug)
-# =============================================================
-
-apply_sysctl_and_limits() {
-    cat << 'EOF' > /etc/sysctl.d/99-vless-tuning.conf
-net.ipv4.ip_forward = 1
-net.core.default_qdisc = fq
-net.ipv4.tcp_congestion_control = bbr
-net.ipv4.tcp_syncookies = 1
-net.ipv4.conf.all.rp_filter = 1
-net.ipv4.conf.default.rp_filter = 1
-vm.swappiness = 10
-
-net.ipv4.ip_local_port_range = 1024 65535
-net.core.netdev_max_backlog = 16384
-net.core.somaxconn = 65535
-net.ipv4.tcp_max_syn_backlog = 65535
-
-net.ipv4.tcp_fin_timeout = 15
-net.ipv4.tcp_keepalive_time = 300
-net.ipv4.tcp_keepalive_intvl = 30
-net.ipv4.tcp_keepalive_probes = 5
-net.ipv4.tcp_max_tw_buckets = 524288
-net.ipv4.tcp_tw_reuse = 1
-net.ipv4.tcp_orphan_retries = 2
-net.ipv4.tcp_slow_start_after_idle = 0
-
-net.core.rmem_max = 16777216
-net.core.wmem_max = 16777216
-net.core.rmem_default = 212992
-net.core.wmem_default = 212992
-net.ipv4.tcp_rmem = 4096 131072 16777216
-net.ipv4.tcp_wmem = 4096 131072 16777216
-net.ipv4.udp_mem = 65536 131072 262144
-net.ipv4.udp_rmem_min = 16384
-net.ipv4.udp_wmem_min = 16384
-
-vm.dirty_ratio = 6
-vm.dirty_background_ratio = 3
-
-net.ipv4.tcp_mtu_probing = 1
-net.ipv4.tcp_mtu_probe_floor = 1024
-
-fs.file-max = 2097152
-fs.inotify.max_user_instances = 8192
-fs.inotify.max_user_watches = 524288
-net.ipv4.tcp_notsent_lowat = 16384
-EOF
-
-    sysctl --system >/dev/null 2>&1 || true
-
-    cat << 'EOF' > /etc/security/limits.d/99-proxy-limits.conf
-* soft nofile 524288
-* hard nofile 524288
-root soft nofile 524288
-root hard nofile 524288
-www-data soft nofile 524288
-www-data hard nofile 524288
-nginx soft nofile 524288
-nginx hard nofile 524288
-EOF
-}
-
-setup_nginx_mainline() {
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get update -q
-    apt-get install gnupg ca-certificates lsb-release openssl -y -q
-
-    mkdir -p /usr/share/keyrings
-    curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg --yes
-
-    local os_id os_codename
-    os_id=$(lsb_release -is | tr '[:upper:]' '[:lower:]')
-    os_codename=$(lsb_release -cs)
-
-    echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] https://nginx.org/packages/mainline/$os_id $os_codename nginx" \
-        > /etc/apt/sources.list.d/nginx.list
-
-    cat << EOF > /etc/apt/preferences.d/99nginx
-Package: nginx*
-Pin: origin nginx.org
-Pin-Priority: 900
-EOF
-
-    apt-get update -q
-    apt-get install -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" nginx -y -q
-}
-
-install_certbot_snap() {
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get install snapd -y -q
-    apt-get purge -y certbot || true
-    systemctl start snapd.socket || true
-    systemctl enable snapd.socket || true
-
-    for i in {1..15}; do
-        if snap version >/dev/null 2>&1; then break; fi
-        sleep 2
-    done
-
-    snap install core || true
-    snap refresh core || true
-    snap install --classic certbot
-    ln -sf /snap/bin/certbot /usr/bin/certbot
-}
-
-# Принимает $1 = домен (был closure-переменной $dom из цикла)
-obtain_cert() {
-    local dom="$1"
-    certbot certonly --webroot -w "$WEBROOT" --expand -d "$dom" --non-interactive
-}
-
-install_acmesh() {
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get install -y cron socat -q
-    local acme_mail="${LE_EMAIL:-admin@$PRIMARY_DOMAIN}"
-    curl -s https://get.acme.sh | sh -s email="$acme_mail"
-    local _acme_bin="${HOME:-/root}/.acme.sh/acme.sh"
-    chmod +x "$_acme_bin"
-    "$_acme_bin" --register-account -m "$acme_mail" --server letsencrypt
-}
-
-# Принимает $1 = домен (был closure-переменной $dom из цикла)
-# Использует глобальные $_ACME (устанавливается после install_acmesh)
-obtain_cf_cert() {
-    local dom="$1"
-    "$_ACME" --issue --dns dns_cf -d "$dom" --server letsencrypt --force && \
-    mkdir -p "/etc/ssl/acme/$dom" && \
-    chmod 755 "/etc/ssl/acme/$dom" && \
-    "$_ACME" --install-cert -d "$dom" \
-        --key-file       "/etc/ssl/acme/$dom/privkey.pem" \
-        --fullchain-file "/etc/ssl/acme/$dom/fullchain.pem" \
-        --reloadcmd     "chmod 755 /etc/ssl /etc/ssl/acme /etc/ssl/acme/$dom 2>/dev/null || true; chmod 644 /etc/ssl/acme/$dom/* 2>/dev/null || true; systemctl reload nginx"
-}
-
-nginx_reload_task() {
-    nginx -t && \
-    systemctl unmask nginx 2>/dev/null || true && \
-    systemctl enable nginx 2>/dev/null || true && \
-    systemctl restart nginx
-}
-
-# =============================================================
-#  ФОНОВАЯ ПРЕД-УСТАНОВКА (Zero-Wait Provisioning)
-# =============================================================
-BG_PREINSTALL_PID=""
-PREINSTALL_COMPLETED=0
-
-start_background_preinstall() {
-    if [ "$NON_INTERACTIVE" -eq 0 ] && [ "${DEBUG_MODE:-0}" -eq 0 ]; then
-        local log_file="/tmp/setup_mask_preinstall.log"
-        : > "$log_file"
-        {
-            export DEBIAN_FRONTEND=noninteractive
-            # 1. Базовые утилиты
-            install_prerequisites
-            # 2. Тюнинг ядра
-            apply_sysctl_and_limits
-            # 3. Nginx Mainline
-            setup_nginx_mainline
-            # 4. Ядро 3X-UI (если ещё не установлено)
-            if ! command -v x-ui >/dev/null 2>&1 && [ ! -f /etc/x-ui/x-ui.db ] && [ ! -f /usr/local/x-ui/bin/x-ui.db ]; then
-                curl -Ls --connect-timeout 15 https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh -o /tmp/install_3xui.sh 2>/dev/null
-                printf "n\n" | bash /tmp/install_3xui.sh || true
-            fi
-        } >> "$log_file" 2>&1 &
-        BG_PREINSTALL_PID=$!
-        echo -e "  ${CYAN}⚡ [Фоновая подготовка]${NC} ${DIM}Установка Nginx, 3X-UI и сетевого стека запущена параллельно...${NC}\n"
-    fi
-}
-
-sync_background_preinstall() {
-    if [ -n "${BG_PREINSTALL_PID:-}" ]; then
-        local log_file="/tmp/setup_mask_preinstall.log"
-        if kill -0 "$BG_PREINSTALL_PID" 2>/dev/null; then
-            local spin_chars=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
-            local delay=0.08
-            local i=0
-            tput civis 2>/dev/null || echo -ne "\033[?25l"
-            while kill -0 "$BG_PREINSTALL_PID" 2>/dev/null; do
-                i=$(( (i + 1) % 10 ))
-                printf "\r  ${CYAN}${spin_chars[$i]}${NC}  ${WHITE}%-54s${NC}" "Доустановка компонентов в фоне (Nginx, 3X-UI)..."
-                sleep "$delay"
-            done
-            wait "$BG_PREINSTALL_PID"
-            local exit_code=$?
-            tput cnorm 2>/dev/null || echo -ne "\033[?25h"
-            if [ $exit_code -eq 0 ]; then
-                printf "\r  ${GREEN}${CHECK}${NC}  ${WHITE}%-54s${NC} ${GREEN}[ГОТОВО]${NC}\n" "Фоновая подготовка пакетов (Nginx, 3X-UI, BBR)"
-                PREINSTALL_COMPLETED=1
-            else
-                printf "\r  ${RED}${CROSS}${NC}  ${WHITE}%-54s${NC} ${RED}[ОШИБКА]${NC}\n" "Фоновая подготовка пакетов"
-                [ -f "$log_file" ] && tail -n 25 "$log_file" | sed 's/^/    /' || true
-                die "Ошибка при фоновой установке пакетов. Подробности выше."
-            fi
-        else
-            wait "$BG_PREINSTALL_PID"
-            local exit_code=$?
-            if [ $exit_code -eq 0 ]; then
-                echo -e "  ${GREEN}${CHECK}${NC}  ${WHITE}Базовые пакеты (Nginx, 3X-UI, BBR) уже подготовлены в фоне${NC} ${GREEN}[ГОТОВО]${NC}"
-                PREINSTALL_COMPLETED=1
-            else
-                echo -e "  ${RED}${CROSS}${NC}  ${WHITE}Ошибка при фоновой подготовке пакетов${NC}"
-                [ -f "$log_file" ] && tail -n 25 "$log_file" | sed 's/^/    /' || true
-                die "Ошибка при фоновой установке пакетов. Подробности выше."
-            fi
-        fi
-        BG_PREINSTALL_PID=""
-    fi
-}
 
 # =============================================================
 #  ФАЗА УСТАНОВКИ И РАЗВЕРТЫВАНИЯ СИСТЕМЫ

@@ -27,7 +27,7 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="v6.8.0"
+SCRIPT_VERSION="v6.9.0"
 
 
 # --------------------------- Цвета и UI-движок ---------------------------
@@ -163,7 +163,7 @@ print_mask_banner() {
     echo "  ║    ░▀▀█░░█░░█▀▄░█▀▀░█▀█░█░█   ░█▀▄░█░█░█░█░░█░░█▀▀░█▀▄                         ║"
     echo "  ║    ░▀▀▀░░▀░░▀░▀░▀▀▀░▀░▀░▀░▀   ░▀░▀░▀▀▀░▀▀▀░░▀░░▀▀▀░▀░▀                         ║"
     echo "  ║                                                                                ║"
-    echo "  ║    Шлюз маскировки и L4/L7 распределения трафика для 3X-UI (Xray)   [v6.8.0]   ║"
+    echo "  ║    Шлюз маскировки и L4/L7 распределения трафика для 3X-UI (Xray)   [v6.9.0]   ║"
     echo "  ║  ────────────────────────────────────────────────────────────────────────────  ║"
     echo "  ║  • L4 SNI Demux     : Проксирование доменов без расшифровки на уровне ядра     ║"
     echo "  ║  • Steal-Oneself    : Маскировка под свои домены с Anti-Loop защитой (9443)    ║"
@@ -267,6 +267,8 @@ PANEL_PATH="my-3x-panel"
 # Учетные данные администратора панели 3X-UI
 ADMIN_USERNAME="admin"
 ADMIN_PASSWORD=""
+# Префикс / название сервера для подключений (например: NL, DE, MyServer)
+SERVER_PREFIX="Server"
 
 SUB_PORT="55443"
 SUB_PATH="my-post-key"
@@ -476,6 +478,7 @@ PANEL_PORT="${PANEL_PORT:-10443}"
 PANEL_PATH="${_save_panel_path}"
 ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
+SERVER_PREFIX="${SERVER_PREFIX:-Server}"
 SUB_PORT="${SUB_PORT:-55443}"
 SUB_PATH="${_save_sub_path}"
 XHTTP_STREAM_PORT="${XHTTP_STREAM_PORT:-50443}"
@@ -734,6 +737,7 @@ if [ "$EXPRESS_MODE" -eq 1 ]; then
     PANEL_PORT="10443"
     ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
     ADMIN_PASSWORD="${ADMIN_PASSWORD:-$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 12)}"
+    SERVER_PREFIX="${SERVER_PREFIX:-Server}"
     RAW_PATH="panel-$(head /dev/urandom | tr -dc a-z0-9 | head -c 6)"
     PANEL_PATH="/${RAW_PATH}/"
     SUB_PORT="55443"
@@ -798,6 +802,12 @@ else
     fi
 
 [[ "$PRIMARY_DOMAIN" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]     || die "Некорректный формат доменного имени: $PRIMARY_DOMAIN"
+
+# Префикс / название сервера для подключений в клиентах (например: NL, Frankfurt, MyServer)
+DEFAULT_SRV_PREFIX="${SERVER_PREFIX:-$(hostname -s 2>/dev/null || echo "Server")}"
+[[ "$DEFAULT_SRV_PREFIX" =~ ^(localhost|ubuntu|debian|centos|vps.*)$ ]] && DEFAULT_SRV_PREFIX="Server"
+prompt_default "Префикс названия сервера для подключений в клиентах (например: NL, Frankfurt, MyServer)" "$DEFAULT_SRV_PREFIX" SERVER_PREFIX
+SERVER_PREFIX="${SERVER_PREFIX:-Server}" 
 
 ALL_DOMAINS=("$PRIMARY_DOMAIN")
 declare -A DOMAIN_TO_PORT
@@ -2846,7 +2856,7 @@ fi
 
 echo
 echo -e "${GREEN}=====================================================================${NC}"
-echo -e "   ИНФРАСТРУКТУРА УСПЕШНО РАЗВЕРНУТА (v6.8.0 PUBLIC EDITION)!       "
+echo -e "   ИНФРАСТРУКТУРА УСПЕШНО РАЗВЕРНУТА (v6.9.0 PUBLIC EDITION)!       "
 echo -e "${GREEN}=====================================================================${NC}"
 echo -e "  Главная страница:            ${CYAN}https://${PRIMARY_DOMAIN}/${NC} (${DECOY_NAME})"
 echo -e "  Вход в панель 3X-UI:         ${GREEN}https://${PRIMARY_DOMAIN}${PANEL_PATH}${NC}"
@@ -2956,7 +2966,7 @@ echo -e "    * Subscription Port: ${GREEN}$SUB_PORT${NC} | Subscription Path: ${
 echo -e "    * Subscription URL: ${CYAN}https://${PRIMARY_DOMAIN}${SUB_PATH}${NC}"
 echo -e "  - ${YELLOW}В разделе «Хосты» (Hosts) добавьте 2 правила:${NC}"
 echo -e "    1) ${BOLD}MAIN_SAME_443:${NC} Инбаунды: ${CYAN}REALITY + Hysteria 2${NC} -> Порт: ${GREEN}443${NC} | Безопасность: ${GREEN}same${NC}"
-echo -e "    2) ${BOLD}XHTTP_TLS_443:${NC} Инбаунд: ${CYAN}VLESS_XHTTP${NC} -> Порт: ${GREEN}443${NC} | Безопасность: ${GREEN}tls${NC} (SNI: ${CYAN}$PRIMARY_DOMAIN${NC})"
+echo -e "    2) ${BOLD}XHTTP_TLS_443:${NC} Инбаунд: ${CYAN}${SERVER_PREFIX} (VLESS xHTTP)${NC} -> Порт: ${GREEN}443${NC} | Безопасность: ${GREEN}tls${NC} (SNI: ${CYAN}$PRIMARY_DOMAIN${NC})"
 echo -e "${GREEN}=====================================================================${NC}"
 
 exit 0

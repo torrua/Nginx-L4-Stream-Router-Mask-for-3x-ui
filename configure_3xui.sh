@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  CONFIGURE 3X-UI INBOUNDS & SETTINGS (v6.8.0 Universal Companion & Smart Reconcile)
+#  CONFIGURE 3X-UI INBOUNDS & SETTINGS (v6.9.0 Universal Companion & Smart Reconcile)
 # ==============================================================================
 #  Скрипт автоматического конфигурирования и самовосстановления базы 3X-UI.
 #  Безопасен для повторного запуска:
@@ -185,6 +185,7 @@ XHTTP_STREAM_PATH="${XHTTP_STREAM_PATH:-Stream-One-Path}"
 
 ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
+SERVER_PREFIX="${SERVER_PREFIX:-Server}"
 
 ENABLE_STEAL="${ENABLE_STEAL:-y}"
 STEAL_PORT="${STEAL_PORT:-45443}"
@@ -323,6 +324,7 @@ export SSL_CERT_PATH
 export SSL_KEY_PATH
 export ADMIN_USERNAME
 export ADMIN_PASSWORD
+export SERVER_PREFIX
 
 # Приостановка службы x-ui на время реальной транзакции во избежание блокировок SQLite
 WAS_ACTIVE=0
@@ -415,6 +417,14 @@ awg_subnet_cidr = int(os.environ.get("AWG_SUBNET_CIDR") or "22")
 # Определение ID администратора и настройка учетных данных
 admin_user = os.environ.get("ADMIN_USERNAME", "").strip()
 admin_pass = os.environ.get("ADMIN_PASSWORD", "").strip()
+server_prefix = os.environ.get("SERVER_PREFIX", "").strip()
+if server_prefix.lower() in ("-", "none", "off", "no"):
+    server_prefix = ""
+
+def make_remark(method):
+    if server_prefix:
+        return f"{server_prefix} ({method})"
+    return method
 
 cur.execute("SELECT id, username, password FROM users LIMIT 1")
 user_row = cur.fetchone()
@@ -815,7 +825,7 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             if ext_dest != domain:
                 preserved.append(f"кастомный хост узла ({ext_dest})")
 
-    if not cur_ext or cur_ext[0].get("port") != expected_ext_port or cur_ext[0].get("dest") != target_dest:
+    if not cur_ext or cur_ext[0].get("port") != expected_ext_port or cur_ext[0].get("dest") != target_dest or cur_ext[0].get("remark") != remark:
         force_tls_val = "same" if protocol == "vless" and "realitySettings" in target_stream else "tls"
         target_stream["externalProxy"] = [{
             "dest": target_dest,
@@ -852,6 +862,8 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
 
 # --- Генерация дефолтных эталонных профилей (для отсутствующих инбаундов) ---
 def_uuid = str(uuid.uuid4())
+safe_prefix_clean = re.sub(r'[^a-zA-Z0-9_-]', '', server_prefix) if server_prefix else ""
+client_tag = f"Client-{safe_prefix_clean}" if safe_prefix_clean and safe_prefix_clean.lower() != "server" else "Client" 
 def_reality_priv, def_reality_pub = generate_reality_keypair()
 def_reality_sid = secrets.token_hex(8)
 def_hy2_pass = secrets.token_hex(12)
@@ -860,7 +872,7 @@ def_wg_c_priv, def_wg_c_pub = generate_wg_keypair()
 
 # 1. Steal-Oneself REALITY (45443)
 if enable_steal:
-    s_set = {"clients": [{"id": def_uuid, "flow": "xtls-rprx-vision", "email": "Client-Steal", "subId": def_reality_sid, "enable": True}], "decryption": "none"}
+    s_set = {"clients": [{"id": def_uuid, "flow": "xtls-rprx-vision", "email": f"{client_tag}-Steal", "subId": def_reality_sid, "enable": True}], "decryption": "none"}
     s_str = {
         "network": "tcp",
         "tcpSettings": {"acceptProxyProtocol": True},
@@ -871,13 +883,14 @@ if enable_steal:
             "shortIds": [def_reality_sid],
             "settings": {"publicKey": def_reality_pub, "fingerprint": "chrome", "spiderX": f"/{def_reality_sid}"}
         },
-        "externalProxy": [{"dest": domain, "port": 443, "forceTls": "same", "remark": "VLESS_STEAL"}]
+        "externalProxy": [{"dest": domain, "port": 443, "forceTls": "same", "remark": make_remark("VLESS Steal")}]
     }
-    smart_reconcile_inbound(steal_port, "vless", "in-steal-reality", "VLESS_STEAL", s_set, s_str, listen="127.0.0.1")
+    steal_remark = make_remark("VLESS Steal")
+    smart_reconcile_inbound(steal_port, "vless", "in-steal-reality", steal_remark, s_set, s_str, listen="127.0.0.1")
 
 # 2. Classic REALITY (46443)
 if enable_classic:
-    c_set = {"clients": [{"id": def_uuid, "flow": "xtls-rprx-vision", "email": "Client-Classic", "subId": def_reality_sid, "enable": True}], "decryption": "none"}
+    c_set = {"clients": [{"id": def_uuid, "flow": "xtls-rprx-vision", "email": f"{client_tag}-Classic", "subId": def_reality_sid, "enable": True}], "decryption": "none"}
     c_str = {
         "network": "tcp",
         "tcpSettings": {"acceptProxyProtocol": True},
@@ -888,12 +901,13 @@ if enable_classic:
             "shortIds": [def_reality_sid],
             "settings": {"publicKey": def_reality_pub, "fingerprint": "chrome", "spiderX": f"/{def_reality_sid}"}
         },
-        "externalProxy": [{"dest": domain, "port": 443, "forceTls": "same", "remark": "VLESS_CLASSIC"}]
+        "externalProxy": [{"dest": domain, "port": 443, "forceTls": "same", "remark": make_remark("VLESS Classic")}]
     }
-    smart_reconcile_inbound(classic_port, "vless", "in-classic-reality", "VLESS_CLASSIC", c_set, c_str, listen="127.0.0.1")
+    classic_remark = make_remark("VLESS Classic")
+    smart_reconcile_inbound(classic_port, "vless", "in-classic-reality", classic_remark, c_set, c_str, listen="127.0.0.1")
 
 # 3. VLESS xHTTP (50443)
-x_set = {"clients": [{"id": def_uuid, "email": "Client-xHTTP", "subId": secrets.token_hex(8), "enable": True}], "decryption": "none"}
+x_set = {"clients": [{"id": def_uuid, "email": f"{client_tag}-xHTTP", "subId": secrets.token_hex(8), "enable": True}], "decryption": "none"}
 x_str = {
     "network": "xhttp",
     "xhttpSettings": {
@@ -910,13 +924,14 @@ x_str = {
         }
     },
     "security": "none",
-    "externalProxy": [{"dest": domain, "port": 443, "forceTls": "tls", "sni": domain, "fingerprint": "chrome", "remark": "VLESS_XHTTP"}]
+    "externalProxy": [{"dest": domain, "port": 443, "forceTls": "tls", "sni": domain, "fingerprint": "chrome", "remark": make_remark("VLESS xHTTP")}]
 }
-smart_reconcile_inbound(xhttp_port, "vless", "in-xhttp-stream", "VLESS_XHTTP", x_set, x_str, listen="127.0.0.1")
+xhttp_remark = make_remark("VLESS xHTTP")
+smart_reconcile_inbound(xhttp_port, "vless", "in-xhttp-stream", xhttp_remark, x_set, x_str, listen="127.0.0.1")
 
 # 4. Hysteria 2 (443)
 if enable_hy2:
-    h_set = {"clients": [{"id": def_hy2_pass, "email": "Client-Hy2", "subId": secrets.token_hex(8), "enable": True}], "version": 2}
+    h_set = {"clients": [{"id": def_hy2_pass, "email": f"{client_tag}-Hy2", "subId": secrets.token_hex(8), "enable": True}], "version": 2}
     h_str = {
         "network": "hysteria",
         "hysteriaSettings": {"version": 2, "udpIdleTimeout": 60, "masquerade": {"type": "proxy", "url": "http://127.0.0.1:80"}},
@@ -925,16 +940,17 @@ if enable_hy2:
             "serverName": hy2_domain, "minVersion": "1.3", "maxVersion": "1.3",
             "certificates": [{"certificateFile": hy2_cert, "keyFile": hy2_key}], "alpn": ["h3"]
         },
-        "externalProxy": [{"dest": hy2_domain, "port": hy2_port, "forceTls": "tls", "remark": "Hysteria 2"}]
+        "externalProxy": [{"dest": hy2_domain, "port": hy2_port, "forceTls": "tls", "remark": make_remark("Hysteria 2")}]
     }
-    smart_reconcile_inbound(hy2_port, "hysteria", "in-hysteria2", "Hysteria 2", h_set, h_str, listen="0.0.0.0")
+    hy2_remark = make_remark("Hysteria 2")
+    smart_reconcile_inbound(hy2_port, "hysteria", "in-hysteria2", hy2_remark, h_set, h_str, listen="0.0.0.0")
 
 # 5. AmneziaWG v3.1 (8443)
 if enable_awg_v3:
     a3_set = {
         "clients": [{
             "privateKey": def_wg_c_priv, "publicKey": def_wg_c_pub,
-            "allowedIPs": ["10.8.1.2/32"], "email": "Client-AWG-v3", "enable": True
+            "allowedIPs": ["10.8.1.2/32"], "email": f"{client_tag}-AWG-v3", "enable": True
         }],
         "server": {
             "h1": "", "h2": "", "h3": "", "h4": "",
@@ -953,15 +969,16 @@ if enable_awg_v3:
             "subnetCidr": awg_subnet_cidr, "subnetIp": awg_subnet_ip
         }
     }
-    a3_str = {"externalProxy": [{"dest": domain, "port": awg_v3_port, "remark": "AmneziaWG v3.1"}]}
-    smart_reconcile_inbound(awg_v3_port, "amneziawg", "in-8443-udp", "AmneziaWG v3.1", a3_set, a3_str, listen="0.0.0.0")
+    a3_str = {"externalProxy": [{"dest": domain, "port": awg_v3_port, "remark": make_remark("AmneziaWG v3")}]}
+    awg_v3_remark = make_remark("AmneziaWG v3")
+    smart_reconcile_inbound(awg_v3_port, "amneziawg", "in-8443-udp", awg_v3_remark, a3_set, a3_str, listen="0.0.0.0")
 
 # 6. AmneziaWG v2.0 Legacy (8444)
 if enable_awg_v2:
     a2_set = {
         "clients": [{
             "privateKey": def_wg_c_priv, "publicKey": def_wg_c_pub,
-            "allowedIPs": ["10.8.2.2/32"], "email": "Client-AWG-v2", "enable": True
+            "allowedIPs": ["10.8.2.2/32"], "email": f"{client_tag}-AWG-v2", "enable": True
         }],
         "server": {
             "h1": "149419586", "h2": "878791997", "h3": "1251051976", "h4": "1657628296",
@@ -972,8 +989,9 @@ if enable_awg_v2:
             "subnetCidr": 24, "subnetIp": "10.8.2.0"
         }
     }
-    a2_str = {"externalProxy": [{"dest": domain, "port": awg_v2_port, "remark": "AmneziaWG v2.0"}]}
-    smart_reconcile_inbound(awg_v2_port, "amneziawg", "in-awg-v2-legacy", "AmneziaWG v2.0", a2_set, a2_str, listen="0.0.0.0")
+    a2_str = {"externalProxy": [{"dest": domain, "port": awg_v2_port, "remark": make_remark("AmneziaWG v2")}]}
+    awg_v2_remark = make_remark("AmneziaWG v2")
+    smart_reconcile_inbound(awg_v2_port, "amneziawg", "in-awg-v2-legacy", awg_v2_remark, a2_set, a2_str, listen="0.0.0.0")
 
 if not dry_run:
     try:

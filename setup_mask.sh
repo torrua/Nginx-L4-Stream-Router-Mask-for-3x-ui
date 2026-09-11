@@ -169,6 +169,7 @@ show_help() {
   -y, --yes, --non-interactive Запуск в неинтерактивном режиме (без вопросов пользователю)
   -d, --domain <DOMAIN>        Указать основной домен (PRIMARY_DOMAIN)
   --express                    Запустить режим Экспресс-настройки (настройка в 2 вопроса)
+  --expert                     Запустить Экспертный режим без повторного запроса меню
   --gen-config [FILE]          Сгенерировать шаблон конфигурации (.env.example) и выйти
   --debug                      Режим отладки: отключить спиннеры, вывод команд в реальном времени
   -f, --force                  Игнорировать ошибки и несовпадения DNS в неинтерактивном режиме
@@ -549,6 +550,7 @@ validate_path_segment() {
 CONFIG_FILE=""
 NON_INTERACTIVE=${NON_INTERACTIVE:-0}
 DEBUG_MODE=${DEBUG_MODE:-0}
+EXPERT_MODE=${EXPERT_MODE:-0}
 GEN_CONFIG=0
 FORCE_DNS=${FORCE_DNS:-0}
 SAVED_CONFIG_FILE="setup_mask.env"
@@ -571,6 +573,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --express)
             EXPRESS_MODE=1
+            shift
+            ;;
+        --expert)
+            EXPERT_MODE=1
             shift
             ;;
         --gen-config)
@@ -633,10 +639,11 @@ fi
 #  ИНТЕРАКТИВНАЯ КОНФИГУРАЦИЯ И СЦЕНАРИИ МАРШРУТИЗАЦИИ
 # =============================================================
 EXPRESS_MODE=${EXPRESS_MODE:-0}
+EXPERT_MODE=${EXPERT_MODE:-0}
 
 if [ "$NON_INTERACTIVE" -eq 0 ]; then
     print_mask_banner
-    if [ "$EXPRESS_MODE" -eq 0 ]; then
+    if [ "$EXPRESS_MODE" -eq 0 ] && [ "$EXPERT_MODE" -eq 0 ]; then
         echo -e "  ${WHITE}${BOLD}Выберите режим настройки:${NC}\n"
         echo -e "    ${CYAN}${BOLD}[1] Экспресс-установка (Рекомендуется)${NC} — Настройка в 2 вопроса"
         echo -e "        ${DIM}• Ввод только домена и email для Let's Encrypt.${NC}"
@@ -654,6 +661,7 @@ if [ "$NON_INTERACTIVE" -eq 0 ]; then
                 break
             elif [ "$MODE_INPUT" = "2" ]; then
                 EXPRESS_MODE=0
+                EXPERT_MODE=1
                 break
             fi
             echo -e "  ${RED}Пожалуйста, введите 1 или 2.${NC}"

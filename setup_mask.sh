@@ -893,22 +893,46 @@ EOF
     apt-get install -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" nginx -y -q
 }
 
-install_certbot_snap() {
+install_certbot_package() {
     export DEBIAN_FRONTEND=noninteractive
-    apt-get install snapd -y -q
-    apt-get purge -y certbot || true
-    systemctl start snapd.socket || true
-    systemctl enable snapd.socket || true
+    
+    # 1. Если certbot уже присутствует в системе и работает — используем его
+    if command -v certbot >/dev/null 2>&1 && certbot --version >/dev/null 2>&1; then
+        return 0
+    fi
 
-    for i in {1..15}; do
-        if snap version >/dev/null 2>&1; then break; fi
-        sleep 2
-    done
+    # 2. Приоритет: Нативный легкий certbot из официального apt репозитория
+    apt-get update -q -y >/dev/null 2>&1 || true
+    if apt-get install -y -q certbot python3-certbot-nginx; then
+        if command -v certbot >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
 
-    snap install core || true
-    snap refresh core || true
-    snap install --classic certbot
-    ln -sf /snap/bin/certbot /usr/bin/certbot
+    # 3. Резервный вариант (Fallback): Установка через Snap, если apt недоступен
+    if apt-get install -y -q snapd; then
+        systemctl start snapd.socket 2>/dev/null || true
+        systemctl enable snapd.socket 2>/dev/null || true
+        for i in {1..10}; do
+            if snap version >/dev/null 2>&1; then break; fi
+            sleep 2
+        done
+        snap install core 2>/dev/null || true
+        snap refresh core 2>/dev/null || true
+        if snap install --classic certbot 2>/dev/null; then
+            ln -sf /snap/bin/certbot /usr/bin/certbot 2>/dev/null || true
+            if command -v certbot >/dev/null 2>&1; then
+                return 0
+            fi
+        fi
+    fi
+
+    # 4. Если оба метода не удались — пробуем pip / certbot standalone
+    if command -v certbot >/dev/null 2>&1; then
+        return 0
+    fi
+
+    die "Не удалось установить Certbot ни через APT, ни через Snap. Проверьте репозитории вашей ОС."
 }
 
 # Принимает $1 = домен (был closure-переменной $dom из цикла)
@@ -1832,7 +1856,7 @@ if ! should_skip_step 4; then
     step_begin 4
 
     if [ "$SSL_ENGINE_CHOICE" = "1" ]; then
-        run_with_spinner "Инициализация подсистемы Certbot через Snap" install_certbot_snap
+        run_with_spinner "Инициализация подсистемы Certbot (APT / Snap)" install_certbot_package
 
         mkdir -p /etc/letsencrypt
         if [ -n "$LE_EMAIL" ]; then

@@ -264,6 +264,9 @@ CLASSIC_SNI="gateway.icloud.com"
 # --- 3. ВНУТРЕННИЕ ПОРТЫ И ПУТИ 3X-UI И xHTTP ---
 PANEL_PORT="10443"
 PANEL_PATH="my-3x-panel"
+# Учетные данные администратора панели 3X-UI
+ADMIN_USERNAME="admin"
+ADMIN_PASSWORD=""
 
 SUB_PORT="55443"
 SUB_PATH="my-post-key"
@@ -471,6 +474,8 @@ CLASSIC_SNI="${EXT_SNI_LIST[*]:-}"
 
 PANEL_PORT="${PANEL_PORT:-10443}"
 PANEL_PATH="${_save_panel_path}"
+ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
 SUB_PORT="${SUB_PORT:-55443}"
 SUB_PATH="${_save_sub_path}"
 XHTTP_STREAM_PORT="${XHTTP_STREAM_PORT:-50443}"
@@ -727,6 +732,8 @@ if [ "$EXPRESS_MODE" -eq 1 ]; then
     CLASSIC_PORT="46443"
     CLASSIC_SNI_LIST=("gateway.icloud.com")
     PANEL_PORT="10443"
+    ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
+    ADMIN_PASSWORD="${ADMIN_PASSWORD:-$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 12)}"
     RAW_PATH="panel-$(head /dev/urandom | tr -dc a-z0-9 | head -c 6)"
     PANEL_PATH="/${RAW_PATH}/"
     SUB_PORT="55443"
@@ -977,6 +984,12 @@ fi
 echo
 echo -e "${YELLOW}Шаг 4: Настройка путей и внутренних портов (3X-UI и VLESS xHTTP)${NC}"
 prompt_default "Внутренний порт панели 3X-UI" "10443" PANEL_PORT
+
+echo -e "  ${BOLD}Учетные данные администратора панели 3X-UI:${NC}"
+prompt_default "  Логин администратора 3X-UI" "${ADMIN_USERNAME:-admin}" ADMIN_USERNAME
+
+DEFAULT_ADMIN_PASS="${ADMIN_PASSWORD:-$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 12)}"
+prompt_default "  Пароль администратора 3X-UI" "$DEFAULT_ADMIN_PASS" ADMIN_PASSWORD
 
 # Безопасная случайная генерация по умолчанию (защита от сканеров и перебора)
 RAND_PANEL_PATH="panel-$(head /dev/urandom | tr -dc a-z0-9 | head -c 8)"
@@ -2837,7 +2850,30 @@ echo -e "   ИНФРАСТРУКТУРА УСПЕШНО РАЗВЕРНУТА (v6
 echo -e "${GREEN}=====================================================================${NC}"
 echo -e "  Главная страница:            ${CYAN}https://${PRIMARY_DOMAIN}/${NC} (${DECOY_NAME})"
 echo -e "  Вход в панель 3X-UI:         ${GREEN}https://${PRIMARY_DOMAIN}${PANEL_PATH}${NC}"
+echo -e "  Логин администратора:        ${BOLD}${ADMIN_USERNAME:-admin}${NC}"
+if [ -n "${ADMIN_PASSWORD:-}" ]; then
+    echo -e "  Пароль администратора:       ${BOLD}${ADMIN_PASSWORD}${NC}"
+fi
 echo -e "  Канал подписок:              ${GREEN}https://${PRIMARY_DOMAIN}${SUB_PATH}${NC}"
+
+# Сохранение учетных данных в защищенный файл
+if [ -n "${ADMIN_PASSWORD:-}" ]; then
+    CRED_FILE="/root/vpn_credentials.txt"
+    cat << EOF_CRED > "$CRED_FILE"
+=====================================================================
+УЧЕТНЫЕ ДАННЫЕ ПАНЕЛИ И СЕРВИСОВ 3X-UI
+Файл создан: $(date '+%Y-%m-%d %H:%M:%S')
+=====================================================================
+Панель управления:     https://${PRIMARY_DOMAIN}${PANEL_PATH}
+Логин администратора:   ${ADMIN_USERNAME:-admin}
+Пароль администратора:  ${ADMIN_PASSWORD}
+
+Ссылка на подписку:    https://${PRIMARY_DOMAIN}${SUB_PATH}
+=====================================================================
+EOF_CRED
+    chmod 600 "$CRED_FILE" 2>/dev/null || true
+    echo -e "  ${CYAN}[i] Учетные данные сохранены в:${NC} ${BOLD}$CRED_FILE${NC} (chmod 600)"
+fi
 echo
 
 echo -e "${YELLOW}[SSL] ВЫПУЩЕННЫЕ СЕРТИФИКАТЫ (Базовый путь: ${SSL_BASE_DIR}):${NC}"

@@ -3200,9 +3200,13 @@ for port in "${ALL_REALITY_PORTS[@]:-}"; do
     fi
 done
 
-UFW_ALLOW_LIST="ufw allow 80/tcp && ufw allow 443/tcp && ufw allow 8443/tcp"
+UFW_ALLOW_LIST="ufw allow 80/tcp && ufw allow 443/tcp"
 if [[ "${ENABLE_HY2:-}" == "1" || "${ENABLE_HY2,,}" == "y" ]] && [ -n "${HY2_PORT:-}" ]; then
-    UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${HY2_PORT}/udp"
+    if [ "${HY2_PORT}" != "443" ]; then
+        UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${HY2_PORT}/udp"
+    else
+        UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow 443/udp"
+    fi
 fi
 if [[ "${ENABLE_AWG_V3:-}" == "1" || "${ENABLE_AWG_V3,,}" == "y" ]] && [ -n "${AWG_V3_PORT:-}" ]; then
     UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${AWG_V3_PORT}/udp"

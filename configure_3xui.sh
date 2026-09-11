@@ -79,6 +79,9 @@ show_help() {
   --db <PATH>             Путь к файлу базы данных SQLite 3X-UI (по умолчанию: /etc/x-ui/x-ui.db)
   --dry-run               Только аудит и проверка (без внесения изменений)
   --force-sub             Принудительно перезаписать кастомные параметры подписки из .env
+  --warp                  Включить исходящий туннель Cloudflare WARP (обход капч и AI)
+  --no-warp               Отключить исходящий туннель Cloudflare WARP
+  --warp-key <KEY>        Указать лицензионный ключ WARP+
   -y, --yes               Неинтерактивное выполнение (без подтверждений)
   -h, --help              Показать эту справку и выйти
 
@@ -96,6 +99,8 @@ DB_PATH="/etc/x-ui/x-ui.db"
 DRY_RUN=0
 FORCE_SUB=0
 NON_INTERACTIVE=0
+CLI_ENABLE_WARP=""
+CLI_WARP_KEY=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -116,6 +121,19 @@ while [[ $# -gt 0 ]]; do
         --force-sub)
             FORCE_SUB=1
             shift
+            ;;
+        --warp)
+            CLI_ENABLE_WARP="y"
+            shift
+            ;;
+        --no-warp)
+            CLI_ENABLE_WARP="n"
+            shift
+            ;;
+        --warp-key)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: лицензионный ключ WARP+."
+            CLI_WARP_KEY="$2"
+            shift 2
             ;;
         -y|--yes|--non-interactive)
             NON_INTERACTIVE=1
@@ -209,6 +227,50 @@ AWG_PRIMARY_DNS="${AWG_PRIMARY_DNS:-76.76.2.0}"
 AWG_SECONDARY_DNS="${AWG_SECONDARY_DNS:-76.76.10.0}"
 AWG_SUBNET_IP="${AWG_SUBNET_IP:-10.8.0.0}"
 AWG_SUBNET_CIDR="${AWG_SUBNET_CIDR:-22}"
+
+ENABLE_WARP="${CLI_ENABLE_WARP:-${ENABLE_WARP:-n}}"
+WARP_LICENSE_KEY="${CLI_WARP_KEY:-${WARP_LICENSE_KEY:-}}"
+
+# Определение системного часового пояса
+SYSTEM_TZ=""
+if [ -f /etc/timezone ]; then
+    SYSTEM_TZ="$(cat /etc/timezone 2>/dev/null | tr -d '[:space:]')"
+elif command -v timedatectl >/dev/null 2>&1; then
+    SYSTEM_TZ="$(timedatectl show --property=Timezone --value 2>/dev/null | tr -d '[:space:]')"
+fi
+if [ -z "$SYSTEM_TZ" ] && [ -L /etc/localtime ]; then
+    SYSTEM_TZ="$(readlink /etc/localtime 2>/dev/null | sed -E 's/.*zoneinfo\///')"
+fi
+TIME_LOCATION="${TIME_LOCATION:-${SYSTEM_TZ:-Europe/Moscow}}"
+
+TRAFFIC_RESET_DAY="${TRAFFIC_RESET_DAY:-1}"
+SUB_SHOW_INFO="${SUB_SHOW_INFO:-true}"
+SUB_UPDATES="${SUB_UPDATES:-1}"
+SUB_ENCRYPT="${SUB_ENCRYPT:-true}"
+BLOCK_SMTP="${BLOCK_SMTP:-y}"
+BLOCK_LAN="${BLOCK_LAN:-y}"
+
+# Проверяем, активен ли Nginx или сконфигурирован ли он в качестве L4/L7 прокси
+HAS_NGINX=0
+if command -v nginx >/dev/null 2>&1 && { systemctl is-active --quiet nginx 2>/dev/null || [ -d /etc/nginx/stream.d ]; }; then
+    HAS_NGINX=1
+fi
+
+if [ -n "${WEB_LISTEN:-}" ]; then
+    WEB_LISTEN="$WEB_LISTEN"
+elif [ "$HAS_NGINX" -eq 1 ]; then
+    WEB_LISTEN="127.0.0.1"
+else
+    WEB_LISTEN=""
+fi
+
+if [ -n "${SUB_LISTEN:-}" ]; then
+    SUB_LISTEN="$SUB_LISTEN"
+elif [ "$HAS_NGINX" -eq 1 ]; then
+    SUB_LISTEN="127.0.0.1"
+else
+    SUB_LISTEN=""
+fi
 
 SSL_ENGINE_CHOICE="${SSL_ENGINE_CHOICE:-1}"
 if [ "$SSL_ENGINE_CHOICE" = "1" ]; then
@@ -325,6 +387,17 @@ export SSL_KEY_PATH
 export ADMIN_USERNAME
 export ADMIN_PASSWORD
 export SERVER_PREFIX
+export ENABLE_WARP
+export WARP_LICENSE_KEY
+export TIME_LOCATION
+export TRAFFIC_RESET_DAY
+export SUB_SHOW_INFO
+export SUB_UPDATES
+export SUB_ENCRYPT
+export BLOCK_SMTP
+export BLOCK_LAN
+export WEB_LISTEN
+export SUB_LISTEN
 
 # Приостановка службы x-ui на время реальной транзакции во избежание блокировок SQLite
 WAS_ACTIVE=0
@@ -357,6 +430,8 @@ import json
 import uuid
 import secrets
 import base64
+import time
+import urllib.request
 
 db_path = os.environ["DB_PATH"]
 dry_run = os.environ.get("DRY_RUN", "0") == "1"
@@ -647,6 +722,16 @@ else:
     target_sub_domain = domain
     target_sub_path = f"/{sub_path}/"
 
+time_location = os.environ.get("TIME_LOCATION", "Europe/Moscow").strip()
+traffic_reset_day = os.environ.get("TRAFFIC_RESET_DAY", "1").strip()
+sub_show_info = os.environ.get("SUB_SHOW_INFO", "true").strip().lower()
+sub_updates = os.environ.get("SUB_UPDATES", "1").strip()
+sub_encrypt = os.environ.get("SUB_ENCRYPT", "true").strip().lower()
+block_smtp = os.environ.get("BLOCK_SMTP", "y").strip().lower() in ("1", "y", "true")
+block_lan = os.environ.get("BLOCK_LAN", "y").strip().lower() in ("1", "y", "true")
+web_listen = os.environ.get("WEB_LISTEN", "").strip()
+sub_listen = os.environ.get("SUB_LISTEN", "").strip()
+
 settings_updates = {
     "webPort": panel_port,
     "webBasePath": f"/{panel_path}/",
@@ -655,8 +740,18 @@ settings_updates = {
     "subURI": target_sub_uri,
     "subDomain": target_sub_domain,
     "subCertFile": "",
-    "subKeyFile": ""
+    "subKeyFile": "",
+    "timeLocation": time_location,
+    "trafficResetDay": traffic_reset_day,
+    "subShowInfo": sub_show_info,
+    "subUpdates": sub_updates,
+    "subEncrypt": sub_encrypt
 }
+
+if web_listen:
+    settings_updates["webListen"] = web_listen
+if sub_listen:
+    settings_updates["subListen"] = sub_listen
 
 for k, v in settings_updates.items():
     current_val = existing_settings.get(k)
@@ -670,6 +765,369 @@ for k, v in settings_updates.items():
         print(f"  [ИСПРАВЛЕНО] Настройка {k}: '{current_val}' -> '{v}'")
     else:
         print(f"  [В ПОРЯДКЕ] Настройка {k}: '{v}'")
+
+# ----------------- 1.1. Тюнинг безопасности и шаблона ядра Xray (xrayTemplateConfig) -----------------
+print("\n[+] Синхронизация шаблона конфигурации Xray (DNS, безопасность и защита от абуз)...")
+
+enable_warp = os.environ.get("ENABLE_WARP", "n").lower() in ("1", "y", "true")
+warp_license_key = os.environ.get("WARP_LICENSE_KEY", "").strip()
+
+DEFAULT_XRAY_TEMPLATE = {
+    "api": {
+        "services": ["HandlerService", "LoggerService", "StatsService", "RoutingService"],
+        "tag": "api"
+    },
+    "inbounds": [{
+        "listen": "127.0.0.1", "port": 62789, "protocol": "tunnel",
+        "settings": {"rewriteAddress": "127.0.0.1"}, "tag": "api"
+    }],
+    "log": {"access": "none", "dnsLog": False, "error": "", "loglevel": "warning", "maskAddress": ""},
+    "metrics": {"listen": "127.0.0.1:11111", "tag": "metrics_out"},
+    "outbounds": [
+        {"protocol": "freedom", "settings": {"domainStrategy": "AsIs"}, "tag": "direct"},
+        {"protocol": "blackhole", "settings": {}, "tag": "blocked"}
+    ],
+    "policy": {
+        "levels": {"0": {"statsUserDownlink": True, "statsUserUplink": True}},
+        "system": {"statsInboundDownlink": True, "statsInboundUplink": True, "statsOutboundDownlink": False, "statsOutboundUplink": False}
+    },
+    "routing": {
+        "domainStrategy": "AsIs",
+        "rules": [
+            {"inboundTag": ["api"], "outboundTag": "api", "type": "field"},
+            {"ip": ["geoip:private"], "outboundTag": "blocked", "type": "field"}
+        ]
+    },
+    "stats": {}
+}
+
+# Чтение и инициализация шаблона Xray
+raw_tpl = existing_settings.get("xrayTemplateConfig")
+tpl = None
+if raw_tpl:
+    try:
+        tpl = json.loads(raw_tpl)
+    except Exception:
+        pass
+if not tpl or not isinstance(tpl, dict):
+    tpl = json.loads(json.dumps(DEFAULT_XRAY_TEMPLATE))
+
+# 1. DNS: UseIPv4 стратегия для предотвращения задержек AAAA
+dns_cfg = tpl.get("dns", {})
+if not isinstance(dns_cfg, dict):
+    dns_cfg = {}
+if dns_cfg.get("queryStrategy") != "UseIPv4":
+    dns_cfg["queryStrategy"] = "UseIPv4"
+    print("  [ОБНОВЛЕН] DNS queryStrategy: зафиксирован 'UseIPv4' (устранение задержек IPv6).")
+else:
+    print("  [В ПОРЯДКЕ] DNS queryStrategy: 'UseIPv4'.")
+tpl["dns"] = dns_cfg
+
+# 2. Логирование (тихий безопасный режим, без записи посещаемых URL)
+log_cfg = tpl.get("log", {})
+if not isinstance(log_cfg, dict):
+    log_cfg = {}
+log_cfg["loglevel"] = log_cfg.get("loglevel") or "warning"
+log_cfg["dnsLog"] = False
+if "access" not in log_cfg:
+    log_cfg["access"] = "none"
+tpl["log"] = log_cfg
+
+# 3. Гарантируем наличие blackhole outbound 'blocked'
+outbounds = tpl.get("outbounds", [])
+if not isinstance(outbounds, list):
+    outbounds = []
+has_blocked_ob = any(isinstance(ob, dict) and ob.get("tag") == "blocked" for ob in outbounds)
+if not has_blocked_ob:
+    outbounds.append({"protocol": "blackhole", "settings": {}, "tag": "blocked"})
+    print("  [СОЗДАНО] Outbound 'blocked' (blackhole) добавлен в шаблон.")
+tpl["outbounds"] = outbounds
+
+# 4. Правила маршрутизации: Блокировка SMTP (порт 25) и приватных сетей (SSRF)
+routing = tpl.get("routing", {})
+if not isinstance(routing, dict):
+    routing = {}
+rules = routing.get("rules", [])
+if not isinstance(rules, list):
+    rules = []
+
+# А. Блокировка спама (строго порт 25, не затрагивая клиентские 465/587)
+if block_smtp:
+    has_smtp_block = any(
+        isinstance(r, dict) and r.get("outboundTag") == "blocked" and "25" in str(r.get("port", "")).split(",")
+        for r in rules
+    )
+    if not has_smtp_block:
+        rules.insert(0, {
+            "type": "field",
+            "port": "25",
+            "outboundTag": "blocked"
+        })
+        print("  [СОЗДАНО] Защита от спама: исходящий порт 25 заблокирован (outboundTag: blocked).")
+    else:
+        print("  [В ПОРЯДКЕ] Защита от спама: порт 25 уже заблокирован.")
+
+# Б. Блокировка доступа к приватным IP и хосту (SSRF защита)
+if block_lan:
+    lan_ips = ["geoip:private", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "fc00::/7", "fe80::/10"]
+    has_lan_block = any(
+        isinstance(r, dict) and r.get("outboundTag") == "blocked" and any(ip_elem in str(r.get("ip", [])) for ip_elem in ["geoip:private", "127.0.0.0/8", "10.0.0.0/8"])
+        for r in rules
+    )
+    if not has_lan_block:
+        rules.insert(0, {
+            "type": "field",
+            "ip": lan_ips,
+            "outboundTag": "blocked"
+        })
+        print("  [СОЗДАНО] SSRF-защита: доступ к приватным IP хоста заблокирован (outboundTag: blocked).")
+    else:
+        print("  [В ПОРЯДКЕ] SSRF-защита: локальные сети уже изолированы.")
+
+routing["rules"] = rules
+tpl["routing"] = routing
+
+# 5. Опциональная интеграция Cloudflare WARP и выборочной маршрутизации
+if enable_warp:
+    print("\n[+] Интеграция Cloudflare WARP (Outbound WireGuard, MTU: 1280 & Smart Routing)...")
+    warp_data = {}
+    if existing_settings.get("warpData"):
+        try:
+            warp_data = json.loads(existing_settings["warpData"])
+        except Exception:
+            warp_data = {}
+
+    priv_b64 = warp_data.get("private_key")
+    device_id = warp_data.get("device_id")
+    client_id = warp_data.get("client_id", "")
+    token = warp_data.get("access_token", "")
+    endpoint_host = "162.159.192.1:2408"
+    v4_address = "172.16.0.2/32"
+    v6_address = "2606:4700:110:8780:4178:f4a4:a997:2167/128"
+    peer_pub = "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo="
+
+    if priv_b64 and device_id:
+        print(f"  [СОХРАНЕНО] Действующий аккаунт WARP (Device ID: {device_id})")
+    else:
+        # Регистрация нового аккаунта через официальный API Cloudflare
+        priv_b64, pub_b64 = generate_wg_keypair()
+        reg_payload = {
+            "key": pub_b64,
+            "tos": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
+            "type": "PC",
+            "model": "x-ui",
+            "name": "x-ui"
+        }
+        reg_req = urllib.request.Request(
+            "https://api.cloudflareclient.com/v0a4005/reg",
+            data=json.dumps(reg_payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "CF-Client-Version": "a-6.30-3596",
+                "User-Agent": "okhttp/3.12.1"
+            },
+            method="POST"
+        )
+        try:
+            with urllib.request.urlopen(reg_req, timeout=12) as reg_resp:
+                reg_res = json.loads(reg_resp.read().decode("utf-8"))
+            device_id = reg_res.get("id", "")
+            token = reg_res.get("token", "")
+            cfg = reg_res.get("config", {})
+            client_id = cfg.get("client_id", "")
+            peers = cfg.get("peers", [])
+            if peers:
+                peer_pub = peers[0].get("public_key", peer_pub)
+                peer_ep_data = peers[0].get("endpoint", {})
+                if isinstance(peer_ep_data, dict) and peer_ep_data.get("host"):
+                    endpoint_host = peer_ep_data["host"]
+            addrs = cfg.get("interface", {}).get("addresses", {})
+            if addrs.get("v4"):
+                v4_address = f"{addrs['v4']}/32"
+            if addrs.get("v6"):
+                v6_address = f"{addrs['v6']}/128"
+
+            # Опциональная привязка лицензии WARP+
+            if warp_license_key and device_id and token:
+                try:
+                    lic_req = urllib.request.Request(
+                        f"https://api.cloudflareclient.com/v0a4005/reg/{device_id}/account",
+                        data=json.dumps({"license": warp_license_key}).encode("utf-8"),
+                        headers={
+                            "Content-Type": "application/json",
+                            "Authorization": f"Bearer {token}",
+                            "User-Agent": "okhttp/3.12.1"
+                        },
+                        method="PUT"
+                    )
+                    with urllib.request.urlopen(lic_req, timeout=10) as lic_resp:
+                        pass
+                    print("  [АКТИВИРОВАНО] Лицензия WARP+ успешно привязана к аккаунту.")
+                except Exception as e_lic:
+                    print(f"  [!] Не удалось привязать ключ WARP+: {e_lic}")
+
+            warp_data = {
+                "access_token": token,
+                "device_id": device_id,
+                "license_key": warp_license_key,
+                "private_key": priv_b64,
+                "client_id": client_id
+            }
+            if not dry_run:
+                for wk, wv in [("warpData", json.dumps(warp_data)), ("warpUpdateInterval", "0"), ("warpLastUpdate", str(int(time.time())))]:
+                    cur.execute("SELECT id FROM settings WHERE key = ?", (wk,))
+                    if cur.fetchone():
+                        cur.execute("UPDATE settings SET value = ? WHERE key = ?", (wv, wk))
+                    else:
+                        cur.execute("INSERT INTO settings (key, value) VALUES (?, ?)", (wk, wv))
+            print(f"  [СОЗДАНО] Cloudflare WARP аккаунт зарегистрирован (Device ID: {device_id})")
+        except Exception as e_reg:
+            print(f"  [!] Предупреждение: Cloudflare API недоступен ({e_reg}).")
+            print("      Шаблон Xray сконфигурирован с MTU 1280. Регистрацию можно завершить в 1 клик в панели 3X-UI.")
+            warp_data = {"private_key": priv_b64, "client_id": ""}
+
+    # Декодирование reserved bytes
+    reserved = [0, 0, 0]
+    if client_id:
+        try:
+            dec = list(base64.b64decode(client_id))
+            if len(dec) >= 3:
+                reserved = dec[:3]
+        except Exception:
+            pass
+
+    # Формирование объекта outbound 'warp'
+    warp_outbound = {
+        "tag": "warp",
+        "protocol": "wireguard",
+        "settings": {
+            "secretKey": priv_b64,
+            "address": [v4_address, v6_address] if v6_address else [v4_address],
+            "peers": [
+                {
+                    "publicKey": peer_pub,
+                    "endpoint": endpoint_host
+                }
+            ],
+            "reserved": reserved,
+            "mtu": 1280
+        }
+    }
+
+    # Согласование outbounds WARP
+    outbounds = tpl.get("outbounds", [])
+    warp_ob_idx = -1
+    for i, ob in enumerate(outbounds):
+        if isinstance(ob, dict) and ob.get("tag") == "warp":
+            warp_ob_idx = i
+            break
+
+    if warp_ob_idx >= 0:
+        existing_ob = outbounds[warp_ob_idx]
+        ob_settings = existing_ob.get("settings", {})
+        ob_settings["mtu"] = 1280
+        if not ob_settings.get("secretKey") and priv_b64:
+            ob_settings["secretKey"] = priv_b64
+        if not ob_settings.get("reserved") and reserved != [0, 0, 0]:
+            ob_settings["reserved"] = reserved
+        outbounds[warp_ob_idx] = existing_ob
+        print("  [ОБНОВЛЕН] Outbound 'warp': зафиксирован MTU 1280 и проверены ключи WireGuard.")
+    else:
+        outbounds.append(warp_outbound)
+        print("  [СОЗДАНО] Outbound 'warp' (WireGuard, MTU: 1280) добавлен в шаблон Xray.")
+    tpl["outbounds"] = outbounds
+
+    # Маршрутизация WARP
+    routing = tpl.get("routing", {})
+    rules = routing.get("rules", [])
+
+    yt_domains = [
+        "geosite:youtube",
+        "domain:youtube.com",
+        "domain:googlevideo.com",
+        "domain:ytimg.com",
+        "domain:youtu.be"
+    ]
+    ru_domains = ["geosite:ru", "geosite:yandex", "geosite:vk", "domain:ru", "domain:su", "domain:рф"]
+    warp_domains = [
+        "geosite:google",
+        "geosite:google-gemini",
+        "geosite:openai",
+        "geosite:anthropic",
+        "geosite:cloudflare",
+        "domain:gemini.google.com",
+        "domain:aistudio.google.com",
+        "domain:deepmind.google",
+        "domain:makersuite.google.com",
+        "domain:generativelanguage.googleapis.com"
+    ]
+
+    has_yt_direct = any(r.get("outboundTag") == "direct" and any("youtube" in str(d).lower() for d in r.get("domain", [])) for r in rules if isinstance(r, dict))
+    has_ru_direct = any(r.get("outboundTag") == "direct" and ("geosite:ru" in r.get("domain", []) or "geoip:ru" in r.get("ip", [])) for r in rules if isinstance(r, dict))
+    has_warp_rule = False
+
+    for r in rules:
+        if isinstance(r, dict) and r.get("outboundTag") == "warp":
+            has_warp_rule = True
+            cur_domains = set(r.get("domain", []))
+            for wd in warp_domains:
+                cur_domains.add(wd)
+            r["domain"] = list(cur_domains)
+            break
+
+    new_rules = []
+    # Сначала системные правила (api, blocked)
+    for r in rules:
+        if isinstance(r, dict) and r.get("outboundTag") in ("api", "blocked"):
+            new_rules.append(r)
+
+    # Добавляем YouTube -> Direct (защита 4K потока)
+    if not has_yt_direct:
+        new_rules.append({
+            "type": "field",
+            "outboundTag": "direct",
+            "domain": yt_domains
+        })
+        print("  [СОЗДАНО] Маршрут YouTube -> DIRECT (без задержек и буферизации).")
+
+    # Добавляем RU -> Direct (защита от блокировок банками РФ)
+    if not has_ru_direct:
+        new_rules.append({
+            "type": "field",
+            "outboundTag": "direct",
+            "domain": ru_domains,
+            "ip": ["geoip:ru"]
+        })
+        print("  [СОЗДАНО] Маршрут RU-ресурсов -> DIRECT (защита от гео-блокировок РФ).")
+
+    # Добавляем Google, Gemini, OpenAI, Claude -> WARP
+    if not has_warp_rule:
+        new_rules.append({
+            "type": "field",
+            "outboundTag": "warp",
+            "domain": warp_domains
+        })
+        print("  [СОЗДАНО] Маршрут Google, Gemini, OpenAI, Claude -> WARP (обход капч и AI).")
+
+    # Сохраняем остальные пользовательские правила
+    for r in rules:
+        if r not in new_rules:
+            new_rules.append(r)
+
+    routing["rules"] = new_rules
+    tpl["routing"] = routing
+else:
+    print("\n[-] Исходящий туннель Cloudflare WARP отключен в конфигурации.")
+
+# Сохранение обновленного шаблона xrayTemplateConfig
+new_xray_json = json.dumps(tpl, indent=2, ensure_ascii=False)
+if not dry_run:
+    cur.execute("SELECT id FROM settings WHERE key = 'xrayTemplateConfig'")
+    if cur.fetchone():
+        cur.execute("UPDATE settings SET value = ? WHERE key = 'xrayTemplateConfig'", (new_xray_json,))
+    else:
+        cur.execute("INSERT INTO settings (key, value) VALUES ('xrayTemplateConfig', ?)", (new_xray_json,))
+print("  [ИСПРАВЛЕНО] Конфигурация xrayTemplateConfig синхронизирована и сохранена в базе данных.")
 
 # ----------------- 2. Интеллектуальное согласование инбаундов (Smart Reconcile) -----------------
 print("\n[+] Аудит и согласование инбаундов (Smart Reconcile Engine)...")

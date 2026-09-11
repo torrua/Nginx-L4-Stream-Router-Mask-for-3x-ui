@@ -183,6 +183,9 @@ SUB_PATH="${SUB_PATH:-my-post-key}"
 XHTTP_STREAM_PORT="${XHTTP_STREAM_PORT:-50443}"
 XHTTP_STREAM_PATH="${XHTTP_STREAM_PATH:-Stream-One-Path}"
 
+ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
+
 ENABLE_STEAL="${ENABLE_STEAL:-y}"
 STEAL_PORT="${STEAL_PORT:-45443}"
 STEAL_DOMAINS="${STEAL_DOMAINS:-cdn.$PRIMARY_DOMAIN}"
@@ -318,6 +321,8 @@ export AWG_SUBNET_IP
 export AWG_SUBNET_CIDR
 export SSL_CERT_PATH
 export SSL_KEY_PATH
+export ADMIN_USERNAME
+export ADMIN_PASSWORD
 
 # Приостановка службы x-ui на время реальной транзакции во избежание блокировок SQLite
 WAS_ACTIVE=0
@@ -407,10 +412,137 @@ awg_secondary_dns = os.environ.get("AWG_SECONDARY_DNS") or "76.76.10.0"
 awg_subnet_ip = os.environ.get("AWG_SUBNET_IP") or "10.8.0.0"
 awg_subnet_cidr = int(os.environ.get("AWG_SUBNET_CIDR") or "22")
 
-# Определение ID администратора
-cur.execute("SELECT id FROM users LIMIT 1")
+# Определение ID администратора и настройка учетных данных
+admin_user = os.environ.get("ADMIN_USERNAME", "").strip()
+admin_pass = os.environ.get("ADMIN_PASSWORD", "").strip()
+
+cur.execute("SELECT id, username, password FROM users LIMIT 1")
 user_row = cur.fetchone()
-admin_id = user_row[0] if user_row else 1
+if user_row:
+    admin_id, curr_user, curr_pass = user_row
+    new_user = admin_user if admin_user else curr_user
+    new_pass = admin_pass if admin_pass else curr_pass
+    if admin_user or admin_pass:
+        if not dry_run:
+            cur.execute("UPDATE users SET username = ?, password = ? WHERE id = ?", (new_user, new_pass, admin_id))
+        print(f"  [ИСПРАВЛЕНО] Администратор (ID {admin_id}): логин='{new_user}', пароль обновлен.")
+else:
+    admin_id = 1
+    if not dry_run:
+        cur.execute("INSERT INTO users (id, username, password) VALUES (1, ?, ?)", (admin_user or "admin", admin_pass or "admin"))
+    print(f"  [СОЗДАНО] Администратор: логин='{admin_user or 'admin'}', пароль создан.")
+
+# Инспекция существующих таблиц и колонок для гарантированной синхронизации клиентов
+cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
+all_tables = set(r[0] for r in cur.fetchall())
+
+def get_table_columns(tbl):
+    if tbl not in all_tables:
+        return set()
+    cur.execute(f"PRAGMA table_info({tbl})")
+    return set(r[1] for r in cur.fetchall())
+
+client_traffics_cols = get_table_columns("client_traffics")
+clients_cols = get_table_columns("clients")
+client_inbounds_cols = get_table_columns("client_inbounds")
+
+def sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_stream=None):
+    clients = target_settings.get("clients", [])
+    if not clients:
+        return
+    
+    import time
+    now_ms = int(time.time() * 1000)
+    for idx, client in enumerate(clients):
+        # 1. Email (уникальный ключ клиента в 3X-UI)
+        email = client.get("email") or client.get("Email") or ""
+        if not email:
+            safe_remark = remark.lower().replace(" ", "-").replace("_", "-")
+            email = f"client-{safe_remark}" if idx == 0 else f"client-{safe_remark}-{idx+1}"
+            client["email"] = email
+        
+        # 2. subId для персональной подписки
+        sub_id = client.get("subId") or client.get("sub_id") or ""
+        if not sub_id:
+            sub_id = secrets.token_hex(8)
+            client["subId"] = sub_id
+            
+        # 3. Статус активности
+        if "enable" not in client:
+            client["enable"] = True
+            
+        client_uuid = client.get("id", "")
+        client_flow = client.get("flow", "")
+        client_pass = client.get("id", "") if protocol == "hysteria" else client.get("password", "")
+        
+        if dry_run:
+            continue
+            
+        # A. Таблица client_traffics (статистика, статус и отображение в панели 3X-UI)
+        if "client_traffics" in all_tables:
+            cur.execute("SELECT id, inbound_id FROM client_traffics WHERE email = ?", (email,))
+            ct_row = cur.fetchone()
+            if not ct_row:
+                ct_data = {
+                    "inbound_id": inbound_id,
+                    "enable": 1 if client.get("enable", True) else 0,
+                    "email": email,
+                    "up": 0, "down": 0, "expiry_time": 0, "total": 0, "reset": 0
+                }
+                for opt_col in ["uuid", "sub_id", "subId"]:
+                    if opt_col in client_traffics_cols:
+                        ct_data[opt_col] = client_uuid if opt_col == "uuid" else sub_id
+                cols = ", ".join(ct_data.keys())
+                placeholders = ", ".join(["?"] * len(ct_data))
+                cur.execute(f"INSERT INTO client_traffics ({cols}) VALUES ({placeholders})", list(ct_data.values()))
+            else:
+                cur.execute("UPDATE client_traffics SET enable = 1, inbound_id = ? WHERE email = ?", (inbound_id, email))
+                
+        # B. Таблица clients (единый реестр клиентов в 3X-UI v2.5+)
+        client_db_id = None
+        if "clients" in all_tables:
+            cur.execute("SELECT id FROM clients WHERE email = ?", (email,))
+            c_row = cur.fetchone()
+            if not c_row:
+                c_data = {
+                    "email": email,
+                    "enable": 1 if client.get("enable", True) else 0,
+                    "created_at": now_ms,
+                    "updated_at": now_ms
+                }
+                if "sub_id" in clients_cols: c_data["sub_id"] = sub_id
+                if "subId" in clients_cols: c_data["subId"] = sub_id
+                if "uuid" in clients_cols: c_data["uuid"] = client_uuid
+                if "password" in clients_cols: c_data["password"] = client_pass
+                if "flow" in clients_cols: c_data["flow"] = client_flow
+                if protocol == "amneziawg":
+                    if "wg_private_key" in clients_cols: c_data["wg_private_key"] = client.get("privateKey", "")
+                    if "wg_public_key" in clients_cols: c_data["wg_public_key"] = client.get("publicKey", "")
+                    if "wg_allowed_ips" in clients_cols and client.get("allowedIPs"):
+                        ips = client.get("allowedIPs")
+                        c_data["wg_allowed_ips"] = json.dumps(ips) if isinstance(ips, list) else str(ips)
+                cols = ", ".join(c_data.keys())
+                placeholders = ", ".join(["?"] * len(c_data))
+                cur.execute(f"INSERT INTO clients ({cols}) VALUES ({placeholders})", list(c_data.values()))
+                client_db_id = cur.lastrowid
+            else:
+                client_db_id = c_row[0]
+                cur.execute("UPDATE clients SET enable = 1, updated_at = ? WHERE id = ?", (now_ms, client_db_id))
+                
+        # C. Таблица client_inbounds (связь клиент <-> инбаунд в 3X-UI v2.5+)
+        if "client_inbounds" in all_tables and client_db_id is not None:
+            cur.execute("SELECT 1 FROM client_inbounds WHERE client_id = ? AND inbound_id = ?", (client_db_id, inbound_id))
+            if not cur.fetchone():
+                ci_data = {
+                    "client_id": client_db_id,
+                    "inbound_id": inbound_id,
+                    "flow_override": client_flow,
+                    "created_at": now_ms
+                }
+                valid_ci = {k: v for k, v in ci_data.items() if k in client_inbounds_cols}
+                cols = ", ".join(valid_ci.keys())
+                placeholders = ", ".join(["?"] * len(valid_ci))
+                cur.execute(f"INSERT INTO client_inbounds ({cols}) VALUES ({placeholders})", list(valid_ci.values()))
 
 # Curve25519 helper (RFC 7748) для генерации, валидации и починки ключей
 P = 2**255 - 19
@@ -548,7 +680,12 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
                     listen, port, protocol, settings, stream_settings, tag, sniffing
                 ) VALUES (?, 0, 0, 0, ?, 1, 0, ?, ?, ?, ?, ?, ?, ?)
             """, (admin_id, remark, listen, port, protocol, settings_json, stream_json, tag, sniffing_json))
-        print(f"  [СОЗДАНО] Отсутствующий инбаунд: {remark} ({protocol.upper()} на порту {port}) добавлен.")
+            new_inbound_id = cur.lastrowid
+            sync_inbound_clients(new_inbound_id, protocol, remark, default_settings, default_stream)
+            # Перезаписываем settings_json со сгенерированными email и subId
+            settings_json = json.dumps(default_settings, ensure_ascii=False)
+            cur.execute("UPDATE inbounds SET settings = ? WHERE id = ?", (settings_json, new_inbound_id))
+        print(f"  [СОЗДАНО] Отсутствующий инбаунд: {remark} ({protocol.upper()} на порту {port}) добавлен и зарегистрирован в реестре клиентов.")
         return
 
     inbound_id, raw_s, raw_st, proto, cur_tag, cur_remark, cur_listen = row
@@ -691,6 +828,9 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
         target_stream["externalProxy"] = cur_ext
         preserved.append(f"externalProxy :{expected_ext_port}")
 
+    # Синхронизация клиентов в реестре (client_traffics, clients, client_inbounds)
+    sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_stream)
+
     # Запись в SQLite
     settings_json = json.dumps(target_settings, ensure_ascii=False)
     stream_json = json.dumps(target_stream, ensure_ascii=False)
@@ -720,7 +860,7 @@ def_wg_c_priv, def_wg_c_pub = generate_wg_keypair()
 
 # 1. Steal-Oneself REALITY (45443)
 if enable_steal:
-    s_set = {"clients": [{"id": def_uuid, "flow": "xtls-rprx-vision"}], "decryption": "none"}
+    s_set = {"clients": [{"id": def_uuid, "flow": "xtls-rprx-vision", "email": "Client-Steal", "subId": def_reality_sid, "enable": True}], "decryption": "none"}
     s_str = {
         "network": "tcp",
         "tcpSettings": {"acceptProxyProtocol": True},
@@ -737,7 +877,7 @@ if enable_steal:
 
 # 2. Classic REALITY (46443)
 if enable_classic:
-    c_set = {"clients": [{"id": def_uuid, "flow": "xtls-rprx-vision"}], "decryption": "none"}
+    c_set = {"clients": [{"id": def_uuid, "flow": "xtls-rprx-vision", "email": "Client-Classic", "subId": def_reality_sid, "enable": True}], "decryption": "none"}
     c_str = {
         "network": "tcp",
         "tcpSettings": {"acceptProxyProtocol": True},
@@ -753,7 +893,7 @@ if enable_classic:
     smart_reconcile_inbound(classic_port, "vless", "in-classic-reality", "VLESS_CLASSIC", c_set, c_str, listen="127.0.0.1")
 
 # 3. VLESS xHTTP (50443)
-x_set = {"clients": [{"id": def_uuid}], "decryption": "none"}
+x_set = {"clients": [{"id": def_uuid, "email": "Client-xHTTP", "subId": secrets.token_hex(8), "enable": True}], "decryption": "none"}
 x_str = {
     "network": "xhttp",
     "xhttpSettings": {
@@ -776,7 +916,7 @@ smart_reconcile_inbound(xhttp_port, "vless", "in-xhttp-stream", "VLESS_XHTTP", x
 
 # 4. Hysteria 2 (443)
 if enable_hy2:
-    h_set = {"clients": [{"id": def_hy2_pass}], "version": 2}
+    h_set = {"clients": [{"id": def_hy2_pass, "email": "Client-Hy2", "subId": secrets.token_hex(8), "enable": True}], "version": 2}
     h_str = {
         "network": "hysteria",
         "hysteriaSettings": {"version": 2, "udpIdleTimeout": 60, "masquerade": {"type": "proxy", "url": "http://127.0.0.1:80"}},
@@ -794,7 +934,7 @@ if enable_awg_v3:
     a3_set = {
         "clients": [{
             "privateKey": def_wg_c_priv, "publicKey": def_wg_c_pub,
-            "allowedIPs": ["10.8.1.2/32"], "email": "Client-1", "enable": True
+            "allowedIPs": ["10.8.1.2/32"], "email": "Client-AWG-v3", "enable": True
         }],
         "server": {
             "h1": "", "h2": "", "h3": "", "h4": "",
@@ -821,7 +961,7 @@ if enable_awg_v2:
     a2_set = {
         "clients": [{
             "privateKey": def_wg_c_priv, "publicKey": def_wg_c_pub,
-            "allowedIPs": ["10.8.2.2/32"], "email": "Legacy-Router", "enable": True
+            "allowedIPs": ["10.8.2.2/32"], "email": "Client-AWG-v2", "enable": True
         }],
         "server": {
             "h1": "149419586", "h2": "878791997", "h3": "1251051976", "h4": "1657628296",
@@ -877,9 +1017,32 @@ if [ "$DRY_RUN" -eq 1 ]; then
     echo -e "  ${BOLD}./configure_3xui.sh --config \"${CONFIG_FILE:-./setup_mask.env}\" -y${NC}"
 else
     echo -e "${GREEN}      БАЗА ДАННЫХ 3X-UI УСПЕШНО СКОНФИГУРИРОВАНА И ИСЦЕЛЕНА!         ${NC}"
-    echo -e "  - ${BOLD}Подключения клиентов:${NC}   ${GREEN}Сохранены без разрыва и сброса ключей${NC}"
+    echo -e "  - ${BOLD}Подключения клиентов:${NC}   ${GREEN}Сохранены и синхронизированы в реестре клиентов${NC}"
     echo -e "  - ${BOLD}Панель управления:${NC}      ${CYAN}https://${PRIMARY_DOMAIN}/${PANEL_PATH}/${NC}"
+    echo -e "  - ${BOLD}Логин панели:${NC}           ${WHITE}${ADMIN_USERNAME:-admin}${NC}"
+    if [ -n "${ADMIN_PASSWORD:-}" ]; then
+        echo -e "  - ${BOLD}Пароль панели:${NC}          ${WHITE}${ADMIN_PASSWORD}${NC}"
+    fi
     echo -e "  - ${BOLD}Ссылка на подписку:${NC}     ${CYAN}https://${PRIMARY_DOMAIN}/${SUB_PATH}/${NC}"
+fi
+
+# Сохранение учетных данных в защищенный файл
+if [ "$DRY_RUN" -eq 0 ] && [ -n "${ADMIN_PASSWORD:-}" ]; then
+    CRED_FILE="/root/vpn_credentials.txt"
+    cat << EOF_CRED > "$CRED_FILE"
+=====================================================================
+УЧЕТНЫЕ ДАННЫЕ ПАНЕЛИ И СЕРВИСОВ 3X-UI
+Файл обновлен: $(date '+%Y-%m-%d %H:%M:%S')
+=====================================================================
+Панель управления:     https://${PRIMARY_DOMAIN}/${PANEL_PATH}/
+Логин администратора:   ${ADMIN_USERNAME:-admin}
+Пароль администратора:  ${ADMIN_PASSWORD}
+
+Ссылка на подписку:    https://${PRIMARY_DOMAIN}/${SUB_PATH}/
+=====================================================================
+EOF_CRED
+    chmod 600 "$CRED_FILE" 2>/dev/null || true
+    echo -e "  - ${BOLD}Файл с паролями:${NC}        ${CYAN}$CRED_FILE${NC} (chmod 600)"
 fi
 echo -e "${GREEN}=====================================================================${NC}"
 echo

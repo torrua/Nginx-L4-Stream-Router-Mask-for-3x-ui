@@ -514,6 +514,25 @@ install_prerequisites() {
             echo "  [DEBUG] Все базовые утилиты уже установлены — пропускаем apt-get."
         fi
     fi
+
+    # Отключение навязчивой рекламы Canonical, ESM Apps и спама motd в Ubuntu
+    if command -v pro >/dev/null 2>&1; then
+        pro config set apt_news=false >/dev/null 2>&1 || true
+    fi
+    if [ -f /etc/default/motd-news ]; then
+        sed -i 's/ENABLED=1/ENABLED=0/' /etc/default/motd-news 2>/dev/null || true
+    fi
+    systemctl stop motd-news.timer >/dev/null 2>&1 || true
+    systemctl disable motd-news.timer >/dev/null 2>&1 || true
+    chmod -x /etc/update-motd.d/10-help-text \
+             /etc/update-motd.d/50-motd-news \
+             /etc/update-motd.d/88-esm-announce \
+             /etc/update-motd.d/91-contract-ua-esm-status >/dev/null 2>&1 || true
+    if [ -f /etc/apt/apt.conf.d/20apt-esm-hook.conf ]; then
+        rm -f /etc/apt/apt.conf.d/20apt-esm-hook.conf
+        touch /etc/apt/apt.conf.d/20apt-esm-hook.conf
+    fi
+    rm -f /var/lib/update-notifier/updates-available 2>/dev/null || true
 }
 
 # =============================================================

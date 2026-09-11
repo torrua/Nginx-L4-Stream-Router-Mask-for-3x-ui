@@ -1111,15 +1111,25 @@ if [[ "${ENABLE_STEAL,,}" == "y" ]]; then
 
             added_count_for_port=0
             saved_first_steal=$(echo "${CONFIG_STEAL_DOMS:-}" | awk '{print $1}')
-            default_steal_dom="${saved_first_steal:-cdn.$PRIMARY_DOMAIN}"
             while true; do
                 if [ "$added_count_for_port" -eq 0 ]; then
-                    echo -ne "  ${WHITE}${ARROW} Основной поддомен для порта $PORT_VAL [${GREEN}${default_steal_dom}${WHITE}]: ${NC}"
-                    read -r STEAL_DOM </dev/tty || read -r STEAL_DOM || true
-                    STEAL_DOM="${STEAL_DOM:-$default_steal_dom}"
+                    if [ -n "$saved_first_steal" ]; then
+                        echo -ne "  ${WHITE}${ARROW} Основной поддомен для порта $PORT_VAL [${GREEN}${saved_first_steal}${WHITE}]: ${NC}"
+                        read -r STEAL_DOM </dev/tty || read -r STEAL_DOM || true
+                        STEAL_DOM="${STEAL_DOM:-$saved_first_steal}"
+                    else
+                        echo -ne "  ${WHITE}${ARROW} Введите поддомен для Steal-Oneself на порту $PORT_VAL (напр. xr.$PRIMARY_DOMAIN): ${NC}"
+                        read -r STEAL_DOM </dev/tty || read -r STEAL_DOM || true
+                        STEAL_DOM=$(echo "${STEAL_DOM:-}" | tr -d '[:space:]')
+                        if [ -z "$STEAL_DOM" ]; then
+                            warn "    Поддомен обязателен для Steal-Oneself. Введите поддомен (напр. xr.$PRIMARY_DOMAIN или cdn.$PRIMARY_DOMAIN)."
+                            continue
+                        fi
+                    fi
                 else
                     echo -ne "  ${DIM}• Добавить еще один поддомен на этот же порт $PORT_VAL? (Enter для завершения): ${NC}"
                     read -r STEAL_DOM </dev/tty || read -r STEAL_DOM || true
+                    STEAL_DOM=$(echo "${STEAL_DOM:-}" | tr -d '[:space:]')
                 fi
 
                 if [ -z "$STEAL_DOM" ]; then
@@ -1434,40 +1444,69 @@ fi
 log "Проверка A-записей для всех собственных доменов..."
 WAN_IP=$(curl -s4 --connect-timeout 5 icanhazip.com || curl -s4 --connect-timeout 5 ifconfig.me || echo "")
 if [ -n "$WAN_IP" ]; then
+    valid_domains=()
     for dom in "${ALL_DOMAINS[@]}"; do
         resolved_ip=$(dig +short "$dom" @1.1.1.1 2>/dev/null | tail -n1 || echo "")
         if [ -z "$resolved_ip" ]; then
             resolved_ip=$(getent ahosts "$dom" 2>/dev/null | awk '{print $1}' | head -n1 || echo "")
         fi
 
+        local_dns_ok=0
         if [ -z "$resolved_ip" ]; then
             warn "Домен $dom не разрешается в IP-адрес. Проверьте DNS A-запись."
-            if [ "$NON_INTERACTIVE" -eq 1 ]; then
-                if [ "$FORCE_DNS" -eq 1 ]; then
-                    warn "Внимание: продолжение установки без валидации DNS (флаг --force / FORCE_DNS=1)."
-                else
-                    die "Критическая ошибка: Домен $dom не разрешается. Укажите -f / --force или проверьте DNS."
-                fi
-            else
-                read -rp "Продолжить установку? [y/N]: " dns_ans </dev/tty || read -r dns_ans || true
-                [[ "${dns_ans,,}" == "y" ]] || die "Установка отменена пользователем."
-            fi
         elif [ "$resolved_ip" != "$WAN_IP" ]; then
             warn "Несовпадение IP: $dom указывает на $resolved_ip, IP сервера: $WAN_IP."
-            if [ "$NON_INTERACTIVE" -eq 1 ]; then
-                if [ "$FORCE_DNS" -eq 1 ]; then
-                    warn "Внимание: несовпадение IP проигнорировано (флаг --force / FORCE_DNS=1)."
-                else
-                    die "Критическая ошибка: $dom указывает на $resolved_ip вместо $WAN_IP. Укажите -f / --force для игнорирования."
-                fi
-            else
-                read -rp "Продолжить установку? [y/N]: " dns_ans </dev/tty || read -r dns_ans || true
-                [[ "${dns_ans,,}" == "y" ]] || die "Установка отменена пользователем."
-            fi
         else
             ok "DNS проверен: $dom -> $WAN_IP"
+            valid_domains+=("$dom")
+            local_dns_ok=1
+        fi
+
+        if [ "$local_dns_ok" -eq 0 ]; then
+            if [ "$NON_INTERACTIVE" -eq 1 ]; then
+                if [ "$FORCE_DNS" -eq 1 ]; then
+                    warn "Внимание: несовпадение DNS проигнорировано (флаг --force / FORCE_DNS=1)."
+                    valid_domains+=("$dom")
+                else
+                    die "Критическая ошибка: Домен $dom не указывает на $WAN_IP. Укажите -f / --force или проверьте DNS."
+                fi
+            elif [ "$dom" = "$PRIMARY_DOMAIN" ]; then
+                read -rp "  [!] Основной домен $dom не совпадает с IP сервера ($WAN_IP). Продолжить выпуск SSL? [y/N]: " dns_ans </dev/tty || read -r dns_ans || true
+                if [[ "${dns_ans,,}" == "y" ]]; then
+                    valid_domains+=("$dom")
+                else
+                    die "Установка отменена пользователем."
+                fi
+            else
+                echo -e "  ${YELLOW}${BOLD}Внимание:${NC} домен '${WHITE}$dom${NC}' не направлен на IP этого сервера (${WHITE}$WAN_IP${NC})."
+                echo -e "  ${DIM}Если продолжить, Let's Encrypt Certbot завершится с фатальной ошибкой (NXDOMAIN).${NC}"
+                echo -e "    ${CYAN}${BOLD}[1] Исключить '$dom' из установки и продолжить${NC} (Рекомендуется)"
+                echo -e "    ${YELLOW}[2] Всё равно попытаться выпустить SSL${NC} (если DNS только что обновлен)"
+                echo -e "    ${RED}[3] Прервать установку${NC}"
+                read -rp "  Ваш выбор [1/2/3] (по умолчанию: 1): " dns_choice </dev/tty || read -r dns_choice || dns_choice="1"
+                dns_choice=$(echo "${dns_choice:-1}" | tr -d '[:space:]')
+                case "$dns_choice" in
+                    2)
+                        warn "Попытка выпуска SSL для '$dom' будет выполнена."
+                        valid_domains+=("$dom")
+                        ;;
+                    3)
+                        die "Установка отменена пользователем для настройки DNS."
+                        ;;
+                    *)
+                        warn "Домен '$dom' исключен из текущей установки."
+                        new_steal=()
+                        for sd in "${STEAL_DOMAINS[@]:-}"; do
+                            [ "$sd" != "$dom" ] && new_steal+=("$sd")
+                        done
+                        STEAL_DOMAINS=("${new_steal[@]:-}")
+                        unset "DOMAIN_TO_PORT[$dom]" 2>/dev/null || true
+                        ;;
+                esac
+            fi
         fi
     done
+    ALL_DOMAINS=("${valid_domains[@]}")
 fi
 
 # Сохраняем состояние сессии в файл конфигурации для защиты от обрыва SSH или повторного вызова

@@ -40,6 +40,7 @@ RESUME_MODE=${RESUME_MODE:-0}
 CURRENT_STEP_START=0
 
 declare -A STEP_DURATIONS=()
+declare -A STEP_BG_FLAGS=()
 declare -A DOMAIN_TO_PORT=()
 declare -A EXT_SNI_TO_PORT=()
 declare -A STEP_NAMES=(
@@ -97,13 +98,33 @@ step_begin() {
 
 step_finish() {
     local step_num="$1"
-    local step_end
-    step_end=$(date +%s)
-    local duration=$(( step_end - CURRENT_STEP_START ))
+    local duration=0
+    local is_bg=0
+    local bg_dur_file="/tmp/setup_mask_bg_duration_${step_num}.time"
+    if [ -f "$bg_dur_file" ]; then
+        duration=$(cat "$bg_dur_file" 2>/dev/null | tr -d '[:space:]' || echo 0)
+        if [[ "$duration" =~ ^[0-9]+$ ]] && [ "$duration" -gt 0 ]; then
+            is_bg=1
+            STEP_BG_FLAGS[$step_num]=1
+        fi
+        rm -f "$bg_dur_file" 2>/dev/null || true
+    fi
+
+    if [ "$is_bg" -eq 0 ]; then
+        local step_end
+        step_end=$(date +%s)
+        duration=$(( step_end - CURRENT_STEP_START ))
+        [ "$duration" -lt 0 ] && duration=0
+    fi
+
     STEP_DURATIONS[$step_num]="$duration"
     local dur_str
     dur_str=$(format_duration "$duration")
-    ok "Шаг $step_num из $TOTAL_STEPS: ${STEP_NAMES[$step_num]} [ГОТОВО] (время: $dur_str)"
+    if [ "$is_bg" -eq 1 ]; then
+        ok "Шаг $step_num из $TOTAL_STEPS: ${STEP_NAMES[$step_num]} [ГОТОВО] (в фоне за $dur_str, сэкономлено: 100%)"
+    else
+        ok "Шаг $step_num из $TOTAL_STEPS: ${STEP_NAMES[$step_num]} [ГОТОВО] (время: $dur_str)"
+    fi
     record_step_completed "$step_num"
 }
 
@@ -1013,18 +1034,42 @@ start_background_preinstall() {
     if [ "$NON_INTERACTIVE" -eq 0 ] && [ "${DEBUG_MODE:-0}" -eq 0 ]; then
         local log_file="/tmp/setup_mask_preinstall.log"
         : > "$log_file"
+        rm -f /tmp/setup_mask_bg_duration_*.time 2>/dev/null || true
         {
             export DEBIAN_FRONTEND=noninteractive
             # 1. Базовые утилиты
+            local _t1_start
+            _t1_start=$(date +%s)
             install_prerequisites
+            local _t1_end
+            _t1_end=$(date +%s)
+            echo $(( _t1_end - _t1_start )) > /tmp/setup_mask_bg_duration_1.time
+
             # 2. Тюнинг ядра
+            local _t2_start
+            _t2_start=$(date +%s)
             apply_sysctl_and_limits
+            local _t2_end
+            _t2_end=$(date +%s)
+            echo $(( _t2_end - _t2_start )) > /tmp/setup_mask_bg_duration_2.time
+
             # 3. Nginx Mainline
+            local _t3_start
+            _t3_start=$(date +%s)
             setup_nginx_mainline
+            local _t3_end
+            _t3_end=$(date +%s)
+            echo $(( _t3_end - _t3_start )) > /tmp/setup_mask_bg_duration_3.time
+
             # 4. Ядро 3X-UI (если ещё не установлено)
             if ! command -v x-ui >/dev/null 2>&1 && [ ! -f /etc/x-ui/x-ui.db ] && [ ! -f /usr/local/x-ui/bin/x-ui.db ]; then
+                local _tx_start
+                _tx_start=$(date +%s)
                 curl -Ls --connect-timeout 15 https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh -o /tmp/install_3xui.sh 2>/dev/null
                 printf "n\n" | bash /tmp/install_3xui.sh || true
+                local _tx_end
+                _tx_end=$(date +%s)
+                echo $(( _tx_end - _tx_start )) > /tmp/setup_mask_bg_duration_xui.time
             fi
         } >> "$log_file" 2>&1 &
         BG_PREINSTALL_PID=$!
@@ -3492,7 +3537,11 @@ for s_idx in 1 2 3 4 5 6 7; do
     s_name="${STEP_NAMES[$s_idx]:-Шаг $s_idx}"
     if [ "$step_t" -gt 0 ]; then
         s_dur_str=$(format_duration "$step_t")
-        echo -e "    • Шаг $s_idx ($s_name): ${GREEN}${s_dur_str}${NC}"
+        if [ "${STEP_BG_FLAGS[$s_idx]:-0}" -eq 1 ]; then
+            echo -e "    • Шаг $s_idx ($s_name): ${GREEN}${s_dur_str}${NC} ${CYAN}[в фоне, сэкономлено]${NC}"
+        else
+            echo -e "    • Шаг $s_idx ($s_name): ${GREEN}${s_dur_str}${NC}"
+        fi
     elif [ "${RESUME_STEP:-1}" -gt "$s_idx" ]; then
         echo -e "    • Шаг $s_idx ($s_name): ${DIM}пропущено (выполнено ранее)${NC}"
     else

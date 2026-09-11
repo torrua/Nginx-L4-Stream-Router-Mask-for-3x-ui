@@ -259,6 +259,13 @@ export SSL_KEY_PATH
 
 # Приостановка службы x-ui на время реальной транзакции во избежание блокировок SQLite
 WAS_ACTIVE=0
+cleanup_xui() {
+    if [ "${WAS_ACTIVE:-0}" -eq 1 ]; then
+        systemctl start x-ui 2>/dev/null || true
+    fi
+}
+trap cleanup_xui EXIT
+
 if [ "$DRY_RUN" -eq 0 ]; then
     if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet x-ui 2>/dev/null; then
         log "Приостановка службы 3X-UI на время обновления конфигурации базы..."
@@ -319,6 +326,9 @@ classic_port = int(os.environ.get("CLASSIC_PORT") or "46443")
 classic_sni = os.environ.get("CLASSIC_SNI") or "gateway.icloud.com"
 classic_sni = classic_sni.split()[0] if classic_sni.strip() else "gateway.icloud.com"
 
+ssl_cert = os.environ.get("SSL_CERT_PATH", "")
+ssl_key = os.environ.get("SSL_KEY_PATH", "")
+
 enable_hy2 = os.environ.get("ENABLE_HY2", "y").lower() in ("1", "y", "true")
 hy2_port = int(os.environ.get("HY2_PORT") or "443")
 hy2_domain = (os.environ.get("HY2_DOMAIN") or domain).strip()
@@ -334,9 +344,6 @@ awg_primary_dns = os.environ.get("AWG_PRIMARY_DNS") or "76.76.2.0"
 awg_secondary_dns = os.environ.get("AWG_SECONDARY_DNS") or "76.76.10.0"
 awg_subnet_ip = os.environ.get("AWG_SUBNET_IP") or "10.8.0.0"
 awg_subnet_cidr = int(os.environ.get("AWG_SUBNET_CIDR") or "22")
-
-ssl_cert = os.environ.get("SSL_CERT_PATH", "")
-ssl_key = os.environ.get("SSL_KEY_PATH", "")
 
 # Определение ID администратора
 cur.execute("SELECT id FROM users LIMIT 1")

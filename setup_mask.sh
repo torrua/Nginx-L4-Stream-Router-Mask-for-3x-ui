@@ -62,10 +62,10 @@ run_with_spinner() {
         echo -e "\n  ${CYAN}[DEBUG]${NC} ${WHITE}▶ $task_name${NC}"
         echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
         local exit_code=0
-        if [ "$#" -eq 1 ]; then
-            bash -c "$1" || exit_code=$?
-        else
+        if declare -f "$1" >/dev/null 2>&1; then
             "$@" || exit_code=$?
+        else
+            eval "$*" || exit_code=$?
         fi
         if [ $exit_code -eq 0 ]; then
             echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
@@ -84,10 +84,10 @@ run_with_spinner() {
     # Очищаем лог, чтобы при ошибке видеть только вывод текущего шага
     : > "$log_file"
 
-    if [ "$#" -eq 1 ]; then
-        bash -c "$1" >> "$log_file" 2>&1 &
-    else
+    if declare -f "$1" >/dev/null 2>&1; then
         "$@" >> "$log_file" 2>&1 &
+    else
+        ( eval "$*" ) >> "$log_file" 2>&1 &
     fi
     local pid=$!
     tput civis 2>/dev/null || echo -ne "\033[?25l"

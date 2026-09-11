@@ -14,17 +14,58 @@
 
 set -euo pipefail
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-NC='\033[0m'
+RED=$'\033[0;31m'
+GREEN=$'\033[0;32m'
+YELLOW=$'\033[1;33m'
+CYAN=$'\033[0;36m'
+WHITE=$'\033[1;37m'
+DIM=$'\033[2m'
+BOLD=$'\033[1m'
+NC=$'\033[0m'
 
 log()  { echo -e "${CYAN}[INFO]${NC} $*"; }
 ok()   { echo -e "${GREEN}[OK]${NC} $*"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 die()  { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
+
+run_with_spinner() {
+    local task_name="$1"
+    shift
+    local log_file="/tmp/configure_3xui_cmd.log"
+    : > "$log_file"
+
+    local spin_chars=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+    local delay=0.08
+
+    if declare -f "$1" >/dev/null 2>&1; then
+        "$@" >> "$log_file" 2>&1 &
+    else
+        ( eval "$*" ) >> "$log_file" 2>&1 &
+    fi
+    local pid=$!
+    tput civis 2>/dev/null || echo -ne "\033[?25l"
+
+    local i=0
+    while kill -0 "$pid" 2>/dev/null; do
+        i=$(( (i + 1) % 10 ))
+        printf "\r  ${CYAN}${spin_chars[$i]}${NC}  ${WHITE}%-54s${NC}" "$task_name..."
+        sleep "$delay"
+    done
+
+    wait "$pid"
+    local exit_code=$?
+    tput cnorm 2>/dev/null || echo -ne "\033[?25h"
+
+    if [ $exit_code -eq 0 ]; then
+        printf "\r  ${GREEN}✔${NC}  ${WHITE}%-54s${NC} ${GREEN}[ГОТОВО]${NC}\n" "$task_name"
+        return 0
+    else
+        printf "\r  ${RED}✖${NC}  ${WHITE}%-54s${NC} ${RED}[ОШИБКА]${NC}\n" "$task_name"
+        [ -f "$log_file" ] && tail -n 25 "$log_file" | sed 's/^/    /' || true
+        die "Шаг завершился с ошибкой: $task_name"
+    fi
+}
+
 
 show_help() {
     cat << 'EOF_HELP'
@@ -212,10 +253,13 @@ if [ ! -f "$DB_PATH" ]; then
         if [ "$DRY_RUN" -eq 1 ]; then
             die "База данных 3X-UI ($DB_PATH) не найдена. Убедитесь, что панель 3X-UI установлена."
         fi
-        warn "Служба 3X-UI не обнаружена на сервере. Запуск автоматической установки 3X-UI..."
-        if curl -Ls --connect-timeout 10 https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh -o /tmp/install_3xui.sh; then
-            printf "n\n" | bash /tmp/install_3xui.sh || true
-        fi
+        log "Служба 3X-UI не обнаружена на сервере. Автоматическая установка..."
+        install_3xui_task() {
+            export DEBIAN_FRONTEND=noninteractive
+            curl -Ls --connect-timeout 15 https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh -o /tmp/install_3xui.sh
+            printf "n\n" | bash /tmp/install_3xui.sh
+        }
+        run_with_spinner "Установка официального ядра 3X-UI (mhsanaei)" install_3xui_task
         for p in "$DB_PATH" "/usr/local/x-ui/bin/x-ui.db" "/etc/x-ui/db/x-ui.db"; do
             if [ -f "$p" ]; then
                 DB_PATH="$p"

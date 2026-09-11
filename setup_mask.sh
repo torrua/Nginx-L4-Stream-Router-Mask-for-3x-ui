@@ -485,7 +485,7 @@ prompt_secret() {
     fi
 
     local input_val
-    read -rp "$(echo -e "${prompt_text} [${GREEN}***${NC}]: ")" input_val
+    read -rp "$(echo -e "${prompt_text} [${GREEN}***${NC}]: ")" input_val </dev/tty || read -r input_val || true
     declare -g "$var_name=${input_val:-$effective_default}"
 }
 
@@ -591,9 +591,12 @@ if [ "$NON_INTERACTIVE" -eq 0 ]; then
         while true; do
             echo -ne "  ${WHITE}${ARROW} Ваш выбор [1/2] (по умолчанию: 1): ${NC}"
             read -r MODE_INPUT </dev/tty || read -r MODE_INPUT || MODE_INPUT="1"
-            MODE_INPUT=${MODE_INPUT:-1}
-            if [[ "$MODE_INPUT" =~ ^[12]$ ]]; then
-                [ "$MODE_INPUT" = "1" ] && EXPRESS_MODE=1
+            MODE_INPUT=$(echo "${MODE_INPUT:-1}" | tr -d '[:space:]')
+            if [ "$MODE_INPUT" = "1" ]; then
+                EXPRESS_MODE=1
+                break
+            elif [ "$MODE_INPUT" = "2" ]; then
+                EXPRESS_MODE=0
                 break
             fi
             echo -e "  ${RED}Пожалуйста, введите 1 или 2.${NC}"
@@ -686,7 +689,11 @@ else
         if [ -n "${PRIMARY_DOMAIN:-}" ]; then
             prompt_default "Введите ваш основной домен" "$PRIMARY_DOMAIN" PRIMARY_DOMAIN
         else
-            read -rp "Введите ваш основной домен (например, yourdomain.online): " PRIMARY_DOMAIN
+            while true; do
+                read -rp "Введите ваш основной домен (например, yourdomain.online): " PRIMARY_DOMAIN </dev/tty || read -r PRIMARY_DOMAIN || true
+                PRIMARY_DOMAIN=$(echo "${PRIMARY_DOMAIN:-}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+                [ -n "$PRIMARY_DOMAIN" ] && break
+            done
         fi
     fi
 
@@ -738,7 +745,7 @@ if [[ "${ENABLE_STEAL,,}" == "y" ]]; then
         done
     else
         while true; do
-            read -rp "  Введите локальный порт Xray для Steal-Oneself [${STEAL_PORT:-45443}]: " PORT_INPUT
+            read -rp "  Введите локальный порт Xray для Steal-Oneself [${STEAL_PORT:-45443}]: " PORT_INPUT </dev/tty || read -r PORT_INPUT || true
             PORT_VAL="${PORT_INPUT:-${STEAL_PORT:-45443}}"
             if [[ ! "$PORT_VAL" =~ ^[0-9]+$ ]] || [ "$PORT_VAL" -le 0 ] || [ "$PORT_VAL" -gt 65535 ]; then
                 warn "  Некорректный номер порта. Назначен порт по умолчанию: 45443."
@@ -755,7 +762,7 @@ if [[ "${ENABLE_STEAL,,}" == "y" ]]; then
             echo -e "${CYAN}  Введите домены для порта $PORT_VAL (для завершения - пусто и Enter):${NC}"
             added_count_for_port=0
             while true; do
-                read -rp "    Собственный домен для порта $PORT_VAL: " STEAL_DOM
+                read -rp "    Собственный домен для порта $PORT_VAL: " STEAL_DOM </dev/tty || read -r STEAL_DOM || true
                 if [ -z "$STEAL_DOM" ]; then
                     if [ "$added_count_for_port" -eq 0 ]; then
                         warn "    Необходимо добавить как минимум один домен для порта $PORT_VAL!"
@@ -781,7 +788,7 @@ if [[ "${ENABLE_STEAL,,}" == "y" ]]; then
                 ok "    Домен $STEAL_DOM привязан к инбаунд-порту $PORT_VAL"
             done
 
-            read -rp "  Сконфигурировать еще один порт Steal-Oneself? [y/N]: " ADD_MORE_STEAL
+            read -rp "  Сконфигурировать еще один порт Steal-Oneself? [y/N]: " ADD_MORE_STEAL </dev/tty || read -r ADD_MORE_STEAL || true
             [[ "${ADD_MORE_STEAL,,}" == "y" ]] || break
         done
     fi
@@ -810,7 +817,7 @@ if [[ "${ENABLE_CLASSIC,,}" == "y" ]]; then
         done
     else
         while true; do
-            read -rp "  Введите локальный порт Xray для Classic REALITY [${CLASSIC_PORT:-46443}]: " PORT_INPUT
+            read -rp "  Введите локальный порт Xray для Classic REALITY [${CLASSIC_PORT:-46443}]: " PORT_INPUT </dev/tty || read -r PORT_INPUT || true
             PORT_VAL="${PORT_INPUT:-${CLASSIC_PORT:-46443}}"
             if [[ ! "$PORT_VAL" =~ ^[0-9]+$ ]] || [ "$PORT_VAL" -le 0 ] || [ "$PORT_VAL" -gt 65535 ]; then
                 warn "  Некорректный номер порта. Назначен порт по умолчанию: 46443."
@@ -827,7 +834,7 @@ if [[ "${ENABLE_CLASSIC,,}" == "y" ]]; then
             echo -e "${CYAN}  Введите внешние SNI для порта $PORT_VAL (нажмите Enter на пустой строке для завершения):${NC}"
             added_sni_count=0
             while true; do
-                read -rp "    Внешний SNI (например, gateway.icloud.com): " EXT_SNI
+                read -rp "    Внешний SNI (например, gateway.icloud.com): " EXT_SNI </dev/tty || read -r EXT_SNI || true
                 if [ -z "$EXT_SNI" ]; then
                     if [ "$added_sni_count" -eq 0 ]; then
                         warn "    Порт $PORT_VAL зарегистрирован для обработки fallback-трафика."
@@ -846,7 +853,7 @@ if [[ "${ENABLE_CLASSIC,,}" == "y" ]]; then
                 ok "    SNI $EXT_SNI привязан к порту $PORT_VAL"
             done
 
-            read -rp "  Сконфигурировать еще один порт Classic REALITY? [y/N]: " ADD_MORE_CLASSIC
+            read -rp "  Сконфигурировать еще один порт Classic REALITY? [y/N]: " ADD_MORE_CLASSIC </dev/tty || read -r ADD_MORE_CLASSIC || true
             [[ "${ADD_MORE_CLASSIC,,}" == "y" ]] || break
         done
     fi
@@ -870,7 +877,7 @@ if [ "$NON_INTERACTIVE" -eq 1 ]; then
     fi
 else
     while true; do
-        read -rp "Добавить собственный домен для выпуска SSL-сертификата? (Enter для пропуска): " EXTRA_DOM
+        read -rp "Добавить собственный домен для выпуска SSL-сертификата? (Enter для пропуска): " EXTRA_DOM </dev/tty || read -r EXTRA_DOM || true
         if [ -z "$EXTRA_DOM" ]; then
             break
         fi
@@ -1031,7 +1038,7 @@ if [ -n "$WAN_IP" ]; then
                     die "Критическая ошибка: Домен $dom не разрешается. Укажите -f / --force или проверьте DNS."
                 fi
             else
-                read -rp "Продолжить установку? [y/N]: " dns_ans
+                read -rp "Продолжить установку? [y/N]: " dns_ans </dev/tty || read -r dns_ans || true
                 [[ "${dns_ans,,}" == "y" ]] || die "Установка отменена пользователем."
             fi
         elif [ "$resolved_ip" != "$WAN_IP" ]; then
@@ -1043,7 +1050,7 @@ if [ -n "$WAN_IP" ]; then
                     die "Критическая ошибка: $dom указывает на $resolved_ip вместо $WAN_IP. Укажите -f / --force для игнорирования."
                 fi
             else
-                read -rp "Продолжить установку? [y/N]: " dns_ans
+                read -rp "Продолжить установку? [y/N]: " dns_ans </dev/tty || read -r dns_ans || true
                 [[ "${dns_ans,,}" == "y" ]] || die "Установка отменена пользователем."
             fi
         else

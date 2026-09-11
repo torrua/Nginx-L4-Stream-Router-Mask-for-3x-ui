@@ -2713,16 +2713,12 @@ fi
 if [[ "${AUTO_SETUP_3XUI,,}" == "y" || "${AUTO_SETUP_3XUI:-}" == "1" ]]; then
     # 1. Проверяем наличие ядра 3X-UI на сервере, если нет - устанавливаем автоматически
     if ! command -v x-ui >/dev/null 2>&1 && [ ! -f /etc/x-ui/x-ui.db ] && [ ! -f /usr/local/x-ui/bin/x-ui.db ]; then
-        log "Служба 3X-UI не обнаружена на сервере. Автоматическая установка официального ядра 3X-UI..."
-        export DEBIAN_FRONTEND=noninteractive
-        if curl -Ls --connect-timeout 15 https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh -o /tmp/install_3xui.sh 2>/dev/null; then
-            printf "n\n" | bash /tmp/install_3xui.sh || true
-        fi
-        if command -v x-ui >/dev/null 2>&1 || [ -f /etc/x-ui/x-ui.db ] || [ -f /usr/local/x-ui/bin/x-ui.db ]; then
-            ok "Ядро 3X-UI успешно установлено!"
-        else
-            warn "Не удалось автоматически установить 3X-UI. Попробуйте установить вручную: bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh)"
-        fi
+        install_3xui_core_task() {
+            export DEBIAN_FRONTEND=noninteractive
+            curl -Ls --connect-timeout 15 https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh -o /tmp/install_3xui.sh
+            printf "n\n" | bash /tmp/install_3xui.sh
+        }
+        run_with_spinner "Установка официального ядра 3X-UI (mhsanaei)" install_3xui_core_task
     fi
 
     # 2. Загружаем всегда самую актуальную версию configure_3xui.sh

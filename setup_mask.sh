@@ -300,6 +300,15 @@ DECOY_MODE="1"
 # --- 6. АВТОМАТИЧЕСКАЯ НАСТРОЙКА 3X-UI ---
 # Автоматически настроить инбаунды и пути подписок в базе данных 3X-UI через configure_3xui.sh [y/n]
 AUTO_SETUP_3XUI="y"
+
+# --- 7. ИСХОДЯЩИЙ ТУННЕЛЬ CLOUDFLARE WARP ---
+# Включить исходящий прокси Cloudflare WARP (WireGuard, MTU: 1280) для обхода капч Google
+# и разблокировки сервисов искусственного интеллекта (Gemini, ChatGPT, Claude) [y/n]
+# При этом трафик YouTube и РФ-ресурсов принудительно направляется напрямую (DIRECT).
+ENABLE_WARP="n"
+
+# Лицензионный ключ WARP+ (опционально, оставьте пустым для бесплатного безлимитного аккаунта)
+WARP_LICENSE_KEY=""
 EOF_CONF
     ok "Шаблон конфигурации успешно сгенерирован: '$target_file'"
 }
@@ -434,8 +443,11 @@ save_session_state() {
     local awg_v3_save="n"
     [[ "${ENABLE_AWG_V3:-}" == "1" || "${ENABLE_AWG_V3,,}" == "y" ]] && awg_v3_save="y"
     local awg_v2_save="n"
+    [[ "${ENABLE_AWG_V2:-}" == "1" || "${ENABLE_AWG_V2,,}" == "y" ]] && awg_v2_save="y"
     local auto_setup_3xui_save="n"
     [[ "${AUTO_SETUP_3XUI:-}" == "1" || "${AUTO_SETUP_3XUI,,}" == "y" ]] && auto_setup_3xui_save="y"
+    local warp_save="n"
+    [[ "${ENABLE_WARP:-}" == "1" || "${ENABLE_WARP,,}" == "y" ]] && warp_save="y"
 
     local _save_panel_path="${RAW_PATH:-${PANEL_PATH:-my-3x-panel}}"
     _save_panel_path="${_save_panel_path#/}"
@@ -496,6 +508,19 @@ AWG_V2_PORT="${AWG_V2_PORT:-8444}"
 
 DECOY_MODE="${DECOY_MODE:-1}"
 AUTO_SETUP_3XUI="$auto_setup_3xui_save"
+
+ENABLE_WARP="$warp_save"
+WARP_LICENSE_KEY="${WARP_LICENSE_KEY:-}"
+
+TIME_LOCATION="${TIME_LOCATION:-}"
+TRAFFIC_RESET_DAY="${TRAFFIC_RESET_DAY:-1}"
+SUB_SHOW_INFO="${SUB_SHOW_INFO:-true}"
+SUB_UPDATES="${SUB_UPDATES:-1}"
+SUB_ENCRYPT="${SUB_ENCRYPT:-true}"
+BLOCK_SMTP="${BLOCK_SMTP:-true}"
+BLOCK_LAN="${BLOCK_LAN:-true}"
+WEB_LISTEN="${WEB_LISTEN:-127.0.0.1}"
+SUB_LISTEN="${SUB_LISTEN:-127.0.0.1}"
 EOF_SAVE
     chmod 600 "$save_path"
     umask "$old_umask"
@@ -756,6 +781,8 @@ if [ "$EXPRESS_MODE" -eq 1 ]; then
     DECOY_MODE="1"
     SSL_ENGINE_CHOICE="1"
     AUTO_SETUP_3XUI="y"
+    ENABLE_WARP="${ENABLE_WARP:-y}"
+    WARP_LICENSE_KEY="${WARP_LICENSE_KEY:-}"
     STEAL_ENABLED=1
     CLASSIC_ENABLED=1
     
@@ -779,6 +806,7 @@ if [ "$EXPRESS_MODE" -eq 1 ]; then
     echo -e "    ${DIM}• Classic REALITY:${NC}${WHITE}gateway.icloud.com -> 127.0.0.1:$CLASSIC_PORT${NC}"
     echo -e "    ${DIM}• VLESS xHTTP:${NC}    ${WHITE}$XHTTP_STREAM_PATH -> 127.0.0.1:$XHTTP_STREAM_PORT${NC}"
     echo -e "    ${DIM}• UDP Стек:${NC}       ${WHITE}Hysteria 2 (:443), AWG v3 (:8443), AWG v2 (:8444)${NC}"
+    echo -e "    ${DIM}• Cloudflare WARP:${NC} ${WHITE}Активирован (Google, Gemini, AI / YouTube direct)${NC}"
     echo -e "    ${DIM}• Веб-маска:${NC}      ${WHITE}DataSphere Analytics Enterprise${NC}"
     echo ""
 else
@@ -1166,6 +1194,21 @@ echo
 echo -e "${YELLOW}Шаг 11: Автоматическая настройка базы данных панели 3X-UI${NC}"
 echo -e "${CYAN}Скрипт может автоматически настроить пути, подписки и создать все инбаунды в базе 3X-UI через configure_3xui.sh.${NC}"
 prompt_yes_no "Автоматически настроить инбаунды и пути в панели 3X-UI?" "${AUTO_SETUP_3XUI:-y}" AUTO_SETUP_3XUI
+
+echo
+echo -e "${YELLOW}Шаг 12: Исходящий туннель Cloudflare WARP (обход капч Google и разблокировка AI)${NC}"
+echo -e "  ${DIM}Позволяет прозрачно обходить капчи Google и разблокировать сервисы AI (Gemini, ChatGPT, Claude).${NC}"
+echo -e "  ${DIM}Тяжелый видеопоток YouTube и российские сервисы продолжат работать напрямую (DIRECT).${NC}"
+prompt_yes_no "Включить интеграцию Cloudflare WARP?" "${ENABLE_WARP:-n}" ENABLE_WARP
+if [[ "${ENABLE_WARP,,}" == "y" || "${ENABLE_WARP:-}" == "1" ]]; then
+    ENABLE_WARP="y"
+    prompt_default "  Лицензионный ключ WARP+ (Enter - использовать бесплатный безлимитный)" "${WARP_LICENSE_KEY:-}" WARP_LICENSE_KEY
+    ok "Интеграция Cloudflare WARP активирована (WireGuard, MTU: 1280)"
+else
+    ENABLE_WARP="n"
+    WARP_LICENSE_KEY=""
+    log "Интеграция Cloudflare WARP отключена."
+fi
 fi
 
 # Определение системного каталога для хранения SSL
@@ -2844,6 +2887,17 @@ if [[ "${AUTO_SETUP_3XUI,,}" == "y" || "${AUTO_SETUP_3XUI:-}" == "1" ]]; then
     if [ -f "$CONFIG_EXEC" ]; then
         echo
         log "Запуск автоматической настройки базы 3X-UI ($CONFIG_EXEC)..."
+        export ENABLE_WARP
+        export WARP_LICENSE_KEY
+        export TIME_LOCATION
+        export TRAFFIC_RESET_DAY
+        export SUB_SHOW_INFO
+        export SUB_UPDATES
+        export SUB_ENCRYPT
+        export BLOCK_SMTP
+        export BLOCK_LAN
+        export WEB_LISTEN
+        export SUB_LISTEN
         if bash "$CONFIG_EXEC" --config "$SAVED_CONFIG_FILE" -y; then
             ok "База данных 3X-UI успешно настроена автоматически!"
         else
@@ -2865,6 +2919,9 @@ if [ -n "${ADMIN_PASSWORD:-}" ]; then
     echo -e "  Пароль администратора:       ${BOLD}${ADMIN_PASSWORD}${NC}"
 fi
 echo -e "  Канал подписок:              ${GREEN}https://${PRIMARY_DOMAIN}${SUB_PATH}${NC}"
+if [[ "${ENABLE_WARP,,}" == "y" || "${ENABLE_WARP:-}" == "1" ]]; then
+    echo -e "  Cloudflare WARP Outbound:    ${GREEN}АКТИВИРОВАН (Google, Gemini, ChatGPT / MTU 1280)${NC}"
+fi
 
 # Сохранение учетных данных в защищенный файл
 if [ -n "${ADMIN_PASSWORD:-}" ]; then

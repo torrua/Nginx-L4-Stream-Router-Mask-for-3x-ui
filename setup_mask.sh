@@ -28,16 +28,16 @@
 set -euo pipefail
 
 # --------------------------- Цвета и UI-движок ---------------------------
-GREEN='\033[0;32m'
-CYAN='\033[0;36m'
-RED='\033[0;31m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-MAGENTA='\033[0;35m'
-WHITE='\033[1;37m'
-DIM='\033[2m'
-BOLD='\033[1m'
-NC='\033[0m'
+GREEN=$'\033[0;32m'
+CYAN=$'\033[0;36m'
+RED=$'\033[0;31m'
+YELLOW=$'\033[1;33m'
+BLUE=$'\033[0;34m'
+MAGENTA=$'\033[0;35m'
+WHITE=$'\033[1;37m'
+DIM=$'\033[2m'
+BOLD=$'\033[1m'
+NC=$'\033[0m'
 
 CHECK="✔"
 CROSS="✖"
@@ -862,7 +862,8 @@ if [[ "${ENABLE_STEAL,,}" == "y" ]]; then
             done
 
             echo ""
-            read -rp "  Нужен ли еще один отдельный инбаунд (второй порт) Steal-Oneself? [y/N] (по умолчанию N): " ADD_MORE_STEAL </dev/tty || read -r ADD_MORE_STEAL || true
+            echo -e "  ${DIM}ℹ️  Одного подключения на порту $PORT_VAL достаточно для всех ваших устройств.${NC}"
+            read -rp "  Создать ЕЩЁ ОДНО входящее подключение Steal-Oneself (на другом порту)? [y/N] (Enter = пропустить): " ADD_MORE_STEAL </dev/tty || read -r ADD_MORE_STEAL || true
             ADD_MORE_STEAL=${ADD_MORE_STEAL:-n}
             [[ "${ADD_MORE_STEAL,,}" == "y" ]] || break
         done
@@ -935,7 +936,8 @@ if [[ "${ENABLE_CLASSIC,,}" == "y" ]]; then
             done
 
             echo ""
-            read -rp "  Нужен ли еще один отдельный инбаунд (второй порт) Classic REALITY? [y/N] (по умолчанию N): " ADD_MORE_CLASSIC </dev/tty || read -r ADD_MORE_CLASSIC || true
+            echo -e "  ${DIM}ℹ️  Одного подключения на порту $PORT_VAL достаточно для всех ваших устройств.${NC}"
+            read -rp "  Создать ЕЩЁ ОДНО входящее подключение Classic REALITY (на другом порту)? [y/N] (Enter = пропустить): " ADD_MORE_CLASSIC </dev/tty || read -r ADD_MORE_CLASSIC || true
             ADD_MORE_CLASSIC=${ADD_MORE_CLASSIC:-n}
             [[ "${ADD_MORE_CLASSIC,,}" == "y" ]] || break
         done

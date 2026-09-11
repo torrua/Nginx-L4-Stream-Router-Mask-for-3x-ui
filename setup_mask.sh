@@ -1593,8 +1593,11 @@ server {
 }
 EOF
 
-nginx -t || die "Ошибка синтаксиса начальной конфигурации Nginx."
-systemctl restart nginx || systemctl start nginx
+if ! nginx -t >/dev/null 2>&1; then
+    nginx -t
+    die "Ошибка синтаксиса начальной конфигурации Nginx."
+fi
+systemctl restart nginx >/dev/null 2>&1 || systemctl start nginx >/dev/null 2>&1
 
 # =============================================================
 #  ВЫПУСК SSL-СЕРТИФИКАТОВ (CERTBOT ИЛИ ACME.SH)

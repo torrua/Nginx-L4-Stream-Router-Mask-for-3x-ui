@@ -435,7 +435,7 @@ prompt_default() {
     fi
 
     local input_val
-    read -rp "$(echo -e "${prompt_text} [${GREEN}${effective_default}${NC}]: ")" input_val
+    read -rp "$(echo -e "${prompt_text} [${GREEN}${effective_default}${NC}]: ")" input_val </dev/tty || read -r input_val || true
     declare -g "$var_name=${input_val:-$effective_default}"
 }
 
@@ -457,7 +457,7 @@ prompt_yes_no() {
 
     while true; do
         local input_val
-        read -rp "$(echo -e "${prompt_text} [${GREEN}${effective_default}${NC}]: ")" input_val
+        read -rp "$(echo -e "${prompt_text} [${GREEN}${effective_default}${NC}]: ")" input_val </dev/tty || read -r input_val || true
         input_val="${input_val:-$effective_default}"
         case "${input_val,,}" in
             y|yes|1|true) declare -g "$var_name=y"; return 0 ;;
@@ -590,7 +590,7 @@ if [ "$NON_INTERACTIVE" -eq 0 ]; then
         
         while true; do
             echo -ne "  ${WHITE}${ARROW} Ваш выбор [1/2] (по умолчанию: 1): ${NC}"
-            read -r MODE_INPUT || MODE_INPUT="1"
+            read -r MODE_INPUT </dev/tty || read -r MODE_INPUT || MODE_INPUT="1"
             MODE_INPUT=${MODE_INPUT:-1}
             if [[ "$MODE_INPUT" =~ ^[12]$ ]]; then
                 [ "$MODE_INPUT" = "1" ] && EXPRESS_MODE=1
@@ -610,9 +610,9 @@ if [ "$EXPRESS_MODE" -eq 1 ]; then
     if [ -z "${PRIMARY_DOMAIN:-}" ]; then
         while true; do
             echo -ne "  ${WHITE}${ARROW} Введите ваш основной домен (напр. domain.com): ${NC}"
-            read -r PRIMARY_DOMAIN
-            PRIMARY_DOMAIN=$(echo "$PRIMARY_DOMAIN" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
-            if [[ "$PRIMARY_DOMAIN" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; then
+            read -r PRIMARY_DOMAIN </dev/tty || read -r PRIMARY_DOMAIN || true
+            PRIMARY_DOMAIN=$(echo "${PRIMARY_DOMAIN:-}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+            if [[ -n "$PRIMARY_DOMAIN" && "$PRIMARY_DOMAIN" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; then
                 break
             fi
             echo -e "  ${RED}${CROSS} Некорректный формат домена. Попробуйте еще раз.${NC}"
@@ -621,8 +621,8 @@ if [ "$EXPRESS_MODE" -eq 1 ]; then
     
     if [ -z "${LE_EMAIL:-}" ]; then
         echo -ne "  ${WHITE}${ARROW} Введите Email для сертификатов Let's Encrypt: ${NC}"
-        read -r LE_EMAIL
-        LE_EMAIL=$(echo "$LE_EMAIL" | tr -d '[:space:]')
+        read -r LE_EMAIL </dev/tty || read -r LE_EMAIL || true
+        LE_EMAIL=$(echo "${LE_EMAIL:-}" | tr -d '[:space:]')
     fi
     
     # Автоматические пресеты для Экспресс-режима

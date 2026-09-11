@@ -29,6 +29,81 @@ set -euo pipefail
 
 SCRIPT_VERSION="v6.9.0"
 
+# --------------------------- Замеры времени и телеметрия ---------------------------
+SCRIPT_START_TIME=$(date +%s)
+SCRIPT_START_DATETIME=$(date '+%Y-%m-%d %H:%M:%S')
+
+TOTAL_STEPS=6
+LAST_COMPLETED_STEP=${LAST_COMPLETED_STEP:-0}
+RESUME_STEP=${RESUME_STEP:-1}
+RESUME_MODE=${RESUME_MODE:-0}
+CURRENT_STEP_START=0
+
+declare -A STEP_DURATIONS
+declare -A STEP_NAMES=(
+    [1]="Установка базовых системных зависимостей"
+    [2]="Оптимизация сетевого стека ядра Linux (BBR + fq)"
+    [3]="Подключение репозитория и установка Nginx Mainline"
+    [4]="Выпуск SSL-сертификатов Let's Encrypt"
+    [5]="Развертывание сайта-маскировки (Decoy Front)"
+    [6]="Сборка конфигурации Nginx и активация маршрутизатора"
+)
+
+format_duration() {
+    local total_seconds=$1
+    local minutes=$(( total_seconds / 60 ))
+    local seconds=$(( total_seconds % 60 ))
+    if [ "$minutes" -gt 0 ]; then
+        echo "${minutes} мин ${seconds} сек"
+    else
+        echo "${seconds} сек"
+    fi
+}
+
+record_step_completed() {
+    local step_num="$1"
+    LAST_COMPLETED_STEP="$step_num"
+    local cfg="${SAVED_CONFIG_FILE:-./setup_mask.env}"
+    if [ -f "$cfg" ]; then
+        if grep -q "^LAST_COMPLETED_STEP=" "$cfg"; then
+            sed -i "s/^LAST_COMPLETED_STEP=.*/LAST_COMPLETED_STEP=\"$step_num\"/" "$cfg"
+        else
+            echo "LAST_COMPLETED_STEP=\"$step_num\"" >> "$cfg"
+        fi
+    fi
+}
+
+should_skip_step() {
+    local step_num="$1"
+    local step_title="${STEP_NAMES[$step_num]:-$2}"
+    if [ "${RESUME_STEP:-1}" -gt "$step_num" ]; then
+        print_step_bar "$step_num" "$TOTAL_STEPS" "$step_title [Уже выполнен ранее]"
+        ok "$step_title — пропущено (уже выполнено в предыдущей сессии)"
+        STEP_DURATIONS[$step_num]=0
+        return 0
+    fi
+    return 1
+}
+
+step_begin() {
+    local step_num="$1"
+    local step_title="${STEP_NAMES[$step_num]:-$2}"
+    CURRENT_STEP_START=$(date +%s)
+    print_step_bar "$step_num" "$TOTAL_STEPS" "$step_title"
+}
+
+step_finish() {
+    local step_num="$1"
+    local step_end
+    step_end=$(date +%s)
+    local duration=$(( step_end - CURRENT_STEP_START ))
+    STEP_DURATIONS[$step_num]="$duration"
+    local dur_str
+    dur_str=$(format_duration "$duration")
+    ok "Шаг $step_num из $TOTAL_STEPS: ${STEP_NAMES[$step_num]} [ГОТОВО] (время: $dur_str)"
+    record_step_completed "$step_num"
+}
+
 
 # --------------------------- Цвета и UI-движок ---------------------------
 GREEN=$'\033[0;32m'
@@ -54,70 +129,96 @@ die()  { echo -e "  ${RED}${CROSS} $*${NC}" >&2; exit 1; }
 
 # Анимированный спиннер для фоновых операций
 # При DEBUG_MODE=1: отключает спиннер, выполняет команды напрямую (весь вывод виден)
-# При ошибке: выводит полный лог и вызывает die (не return), чтобы не глотать exit-code при set -euo pipefail
+# При ошибке: выводит полный лог и вызывает меню повтора (Retry / Skip / Abort)
 run_with_spinner() {
     local task_name="$1"
     shift
     local log_file="${SETUP_MASK_LOG:-/tmp/setup_mask_cmd.log}"
 
-    # ── DEBUG MODE: без фона, весь вывод сразу в stdout ──
-    if [ "${DEBUG_MODE:-0}" -eq 1 ]; then
-        echo -e "\n  ${CYAN}[DEBUG]${NC} ${WHITE}▶ $task_name${NC}"
-        echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
+    while true; do
         local exit_code=0
-        if declare -f "$1" >/dev/null 2>&1; then
-            "$@" || exit_code=$?
+
+        # ── DEBUG MODE: без фона, весь вывод сразу в stdout ──
+        if [ "${DEBUG_MODE:-0}" -eq 1 ]; then
+            echo -e "\n  ${CYAN}[DEBUG]${NC} ${WHITE}▶ $task_name${NC}"
+            echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
+            if declare -f "$1" >/dev/null 2>&1; then
+                "$@" || exit_code=$?
+            else
+                eval "$*" || exit_code=$?
+            fi
+            if [ $exit_code -eq 0 ]; then
+                echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
+                echo -e "  ${GREEN}${CHECK}${NC}  ${WHITE}$task_name${NC} ${GREEN}[ГОТОВО]${NC}\n"
+                return 0
+            else
+                echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
+            fi
         else
-            eval "$*" || exit_code=$?
+            # ── Нормальный режим: фоновый процесс + спиннер ──
+            local spin_chars=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+            local delay=0.08
+
+            : > "$log_file"
+
+            if declare -f "$1" >/dev/null 2>&1; then
+                "$@" >> "$log_file" 2>&1 &
+            else
+                ( eval "$*" ) >> "$log_file" 2>&1 &
+            fi
+            local pid=$!
+            tput civis 2>/dev/null || echo -ne "\033[?25l"
+
+            local i=0
+            while kill -0 "$pid" 2>/dev/null; do
+                i=$(( (i + 1) % 10 ))
+                printf "\r  ${CYAN}${spin_chars[$i]}${NC}  ${WHITE}%-54s${NC}" "$task_name..."
+                sleep "$delay"
+            done
+
+            wait "$pid"
+            exit_code=$?
+            tput cnorm 2>/dev/null || echo -ne "\033[?25h"
+
+            if [ $exit_code -eq 0 ]; then
+                printf "\r  ${GREEN}${CHECK}${NC}  ${WHITE}%-54s${NC} ${GREEN}[ГОТОВО]${NC}\n" "$task_name"
+                return 0
+            fi
+
+            printf "\r  ${RED}${CROSS}${NC}  ${WHITE}%-54s${NC} ${RED}[ОШИБКА]${NC}\n" "$task_name"
+            echo -e "\n  ${RED}${BOLD}Полный лог ошибки:${NC}"
+            echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
+            [ -f "$log_file" ] && cat "$log_file" | sed 's/^/    /' || true
+            echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
+            echo -e "  ${DIM}Совет: запустите с флагом ${WHITE}--debug${DIM} для подробного вывода в реальном времени.${NC}\n"
         fi
-        if [ $exit_code -eq 0 ]; then
-            echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
-            echo -e "  ${GREEN}${CHECK}${NC}  ${WHITE}$task_name${NC} ${GREEN}[ГОТОВО]${NC}\n"
-            return 0
+
+        # ── Интерактивная обработка сбоя (Retry / Skip / Abort) ──
+        if [ "${NON_INTERACTIVE:-0}" -eq 0 ]; then
+            echo -e "  ${YELLOW}${BOLD}Действия при сбое:${NC}"
+            echo -e "    ${CYAN}${BOLD}[1] Повторить попытку (Retry)${NC} — после исправления причин (напр. DNS)"
+            echo -e "    ${YELLOW}[2] Пропустить этот шаг и продолжить (Skip)${NC}"
+            echo -e "    ${RED}[3] Прервать установку (Abort)${NC}"
+            local retry_ans=""
+            read -rp "  Ваш выбор [1/2/3] (по умолчанию: 1): " retry_ans </dev/tty || read -r retry_ans || retry_ans="1"
+            retry_ans=$(echo "${retry_ans:-1}" | tr -d '[:space:]')
+            case "$retry_ans" in
+                2)
+                    warn "Шаг '$task_name' пропущен по выбору пользователя."
+                    return 0
+                    ;;
+                3)
+                    die "Шаг завершился с ошибкой (exit $exit_code): $task_name"
+                    ;;
+                *)
+                    echo -e "  ${CYAN}${ARROW} Повторная попытка: $task_name...${NC}\n"
+                    continue
+                    ;;
+            esac
         else
-            echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
             die "Шаг завершился с ошибкой (exit $exit_code): $task_name"
         fi
-    fi
-
-    # ── Нормальный режим: фоновый процесс + спиннер ──
-    local spin_chars=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
-    local delay=0.08
-
-    # Очищаем лог, чтобы при ошибке видеть только вывод текущего шага
-    : > "$log_file"
-
-    if declare -f "$1" >/dev/null 2>&1; then
-        "$@" >> "$log_file" 2>&1 &
-    else
-        ( eval "$*" ) >> "$log_file" 2>&1 &
-    fi
-    local pid=$!
-    tput civis 2>/dev/null || echo -ne "\033[?25l"
-
-    local i=0
-    while kill -0 "$pid" 2>/dev/null; do
-        i=$(( (i + 1) % 10 ))
-        printf "\r  ${CYAN}${spin_chars[$i]}${NC}  ${WHITE}%-54s${NC}" "$task_name..."
-        sleep "$delay"
     done
-
-    wait "$pid"
-    local exit_code=$?
-    tput cnorm 2>/dev/null || echo -ne "\033[?25h"
-
-    if [ $exit_code -eq 0 ]; then
-        printf "\r  ${GREEN}${CHECK}${NC}  ${WHITE}%-54s${NC} ${GREEN}[ГОТОВО]${NC}\n" "$task_name"
-        return 0
-    else
-        printf "\r  ${RED}${CROSS}${NC}  ${WHITE}%-54s${NC} ${RED}[ОШИБКА]${NC}\n" "$task_name"
-        echo -e "\n  ${RED}${BOLD}Полный лог ошибки:${NC}"
-        echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
-        [ -f "$log_file" ] && cat "$log_file" | sed 's/^/    /' || true
-        echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
-        echo -e "  ${DIM}Совет: запустите с флагом ${WHITE}--debug${DIM} для подробного вывода в реальном времени.${NC}\n"
-        die "Шаг завершился с ошибкой (exit $exit_code): $task_name"
-    fi
 }
 
 # Прогресс-бар шагов
@@ -156,22 +257,15 @@ check_for_script_updates() {
 
 print_mask_banner() {
     clear 2>/dev/null || true
-    echo -e "${CYAN}${BOLD}"
-    echo "  ╔════════════════════════════════════════════════════════════════════════════════╗"
-    echo "  ║                                                                                ║"
-    echo "  ║    ░█▀▀░▀█▀░█▀▄░█▀▀░█▀█░█▄█   ░█▀▄░█▀█░█░█░▀█▀░█▀▀░█▀▄                         ║"
-    echo "  ║    ░▀▀█░░█░░█▀▄░█▀▀░█▀█░█░█   ░█▀▄░█░█░█░█░░█░░█▀▀░█▀▄                         ║"
-    echo "  ║    ░▀▀▀░░▀░░▀░▀░▀▀▀░▀░▀░▀░▀   ░▀░▀░▀▀▀░▀▀▀░░▀░░▀▀▀░▀░▀                         ║"
-    echo "  ║                                                                                ║"
-    echo "  ║    Шлюз маскировки и L4/L7 распределения трафика для 3X-UI (Xray)   [v6.9.0]   ║"
-    echo "  ║  ────────────────────────────────────────────────────────────────────────────  ║"
-    echo "  ║  • L4 SNI Demux     : Проксирование доменов без расшифровки на уровне ядра     ║"
-    echo "  ║  • Steal-Oneself    : Маскировка под свои домены с Anti-Loop защитой (9443)    ║"
-    echo "  ║  • xHTTP Stream-One : Чистый HTTP/2 без раздувания буферов и вылетов XMUX     ║"
-    echo "  ║  • UDP Dual-Stack   : Hysteria 2 (:443 UDP) + AmneziaWG v3.1 / v2.0 (:8443)    ║"
-    echo "  ║  • Decoy Shield     : SPA-маскировка DataSphere + блокировка ботов и DPI (444) ║"
-    echo "  ╚════════════════════════════════════════════════════════════════════════════════╝"
-    echo -e "${NC}"
+    echo -e "  ${CYAN}${BOLD}🛡️   Nginx Stream Router для 3X-UI [${SCRIPT_VERSION}]${NC}"
+    echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}"
+    echo -e "  ${WHITE}Шлюз маскировки и защиты VPN-подключений:${NC}"
+    echo -e "  ${DIM}• Маскировка под реальный сайт (защита от сканирования и блокировок)${NC}"
+    echo -e "  ${DIM}• Поддержка протоколов: VLESS REALITY, Hysteria 2, AmneziaWG${NC}"
+    echo -e "  ${DIM}• Единый защищенный порт 443 для всех сервисов, панели и подписок${NC}"
+    echo -e "  ${DIM}• Обход капч Google и доступ к AI через Cloudflare WARP${NC}"
+    echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}"
+    echo -e "  ${DIM}Время запуска: ${WHITE}${SCRIPT_START_DATETIME}${NC}\n"
     check_for_script_updates
 }
 
@@ -187,6 +281,8 @@ show_help() {
   -c, --config <FILE>          Загрузить параметры из конфигурационного файла (.env)
   -y, --yes, --non-interactive Запуск в неинтерактивном режиме (без вопросов пользователю)
   -d, --domain <DOMAIN>        Указать основной домен (PRIMARY_DOMAIN)
+  -r, --resume                 Продолжить установку с последнего незавершенного шага
+  --step <N>                   Принудительно начать выполнение с указанного шага (1-6)
   --express                    Запустить режим Экспресс-настройки (настройка в 2 вопроса)
   --expert                     Запустить Экспертный режим без повторного запроса меню
   --gen-config [FILE]          Сгенерировать шаблон конфигурации (.env.example) и выйти
@@ -198,6 +294,12 @@ show_help() {
 Примеры использования:
   # Интерактивный режим (введенные параметры автоматически сохраняются в setup_mask.env):
   ./setup_mask.sh
+
+  # Возобновление прерванной установки с последнего незавершенного шага:
+  ./setup_mask.sh --resume
+
+  # Принудительный запуск с определенного шага (напр. Шаг 4: Выпуск SSL):
+  ./setup_mask.sh --step 4 -y
 
   # Возобновление после обрыва связи или повторный запуск из сохраненного конфига:
   ./setup_mask.sh -c setup_mask.env -y
@@ -521,6 +623,7 @@ BLOCK_SMTP="${BLOCK_SMTP:-true}"
 BLOCK_LAN="${BLOCK_LAN:-true}"
 WEB_LISTEN="${WEB_LISTEN:-127.0.0.1}"
 SUB_LISTEN="${SUB_LISTEN:-127.0.0.1}"
+LAST_COMPLETED_STEP="${LAST_COMPLETED_STEP:-0}"
 EOF_SAVE
     chmod 600 "$save_path"
     umask "$old_umask"
@@ -626,6 +729,15 @@ while [[ $# -gt 0 ]]; do
         -d|--domain)
             [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: доменное имя."
             PRIMARY_DOMAIN="$2"
+            shift 2
+            ;;
+        -r|--resume)
+            RESUME_MODE=1
+            shift
+            ;;
+        --step)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует номер шага (1-$TOTAL_STEPS)."
+            RESUME_STEP="$2"
             shift 2
             ;;
         --express)
@@ -910,34 +1022,140 @@ sync_background_preinstall() {
 EXPRESS_MODE=${EXPRESS_MODE:-0}
 EXPERT_MODE=${EXPERT_MODE:-0}
 
+# Проверка сохраненной контрольной точки (Resume Checkpoint)
+SKIP_INTERVIEW=0
 if [ "$NON_INTERACTIVE" -eq 0 ]; then
     print_mask_banner
-    start_background_preinstall
-    if [ "$EXPRESS_MODE" -eq 0 ] && [ "$EXPERT_MODE" -eq 0 ]; then
-        echo -e "  ${WHITE}${BOLD}Выберите режим настройки:${NC}\n"
-        echo -e "    ${CYAN}${BOLD}[1] Экспресс-установка (Рекомендуется)${NC} — Настройка в 2 вопроса"
-        echo -e "        ${DIM}• Ввод только домена и email для Let's Encrypt.${NC}"
-        echo -e "        ${DIM}• Автоматический выбор лучших протоколов (Steal-Oneself, Classic REALITY, xHTTP).${NC}"
-        echo -e "        ${DIM}• Готовый сайт-маскировка DataSphere Analytics + автогенерация безопасных путей.${NC}\n"
-        echo -e "    ${YELLOW}${BOLD}[2] Экспертная детальная настройка${NC} — Полный контроль параметров"
-        echo -e "        ${DIM}• Пошаговый выбор всех портов, путей подписок, Hysteria 2 и AmneziaWG.${NC}\n"
-        
-        while true; do
-            echo -ne "  ${WHITE}${ARROW} Ваш выбор [1/2] (по умолчанию: 1): ${NC}"
-            read -r MODE_INPUT </dev/tty || read -r MODE_INPUT || MODE_INPUT="1"
-            MODE_INPUT=$(echo "${MODE_INPUT:-1}" | tr -d '[:space:]')
-            if [ "$MODE_INPUT" = "1" ]; then
-                EXPRESS_MODE=1
-                break
-            elif [ "$MODE_INPUT" = "2" ]; then
-                EXPRESS_MODE=0
-                EXPERT_MODE=1
-                break
-            fi
-            echo -e "  ${RED}Пожалуйста, введите 1 или 2.${NC}"
-        done
+    if [ "$LAST_COMPLETED_STEP" -gt 0 ] && [ "$LAST_COMPLETED_STEP" -lt "$TOTAL_STEPS" ]; then
+        NEXT_STEP=$(( LAST_COMPLETED_STEP + 1 ))
+        echo -e "  ${YELLOW}${BOLD}Обнаружена незавершенная установка!${NC}"
+        echo -e "  ${DIM}Последний успешно завершенный шаг: ${WHITE}Шаг $LAST_COMPLETED_STEP из $TOTAL_STEPS (${STEP_NAMES[$LAST_COMPLETED_STEP]:-})${NC}"
+        echo -e "    ${CYAN}${BOLD}[1] Продолжить с шага $NEXT_STEP (${STEP_NAMES[$NEXT_STEP]:-})${NC} (Рекомендуется)"
+        echo -e "    ${YELLOW}[2] Начать установку заново (с шага 1)${NC}\n"
+        read -rp "  Ваш выбор [1/2] (по умолчанию: 1): " RESUME_CHOICE </dev/tty || read -r RESUME_CHOICE || RESUME_CHOICE="1"
+        RESUME_CHOICE=$(echo "${RESUME_CHOICE:-1}" | tr -d '[:space:]')
+        if [ "$RESUME_CHOICE" != "2" ]; then
+            RESUME_STEP="$NEXT_STEP"
+            SKIP_INTERVIEW=1
+            ok "Возобновление установки с шага $RESUME_STEP..."
+        else
+            LAST_COMPLETED_STEP=0
+            RESUME_STEP=1
+            record_step_completed 0
+            ok "Сброс контрольной точки. Установка будет начата с первого шага."
+        fi
+        echo ""
     fi
 fi
+
+if [ "$SKIP_INTERVIEW" -eq 1 ]; then
+    # Восстановление массивов из сохраненных скалярных параметров конфигурации
+    ALL_DOMAINS=("$PRIMARY_DOMAIN")
+    if [[ "${ADD_WWW,,}" == "y" || "${ADD_WWW:-}" == "1" ]]; then
+        ALL_DOMAINS+=("www.$PRIMARY_DOMAIN")
+    fi
+    IFS=',' read -r -a extra_arr <<< "${EXTRA_SSL_DOMAINS:-}"
+    for ed in "${extra_arr[@]}"; do
+        ed=$(echo "$ed" | tr -d '[:space:]')
+        [ -n "$ed" ] && ALL_DOMAINS+=("$ed")
+    done
+
+    STEAL_DOMAINS=()
+    declare -A DOMAIN_TO_PORT
+    if [[ "${ENABLE_STEAL,,}" == "y" || "${ENABLE_STEAL:-}" == "1" ]]; then
+        STEAL_ENABLED=1
+        STEAL_PORTS_LIST=(${STEAL_PORT:-45443})
+        IFS=',' read -r -a steal_dom_arr <<< "${STEAL_DOMAINS_STR:-${STEAL_DOMAINS:-}}"
+        for sd in "${steal_dom_arr[@]}"; do
+            sd=$(echo "$sd" | tr -d '[:space:]')
+            if [ -n "$sd" ]; then
+                STEAL_DOMAINS+=("$sd")
+                DOMAIN_TO_PORT["$sd"]="${STEAL_PORTS_LIST[0]}"
+                [[ " ${ALL_DOMAINS[*]} " =~ " ${sd} " ]] || ALL_DOMAINS+=("$sd")
+            fi
+        done
+    else
+        STEAL_ENABLED=0
+        STEAL_PORTS_LIST=()
+    fi
+
+    declare -A EXT_SNI_TO_PORT
+    if [[ "${ENABLE_CLASSIC,,}" == "y" || "${ENABLE_CLASSIC:-}" == "1" ]]; then
+        CLASSIC_ENABLED=1
+        CLASSIC_PORTS_LIST=(${CLASSIC_PORT:-46443})
+        IFS=',' read -r -a sni_arr <<< "${CLASSIC_SNI:-}"
+        for cs in "${sni_arr[@]}"; do
+            cs=$(echo "$cs" | tr -d '[:space:]')
+            if [ -n "$cs" ]; then
+                EXT_SNI_TO_PORT["$cs"]="${CLASSIC_PORTS_LIST[0]}"
+            fi
+        done
+        [ ${#EXT_SNI_TO_PORT[@]} -gt 0 ] || EXT_SNI_TO_PORT["gateway.icloud.com"]="${CLASSIC_PORTS_LIST[0]}"
+    else
+        CLASSIC_ENABLED=0
+        CLASSIC_PORTS_LIST=()
+    fi
+
+    ALL_REALITY_PORTS=()
+    for p in "${STEAL_PORTS_LIST[@]:-}"; do [ -n "$p" ] && ALL_REALITY_PORTS+=("$p"); done
+    for p in "${CLASSIC_PORTS_LIST[@]:-}"; do [ -n "$p" ] && ALL_REALITY_PORTS+=("$p"); done
+
+    PANEL_PORT="${PANEL_PORT:-10443}"
+    RAW_PATH="${PANEL_PATH:-my-3x-panel}"
+    RAW_PATH="${RAW_PATH#/}"
+    RAW_PATH="${RAW_PATH%/}"
+    PANEL_PATH="/${RAW_PATH}/"
+
+    SUB_PORT="${SUB_PORT:-55443}"
+    RAW_SUB_PATH="${SUB_PATH:-my-post-key}"
+    RAW_SUB_PATH="${RAW_SUB_PATH#/}"
+    RAW_SUB_PATH="${RAW_SUB_PATH%/}"
+    SUB_PATH="/${RAW_SUB_PATH}/"
+
+    XHTTP_STREAM_PORT="${XHTTP_STREAM_PORT:-50443}"
+    RAW_XHTTP_STREAM_PATH="${XHTTP_STREAM_PATH:-Stream-One-Path}"
+    RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH#/}"
+    RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH%/}"
+    XHTTP_STREAM_PATH="/${RAW_XHTTP_STREAM_PATH}/"
+
+    REALITY_FALLBACK_PORT=9443
+    ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
+    SERVER_PREFIX="${SERVER_PREFIX:-Server}"
+    DECOY_MODE="${DECOY_MODE:-1}"
+    SSL_ENGINE_CHOICE="${SSL_ENGINE_CHOICE:-1}"
+    if [ "$SSL_ENGINE_CHOICE" = "1" ]; then
+        SSL_BASE_DIR="/etc/letsencrypt/live"
+    else
+        SSL_BASE_DIR="/etc/ssl/acme"
+    fi
+else
+    if [ "$NON_INTERACTIVE" -eq 0 ]; then
+        start_background_preinstall
+        if [ "$EXPRESS_MODE" -eq 0 ] && [ "$EXPERT_MODE" -eq 0 ]; then
+            echo -e "  ${WHITE}${BOLD}Выберите режим настройки:${NC}\n"
+            echo -e "    ${CYAN}${BOLD}[1] Экспресс-установка (Рекомендуется)${NC} — Настройка в 2 вопроса"
+            echo -e "        ${DIM}• Ввод только домена и email для Let's Encrypt.${NC}"
+            echo -e "        ${DIM}• Автоматический выбор лучших протоколов (Steal-Oneself, Classic REALITY, xHTTP).${NC}"
+            echo -e "        ${DIM}• Готовый сайт-маскировка DataSphere Analytics + автогенерация безопасных путей.${NC}\n"
+            echo -e "    ${YELLOW}${BOLD}[2] Экспертная детальная настройка${NC} — Полный контроль параметров"
+            echo -e "        ${DIM}• Пошаговый выбор всех портов, путей подписок, Hysteria 2 и AmneziaWG.${NC}\n"
+            
+            while true; do
+                echo -ne "  ${WHITE}${ARROW} Ваш выбор [1/2] (по умолчанию: 1): ${NC}"
+                read -r MODE_INPUT </dev/tty || read -r MODE_INPUT || MODE_INPUT="1"
+                MODE_INPUT=$(echo "${MODE_INPUT:-1}" | tr -d '[:space:]')
+                if [ "$MODE_INPUT" = "1" ]; then
+                    EXPRESS_MODE=1
+                    break
+                elif [ "$MODE_INPUT" = "2" ]; then
+                    EXPRESS_MODE=0
+                    EXPERT_MODE=1
+                    break
+                fi
+                echo -e "  ${RED}Пожалуйста, введите 1 или 2.${NC}"
+            done
+        fi
+    fi
 
 if [ "$EXPRESS_MODE" -eq 1 ]; then
     echo ""
@@ -1023,8 +1241,8 @@ if [ "$EXPRESS_MODE" -eq 1 ]; then
     echo ""
 else
     echo
-    echo -e "${YELLOW}Шаг 1: Конфигурация Главного домена (PRIMARY_DOMAIN)${NC}"
-    echo -e "${CYAN}Этот домен используется для входа в 3X-UI, подписок, xHTTP (VLESSENC) и Маски.${NC}"
+    echo -e "${YELLOW}Шаг 1: Конфигурация главного сайта (домена)${NC}"
+    echo -e "${CYAN}Этот домен будет использоваться для входа в 3X-UI, подписок, xHTTP (VLESSENC) и Маски.${NC}"
 
     if [ "$NON_INTERACTIVE" -eq 1 ]; then
         [ -n "${PRIMARY_DOMAIN:-}" ] || die "Ошибка: PRIMARY_DOMAIN не задан в конфигурации или аргументах!"
@@ -1063,7 +1281,7 @@ REALITY_FALLBACK_PORT="9443"
 
 if [[ ! "$PRIMARY_DOMAIN" =~ ^www\. ]]; then
     echo
-    echo -e "${YELLOW}Защита от ошибок SSL (Certificate Name Mismatch):${NC}"
+    echo -e "${YELLOW}Защита от ошибок SSL:${NC}"
     prompt_yes_no "Добавить алиас 'www.$PRIMARY_DOMAIN' для выпуска SSL и привязки к Nginx?" "${ADD_WWW:-y}" ADD_WWW
     if [[ "${ADD_WWW,,}" == "y" ]]; then
         ALL_DOMAINS+=("www.$PRIMARY_DOMAIN")
@@ -1072,8 +1290,7 @@ if [[ ! "$PRIMARY_DOMAIN" =~ ^www\. ]]; then
 fi
 
 echo
-echo -e "${YELLOW}Шаг 2: Настройка Steal-Oneself REALITY (Кража у самого себя)${NC}"
-echo -e "${CYAN}SSL-сертификаты выпускаются на ваши домены, трафик которых Nginx перенаправляет на порты REALITY.${NC}"
+echo -e "${YELLOW}Шаг 2: Настройка VLESS Steal-Oneself REALITY${NC}"
 prompt_yes_no "Включить Steal-Oneself REALITY?" "${ENABLE_STEAL:-y}" ENABLE_STEAL
 
 if [[ "${ENABLE_STEAL,,}" == "y" ]]; then
@@ -1154,7 +1371,7 @@ if [[ "${ENABLE_STEAL,,}" == "y" ]]; then
             done
 
             echo ""
-            echo -e "  ${DIM}ℹ️  Одного подключения на порту $PORT_VAL достаточно для всех ваших устройств.${NC}"
+            echo -e "  ${CYAN}[i]${NC}  ${DIM}Одного подключения на порту $PORT_VAL достаточно для всех ваших устройств.${NC}"
             read -rp "  Хотите создать ещё одно изолированное подключение Steal-Oneself (на другом порту)? [y/N] (Enter = нет, продолжить): " ADD_MORE_STEAL </dev/tty || read -r ADD_MORE_STEAL || true
             ADD_MORE_STEAL=${ADD_MORE_STEAL:-n}
             [[ "${ADD_MORE_STEAL,,}" == "y" ]] || break
@@ -1166,7 +1383,7 @@ else
 fi
 
 echo
-echo -e "${YELLOW}Шаг 3: Настройка Classic External REALITY (Сторонние SNI маскировки)${NC}"
+echo -e "${YELLOW}Шаг 3: Настройка VLESS Classic External REALITY (Сторонние SNI маскировки)${NC}"
 echo -e "${CYAN}В этом режиме трафик с внешними SNI (Microsoft, Apple, Samsung и др.) пересылается на локальные порты Xray.${NC}"
 prompt_yes_no "Включить Classic External REALITY?" "${ENABLE_CLASSIC:-y}" ENABLE_CLASSIC
 
@@ -1228,7 +1445,7 @@ if [[ "${ENABLE_CLASSIC,,}" == "y" ]]; then
             done
 
             echo ""
-            echo -e "  ${DIM}ℹ️  Одного подключения на порту $PORT_VAL достаточно для всех ваших устройств.${NC}"
+            echo -e "  ${CYAN}[i]${NC}  ${DIM}Одного подключения на порту $PORT_VAL достаточно для всех ваших устройств.${NC}"
             read -rp "  Хотите создать ещё одно изолированное подключение Classic REALITY (на другом порту)? [y/N] (Enter = нет, продолжить): " ADD_MORE_CLASSIC </dev/tty || read -r ADD_MORE_CLASSIC || true
             ADD_MORE_CLASSIC=${ADD_MORE_CLASSIC:-n}
             [[ "${ADD_MORE_CLASSIC,,}" == "y" ]] || break
@@ -1282,8 +1499,7 @@ XHTTP_STREAM_PATH="/${RAW_XHTTP_STREAM_PATH#/}"
 XHTTP_STREAM_PATH="${XHTTP_STREAM_PATH%/}/"
 
 echo
-echo -e "${YELLOW}Шаг 5: Настройка скоростного протокола Hysteria 2 (UDP)${NC}"
-echo -e "  ${DIM}Hysteria 2 работает по протоколу UDP/QUIC (отлично подходит при плохой связи и высоких потерях).${NC}"
+echo -e "${YELLOW}Шаг 5: Настройка протокола Hysteria 2 (UDP)${NC}"
 prompt_yes_no "Установить и настроить Hysteria 2?" "${ENABLE_HY2:-y}" ENABLE_HY2
 if [[ "${ENABLE_HY2,,}" == "y" ]]; then
     ENABLE_HY2=1
@@ -1307,7 +1523,7 @@ else
 fi
 
 echo
-echo -e "${YELLOW}Шаг 6: Настройка протокола AmneziaWG v3.1 (Transport Protection)${NC}"
+echo -e "${YELLOW}Шаг 6: Настройка протокола AmneziaWG v3.1${NC}"
 prompt_yes_no "Установить и настроить AmneziaWG v3.1?" "${ENABLE_AWG_V3:-y}" ENABLE_AWG_V3
 if [[ "${ENABLE_AWG_V3,,}" == "y" ]]; then
     ENABLE_AWG_V3=1
@@ -1320,7 +1536,7 @@ else
 fi
 
 echo
-echo -e "${YELLOW}Шаг 7: Настройка протокола AmneziaWG v2.0 / Legacy 1.0 (для роутеров)${NC}"
+echo -e "${YELLOW}Шаг 7: Настройка протокола AmneziaWG v2.0${NC}"
 prompt_yes_no "Установить и настроить AmneziaWG v2.0 / Legacy?" "${ENABLE_AWG_V2:-y}" ENABLE_AWG_V2
 if [[ "${ENABLE_AWG_V2,,}" == "y" ]]; then
     ENABLE_AWG_V2=1
@@ -1333,7 +1549,7 @@ else
 fi
 
 echo
-echo -e "${YELLOW}Шаг 8: Выбор темы для сайта-маскировки (Decoy Fronts Catalog)${NC}"
+echo -e "${YELLOW}Шаг 8: Выбор темы для сайта-маскировки${NC}"
 echo -e " 1) ${GREEN}DataSphere Analytics Enterprise${NC} (Строгий геометрический дизайн + Live телеметрия ±10%)"
 echo -e " 2) ${GREEN}CosmosCloud NextGen${NC} (Облачный диск с оригинальным логотипом и сессионными cookies)"
 echo -e " 3) Стандартная заглушка Nginx (Welcome to nginx)"
@@ -1346,7 +1562,7 @@ for d in "${ALL_DOMAINS[@]}"; do
     echo -e "    ${GREEN}✔ ${WHITE}$d${NC}"
 done
 echo ""
-echo -e "  ${DIM}ℹ️  Вышеперечисленные домены повторно вводить не нужно.${NC}"
+echo -e "  ${CYAN}[i]${NC}  ${DIM}Вышеперечисленные домены повторно вводить не нужно.${NC}"
 echo -e "  ${DIM}Добавление требуется только при наличии сторонних доменов (напр. failover или прямой gRPC).${NC}"
 
 if [ "$NON_INTERACTIVE" -eq 1 ]; then
@@ -1381,7 +1597,7 @@ else
 fi
 
 echo
-echo -e "${YELLOW}Шаг 10: Выбор метода выпуска SSL-сертификатов (Certbot / acme.sh)${NC}"
+echo -e "${YELLOW}Шаг 10: Выбор метода выпуска SSL-сертификатов${NC}"
 echo -e " 1) ${GREEN}Классический Certbot (HTTP-01)${NC} - Каталог: /etc/letsencrypt/live/"
 echo -e " 2) ${GREEN}acme.sh + Cloudflare DNS-01${NC} - Каталог: /etc/ssl/acme/ (изоляция прав 755/644)"
 prompt_default "Выберите метод сертификации (1 или 2)" "1" SSL_ENGINE_CHOICE
@@ -1418,7 +1634,7 @@ echo -e "${CYAN}Скрипт может автоматически настро�
 prompt_yes_no "Автоматически настроить инбаунды и пути в панели 3X-UI?" "${AUTO_SETUP_3XUI:-y}" AUTO_SETUP_3XUI
 
 echo
-echo -e "${YELLOW}Шаг 12: Исходящий туннель Cloudflare WARP (обход капч Google и разблокировка AI)${NC}"
+echo -e "${YELLOW}Шаг 12: Исходящий туннель Cloudflare WARP (обход Google CAPTCHA и разблокировка AI)${NC}"
 echo -e "  ${DIM}Позволяет прозрачно обходить капчи Google и разблокировать сервисы AI (Gemini, ChatGPT, Claude).${NC}"
 echo -e "  ${DIM}Тяжелый видеопоток YouTube и российские сервисы продолжат работать напрямую (DIRECT).${NC}"
 prompt_yes_no "Включить интеграцию Cloudflare WARP?" "${ENABLE_WARP:-n}" ENABLE_WARP
@@ -1508,6 +1724,7 @@ if [ -n "$WAN_IP" ]; then
     done
     ALL_DOMAINS=("${valid_domains[@]}")
 fi
+fi
 
 # Сохраняем состояние сессии в файл конфигурации для защиты от обрыва SSH или повторного вызова
 save_session_state "$SAVED_CONFIG_FILE"
@@ -1521,27 +1738,36 @@ TOTAL_STEPS=6
 sync_background_preinstall
 
 # --- Шаг 1: Системные зависимости и утилиты ---
-print_step_bar 1 $TOTAL_STEPS "Установка базовых системных зависимостей"
-if [ "$PREINSTALL_COMPLETED" -eq 1 ]; then
-    ok "Базовые утилиты (curl, socat, dig, ufw) установлены [В фоне]"
-else
-    run_with_spinner "Проверка и установка базовых утилит (curl, socat, dig, ufw)" install_prerequisites
+if ! should_skip_step 1; then
+    step_begin 1
+    if [ "$PREINSTALL_COMPLETED" -eq 1 ]; then
+        ok "Базовые утилиты (curl, socat, dig, ufw) установлены [В фоне]"
+    else
+        run_with_spinner "Проверка и установка базовых утилит (curl, socat, dig, ufw)" install_prerequisites
+    fi
+    step_finish 1
 fi
 
 # --- Шаг 2: Тюнинг ядра Linux (TCP BBR & UDP Buffers) ---
-print_step_bar 2 $TOTAL_STEPS "Оптимизация сетевого стека ядра Linux (BBR + fq)"
-if [ "$PREINSTALL_COMPLETED" -eq 1 ]; then
-    ok "Системные параметры BBR и лимиты дескрипторов применены [В фоне]"
-else
-    run_with_spinner "Применение системных параметров BBR и лимитов дескрипторов" apply_sysctl_and_limits
+if ! should_skip_step 2; then
+    step_begin 2
+    if [ "$PREINSTALL_COMPLETED" -eq 1 ]; then
+        ok "Системные параметры BBR и лимиты дескрипторов применены [В фоне]"
+    else
+        run_with_spinner "Применение системных параметров BBR и лимитов дескрипторов" apply_sysctl_and_limits
+    fi
+    step_finish 2
 fi
 
 # --- Шаг 3: Установка Nginx Mainline ---
-print_step_bar 3 $TOTAL_STEPS "Подключение репозитория и установка Nginx Mainline"
-if [ "$PREINSTALL_COMPLETED" -eq 1 ]; then
-    ok "Репозиторий nginx.org подключен, Nginx Mainline установлен [В фоне]"
-else
-    run_with_spinner "Подключение репозитория nginx.org и установка Nginx" setup_nginx_mainline
+if ! should_skip_step 3; then
+    step_begin 3
+    if [ "$PREINSTALL_COMPLETED" -eq 1 ]; then
+        ok "Репозиторий nginx.org подключен, Nginx Mainline установлен [В фоне]"
+    else
+        run_with_spinner "Подключение репозитория nginx.org и установка Nginx" setup_nginx_mainline
+    fi
+    step_finish 3
 fi
 
 NGINX_USER="nginx"
@@ -1602,39 +1828,40 @@ systemctl restart nginx >/dev/null 2>&1 || systemctl start nginx >/dev/null 2>&1
 # =============================================================
 #  ВЫПУСК SSL-СЕРТИФИКАТОВ (CERTBOT ИЛИ ACME.SH)
 # =============================================================
-print_step_bar 4 $TOTAL_STEPS "Выпуск SSL-сертификатов Let's Encrypt"
+if ! should_skip_step 4; then
+    step_begin 4
 
-if [ "$SSL_ENGINE_CHOICE" = "1" ]; then
-    run_with_spinner "Инициализация подсистемы Certbot через Snap" install_certbot_snap
+    if [ "$SSL_ENGINE_CHOICE" = "1" ]; then
+        run_with_spinner "Инициализация подсистемы Certbot через Snap" install_certbot_snap
 
-    mkdir -p /etc/letsencrypt
-    if [ -n "$LE_EMAIL" ]; then
-        cat << EOF > /etc/letsencrypt/cli.ini
+        mkdir -p /etc/letsencrypt
+        if [ -n "$LE_EMAIL" ]; then
+            cat << EOF > /etc/letsencrypt/cli.ini
 email = $LE_EMAIL
 agree-tos = true
 non-interactive = true
 EOF
-    else
-        cat << EOF > /etc/letsencrypt/cli.ini
+        else
+            cat << EOF > /etc/letsencrypt/cli.ini
 register-unsafely-without-email = true
 agree-tos = true
 non-interactive = true
 EOF
-    fi
-
-    for dom in "${ALL_DOMAINS[@]}"; do
-        if run_with_spinner "Выпуск SSL для домена $dom (HTTP-01)" obtain_cert "$dom"; then
-            :
-        else
-            warn "Не удалось выпустить сертификат для $dom."
-            if [ "$dom" = "$PRIMARY_DOMAIN" ]; then
-                die "Критическая ошибка: Выпуск сертификата для Главного домена $PRIMARY_DOMAIN провален."
-            fi
         fi
-    done
 
-    mkdir -p /etc/letsencrypt/renewal-hooks/deploy/
-    cat << 'EOF' > /etc/letsencrypt/renewal-hooks/deploy/nginx-reload.sh
+        for dom in "${ALL_DOMAINS[@]}"; do
+            if run_with_spinner "Выпуск SSL для домена $dom (HTTP-01)" obtain_cert "$dom"; then
+                :
+            else
+                warn "Не удалось выпустить сертификат для $dom."
+                if [ "$dom" = "$PRIMARY_DOMAIN" ]; then
+                    die "Критическая ошибка: Выпуск сертификата для Главного домена $PRIMARY_DOMAIN провален."
+                fi
+            fi
+        done
+
+        mkdir -p /etc/letsencrypt/renewal-hooks/deploy/
+        cat << 'EOF' > /etc/letsencrypt/renewal-hooks/deploy/nginx-reload.sh
 #!/bin/bash
 chmod 755 /etc/letsencrypt /etc/letsencrypt/live /etc/letsencrypt/archive 2>/dev/null || true
 chmod 755 /etc/letsencrypt/archive/* 2>/dev/null || true
@@ -1643,61 +1870,65 @@ chmod 644 /etc/letsencrypt/archive/*/* 2>/dev/null || true
 chmod 644 /etc/letsencrypt/live/*/* 2>/dev/null || true
 systemctl reload nginx
 EOF
-    chmod +x /etc/letsencrypt/renewal-hooks/deploy/nginx-reload.sh
+        chmod +x /etc/letsencrypt/renewal-hooks/deploy/nginx-reload.sh
 
-else
-    run_with_spinner "Инициализация подсистемы acme.sh" install_acmesh
-    _ACME="${HOME:-/root}/.acme.sh/acme.sh"
-
-    if [ "$CF_AUTH_METHOD" = "1" ]; then
-        export CF_Token="$CF_Token"
-        [ -n "${CF_Account_ID:-}" ] && export CF_Account_ID="$CF_Account_ID"
     else
-        export CF_Email="$CF_Email"
-        export CF_Key="$CF_Key"
+        run_with_spinner "Инициализация подсистемы acme.sh" install_acmesh
+        _ACME="${HOME:-/root}/.acme.sh/acme.sh"
+
+        if [ "$CF_AUTH_METHOD" = "1" ]; then
+            export CF_Token="$CF_Token"
+            [ -n "${CF_Account_ID:-}" ] && export CF_Account_ID="$CF_Account_ID"
+        else
+            export CF_Email="$CF_Email"
+            export CF_Key="$CF_Key"
+        fi
+
+        mkdir -p /etc/ssl/acme
+        chmod 755 /etc/ssl /etc/ssl/acme
+
+        for dom in "${ALL_DOMAINS[@]}"; do
+            if run_with_spinner "Выпуск SSL для домена $dom через Cloudflare DNS-01" obtain_cf_cert "$dom"; then
+                :
+            else
+                warn "Ошибка при выпуске сертификата для $dom."
+                if [ "$dom" = "$PRIMARY_DOMAIN" ]; then
+                    die "Критическая ошибка: Выпуск сертификата для Главного домена $PRIMARY_DOMAIN провален."
+                fi
+            fi
+        done
     fi
 
-    mkdir -p /etc/ssl/acme
-    chmod 755 /etc/ssl /etc/ssl/acme
-
-    for dom in "${ALL_DOMAINS[@]}"; do
-        if run_with_spinner "Выпуск SSL для домена $dom через Cloudflare DNS-01" obtain_cf_cert "$dom"; then
-            :
-        else
-            warn "Ошибка при выпуске сертификата для $dom."
-            if [ "$dom" = "$PRIMARY_DOMAIN" ]; then
-                die "Критическая ошибка: Выпуск сертификата для Главного домена $PRIMARY_DOMAIN провален."
+    # Настройка строгих прав доступа на каталоги SSL для чтения Nginx
+    if [ "$SSL_ENGINE_CHOICE" = "1" ]; then
+        chmod 755 /etc/letsencrypt /etc/letsencrypt/live /etc/letsencrypt/archive 2>/dev/null || true
+        for dom in "${ALL_DOMAINS[@]}"; do
+            if [ -d "/etc/letsencrypt/live/$dom" ]; then
+                chmod 755 "/etc/letsencrypt/live/$dom" 2>/dev/null || true
+                chmod 644 /etc/letsencrypt/live/"$dom"/* 2>/dev/null || true
             fi
-        fi
-    done
-fi
+        done
+    else
+        chmod 755 /etc/ssl /etc/ssl/acme 2>/dev/null || true
+        for dom in "${ALL_DOMAINS[@]}"; do
+            if [ -d "/etc/ssl/acme/$dom" ]; then
+                chmod 755 "/etc/ssl/acme/$dom" 2>/dev/null || true
+                chmod 644 /etc/ssl/acme/"$dom"/* 2>/dev/null || true
+            fi
+        done
+    fi
 
-# Настройка строгих прав доступа на каталоги SSL для чтения Nginx
-if [ "$SSL_ENGINE_CHOICE" = "1" ]; then
-    chmod 755 /etc/letsencrypt /etc/letsencrypt/live /etc/letsencrypt/archive 2>/dev/null || true
-    for dom in "${ALL_DOMAINS[@]}"; do
-        if [ -d "/etc/letsencrypt/live/$dom" ]; then
-            chmod 755 "/etc/letsencrypt/live/$dom" 2>/dev/null || true
-            chmod 644 /etc/letsencrypt/live/"$dom"/* 2>/dev/null || true
-        fi
-    done
-else
-    chmod 755 /etc/ssl /etc/ssl/acme 2>/dev/null || true
-    for dom in "${ALL_DOMAINS[@]}"; do
-        if [ -d "/etc/ssl/acme/$dom" ]; then
-            chmod 755 "/etc/ssl/acme/$dom" 2>/dev/null || true
-            chmod 644 /etc/ssl/acme/"$dom"/* 2>/dev/null || true
-        fi
-    done
+    step_finish 4
 fi
 
 # =============================================================
 #  ГЕНЕРАЦИЯ ВЫБРАННОЙ ВЕБ-МАСКИ
 # =============================================================
-print_step_bar 5 $TOTAL_STEPS "Формирование маскировочного портала (Decoy Front)"
-log "Формирование выбранного маскировочного портала..."
+if ! should_skip_step 5; then
+    step_begin 5
+    log "Формирование выбранного маскировочного портала..."
 
-if [ "$DECOY_MODE" = "1" ]; then
+    if [ "$DECOY_MODE" = "1" ]; then
     # 1. DataSphere Analytics Enterprise (Геометрический логотип + Dynamic Stats ±10%)
     cat << 'EOF' > /var/www/html/index.html
 <!DOCTYPE html>
@@ -2217,14 +2448,18 @@ EOF
 
 chown -R "$NGINX_USER:$NGINX_USER" "$WEBROOT"
 chmod 644 "$WEBROOT"/*.html
+    step_finish 5
+fi
 
 # =============================================================
-#  ПОЛНАЯ КОНФИГУРАЦИЯ NGINX (STREAM + HTTP CORE + ANTI-BOT)
+#  ШАГ 6: ПОЛНАЯ КОНФИГУРАЦИЯ NGINX И ПЕРЕЗАПУСК СЛУЖБ
 # =============================================================
-log "Сборка конфигурации Nginx Mainline (Stream L4 + HTTP/2 Upstream Engine)..."
+if ! should_skip_step 6; then
+    step_begin 6
+    log "Сборка конфигурации Nginx Mainline (Stream L4 + HTTP/2 Upstream Engine)..."
 
-# 1. Глобальный файл конфигурации /etc/nginx/nginx.conf
-cat << EOF > /etc/nginx/nginx.conf
+    # 1. Глобальный файл конфигурации /etc/nginx/nginx.conf
+    cat << EOF > /etc/nginx/nginx.conf
 user $NGINX_USER;
 worker_processes auto;
 pid /run/nginx.pid;
@@ -2813,11 +3048,9 @@ EOF
     fi
 done
 
-# =============================================================
-#  ФИНАЛЬНОЕ ТЕСТИРОВАНИЕ И ПЕРЕЗАПУСК СЛУЖБ
-# =============================================================
-print_step_bar 6 $TOTAL_STEPS "Сборка конфигурации Nginx и активация маршрутизатора"
-run_with_spinner "Тестирование конфигурации и перезапуск Nginx Mainline" nginx_reload_task
+    run_with_spinner "Тестирование конфигурации и перезапуск Nginx Mainline" nginx_reload_task
+    step_finish 6
+fi
 
 # =============================================================
 #  ФОРМИРОВАНИЕ ИТОГОВ И ИНСТРУКЦИИ ДЛЯ 3X-UI
@@ -3067,5 +3300,36 @@ echo -e "  - ${YELLOW}В разделе «Хосты» (Hosts) добавьте 
 echo -e "    1) ${BOLD}MAIN_SAME_443:${NC} Инбаунды: ${CYAN}REALITY + Hysteria 2${NC} -> Порт: ${GREEN}443${NC} | Безопасность: ${GREEN}same${NC}"
 echo -e "    2) ${BOLD}XHTTP_TLS_443:${NC} Инбаунд: ${CYAN}${SERVER_PREFIX} (VLESS xHTTP)${NC} -> Порт: ${GREEN}443${NC} | Безопасность: ${GREEN}tls${NC} (SNI: ${CYAN}$PRIMARY_DOMAIN${NC})"
 echo -e "${GREEN}=====================================================================${NC}"
+
+# Сброс контрольной точки после успешного завершения всех этапов установки
+record_step_completed 0
+
+# Расчет общего времени выполнения скрипта
+SCRIPT_END_TIME=$(date +%s)
+SCRIPT_END_DATETIME=$(date '+%Y-%m-%d %H:%M:%S')
+TOTAL_EXECUTION_TIME=$(( SCRIPT_END_TIME - SCRIPT_START_TIME ))
+FORMATTED_TOTAL_TIME=$(format_duration "$TOTAL_EXECUTION_TIME")
+
+echo ""
+echo -e "  ${CYAN}${BOLD}⏱️  Статистика выполнения установки:${NC}"
+echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}"
+echo -e "  Время запуска:        ${WHITE}${SCRIPT_START_DATETIME}${NC}"
+echo -e "  Время завершения:     ${WHITE}${SCRIPT_END_DATETIME}${NC}"
+echo -e "  Общее время работы:   ${GREEN}${BOLD}${FORMATTED_TOTAL_TIME}${NC}"
+echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}"
+echo -e "  ${WHITE}Время по шагам:${NC}"
+for s_idx in 1 2 3 4 5 6; do
+    step_t="${STEP_DURATIONS[$s_idx]:-0}"
+    s_name="${STEP_NAMES[$s_idx]:-Шаг $s_idx}"
+    if [ "$step_t" -gt 0 ]; then
+        s_dur_str=$(format_duration "$step_t")
+        echo -e "    • Шаг $s_idx ($s_name): ${GREEN}${s_dur_str}${NC}"
+    elif [ "${RESUME_STEP:-1}" -gt "$s_idx" ]; then
+        echo -e "    • Шаг $s_idx ($s_name): ${DIM}пропущено (выполнено ранее)${NC}"
+    else
+        echo -e "    • Шаг $s_idx ($s_name): ${DIM}< 1 сек${NC}"
+    fi
+done
+echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}\n"
 
 exit 0

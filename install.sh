@@ -438,13 +438,15 @@ main() {
     
     if [ "$MODE_CHOICE" == "2" ]; then
         echo -e "  ${YELLOW}${INFO} Запуск экспертного режима (setup_mask.sh)...${RESET}\n"
-        cd "$SCRIPT_DIR"
-        if [ -f "./setup_mask.sh" ]; then
-            bash ./setup_mask.sh --expert "$@"
+        echo -e "  ${CYAN}[i] Загрузка актуального установщика...${RESET}"
+        if command -v curl >/dev/null 2>&1; then
+            curl -fsSL "${REPO_URL}/setup_mask.sh?v=$(date +%s)" -o /tmp/setup_mask.sh
         else
             wget -qO /tmp/setup_mask.sh "${REPO_URL}/setup_mask.sh?v=$(date +%s)"
-            bash /tmp/setup_mask.sh --expert "$@"
         fi
+        chmod +x /tmp/setup_mask.sh
+        [ -f "$SCRIPT_DIR/setup_mask.sh" ] && cp /tmp/setup_mask.sh "$SCRIPT_DIR/setup_mask.sh" 2>/dev/null || true
+        bash /tmp/setup_mask.sh --expert "$@"
         exit 0
     fi
     

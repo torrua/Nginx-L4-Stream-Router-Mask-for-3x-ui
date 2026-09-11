@@ -1766,7 +1766,8 @@ if [ "$DRY_RUN" -eq 0 ]; then
 
         LATEST_TAG=""
         if command -v curl >/dev/null 2>&1; then
-            LATEST_TAG=$(curl -fsSL --connect-timeout 5 "https://api.github.com/repos/XTLS/Xray-core/releases?per_page=1" 2>/dev/null | grep -m1 '"tag_name":' | cut -d '"' -f 4)
+            gh_resp=$(curl -fsSL --connect-timeout 5 "https://api.github.com/repos/XTLS/Xray-core/releases?per_page=1" 2>/dev/null || true)
+            LATEST_TAG=$(echo "$gh_resp" | grep -m1 '"tag_name":' | cut -d '"' -f 4 || true)
         fi
         [ -n "$LATEST_TAG" ] || LATEST_TAG="v26.9.9"
         CLEAN_LATEST="${LATEST_TAG#v}"

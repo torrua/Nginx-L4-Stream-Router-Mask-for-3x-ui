@@ -113,11 +113,12 @@ net.ipv6.conf.lo.disable_ipv6 = 1
 * **Hysteria 2 на `443/UDP`:** Сверхскоростной транспорт на базе протокола QUIC (HTTP/3) с маскировкой под веб-сервер и алгоритмом контроля перегрузок BBR.
 * **AmneziaWG (AWG v3.1 / v2.0):**
   * Параметры обфускации: Junk-пакеты `Jc=3`, `Jmin=40`, `Jmax=80`.
-  * Длины сигнатур: `S1=45, S2=60, S3=24, S4=16`.
+  * Длины сигнатур: `S1=45, S2=60, S3=24, S4=16` (соблюдение жесткого правила AWG 3.0+ $S1..S4 \ge 12$).
   * Фиксированный `MTU=1280` против фрагментации в сетях сотовых операторов РФ.
   * Расширенная клиентская подсеть `/22` (`10.8.0.0/22`, диапазон до 1022 адресов клиентов).
   * Быстрый Anycast DNS от Control D (`76.76.2.0, 76.76.10.0`).
-  * `HeaderProtectionKey` оставлен пустым для 100% совместимости со стандартными клиентами (Happ, iOS, AmneziaWG).
+  * `HeaderProtectionKey`: 32-байтный base64-ключ для криптографической защиты служебных пакетов Handshake от ТСПУ/РКН без малейшей просадки скорости трафика.
+  * `RandomTrailers`: Включено (`true`) для рандомизации хвостов пакетов и ликвидации статистических сигнатур WireGuard.
 ### 2.6. Межпроцессная связь через Unix Sockets в RAM
 * Внутренний обмен между Nginx L4 Stream и Nginx L7 HTTP Core выполняется через сокет в оперативной памяти (**`unix:/dev/shm/nginx-http.sock`**), исключая сетевой оверхед виртуального loopback.
 * Использование директивы `ssl_reject_handshake on` на дефолтном сервере для мгновенного сброса сканеров при прямом обращении по IP без раскрытия SSL-сертификата.
@@ -285,10 +286,11 @@ sudo ufw deny 9443/tcp comment 'Block Direct Anti-Loop Port'
   * DNS: `76.76.2.0, 76.76.10.0` (Control D Anycast)
 * **Параметры обфускации:**
   * `Jc = 3`, `Jmin = 40`, `Jmax = 80`
-  * `S1 = 45`, `S2 = 60`, `S3 = 24`, `S4 = 16`
-  * `HeaderProtectionKey`: **Оставить ПУСТЫМ** (критично для совместимости с Happ и iOS)
+  * `S1 = 45`, `S2 = 60`, `S3 = 24`, `S4 = 16` (все $\ge 12$)
+  * `HeaderProtectionKey`: 32 байта base64 (защита Handshake от DPI)
+  * `RandomTrailers`: `Включено (true)`
   * `KeepaliveTimeout`: `10` | `RekeyAfterTime`: `120` | `RekeyTimeout`: `3` | `RejectAfterTime`: `180` | `MaxHandshakeAttempts`: `20`
-  * `DisableCookies`: `Включено (ON)`
+  * `DisableCookies`: `Включено (true)`
 
 #### F. Инбаунд `<Префикс> (AmneziaWG v2)` (UDP 8444)
 * **Основное:** Порт: `8444` | Listen IP: `0.0.0.0` | Протокол: `amneziawg`
@@ -691,13 +693,14 @@ nginx -t && systemctl start nginx x-ui AdGuardHome
     "i3": "",
     "i4": "",
     "i5": "",
-    "headerProtectionKey": "",
+    "headerProtectionKey": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
+    "randomTrailers": true,
     "keepaliveTimeout": "10",
     "rekeyAfterTime": "120",
     "rekeyTimeout": "3",
     "rejectAfterTime": "180",
     "maxHandshakeAttempts": "20",
-    "disableCookies": false,
+    "disableCookies": true,
     "peers": []
   }
 }

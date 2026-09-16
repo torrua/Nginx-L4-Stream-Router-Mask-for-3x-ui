@@ -257,6 +257,8 @@ export ENABLE_HY2="${ENABLE_HY2:-y}"
 export HY2_PORT="${HY2_PORT:-443}"
 export ENABLE_AWG_V3="${ENABLE_AWG_V3:-y}"
 export AWG_V3_PORT="${AWG_V3_PORT:-8443}"
+export AWG_HEADER_PROTECTION_KEY="${AWG_HEADER_PROTECTION_KEY:-}"
+export AWG_RANDOM_TRAILERS="${AWG_RANDOM_TRAILERS:-true}"
 export ENABLE_AWG_V2="${ENABLE_AWG_V2:-y}"
 export AWG_V2_PORT="${AWG_V2_PORT:-8444}"
 export SSL_ENGINE_CHOICE="${SSL_ENGINE_CHOICE:-1}"
@@ -356,6 +358,8 @@ hy2_port = int(os.environ.get("HY2_PORT") or "443")
 
 enable_awg_v3 = os.environ.get("ENABLE_AWG_V3", "y").lower() in ("1", "y", "true")
 awg_v3_port = int(os.environ.get("AWG_V3_PORT") or "8443")
+awg_hpk_env = os.environ.get("AWG_HEADER_PROTECTION_KEY", "").strip()
+awg_random_trailers_env = os.environ.get("AWG_RANDOM_TRAILERS", "true").strip().lower() in ("1", "y", "true")
 
 enable_awg_v2 = os.environ.get("ENABLE_AWG_V2", "y").lower() in ("1", "y", "true")
 awg_v2_port = int(os.environ.get("AWG_V2_PORT") or "8444")
@@ -664,25 +668,36 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
                 target_stream["realitySettings"]["settings"]["publicKey"] = derived_pub
                 repairs.append("восстановлен и добавлен settings.publicKey по x25519")
 
-        # Ремонт мертвого swdist.microsoft.com SNI
+        # Ремонт мертвого swdist.microsoft.com SNI или пустых значений
         old_snis = cur_reality.get("serverNames", [])
-        old_dest = cur_reality.get("dest", "")
+        old_dest = str(cur_reality.get("dest", "")).strip()
         if any("swdist.microsoft.com" in s for s in old_snis) or "swdist.microsoft.com" in old_dest:
             repairs.append(f"заменен мертвый SNI swdist.microsoft.com -> {classic_sni}")
             target_stream["realitySettings"]["serverNames"] = [classic_sni]
             target_stream["realitySettings"]["dest"] = f"{classic_sni}:443"
+            target_stream["realitySettings"]["xver"] = 0
         elif old_snis:
             target_stream["realitySettings"]["serverNames"] = old_snis
             target_stream["realitySettings"]["dest"] = old_dest or target_stream["realitySettings"]["dest"]
             preserved.append(f"SNI ({','.join(old_snis)})")
 
-        # Проверка Anti-Loop для Steal-Oneself
-        if tag == "in-steal-reality":
-            if cur_reality.get("dest") != "127.0.0.1:9443":
-                repairs.append("установлен dest: 127.0.0.1:9443 (защита от петли Steal-Oneself)")
+        # Строгая гарантия параметров Steal-Oneself (Anti-Loop Fallback + Xver=1)
+        if port == steal_port or tag == "in-steal-reality" or cur_tag == "in-steal-reality":
+            if not target_stream["realitySettings"].get("dest") or target_stream["realitySettings"]["dest"] != "127.0.0.1:9443":
                 target_stream["realitySettings"]["dest"] = "127.0.0.1:9443"
+                repairs.append("установлен dest: 127.0.0.1:9443 (защита от петли Steal-Oneself)")
             else:
                 preserved.append("anti-loop dest 9443")
+            if target_stream["realitySettings"].get("xver") != 1:
+                target_stream["realitySettings"]["xver"] = 1
+                repairs.append("установлен xver: 1 (Proxy Protocol для Nginx Anti-Loop)")
+
+        # Строгая гарантия параметров Classic External REALITY (xver=0 и dest: 443)
+        if port == classic_port or tag == "in-classic-reality" or cur_tag == "in-classic-reality":
+            if not target_stream["realitySettings"].get("dest"):
+                target_stream["realitySettings"]["dest"] = f"{classic_sni}:443"
+                repairs.append(f"восстановлен пустой dest -> {classic_sni}:443")
+            target_stream["realitySettings"]["xver"] = 0
 
     # В. Проверка и ремонт xHTTP
     if protocol == "vless" and "xhttpSettings" in target_stream:
@@ -722,9 +737,27 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
                 repairs.append("исправлен поврежденный publicKey сервера Curve25519 (устранено зависание Handshake)")
         
         # Сохранение параметров обфускации
-        for param in ["jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "h1", "h2", "h3", "h4", "mtu", "subnetIp", "subnetCidr"]:
+        for param in ["jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "h1", "h2", "h3", "h4", "headerProtectionKey", "randomTrailers", "disableCookies", "mtu", "subnetIp", "subnetCidr"]:
             if param in cur_srv:
                 target_settings["server"][param] = cur_srv[param]
+        if cur_srv.get("headerProtectionKey"):
+            preserved.append("HeaderProtectionKey AWG")
+        if cur_srv.get("randomTrailers") is not None:
+            preserved.append("randomTrailers AWG")
+
+        # Защитный аудит AmneziaWG 3.0+: S1, S2, S3, S4 должны быть >= 12 при активном HeaderProtectionKey
+        has_hpk = bool(target_settings["server"].get("headerProtectionKey"))
+        if has_hpk:
+            s_defaults = {"s1": 45, "s2": 60, "s3": 24, "s4": 16}
+            for s_param, min_val in [("s1", 12), ("s2", 12), ("s3", 12), ("s4", 12)]:
+                val = target_settings["server"].get(s_param)
+                try:
+                    val_int = int(val)
+                except (TypeError, ValueError):
+                    val_int = 0
+                if val_int < min_val:
+                    target_settings["server"][s_param] = s_defaults[s_param]
+                    repairs.append(f"исправлен {s_param}={val} -> {s_defaults[s_param]} (защита AWG 3.0+ от зависания handshake)")
 
     # Е. Проверка и сохранение externalProxy (:443 и кастомных доменов узлов)
     cur_ext = cur_stream.get("externalProxy", [])
@@ -778,6 +811,7 @@ def_reality_sid = secrets.token_hex(8)
 def_hy2_pass = secrets.token_hex(12)
 def_wg_s_priv, def_wg_s_pub = generate_wg_keypair()
 def_wg_c_priv, def_wg_c_pub = generate_wg_keypair()
+def_wg_hpk = awg_hpk_env or base64.b64encode(secrets.token_bytes(32)).decode()
 
 # 1. Steal-Oneself REALITY
 if enable_steal:
@@ -850,13 +884,15 @@ if enable_awg_v3:
         }],
         "server": {
             "contentPaddingAddition": "3-16", "disableCookies": True,
-            "h1": "", "h2": "", "h3": "", "h4": "", "jc": 4, "jmax": 160, "jmin": 50,
-            "keepaliveTimeout": "8-10", "maxHandshakeAttempts": "21-26", "mtu": 1360,
-            "primaryDns": "8.8.8.8", "secondaryDns": "8.8.4.4",
+            "h1": "", "h2": "", "h3": "", "h4": "", "jc": 3, "jmax": 80, "jmin": 40,
+            "keepaliveTimeout": "10", "maxHandshakeAttempts": "20", "mtu": 1280,
+            "primaryDns": "76.76.2.0", "secondaryDns": "76.76.10.0",
             "privateKey": def_wg_s_priv, "publicKey": def_wg_s_pub,
-            "randomTrailers": False, "rejectAfterTime": "178-211", "rekeyAfterTime": "107-135",
-            "rekeyTimeout": "3-4", "s1": 45, "s2": 60, "s3": 24, "s4": 16,
-            "subnetCidr": 24, "subnetIp": "10.8.1.0"
+            "headerProtectionKey": def_wg_hpk,
+            "randomTrailers": awg_random_trailers_env,
+            "rejectAfterTime": "180", "rekeyAfterTime": "120",
+            "rekeyTimeout": "3", "s1": 45, "s2": 60, "s3": 24, "s4": 16,
+            "subnetCidr": 22, "subnetIp": "10.8.0.0"
         }
     }
     a3_str = {"externalProxy": [{"dest": domain, "port": awg_v3_port, "remark": "AmneziaWG v3.1"}]}

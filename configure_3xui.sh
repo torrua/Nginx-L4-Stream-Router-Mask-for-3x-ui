@@ -1813,13 +1813,15 @@ if [ "$DRY_RUN" -eq 0 ]; then
         
         CURRENT_VER=""
         if [ -x "$TARGET_BIN" ]; then
-            CURRENT_VER=$("$TARGET_BIN" -version 2>/dev/null | head -n 1 | awk '{print $2}')
+            CURRENT_VER=$("$TARGET_BIN" -version 2>/dev/null | { head -n 1 || true; } | { awk '{print $2}' || true; }) || CURRENT_VER=""
         fi
 
         LATEST_TAG=""
         if command -v curl >/dev/null 2>&1; then
             gh_resp=$(curl -fsSL --connect-timeout 5 "https://api.github.com/repos/XTLS/Xray-core/releases?per_page=1" 2>/dev/null || true)
-            LATEST_TAG=$(echo "$gh_resp" | grep -m1 '"tag_name":' | cut -d '"' -f 4 || true)
+            if [ -n "$gh_resp" ]; then
+                LATEST_TAG=$(echo "$gh_resp" | { grep -m1 '"tag_name":' || true; } | { cut -d '"' -f 4 || true; }) || LATEST_TAG=""
+            fi
         fi
         [ -n "$LATEST_TAG" ] || LATEST_TAG="v26.9.9"
         CLEAN_LATEST="${LATEST_TAG#v}"

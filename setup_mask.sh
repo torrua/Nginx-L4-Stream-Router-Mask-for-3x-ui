@@ -412,6 +412,10 @@ HY2_DOMAIN="yourdomain.online"
 # AmneziaWG v3.1 (Transport Protection) [y/n]
 ENABLE_AWG_V3="y"
 AWG_V3_PORT="8443"
+# Защита заголовков Handshake (пусто = автогенерация 32-байтного ключа, 'none' = выкл)
+AWG_HEADER_PROTECTION_KEY=""
+# Рандомизация хвостов пакетов против анализа длины трафика WireGuard [true/false]
+AWG_RANDOM_TRAILERS="true"
 
 # AmneziaWG v2.0 / Legacy (Для роутеров) [y/n]
 ENABLE_AWG_V2="y"
@@ -657,6 +661,8 @@ HY2_DOMAIN="${HY2_DOMAIN:-$PRIMARY_DOMAIN}"
 
 ENABLE_AWG_V3="$awg_v3_save"
 AWG_V3_PORT="${AWG_V3_PORT:-8443}"
+AWG_HEADER_PROTECTION_KEY="${AWG_HEADER_PROTECTION_KEY:-}"
+AWG_RANDOM_TRAILERS="${AWG_RANDOM_TRAILERS:-true}"
 
 ENABLE_AWG_V2="$awg_v2_save"
 AWG_V2_PORT="${AWG_V2_PORT:-8444}"
@@ -3484,11 +3490,11 @@ echo -e "    * Мусорные пакеты: ${CYAN}Jc = 4${NC}, ${CYAN}Jmin = 
 echo -e "    * Мусорные смещения: ${CYAN}S1 = 45${NC}, ${CYAN}S2 = 60${NC}, ${CYAN}S3 = 24${NC}, ${CYAN}S4 = 16${NC}"
 echo -e "    * Заголовки ${CYAN}H1 - H4${NC}: ${GREEN}Оставить ПУСТЫМИ${NC} (по умолчанию 1/2/3/4)"
 echo -e "    * Сигнатурные пакеты ${CYAN}I1 - I5${NC}: ${GREEN}Оставить ПУСТЫМИ${NC}"
-echo -e "    * Защита заголовков (${CYAN}HeaderProtectionKey${NC}): ${GREEN}Оставить ПУСТЫМ${NC}"
+echo -e "    * Защита заголовков (${CYAN}HeaderProtectionKey${NC}): ${GREEN}Авто (32 байта base64)${NC} (шифрование handshake против ТСПУ)"
 echo -e "    * Паддинг содержимого (${CYAN}ContentPaddingAddition${NC}): ${GREEN}3-16${NC}"
 echo -e "    * Тайминги ключей: ${CYAN}RekeyAfterTime = 107-135${NC}, ${CYAN}RekeyTimeout = 3-4${NC}, ${CYAN}RejectAfterTime = 178-211${NC}"
 echo -e "    * Тайминги соединения: ${CYAN}KeepaliveTimeout = 8-10${NC}, ${CYAN}MaxHandshakeAttempts = 21-26${NC}"
-echo -e "    * Переключатели: ${CYAN}RandomTrailers:${NC} ${RED}Выключить${NC} | ${CYAN}DisableCookies:${NC} ${GREEN}Включить${NC}"
+echo -e "    * Переключатели: ${CYAN}RandomTrailers:${NC} ${GREEN}Включить (ON)${NC} | ${CYAN}DisableCookies:${NC} ${GREEN}Включить${NC}"
 echo
 fi
 

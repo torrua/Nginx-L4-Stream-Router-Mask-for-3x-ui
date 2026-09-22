@@ -409,8 +409,8 @@ ENABLE_HY2="y"
 HY2_PORT="443"
 # Отдельный домен для Hysteria 2 (по умолчанию равен PRIMARY_DOMAIN)
 HY2_DOMAIN="yourdomain.online"
-# Port Hopping: клиент «прыгает» по UDP-портам, усложняя блокировку ТСПУ [y/n]
-HY2_PORT_HOPPING="y"
+# Port Hopping: клиент «прыгает» по UDP-портам (обход шейпинга UDP). ВНИМАНИЕ: открывает 20000-50000 в сканерах Censys. По умолчанию: n (стелс) [y/n]
+HY2_PORT_HOPPING="n"
 # Диапазон UDP-портов для Port Hopping (формат: START:END)
 HY2_PORT_HOPPING_RANGE="20000:50000"
 
@@ -1365,6 +1365,8 @@ if [ "$EXPRESS_MODE" -eq 1 ]; then
     ENABLE_HY2="1"
     HY2_PORT="443"
     HY2_DOMAIN="$PRIMARY_DOMAIN"
+    HY2_PORT_HOPPING="${HY2_PORT_HOPPING:-n}"
+    HY2_PORT_HOPPING_RANGE="${HY2_PORT_HOPPING_RANGE:-20000:50000}"
     ENABLE_AWG_V3="1"
     AWG_V3_PORT="8443"
     ENABLE_AWG_V2="1"
@@ -1781,10 +1783,23 @@ if [[ "${ENABLE_HY2,,}" == "y" ]]; then
         ok "Домен Hysteria 2 ($HY2_DOMAIN) добавлен в очередь на выпуск SSL-сертификата."
     fi
     ok "Hysteria 2 активирована на порту ${HY2_PORT}/udp (домен: ${HY2_DOMAIN})"
+
+    echo -e "  ${DIM}• Port Hopping позволяет клиентам прыгать по UDP-портам (обход шейпинга операторов),${NC}"
+    echo -e "    ${DIM}но делает диапазон 20000-50000 видимым в сканерах Censys (30+ открытых UDP портов).${NC}"
+    prompt_yes_no "  Включить Port Hopping для Hysteria 2 (UDP 20000:50000)?" "${HY2_PORT_HOPPING:-n}" HY2_PORT_HOPPING
+    if [[ "${HY2_PORT_HOPPING,,}" == "y" || "${HY2_PORT_HOPPING:-}" == "1" ]]; then
+        HY2_PORT_HOPPING="y"
+        prompt_default "  Диапазон портов Port Hopping" "${HY2_PORT_HOPPING_RANGE:-20000:50000}" HY2_PORT_HOPPING_RANGE
+        ok "Port Hopping активирован для диапазона UDP ${HY2_PORT_HOPPING_RANGE}."
+    else
+        HY2_PORT_HOPPING="n"
+        log "Port Hopping отключен (чистый стелс на едином порту ${HY2_PORT}/udp)."
+    fi
 else
     ENABLE_HY2=0
     HY2_PORT=""
     HY2_DOMAIN=""
+    HY2_PORT_HOPPING="n"
     log "Hysteria 2 отключена."
 fi
 
@@ -2988,13 +3003,6 @@ server {
     proxy_pass \$backend_gate;
     ssl_preread on;
 }
-
-server {
-    listen 8443 backlog=65535 reuseport;
-    proxy_protocol on;
-    proxy_pass \$backend_gate;
-    ssl_preread on;
-}
 EOF
 
 # 2.5 Конфигурация локаций AdGuard Home (Режим 1: на основном домене)
@@ -3132,6 +3140,9 @@ server {
     location ~* ^/(wp-admin|wp-login|xmlrpc|vendor|cgi-bin) { return 444; }
     location ~ /\.(git|env|htaccess|svn) { return 444; }
 
+    # Немедленный сброс прямых сканеров по IP (IPv4 и IPv6)
+    if (\$host ~* "^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$") { return 444; }
+    if (\$host ~* "^\[?[0-9a-fA-F:]+\]?$") { return 444; }
     if (\$host = "") { return 444; }
 
     location / {

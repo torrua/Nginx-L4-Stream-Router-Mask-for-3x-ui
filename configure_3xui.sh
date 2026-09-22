@@ -251,6 +251,8 @@ SUB_UPDATES="${SUB_UPDATES:-1}"
 SUB_ENCRYPT="${SUB_ENCRYPT:-true}"
 BLOCK_SMTP="${BLOCK_SMTP:-y}"
 BLOCK_LAN="${BLOCK_LAN:-y}"
+ENABLE_AGH="${ENABLE_AGH:-n}"
+AGH_XRAY_DNS="${AGH_XRAY_DNS:-n}"
 
 # Проверяем, активен ли Nginx или сконфигурирован ли он в качестве L4/L7 прокси
 HAS_NGINX=0
@@ -407,6 +409,8 @@ export BLOCK_SMTP
 export BLOCK_LAN
 export WEB_LISTEN
 export SUB_LISTEN
+export ENABLE_AGH
+export AGH_XRAY_DNS
 
 # Приостановка службы x-ui на время реальной транзакции во избежание блокировок SQLite
 WAS_ACTIVE=0
@@ -891,6 +895,15 @@ if dns_cfg.get("queryStrategy") != "UseIPv4":
     print("  [ОБНОВЛЕН] DNS queryStrategy: зафиксирован 'UseIPv4' (устранение задержек IPv6).")
 else:
     print("  [В ПОРЯДКЕ] DNS queryStrategy: 'UseIPv4'.")
+
+enable_agh = os.environ.get("ENABLE_AGH", "").lower() in ("1", "y", "true")
+agh_xray_dns = os.environ.get("AGH_XRAY_DNS", "").lower() in ("1", "y", "true")
+if enable_agh and agh_xray_dns:
+    if dns_cfg.get("servers") != ["127.0.0.1"]:
+        dns_cfg["servers"] = ["127.0.0.1"]
+        print("  [ОБНОВЛЕН] DNS servers: зафиксирован '127.0.0.1' (AdGuard Home локальный фильтр).")
+    else:
+        print("  [В ПОРЯДКЕ] DNS servers: '127.0.0.1' (AdGuard Home).")
 tpl["dns"] = dns_cfg
 
 # 2. Логирование (тихий безопасный режим, без записи посещаемых URL)

@@ -976,8 +976,11 @@ EOF
 
 setup_nginx_mainline() {
     export DEBIAN_FRONTEND=noninteractive
-    apt-get update -q
-    apt-get install gnupg ca-certificates lsb-release openssl -y -q
+    if command -v nginx >/dev/null 2>&1 && nginx -v >/dev/null 2>&1; then
+        return 0
+    fi
+    apt-get update -q || true
+    apt-get install gnupg ca-certificates lsb-release openssl -y -q || true
 
     mkdir -p /usr/share/keyrings
     curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg --yes
@@ -995,7 +998,7 @@ Pin: origin nginx.org
 Pin-Priority: 900
 EOF
 
-    apt-get update -q
+    apt-get update -q || true
     apt-get install -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" nginx -y -q
 }
 
@@ -1044,6 +1047,9 @@ install_certbot_package() {
 # Принимает $1 = домен (был closure-переменной $dom из цикла)
 obtain_cert() {
     local dom="$1"
+    if [ -f "/etc/letsencrypt/live/$dom/fullchain.pem" ] && [ -f "/etc/letsencrypt/live/$dom/privkey.pem" ]; then
+        return 0
+    fi
     certbot certonly --webroot -w "$WEBROOT" --expand -d "$dom" --non-interactive
 }
 
@@ -1200,6 +1206,13 @@ if [ "$NON_INTERACTIVE" -eq 0 ]; then
         fi
         echo ""
     fi
+else
+    # В неинтерактивном режиме с переданным конфигом пропускаем интервью и возобновляем
+    SKIP_INTERVIEW=1
+    if [ "$LAST_COMPLETED_STEP" -gt 0 ] && [ "$LAST_COMPLETED_STEP" -lt "$TOTAL_STEPS" ]; then
+        RESUME_STEP=$(( LAST_COMPLETED_STEP + 1 ))
+        ok "Неинтерактивный режим: возобновление с шага $RESUME_STEP..."
+    fi
 fi
 
 if [ "$SKIP_INTERVIEW" -eq 1 ]; then
@@ -1214,12 +1227,12 @@ if [ "$SKIP_INTERVIEW" -eq 1 ]; then
         [ -n "$ed" ] && ALL_DOMAINS+=("$ed")
     done
 
+    steal_raw="${STEAL_DOMAINS_STR:-${STEAL_DOMAINS[*]:-}}"
     STEAL_DOMAINS=()
     declare -A DOMAIN_TO_PORT=()
     if [[ "${ENABLE_STEAL,,}" == "y" || "${ENABLE_STEAL:-}" == "1" ]]; then
         STEAL_ENABLED=1
         STEAL_PORTS_LIST=(${STEAL_PORT:-45443})
-        steal_raw="${STEAL_DOMAINS_STR:-${STEAL_DOMAINS[*]:-}}"
         for sd in ${steal_raw//,/ }; do
             sd=$(echo "$sd" | tr -d '[:space:]')
             if [ -n "$sd" ]; then

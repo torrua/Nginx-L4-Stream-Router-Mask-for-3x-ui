@@ -51,6 +51,7 @@ declare -A STEP_NAMES=(
     [5]="Развертывание сайта-маскировки (Decoy Front)"
     [6]="Сборка конфигурации Nginx и активация маршрутизатора"
     [7]="Автоматическая настройка базы данных 3X-UI"
+    [8]="Приватный AdGuard Home DoH + Split-DNS"
 )
 
 format_duration() {
@@ -446,6 +447,23 @@ ENABLE_WARP="n"
 
 # Лицензионный ключ WARP+ (опционально, оставьте пустым для бесплатного безлимитного аккаунта)
 WARP_LICENSE_KEY=""
+
+# --- 8. ADGUARD HOME: ПРИВАТНЫЙ DOH + SPLIT-DNS + БЛОКИРОВКА РЕКЛАМЫ ---
+# Установить AdGuard Home с приватным DNS-over-HTTPS [y/n]
+ENABLE_AGH="y"
+# Режим доступа к DoH:
+#   1 = На основном домене (domain.com/dns-query/) — не нужен отдельный поддомен
+#   2 = На отдельном поддомене (dns.domain.com) — нужна A-запись в DNS-панели
+AGH_MODE="1"
+# Поддомен для AdGuard Home (только при AGH_MODE=2, пусто = dns.PRIMARY_DOMAIN)
+AGH_DOMAIN=""
+# Учетные данные веб-панели AdGuard Home
+AGH_USER="admin"
+AGH_PASS=""
+# Секретный ClientID для роутера (часть URL DoH)
+AGH_CLIENT_ID="home-router"
+# Использовать AdGuard Home как DNS для VPN-клиентов (Xray DNS → 127.0.0.1) [y/n]
+AGH_XRAY_DNS="y"
 EOF_CONF
     ok "Шаблон конфигурации успешно сгенерирован: '$target_file'"
 }
@@ -611,6 +629,10 @@ save_session_state() {
     [[ "${AUTO_SETUP_3XUI:-}" == "1" || "${AUTO_SETUP_3XUI,,}" == "y" ]] && auto_setup_3xui_save="y"
     local warp_save="n"
     [[ "${ENABLE_WARP:-}" == "1" || "${ENABLE_WARP,,}" == "y" ]] && warp_save="y"
+    local agh_save="n"
+    [[ "${ENABLE_AGH:-}" == "1" || "${ENABLE_AGH,,}" == "y" ]] && agh_save="y"
+    local agh_xray_save="n"
+    [[ "${AGH_XRAY_DNS:-}" == "1" || "${AGH_XRAY_DNS,,}" == "y" ]] && agh_xray_save="y"
 
     local _save_panel_path="${RAW_PATH:-${PANEL_PATH:-my-3x-panel}}"
     _save_panel_path="${_save_panel_path#/}"
@@ -678,6 +700,13 @@ AUTO_SETUP_3XUI="$auto_setup_3xui_save"
 
 ENABLE_WARP="$warp_save"
 WARP_LICENSE_KEY="${WARP_LICENSE_KEY:-}"
+ENABLE_AGH="$agh_save"
+AGH_MODE="${AGH_MODE:-1}"
+AGH_DOMAIN="${AGH_DOMAIN:-}"
+AGH_USER="${AGH_USER:-admin}"
+AGH_PASS="${AGH_PASS:-}"
+AGH_CLIENT_ID="${AGH_CLIENT_ID:-home-router}"
+AGH_XRAY_DNS="$agh_xray_save"
 
 TIME_LOCATION="${TIME_LOCATION:-}"
 TRAFFIC_RESET_DAY="${TRAFFIC_RESET_DAY:-1}"
@@ -1343,6 +1372,14 @@ if [ "$EXPRESS_MODE" -eq 1 ]; then
     AUTO_SETUP_3XUI="y"
     ENABLE_WARP="${ENABLE_WARP:-y}"
     WARP_LICENSE_KEY="${WARP_LICENSE_KEY:-}"
+    ENABLE_AGH="${ENABLE_AGH:-y}"
+    AGH_MODE="${AGH_MODE:-1}"
+    AGH_DOMAIN=""
+    AGH_USER="${AGH_USER:-admin}"
+    DEFAULT_AG_PASS="AgHome_$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 8 || echo 'Pass1234')"
+    AGH_PASS="${AGH_PASS:-$DEFAULT_AG_PASS}"
+    AGH_CLIENT_ID="${AGH_CLIENT_ID:-home-router}"
+    AGH_XRAY_DNS="${AGH_XRAY_DNS:-y}"
     STEAL_ENABLED=1
     CLASSIC_ENABLED=1
     
@@ -1775,6 +1812,51 @@ else
 fi
 
 echo
+echo -e "${YELLOW}Шаг 7.1: Настройка приватного AdGuard Home DoH + Split-DNS${NC}"
+prompt_yes_no "Установить приватный AdGuard Home DoH со Split-DNS?" "${ENABLE_AGH:-y}" ENABLE_AGH
+if [[ "${ENABLE_AGH,,}" == "y" || "${ENABLE_AGH:-}" == "1" ]]; then
+    ENABLE_AGH=1
+    echo
+    echo -e "  ${YELLOW}Режим доступа к AdGuard Home DoH:${NC}"
+    echo -e "    ${GREEN}1)${NC} На основном домене (${PRIMARY_DOMAIN}/dns-query/)"
+    echo -e "       ${DIM}— Не нужен отдельный поддомен и SSL-сертификат${NC}"
+    echo -e "       ${DIM}— Быстрая настройка, подходит для большинства${NC}"
+    echo
+    echo -e "    ${GREEN}2)${NC} На отдельном поддомене (dns.${PRIMARY_DOMAIN})"
+    echo -e "       ${DIM}— Нужно добавить A-запись в DNS-панели регистратора${NC}"
+    echo -e "       ${DIM}— Полная изоляция DoH от VPN-трафика${NC}"
+    prompt_default "  Ваш выбор (1 или 2)" "${AGH_MODE:-1}" AGH_MODE
+
+    if [ "$AGH_MODE" = "2" ]; then
+        prompt_default "  Поддомен для AdGuard Home DoH" "${AGH_DOMAIN:-dns.$PRIMARY_DOMAIN}" AGH_DOMAIN
+        AGH_DOMAIN=$(echo "$AGH_DOMAIN" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+        if [[ ! " ${ALL_DOMAINS[*]} " == *" ${AGH_DOMAIN} "* ]]; then
+            ALL_DOMAINS+=("$AGH_DOMAIN")
+            ok "Домен AdGuard Home ($AGH_DOMAIN) добавлен в очередь на выпуск SSL-сертификата."
+        fi
+    else
+        AGH_MODE="1"
+        AGH_DOMAIN=""
+    fi
+
+    prompt_default "  Логин администратора AdGuard Home" "${AGH_USER:-admin}" AGH_USER
+    DEFAULT_AG_PASS="AgHome_$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 8 || echo 'Pass1234')"
+    prompt_default "  Пароль администратора AdGuard Home" "${AGH_PASS:-$DEFAULT_AG_PASS}" AGH_PASS
+    prompt_default "  Секретный ClientID токен для роутера" "${AGH_CLIENT_ID:-home-router}" AGH_CLIENT_ID
+    prompt_yes_no "  Использовать AdGuard Home как DNS для VPN-клиентов (Xray)?" "${AGH_XRAY_DNS:-y}" AGH_XRAY_DNS
+    if [[ "${AGH_XRAY_DNS,,}" == "y" || "${AGH_XRAY_DNS:-}" == "1" ]]; then
+        AGH_XRAY_DNS="y"
+    else
+        AGH_XRAY_DNS="n"
+    fi
+    ok "AdGuard Home настроен (Режим: $AGH_MODE, ClientID: $AGH_CLIENT_ID)"
+else
+    ENABLE_AGH=0
+    AGH_DOMAIN=""
+    log "AdGuard Home DoH отключен."
+fi
+
+echo
 echo -e "${YELLOW}Шаг 8: Выбор темы для сайта-маскировки${NC}"
 echo -e " 1) ${GREEN}DataSphere Analytics Enterprise${NC} (Строгий геометрический дизайн + Live телеметрия ±10%)"
 echo -e " 2) ${GREEN}CosmosCloud NextGen${NC} (Облачный диск с оригинальным логотипом и сессионными cookies)"
@@ -1958,7 +2040,11 @@ save_session_state "$SAVED_CONFIG_FILE"
 # =============================================================
 #  ФАЗА УСТАНОВКИ И РАЗВЕРТЫВАНИЯ СИСТЕМЫ
 # =============================================================
-TOTAL_STEPS=7
+if [[ "${ENABLE_AGH,,}" == "y" || "${ENABLE_AGH:-}" == "1" ]]; then
+    TOTAL_STEPS=8
+else
+    TOTAL_STEPS=7
+fi
 
 # Ожидание фоновой пред-установки (если была запущена параллельно с опросом)
 sync_background_preinstall
@@ -2804,6 +2890,8 @@ http {
         ~^1:[01]:${SUB_PATH} 0;
         ~^1:[01]:/sub/ 0;
         ~^1:[01]:${XHTTP_STREAM_PATH} 0;
+        ~^1:[01]:/dns-query 0;
+        ~^1:[01]:/agh/ 0;
         ~(^1:|:1) 1;
         default 0;
     }
@@ -2814,6 +2902,7 @@ http {
     limit_req_zone \$binary_remote_addr zone=scan:1m rate=1r/s;
     limit_conn_zone \$binary_remote_addr zone=addr:1m;
     limit_req_zone \$binary_remote_addr zone=assets:1m rate=150r/s;
+    limit_req_zone \$binary_remote_addr zone=doh:10m rate=300r/s;
     limit_req_status 429;
 
     proxy_hide_header X-Proxy-Engine;
@@ -2902,6 +2991,29 @@ server {
     ssl_preread on;
 }
 EOF
+
+# 2.5 Конфигурация локаций AdGuard Home (Режим 1: на основном домене)
+AGH_MAIN_LOCATION_BLOCKS=""
+if [[ "${ENABLE_AGH:-0}" == "1" || "${ENABLE_AGH,,}" == "y" ]] && [ "${AGH_MODE:-1}" = "1" ]; then
+    AGH_MAIN_LOCATION_BLOCKS="
+    # --- ЛОКАЦИЯ: ADGUARD HOME DOH (ENDPOINT С CLIENTID) ---
+    location = /dns-query {
+        return 404;
+    }
+
+    location /dns-query/ {
+        limit_req zone=doh burst=500 nodelay;
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Connection \"\";
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Real-IP \$ak_real_ip;
+        proxy_set_header X-Forwarded-For \$ak_real_ip;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_buffering off;
+    }
+"
+fi
 
 # 3. Конфигурация локаций маскировки (Автономные чистые профили)
 DECOY_LOCATION_BLOCKS=""
@@ -3143,6 +3255,8 @@ server {
         proxy_pass http://xray_xhttp_stream;
     }
 
+    $AGH_MAIN_LOCATION_BLOCKS
+
     # --- ЛОКАЦИЯ 4: ДЕКОЙ САЙТ / МАСКИРОВКА ---
     $DECOY_LOCATION_BLOCKS
 
@@ -3176,7 +3290,7 @@ EOF
 # 5. Генерация виртуальных хостов для дополнительных доменов
 for ((i=1; i<${#ALL_DOMAINS[@]}; i++)); do
     ext_dom="${ALL_DOMAINS[$i]}"
-    if [ "$ext_dom" != "$PRIMARY_DOMAIN" ] && [ -f "${SSL_BASE_DIR}/$ext_dom/fullchain.pem" ]; then
+    if [ "$ext_dom" != "$PRIMARY_DOMAIN" ] && [ "$ext_dom" != "${AGH_DOMAIN:-}" ] && [ -f "${SSL_BASE_DIR}/$ext_dom/fullchain.pem" ]; then
         cat << EOF > "/etc/nginx/conf.d/02-${ext_dom}.conf"
 server {
     listen unix:/dev/shm/nginx-http.sock ssl proxy_protocol;
@@ -3273,6 +3387,67 @@ server {
 EOF
     fi
 done
+
+    # 6. Виртуальный хост для AdGuard Home (Режим 2: отдельный поддомен)
+    if [[ "${ENABLE_AGH:-0}" == "1" || "${ENABLE_AGH,,}" == "y" ]] && [ "${AGH_MODE:-1}" = "2" ] && [ -n "${AGH_DOMAIN:-}" ] && [ -f "${SSL_BASE_DIR}/$AGH_DOMAIN/fullchain.pem" ]; then
+        cat << EOF > "/etc/nginx/conf.d/03-adguard.conf"
+upstream adguard_backend { server 127.0.0.1:3000; keepalive 32; }
+
+server {
+    listen unix:/dev/shm/nginx-http.sock ssl proxy_protocol;
+    listen 127.0.0.1:$REALITY_FALLBACK_PORT ssl proxy_protocol;
+    http2 on;
+    server_name $AGH_DOMAIN;
+
+    ssl_certificate ${SSL_BASE_DIR}/$AGH_DOMAIN/fullchain.pem;
+    ssl_certificate_key ${SSL_BASE_DIR}/$AGH_DOMAIN/privkey.pem;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
+    ssl_prefer_server_ciphers off;
+
+    ssl_buffer_size 4k;
+    ssl_session_tickets on;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 4h;
+
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header X-Robots-Tag "noindex, nofollow, noarchive, nosnippet" always;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+
+    # Защита от ботов: пустой /dns-query без токена
+    location = /dns-query {
+        return 404;
+    }
+
+    location /dns-query/ {
+        limit_req zone=doh burst=500 nodelay;
+        proxy_pass http://adguard_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Real-IP \$ak_real_ip;
+        proxy_set_header X-Forwarded-For \$ak_real_ip;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_buffering off;
+    }
+
+    location / {
+        limit_req zone=panel burst=60 delay=30;
+        proxy_pass http://adguard_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection \$connection_upgrade;
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}
+EOF
+    else
+        rm -f "/etc/nginx/conf.d/03-adguard.conf" 2>/dev/null || true
+    fi
 
     run_with_spinner "Тестирование конфигурации и перезапуск Nginx Mainline" nginx_reload_task
     step_finish 6
@@ -3460,6 +3635,8 @@ else
             export BLOCK_LAN
             export WEB_LISTEN
             export SUB_LISTEN
+            export ENABLE_AGH
+            export AGH_XRAY_DNS
             export UPDATE_XRAY_CORE="${UPDATE_XRAY_CORE:-y}"
             bash "$CONFIG_EXEC" --config "$SAVED_CONFIG_FILE" -y
         }
@@ -3469,6 +3646,179 @@ else
     fi
 
     step_finish 7
+fi
+
+# --- Шаг 8: Приватный AdGuard Home DoH + Split-DNS (Опционально) ---
+if should_skip_step 8; then
+    :
+elif [[ "${ENABLE_AGH,,}" != "y" && "${ENABLE_AGH:-}" != "1" ]]; then
+    step_begin 8
+    ok "Шаг 8: AdGuard Home DoH отключен в конфигурации — пропущено."
+    step_finish 8
+else
+    step_begin 8
+
+    install_agh_task() {
+        # 1. Отключение systemd-resolved StubListener
+        mkdir -p /etc/systemd/resolved.conf.d
+        cat << 'EOF_RESOLVED' > /etc/systemd/resolved.conf.d/adguard.conf
+[Resolve]
+DNS=1.1.1.1 8.8.8.8
+DNSStubListener=no
+EOF_RESOLVED
+        systemctl restart systemd-resolved 2>/dev/null || true
+        ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf 2>/dev/null || true
+
+        # 2. Скачивание и распаковка AdGuard Home (если ещё не установлен)
+        if [ ! -f /opt/AdGuardHome/AdGuardHome ]; then
+            local agh_arch="amd64"
+            local cur_arch
+            cur_arch=$(uname -m 2>/dev/null || echo "x86_64")
+            case "$cur_arch" in
+                x86_64) agh_arch="amd64" ;;
+                aarch64|arm64) agh_arch="arm64" ;;
+                armv7l|armhf) agh_arch="armv7" ;;
+                *) agh_arch="amd64" ;;
+            esac
+
+            curl -fsSL "https://static.adguard.com/adguardhome/release/AdGuardHome_linux_${agh_arch}.tar.gz" -o /tmp/agh.tar.gz 2>/dev/null || \
+                curl -fsSL "https://github.com/AdguardTeam/AdGuardHome/releases/latest/download/AdGuardHome_linux_${agh_arch}.tar.gz" -o /tmp/agh.tar.gz
+            tar -zxf /tmp/agh.tar.gz -C /opt/ >/dev/null 2>&1
+            rm -f /tmp/agh.tar.gz
+        fi
+
+        # 3. Генерация bcrypt-хэша пароля через htpasswd
+        which htpasswd >/dev/null 2>&1 || apt-get install -y -q apache2-utils >/dev/null 2>&1
+        local agh_pass_hash=""
+        if command -v htpasswd >/dev/null 2>&1; then
+            agh_pass_hash=$(htpasswd -b -n -B -C 10 "" "$AGH_PASS" 2>/dev/null | tr -d '\n' | cut -d: -f2)
+        fi
+        if [ -z "$agh_pass_hash" ]; then
+            agh_pass_hash=$(python3 -c "
+import sys
+try:
+    import bcrypt
+    print(bcrypt.hashpw(sys.argv[1].encode(), bcrypt.gensalt(10)).decode())
+except Exception:
+    pass
+" "$AGH_PASS" 2>/dev/null || true)
+        fi
+
+        # 4. Создание конфигурации AdGuardHome.yaml
+        mkdir -p /opt/AdGuardHome
+        cat << EOF_AGH > /opt/AdGuardHome/AdGuardHome.yaml
+http:
+  address: 127.0.0.1:3000
+  doh:
+    insecure_enabled: true
+users:
+  - name: ${AGH_USER}
+    password: "${agh_pass_hash}"
+dns:
+  bind_hosts:
+    - 127.0.0.1
+  port: 53
+  trusted_proxies:
+    - 127.0.0.1
+    - ::1
+  ratelimit: 20
+  ratelimit_whitelist:
+    - 127.0.0.1
+  dnssec: true
+  upstream_dns:
+    - "[/ru/kz/by/su/xn--p1ai/]https://77.88.8.8:443/dns-query"
+    - "[/google.com/googlevideo.com/youtube.com/ytimg.com/gstatic.com/googleapis.com/1e100.net/]h3://dns.google/dns-query"
+    - "quic://p2.freedns.controld.com"
+    - "quic://dns.adguard-dns.com"
+    - "quic://dns.nextdns.io"
+    - "quic://dns.quad9.net"
+    - "quic://doq.ffmuc.net"
+    - "quic://dns.surfsharkdns.com"
+    - "h3://cloudflare-dns.com/dns-query"
+  blocked_hosts: []
+clients:
+  runtime_sources:
+    whois: false
+    dhcp: false
+  persistent:
+    - name: "Home-Router"
+      ids:
+        - ${AGH_CLIENT_ID}
+      use_global_settings: true
+access:
+  allowed_clients:
+    - ${AGH_CLIENT_ID}
+    - 127.0.0.1
+  disallowed_clients: []
+  blocked_hosts: []
+filters:
+  - enabled: true
+    url: "https://small.oisd.nl/domainswild"
+    name: "OISD Small (Ads + Trackers)"
+    id: 1
+filtering:
+  filtering_enabled: true
+  filters_update_interval: 24
+querylog:
+  enabled: true
+  interval: 24h
+  size_memory: 1000
+statistics:
+  enabled: true
+  interval: 168h
+tls:
+  enabled: false
+  allow_unencrypted_doh: true
+schema_version: 28
+EOF_AGH
+
+        # 5. Установка и запуск службы systemd
+        /opt/AdGuardHome/AdGuardHome -s install >/dev/null 2>&1 || true
+
+        # 6. Ограничение памяти Go для экономии RAM на VPS
+        mkdir -p /etc/systemd/system/AdGuardHome.service.d
+        cat << 'EOF_GOMEM' > /etc/systemd/system/AdGuardHome.service.d/memory.conf
+[Service]
+Environment="GOGC=50"
+Environment="GOMEMLIMIT=100MiB"
+EOF_GOMEM
+        systemctl daemon-reload 2>/dev/null || true
+        systemctl restart AdGuardHome 2>/dev/null || true
+
+        # 7. Интеграция с Xray DNS (если выбрано AGH_XRAY_DNS=y)
+        if [[ "${AGH_XRAY_DNS,,}" == "y" || "${AGH_XRAY_DNS:-}" == "1" ]]; then
+            local xui_db="/etc/x-ui/x-ui.db"
+            [ -f "$xui_db" ] || xui_db="/usr/local/x-ui/bin/x-ui.db"
+            if [ -f "$xui_db" ]; then
+                python3 -c "
+import sqlite3, json
+
+db_path = '$xui_db'
+conn = sqlite3.connect(db_path)
+cur = conn.cursor()
+cur.execute(\"SELECT value FROM settings WHERE key='xrayTemplateConfig'\")
+row = cur.fetchone()
+if row and row[0]:
+    try:
+        cfg = json.loads(row[0])
+        dns = cfg.get('dns', {})
+        dns['servers'] = ['127.0.0.1']
+        dns['queryStrategy'] = 'UseIPv4'
+        cfg['dns'] = dns
+        new_val = json.dumps(cfg, ensure_ascii=False)
+        cur.execute(\"UPDATE settings SET value=? WHERE key='xrayTemplateConfig'\", (new_val,))
+        conn.commit()
+    except Exception:
+        pass
+conn.close()
+" 2>/dev/null || true
+                systemctl restart x-ui 2>/dev/null || true
+            fi
+        fi
+    }
+
+    run_with_spinner "Установка и настройка AdGuard Home (DoH + Split-DNS + OISD)" install_agh_task
+    step_finish 8
 fi
 
 echo
@@ -3485,6 +3835,15 @@ echo -e "  Канал подписок:              ${GREEN}https://${PRIMARY_D
 if [[ "${ENABLE_WARP,,}" == "y" || "${ENABLE_WARP:-}" == "1" ]]; then
     echo -e "  Cloudflare WARP Outbound:    ${GREEN}АКТИВИРОВАН (Google, Gemini, ChatGPT / MTU 1280)${NC}"
 fi
+if [[ "${ENABLE_AGH,,}" == "y" || "${ENABLE_AGH:-}" == "1" ]]; then
+    if [ "${AGH_MODE:-1}" = "2" ] && [ -n "${AGH_DOMAIN:-}" ]; then
+        echo -e "  Панель AdGuard Home:         ${CYAN}https://${AGH_DOMAIN}/${NC}"
+        echo -e "  Приватный DoH для роутера:   ${GREEN}https://${AGH_DOMAIN}/dns-query/${AGH_CLIENT_ID}${NC}"
+    else
+        echo -e "  Панель AdGuard Home:         ${CYAN}http://127.0.0.1:3000${NC} ${DIM}(SSH туннель)${NC}"
+        echo -e "  Приватный DoH для роутера:   ${GREEN}https://${PRIMARY_DOMAIN}/dns-query/${AGH_CLIENT_ID}${NC}"
+    fi
+fi
 
 # Сохранение учетных данных в защищенный файл
 if [ -n "${ADMIN_PASSWORD:-}" ]; then
@@ -3499,8 +3858,17 @@ if [ -n "${ADMIN_PASSWORD:-}" ]; then
 Пароль администратора:  ${ADMIN_PASSWORD}
 
 Ссылка на подписку:    https://${PRIMARY_DOMAIN}${SUB_PATH}
-=====================================================================
 EOF_CRED
+    if [[ "${ENABLE_AGH,,}" == "y" || "${ENABLE_AGH:-}" == "1" ]]; then
+        cat << EOF_AGH_CRED >> "$CRED_FILE"
+=====================================================================
+ПРИВАТНЫЙ ADGUARD HOME DOH
+Логин администратора:  ${AGH_USER}
+Пароль администратора: ${AGH_PASS}
+URL DoH для роутера:   $([ "${AGH_MODE:-1}" = "2" ] && echo "https://${AGH_DOMAIN}/dns-query/${AGH_CLIENT_ID}" || echo "https://${PRIMARY_DOMAIN}/dns-query/${AGH_CLIENT_ID}")
+EOF_AGH_CRED
+    fi
+    echo "=====================================================================" >> "$CRED_FILE"
     chmod 600 "$CRED_FILE" 2>/dev/null || true
     echo -e "  ${CYAN}[i] Учетные данные сохранены в:${NC} ${BOLD}$CRED_FILE${NC} (chmod 600)"
 fi
@@ -3591,6 +3959,41 @@ echo -e "    * Subscription URL: ${CYAN}https://${PRIMARY_DOMAIN}${SUB_PATH}${NC
 echo -e "  - ${YELLOW}В разделе «Хосты» (Hosts) добавьте 2 правила:${NC}"
 echo -e "    1) ${BOLD}MAIN_SAME_443:${NC} Инбаунды: ${CYAN}REALITY + Hysteria 2${NC} -> Порт: ${GREEN}443${NC} | Безопасность: ${GREEN}same${NC}"
 echo -e "    2) ${BOLD}XHTTP_TLS_443:${NC} Инбаунд: ${CYAN}${SERVER_PREFIX} (VLESS xHTTP)${NC} -> Порт: ${GREEN}443${NC} | Безопасность: ${GREEN}tls${NC} (SNI: ${CYAN}$PRIMARY_DOMAIN${NC})"
+
+if [[ "${ENABLE_AGH,,}" == "y" || "${ENABLE_AGH:-}" == "1" ]]; then
+    local_agh_panel_url=""
+    local_agh_doh_url=""
+    local_server_ip="${WAN_IP:-$(curl -s4 --connect-timeout 3 icanhazip.com 2>/dev/null || echo "IP_СЕРВЕРА")}"
+
+    if [ "${AGH_MODE:-1}" = "2" ] && [ -n "${AGH_DOMAIN:-}" ]; then
+        local_agh_panel_url="https://${AGH_DOMAIN}/"
+        local_agh_doh_url="https://${AGH_DOMAIN}/dns-query/${AGH_CLIENT_ID}"
+    else
+        local_agh_panel_url="http://127.0.0.1:3000 (доступ через SSH-туннель: ssh -L 3000:127.0.0.1:3000 user@${local_server_ip})"
+        local_agh_doh_url="https://${PRIMARY_DOMAIN}/dns-query/${AGH_CLIENT_ID}"
+    fi
+
+    echo
+    echo -e "${YELLOW}ШАГ 8: Приватный AdGuard Home DoH + Split-DNS:${NC}"
+    echo -e "  - ${YELLOW}Веб-панель:${NC}          ${CYAN}${local_agh_panel_url}${NC}"
+    echo -e "  - ${YELLOW}Логин / Пароль:${NC}      ${GREEN}${AGH_USER}${NC} / ${GREEN}${AGH_PASS}${NC}"
+    echo -e "  - ${YELLOW}URL DoH для роутера:${NC} ${GREEN}${local_agh_doh_url}${NC}"
+    echo -e "  - ${YELLOW}Split-DNS зоны:${NC}      ${CYAN}.ru, .рф, .su, .kz, .by${NC} → ${GREEN}Яндекс DNS (77.88.8.8)${NC}"
+    echo -e "  - ${YELLOW}Блокировка рекламы:${NC}  ${GREEN}OISD Small (активен, автообновление каждые 24ч)${NC}"
+    echo -e "  - ${YELLOW}Upstream DNS:${NC}        ${CYAN}Control D (p2 Ads/Malware), Google H3, Cloudflare, DoQ${NC}"
+    if [[ "${AGH_XRAY_DNS,,}" == "y" || "${AGH_XRAY_DNS:-}" == "1" ]]; then
+        echo -e "  - ${YELLOW}Интеграция с Xray:${NC}   ${GREEN}127.0.0.1 (Все VPN-клиенты фильтруются через AGH)${NC}"
+    fi
+    echo
+    echo -e "  ${YELLOW}Инструкция по настройке роутера (Keenetic):${NC}"
+    echo -e "    1. Сетевые правила -> Интернет-фильтры -> Настройка DNS (вкладка DNS-серверы)"
+    echo -e "    2. Добавить DNS-сервер -> IP-адрес: ${CYAN}${local_server_ip}${NC}"
+    echo -e "    3. URL DoH: ${CYAN}${local_agh_doh_url}${NC}"
+    echo
+    echo -e "  ${YELLOW}Инструкция по настройке OpenWrt (Podkop / https-dns-proxy):${NC}"
+    echo -e "    1. Services -> HTTPS DNS Proxy -> Добавить upstream"
+    echo -e "    2. Custom URL: ${CYAN}${local_agh_doh_url}${NC}"
+fi
 echo -e "${GREEN}=====================================================================${NC}"
 
 # Сброс контрольной точки после успешного завершения всех этапов установки
@@ -3610,7 +4013,7 @@ echo -e "  Время завершения:     ${WHITE}${SCRIPT_END_DATETIME}${
 echo -e "  Общее время работы:   ${GREEN}${BOLD}${FORMATTED_TOTAL_TIME}${NC}"
 echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}"
 echo -e "  ${WHITE}Время по шагам:${NC}"
-for s_idx in 1 2 3 4 5 6 7; do
+for ((s_idx=1; s_idx<=TOTAL_STEPS; s_idx++)); do
     step_t="${STEP_DURATIONS[$s_idx]:-0}"
     s_name="${STEP_NAMES[$s_idx]:-Шаг $s_idx}"
     if [ "$step_t" -gt 0 ]; then

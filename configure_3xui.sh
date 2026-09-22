@@ -79,6 +79,7 @@ show_help() {
   --db <PATH>             Путь к файлу базы данных SQLite 3X-UI (по умолчанию: /etc/x-ui/x-ui.db)
   --dry-run               Только аудит и проверка (без внесения изменений)
   --force-sub             Принудительно перезаписать кастомные параметры подписки из .env
+  --force-remarks         Принудительно сбросить названия инбаундов к стандартным из .env
   --warp                  Включить исходящий туннель Cloudflare WARP (обход капч и AI)
   --no-warp               Отключить исходящий туннель Cloudflare WARP
   --warp-key <KEY>        Указать лицензионный ключ WARP+
@@ -98,6 +99,7 @@ CONFIG_FILE=""
 DB_PATH="/etc/x-ui/x-ui.db"
 DRY_RUN=0
 FORCE_SUB=0
+FORCE_REMARKS=0
 NON_INTERACTIVE=0
 CLI_ENABLE_WARP=""
 CLI_WARP_KEY=""
@@ -120,6 +122,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --force-sub)
             FORCE_SUB=1
+            shift
+            ;;
+        --force-remarks)
+            FORCE_REMARKS=1
             shift
             ;;
         --warp)
@@ -411,6 +417,7 @@ export WEB_LISTEN
 export SUB_LISTEN
 export ENABLE_AGH
 export AGH_XRAY_DNS
+export FORCE_REMARKS
 
 # Приостановка службы x-ui на время реальной транзакции во избежание блокировок SQLite
 WAS_ACTIVE=0
@@ -450,6 +457,7 @@ import re
 db_path = os.environ["DB_PATH"]
 dry_run = os.environ.get("DRY_RUN", "0") == "1"
 force_sub = os.environ.get("FORCE_SUB", "0") == "1"
+force_remarks = os.environ.get("FORCE_REMARKS", "0") == "1"
 
 conn = sqlite3.connect(db_path, timeout=30.0)
 cur = conn.cursor()
@@ -1424,6 +1432,13 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
     repairs = []
     preserved = []
 
+    # Сохранение пользовательского названия инбаунда (remark), если оно было изменено
+    final_remark = remark
+    if not force_remarks and cur_remark and str(cur_remark).strip():
+        final_remark = str(cur_remark).strip()
+        if final_remark != remark:
+            preserved.append(f"пользовательское название '{final_remark}'")
+
     # А. Сохранение и консолидация клиентов (единый реестр)
     existing_clients = cur_settings.get("clients", [])
     consolidated_clients = []
@@ -1591,13 +1606,13 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             if ext_dest != domain:
                 preserved.append(f"кастомный хост узла ({ext_dest})")
 
-    if not cur_ext or cur_ext[0].get("port") != expected_ext_port or cur_ext[0].get("dest") != target_dest or cur_ext[0].get("remark") != remark:
+    if not cur_ext or cur_ext[0].get("port") != expected_ext_port or cur_ext[0].get("dest") != target_dest or cur_ext[0].get("remark") != final_remark:
         force_tls_val = "same" if protocol == "vless" and "realitySettings" in target_stream else "tls"
         target_stream["externalProxy"] = [{
             "dest": target_dest,
             "port": expected_ext_port,
             "forceTls": force_tls_val,
-            "remark": remark
+            "remark": final_remark
         }]
         repairs.append(f"исправлен externalProxy -> {target_dest}:{expected_ext_port}")
     else:
@@ -1605,7 +1620,7 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
         preserved.append(f"externalProxy :{expected_ext_port}")
 
     # Синхронизация клиентов в реестре (client_traffics, clients, client_inbounds)
-    sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_stream)
+    sync_inbound_clients(inbound_id, protocol, final_remark, target_settings, target_stream)
 
     # Запись в SQLite
     settings_json = json.dumps(target_settings, ensure_ascii=False)
@@ -1617,9 +1632,9 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             UPDATE inbounds
             SET protocol = ?, tag = ?, remark = ?, settings = ?, stream_settings = ?, listen = ?, sniffing = ?, enable = 1
             WHERE id = ?
-        """, (protocol, tag, remark, settings_json, stream_json, listen, sniffing_json, inbound_id))
+        """, (protocol, tag, final_remark, settings_json, stream_json, listen, sniffing_json, inbound_id))
 
-    status_str = f"  [ОБНОВЛЕН] {remark} (порт {port}):"
+    status_str = f"  [ОБНОВЛЕН] {final_remark} (порт {port}):"
     if repairs:
         status_str += f"\n    -> Исправлено: {', '.join(repairs)}"
     if preserved:

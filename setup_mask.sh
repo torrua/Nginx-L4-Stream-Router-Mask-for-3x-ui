@@ -27,7 +27,7 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="v6.9.0"
+SCRIPT_VERSION="v6.9.1"
 
 # --------------------------- Замеры времени и телеметрия ---------------------------
 SCRIPT_START_TIME=$(date +%s)
@@ -80,12 +80,81 @@ record_step_completed() {
 
 should_skip_step() {
     local step_num="$1"
-    local step_title="${STEP_NAMES[$step_num]:-$2}"
+    local step_title="${STEP_NAMES[$step_num]:-${2:-Шаг $step_num}}"
     if [ "${RESUME_STEP:-1}" -gt "$step_num" ]; then
-        print_step_bar "$step_num" "$TOTAL_STEPS" "$step_title [Уже выполнен ранее]"
-        ok "$step_title — пропущено (уже выполнено в предыдущей сессии)"
-        STEP_DURATIONS[$step_num]=0
-        return 0
+        # Проверка фактического наличия артефактов шага на диске
+        local state_valid=1
+        local missing_reason=""
+
+        case "$step_num" in
+            1)
+                if ! command -v curl >/dev/null 2>&1 || ! command -v socat >/dev/null 2>&1; then
+                    state_valid=0
+                    missing_reason="базовые утилиты (curl/socat) не найдены"
+                fi
+                ;;
+            2)
+                if ! sysctl net.ipv4.tcp_congestion_control 2>/dev/null | grep -q "bbr"; then
+                    state_valid=0
+                    missing_reason="TCP BBR не активен в sysctl"
+                fi
+                ;;
+            3)
+                if ! command -v nginx >/dev/null 2>&1; then
+                    state_valid=0
+                    missing_reason="бинарный файл nginx не найден"
+                fi
+                ;;
+            4)
+                local cert_file=""
+                if [ "${SSL_ENGINE_CHOICE:-1}" = "1" ]; then
+                    cert_file="/etc/letsencrypt/live/${PRIMARY_DOMAIN:-}/fullchain.pem"
+                else
+                    cert_file="/etc/ssl/acme/${PRIMARY_DOMAIN:-}/fullchain.pem"
+                fi
+                if [ -z "${PRIMARY_DOMAIN:-}" ] || [ ! -f "$cert_file" ]; then
+                    state_valid=0
+                    missing_reason="SSL-сертификат для $PRIMARY_DOMAIN отсутствует ($cert_file)"
+                fi
+                ;;
+            5)
+                if [ ! -f "/var/www/html/index.html" ]; then
+                    state_valid=0
+                    missing_reason="веб-маска /var/www/html/index.html не найдена"
+                fi
+                ;;
+            6)
+                if [ ! -f "/etc/nginx/stream.d/00-stream.conf" ] || [ ! -f "/etc/nginx/conf.d/01-main.conf" ] || [ ! -f "/etc/nginx/nginx.conf" ]; then
+                    state_valid=0
+                    missing_reason="конфигурации Nginx (00-stream.conf / 01-main.conf) отсутствуют"
+                fi
+                ;;
+            7)
+                if [ ! -f "/etc/x-ui/x-ui.db" ] && [ ! -f "/usr/local/x-ui/bin/x-ui.db" ]; then
+                    state_valid=0
+                    missing_reason="база данных 3X-UI x-ui.db не найдена"
+                fi
+                ;;
+            8)
+                if [[ "${ENABLE_AGH,,}" == "y" || "${ENABLE_AGH:-}" == "1" ]]; then
+                    if [ ! -f "/opt/AdGuardHome/AdGuardHome.yaml" ]; then
+                        state_valid=0
+                        missing_reason="конфигурация AdGuardHome.yaml не найдена"
+                    fi
+                fi
+                ;;
+        esac
+
+        if [ "$state_valid" -eq 1 ]; then
+            print_step_bar "$step_num" "$TOTAL_STEPS" "$step_title [Уже выполнен ранее]"
+            ok "$step_title — пропущено (файлы и сервисы проверены на диске)"
+            STEP_DURATIONS[$step_num]=0
+            return 0
+        else
+            warn "Шаг $step_num ($step_title) был отмечен завершенным, но $missing_reason."
+            log "Повторное выполнение шага $step_num для восстановления целостности..."
+            return 1
+        fi
     fi
     return 1
 }
@@ -307,7 +376,8 @@ show_help() {
   -y, --yes, --non-interactive Запуск в неинтерактивном режиме (без вопросов пользователю)
   -d, --domain <DOMAIN>        Указать основной домен (PRIMARY_DOMAIN)
   -r, --resume                 Продолжить установку с последнего незавершенного шага
-  --step <N>                   Принудительно начать выполнение с указанного шага (1-6)
+  --step <N>                   Принудительно начать выполнение с указанного шага (1-8)
+  --check, --doctor            Запустить быструю диагностику состояния сервисов и выйти
   --express                    Запустить режим Экспресс-настройки (настройка в 2 вопроса)
   --expert                     Запустить Экспертный режим без повторного запроса меню
   --gen-config [FILE]          Сгенерировать шаблон конфигурации (.env.example) и выйти
@@ -319,6 +389,9 @@ show_help() {
 Примеры использования:
   # Интерактивный режим (введенные параметры автоматически сохраняются в setup_mask.env):
   ./setup_mask.sh
+
+  # Быстрая экспресс-диагностика всех сервисов и портов:
+  ./setup_mask.sh --check
 
   # Возобновление прерванной установки с последнего незавершенного шага:
   ./setup_mask.sh --resume
@@ -341,7 +414,7 @@ generate_config_template() {
     local target_file="${1:-setup_mask.env.example}"
     cat << 'EOF_CONF' > "$target_file"
 # ==============================================================================
-# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v6.9.0 Universal)
+# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v6.9.1 Universal)
 # ==============================================================================
 # Данный файл позволяет выполнять полностью автоматическую установку:
 # ./setup_mask.sh --config setup_mask.env --non-interactive --force
@@ -498,13 +571,20 @@ done
 
 
 # ----------------------- Системные предусловия -----------------------
-# Проверка прав root только при реальной установке (пропускается для --help и --gen-config)
+# Проверка прав root только при реальной установке (пропускается для --help, --gen-config, --check, --doctor)
 check_root() {
+    for arg in "$@"; do
+        case "$arg" in
+            -v|--version|-h|--help|--gen-config|--check|--doctor)
+                return 0
+                ;;
+        esac
+    done
     if [ "$EUID" -ne 0 ]; then
         die "Пожалуйста, запустите установщик с правами суперпользователя root (через sudo)."
     fi
 }
-check_root
+check_root "$@"
 
 if [ -f /etc/os-release ]; then
     . /etc/os-release
@@ -549,12 +629,13 @@ install_prerequisites() {
             echo "  [DEBUG] Требуется установка: ${missing_pkgs[*]}"
         fi
         export DEBIAN_FRONTEND=noninteractive
+        local apt_flags=("-o" "Acquire::Retries=3" "-o" "Acquire::http::Timeout=15")
         if [ "${DEBUG_MODE:-0}" -eq 1 ]; then
-            apt-get update
-            apt-get install -y "${missing_pkgs[@]}"
+            apt-get update "${apt_flags[@]}" 2>/dev/null || apt-get update || true
+            apt-get install -y --no-install-recommends "${apt_flags[@]}" "${missing_pkgs[@]}"
         else
-            apt-get update -q
-            apt-get install -y "${missing_pkgs[@]}" -q
+            apt-get update -q "${apt_flags[@]}" 2>/dev/null || apt-get update -q || true
+            apt-get install -y --no-install-recommends "${apt_flags[@]}" "${missing_pkgs[@]}" -q
         fi
     else
         if [ "${DEBUG_MODE:-0}" -eq 1 ]; then
@@ -805,6 +886,7 @@ CONFIG_FILE=""
 NON_INTERACTIVE=${NON_INTERACTIVE:-0}
 DEBUG_MODE=${DEBUG_MODE:-0}
 EXPERT_MODE=${EXPERT_MODE:-0}
+CHECK_MODE=0
 GEN_CONFIG=0
 FORCE_DNS=${FORCE_DNS:-0}
 SAVED_CONFIG_FILE="setup_mask.env"
@@ -833,6 +915,10 @@ while [[ $# -gt 0 ]]; do
             [[ -n "${2:-}" ]] || die "Параметр $1 требует номер шага (1-$TOTAL_STEPS)."
             RESUME_STEP="$2"
             shift 2
+            ;;
+        --check|--doctor)
+            CHECK_MODE=1
+            shift
             ;;
         --express)
             EXPRESS_MODE=1
@@ -889,6 +975,379 @@ fi
 
 # Сессия всегда сохраняется в setup_mask.env (не перезаписываем исходный -c файл)
 SAVED_CONFIG_FILE="./setup_mask.env"
+
+# =============================================================
+#  ФУНКЦИИ ДИАГНОСТИКИ, РЕЗЕРВНОГО КОПИРОВАНИЯ И SMOKE-TEST
+# =============================================================
+
+backup_nginx_configs() {
+    local bkp_dir="/var/backups/nginx_mask"
+    mkdir -p "$bkp_dir"
+    local ts
+    ts=$(date +%Y%m%d_%H%M%S)
+    local bkp_file="$bkp_dir/nginx_conf_${ts}.tar.gz"
+
+    local has_files=0
+    if compgen -G "/etc/nginx/conf.d/*.conf" >/dev/null 2>&1 || compgen -G "/etc/nginx/stream.d/*.conf" >/dev/null 2>&1; then
+        has_files=1
+    fi
+
+    if [ "$has_files" -eq 1 ]; then
+        if tar -czf "$bkp_file" -C /etc/nginx conf.d stream.d 2>/dev/null; then
+            local old_backups
+            old_backups=$(ls -1t "$bkp_dir"/nginx_conf_*.tar.gz 2>/dev/null | tail -n +6 || true)
+            if [ -n "$old_backups" ]; then
+                echo "$old_backups" | xargs -r rm -f 2>/dev/null || true
+            fi
+            ok "Создана резервная копия конфигурации Nginx: $bkp_file (ротация: 5)"
+        fi
+    fi
+}
+
+post_install_sanity_check() {
+    echo ""
+    echo -e "  ${CYAN}${BOLD}🔍  ПРОВЕРКА РАБОТОСПОСОБНОСТИ СЕРВИСОВ (SMOKE TEST)${NC}"
+    echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}"
+
+    local all_ok=1
+
+    # 1. Nginx служба и порт 443 TCP
+    if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet nginx 2>/dev/null; then
+        ok "Служба Nginx: активна (running)"
+    else
+        warn "Служба Nginx: НЕ АКТИВНА!"
+        all_ok=0
+    fi
+
+    if timeout 2 bash -c '</dev/tcp/127.0.0.1/443' 2>/dev/null; then
+        ok "Порт 443 TCP (Nginx Stream Router): отвечает"
+    else
+        warn "Порт 443 TCP (Nginx Stream Router): НЕ ОТВЕЧАЕТ на 127.0.0.1!"
+        all_ok=0
+    fi
+
+    if timeout 2 bash -c '</dev/tcp/127.0.0.1/80' 2>/dev/null; then
+        ok "Порт 80 TCP (HTTP / ACME Redirect): отвечает"
+    else
+        warn "Порт 80 TCP (HTTP): НЕ ОТВЕЧАЕТ на 127.0.0.1!"
+    fi
+
+    # 2. Xray / 3X-UI
+    if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet x-ui 2>/dev/null; then
+        ok "Служба 3X-UI: активна (running)"
+    else
+        warn "Служба 3X-UI: НЕ АКТИВНА!"
+        all_ok=0
+    fi
+
+    local steal_p="${STEAL_PORTS_LIST[0]:-${STEAL_PORT:-45443}}"
+    local classic_p="${CLASSIC_PORTS_LIST[0]:-${CLASSIC_PORT:-46443}}"
+    local xhttp_p="${XHTTP_STREAM_PORT:-50443}"
+    local panel_p="${PANEL_PORT:-10443}"
+    local sub_p="${SUB_PORT:-55443}"
+
+    if [[ "${ENABLE_STEAL,,}" == "y" || "${ENABLE_STEAL:-}" == "1" ]]; then
+        if timeout 2 bash -c "</dev/tcp/127.0.0.1/$steal_p" 2>/dev/null; then
+            ok "Инбаунд Steal-Oneself REALITY (порт $steal_p): отвечает"
+        else
+            warn "Инбаунд Steal-Oneself REALITY (порт $steal_p): НЕ ОТВЕЧАЕТ!"
+            all_ok=0
+        fi
+    fi
+
+    if [[ "${ENABLE_CLASSIC,,}" == "y" || "${ENABLE_CLASSIC:-}" == "1" ]]; then
+        if timeout 2 bash -c "</dev/tcp/127.0.0.1/$classic_p" 2>/dev/null; then
+            ok "Инбаунд Classic REALITY (порт $classic_p): отвечает"
+        else
+            warn "Инбаунд Classic REALITY (порт $classic_p): НЕ ОТВЕЧАЕТ!"
+            all_ok=0
+        fi
+    fi
+
+    if timeout 2 bash -c "</dev/tcp/127.0.0.1/$xhttp_p" 2>/dev/null; then
+        ok "Инбаунд VLESS xHTTP (порт $xhttp_p): отвечает"
+    else
+        warn "Инбаунд VLESS xHTTP (порт $xhttp_p): НЕ ОТВЕЧАЕТ!"
+        all_ok=0
+    fi
+
+    if timeout 2 bash -c "</dev/tcp/127.0.0.1/$panel_p" 2>/dev/null; then
+        ok "Панель 3X-UI (порт $panel_p): отвечает"
+    else
+        warn "Панель 3X-UI (порт $panel_p): НЕ ОТВЕЧАЕТ!"
+    fi
+
+    if timeout 2 bash -c "</dev/tcp/127.0.0.1/$sub_p" 2>/dev/null; then
+        ok "Канал подписок 3X-UI (порт $sub_p): отвечает"
+    else
+        warn "Канал подписок 3X-UI (порт $sub_p): НЕ ОТВЕЧАЕТ!"
+    fi
+
+    # 3. UDP сервисы (Hysteria 2 / AmneziaWG)
+    if [[ "${ENABLE_HY2,,}" == "y" || "${ENABLE_HY2:-}" == "1" ]]; then
+        if ss -ulpn 2>/dev/null | grep -q ":${HY2_PORT:-443} "; then
+            ok "Hysteria 2 UDP (порт ${HY2_PORT:-443}): слушает"
+        fi
+    fi
+    if [[ "${ENABLE_AWG_V3,,}" == "y" || "${ENABLE_AWG_V3:-}" == "1" ]]; then
+        if ss -ulpn 2>/dev/null | grep -q ":${AWG_V3_PORT:-8443} "; then
+            ok "AmneziaWG v3.1 UDP (порт ${AWG_V3_PORT:-8443}): слушает"
+        fi
+    fi
+
+    # 4. AdGuard Home
+    if [[ "${ENABLE_AGH,,}" == "y" || "${ENABLE_AGH:-}" == "1" ]]; then
+        if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet AdGuardHome 2>/dev/null; then
+            ok "Служба AdGuard Home: активна (running)"
+        else
+            warn "Служба AdGuard Home: НЕ АКТИВНА!"
+        fi
+        if timeout 2 bash -c '</dev/tcp/127.0.0.1/53' 2>/dev/null || ss -ulpn 2>/dev/null | grep -q ':53 '; then
+            ok "AdGuard Home DNS (порт 53): слушает"
+        fi
+    fi
+
+    # 5. SSL сертификат
+    local main_cert=""
+    if [ "${SSL_ENGINE_CHOICE:-1}" = "1" ]; then
+        main_cert="/etc/letsencrypt/live/${PRIMARY_DOMAIN:-}/fullchain.pem"
+    else
+        main_cert="/etc/ssl/acme/${PRIMARY_DOMAIN:-}/fullchain.pem"
+    fi
+    if [ -f "$main_cert" ] && command -v openssl >/dev/null 2>&1; then
+        local exp_date
+        exp_date=$(openssl x509 -enddate -noout -in "$main_cert" 2>/dev/null | cut -d= -f2 || true)
+        local exp_epoch
+        exp_epoch=$(date -d "$exp_date" +%s 2>/dev/null || echo 0)
+        local now_epoch
+        now_epoch=$(date +%s)
+        local days_left=$(( (exp_epoch - now_epoch) / 86400 ))
+        if [ "$days_left" -gt 0 ]; then
+            ok "SSL-сертификат $PRIMARY_DOMAIN: действителен (осталось $days_left дн., до $exp_date)"
+        else
+            warn "SSL-сертификат $PRIMARY_DOMAIN: ИСТЕК ИЛИ НЕВАЛИДЕН!"
+            all_ok=0
+        fi
+    fi
+
+    # 6. Decoy сайт
+    if [ -n "${PRIMARY_DOMAIN:-}" ] && command -v curl >/dev/null 2>&1; then
+        local http_code
+        http_code=$(curl -sk -o /dev/null -w "%{http_code}" --resolve "${PRIMARY_DOMAIN}:443:127.0.0.1" "https://${PRIMARY_DOMAIN}/" 2>/dev/null || echo "ERR")
+        if [ "$http_code" = "200" ]; then
+            ok "Веб-маска (HTTPS GET /): HTTP $http_code OK"
+        else
+            warn "Веб-маска (HTTPS GET /): вернула код $http_code"
+        fi
+    fi
+
+    echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}"
+    if [ "$all_ok" -eq 1 ]; then
+        echo -e "  ${GREEN}${BOLD}✔ Все ключевые компоненты работают штатно!${NC}\n"
+    else
+        echo -e "  ${YELLOW}${BOLD}⚠️  Обнаружены предупреждения при проверке компонентов (см. выше).${NC}\n"
+    fi
+}
+
+run_doctor_check() {
+    clear 2>/dev/null || true
+    echo -e "  ${CYAN}${BOLD}🩺  ДИАГНОСТИКА СИСТЕМЫ И СЕРВИСОВ (DOCTOR MODE)${NC}"
+    echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}"
+    echo -e "  Дата проверки: ${WHITE}$(date '+%Y-%m-%d %H:%M:%S')${NC}\n"
+
+    # 1. ОС и Ядро
+    echo -e "  ${WHITE}${BOLD}[1/7] ОС и Сетевой стек ядра:${NC}"
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        echo -e "    • Дистрибутив:       ${GREEN}${PRETTY_NAME:-$ID}${NC}"
+    fi
+    echo -e "    • Ядро Linux:         ${GREEN}$(uname -r)${NC}"
+
+    local cc
+    cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "unknown")
+    if [ "$cc" = "bbr" ]; then
+        echo -e "    • Алгоритм TCP:      ${GREEN}BBR (активен)${NC}"
+    else
+        echo -e "    • Алгоритм TCP:      ${YELLOW}$cc (рекомендуется bbr)${NC}"
+    fi
+
+    local qdisc
+    qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo "unknown")
+    echo -e "    • Очередь qdisc:     ${GREEN}$qdisc${NC}"
+
+    if iptables -t mangle -L -n -v 2>/dev/null | grep -q "TCPMSS.*clamp"; then
+        echo -e "    • MSS Clamping:      ${GREEN}АКТИВЕН (iptables mangle TCPMSS clamp)${NC}"
+    else
+        echo -e "    • MSS Clamping:      ${YELLOW}не обнаружен в iptables mangle${NC}"
+    fi
+
+    # 2. Nginx
+    echo -e "\n  ${WHITE}${BOLD}[2/7] Веб-сервер Nginx (L4/L7 Router):${NC}"
+    if command -v nginx >/dev/null 2>&1; then
+        local ng_ver
+        ng_ver=$(nginx -v 2>&1 | cut -d/ -f2 || true)
+        echo -e "    • Версия Nginx:      ${GREEN}$ng_ver${NC}"
+        if systemctl is-active --quiet nginx 2>/dev/null; then
+            echo -e "    • Статус службы:     ${GREEN}active (running)${NC}"
+        else
+            echo -e "    • Статус службы:     ${RED}NOT RUNNING${NC}"
+        fi
+        if nginx -t >/dev/null 2>&1; then
+            echo -e "    • Синтаксис конфига: ${GREEN}OK (nginx -t passed)${NC}"
+        else
+            echo -e "    • Синтаксис конфига: ${RED}ОШИБКА в конфигурации!${NC}"
+        fi
+        [ -f /etc/nginx/stream.d/00-stream.conf ] && echo -e "    • Stream Router:     ${GREEN}/etc/nginx/stream.d/00-stream.conf (присутствует)${NC}" || echo -e "    • Stream Router:     ${RED}00-stream.conf ОТСУТСТВУЕТ!${NC}"
+        [ -f /etc/nginx/conf.d/01-main.conf ] && echo -e "    • Main HTTP Config:  ${GREEN}/etc/nginx/conf.d/01-main.conf (присутствует)${NC}" || echo -e "    • Main HTTP Config:  ${RED}01-main.conf ОТСУТСТВУЕТ!${NC}"
+    else
+        echo -e "    • Nginx:             ${RED}не установлен${NC}"
+    fi
+
+    # 3. Xray-core и 3X-UI
+    echo -e "\n  ${WHITE}${BOLD}[3/7] Прокси-ядро Xray и панель 3X-UI:${NC}"
+    if systemctl is-active --quiet x-ui 2>/dev/null; then
+        echo -e "    • Статус 3X-UI:      ${GREEN}active (running)${NC}"
+    else
+        echo -e "    • Статус 3X-UI:      ${RED}NOT RUNNING${NC}"
+    fi
+    local xray_bin="/usr/local/x-ui/bin/xray-linux-amd64"
+    [ -f "$xray_bin" ] || xray_bin="/usr/local/x-ui/bin/xray"
+    [ -f "$xray_bin" ] || xray_bin="/etc/x-ui/bin/xray-linux-amd64"
+    [ -f "$xray_bin" ] || xray_bin="/etc/x-ui/bin/xray"
+    if [ -x "$xray_bin" ]; then
+        local xv
+        xv=$("$xray_bin" -version 2>/dev/null | head -n1 | awk '{print $2}' || true)
+        echo -e "    • Ядро Xray-core:    ${GREEN}${xv:-найден}${NC}"
+    fi
+    if [ -f /etc/x-ui/x-ui.db ]; then
+        echo -e "    • База SQLite:       ${GREEN}/etc/x-ui/x-ui.db (${WHITE}$(du -h /etc/x-ui/x-ui.db 2>/dev/null | awk '{print $1}')${GREEN})${NC}"
+    fi
+    if systemctl is-active --quiet xray-geo-update.timer 2>/dev/null; then
+        echo -e "    • Таймер гео-баз:    ${GREEN}активен (еженедельное обновление)${NC}"
+    fi
+
+    # 4. Прослушиваемые порты
+    echo -e "\n  ${WHITE}${BOLD}[4/7] Сетевые порты (Listening Sockets):${NC}"
+    doctor_check_tcp() {
+        local p="$1"
+        local desc="$2"
+        if timeout 1 bash -c "</dev/tcp/127.0.0.1/$p" 2>/dev/null; then
+            echo -e "    • TCP :$p ($desc): ${GREEN}ОТКРЫТ (отвечает)${NC}"
+        else
+            echo -e "    • TCP :$p ($desc): ${RED}НЕ ОТВЕЧАЕТ${NC}"
+        fi
+    }
+    doctor_check_tcp 443 "Nginx Stream Router"
+    doctor_check_tcp 80 "HTTP Redirect / ACME"
+    doctor_check_tcp 9443 "Anti-Loop Fallback"
+    doctor_check_tcp "${STEAL_PORT:-45443}" "Xray Steal-Oneself"
+    doctor_check_tcp "${CLASSIC_PORT:-46443}" "Xray Classic REALITY"
+    doctor_check_tcp "${XHTTP_STREAM_PORT:-50443}" "Xray VLESS xHTTP"
+    doctor_check_tcp "${PANEL_PORT:-10443}" "3X-UI Web Panel"
+    doctor_check_tcp "${SUB_PORT:-55443}" "3X-UI Subscriptions"
+
+    # UDP
+    if ss -ulpn 2>/dev/null | grep -q ":${HY2_PORT:-443} "; then
+        echo -e "    • UDP :${HY2_PORT:-443} (Hysteria 2): ${GREEN}СЛУШАЕТ${NC}"
+    else
+        echo -e "    • UDP :${HY2_PORT:-443} (Hysteria 2): ${DIM}не активен или выключен${NC}"
+    fi
+    if ss -ulpn 2>/dev/null | grep -q ":${AWG_V3_PORT:-8443} "; then
+        echo -e "    • UDP :${AWG_V3_PORT:-8443} (AmneziaWG v3): ${GREEN}СЛУШАЕТ${NC}"
+    else
+        echo -e "    • UDP :${AWG_V3_PORT:-8443} (AmneziaWG v3): ${DIM}не активен или выключен${NC}"
+    fi
+
+    # 5. AdGuard Home
+    echo -e "\n  ${WHITE}${BOLD}[5/7] AdGuard Home DNS:${NC}"
+    if [ -f /opt/AdGuardHome/AdGuardHome ]; then
+        if systemctl is-active --quiet AdGuardHome 2>/dev/null; then
+            echo -e "    • Статус:            ${GREEN}active (running)${NC}"
+        else
+            echo -e "    • Статус:            ${RED}NOT RUNNING${NC}"
+        fi
+        if ss -ulpn 2>/dev/null | grep -q ":53 "; then
+            echo -e "    • DNS Порт 53:       ${GREEN}СЛУШАЕТ${NC}"
+        else
+            echo -e "    • DNS Порт 53:       ${YELLOW}не слушает 53${NC}"
+        fi
+    else
+        echo -e "    • AdGuard Home:      ${DIM}не установлен на этом сервере${NC}"
+    fi
+
+    # 6. SSL сертификаты
+    echo -e "\n  ${WHITE}${BOLD}[6/7] SSL-сертификаты:${NC}"
+    local found_cert=0
+    for cert_dir in "/etc/letsencrypt/live" "/etc/ssl/acme"; do
+        if [ -d "$cert_dir" ]; then
+            for c_path in "$cert_dir"/*/fullchain.pem; do
+                if [ -f "$c_path" ]; then
+                    found_cert=1
+                    local c_dom
+                    c_dom=$(basename "$(dirname "$c_path")")
+                    local c_exp
+                    c_exp=$(openssl x509 -enddate -noout -in "$c_path" 2>/dev/null | cut -d= -f2 || echo "unknown")
+                    local exp_sec
+                    exp_sec=$(date -d "$c_exp" +%s 2>/dev/null || echo 0)
+                    local days_rem=$(( (exp_sec - $(date +%s)) / 86400 ))
+                    if [ "$days_rem" -gt 15 ]; then
+                        echo -e "    • Домен ${CYAN}$c_dom${NC}: ${GREEN}валиден${NC} (осталось ${GREEN}$days_rem дн.${NC}, до $c_exp)"
+                    elif [ "$days_rem" -gt 0 ]; then
+                        echo -e "    • Домен ${CYAN}$c_dom${NC}: ${YELLOW}скоро истекает${NC} (осталось $days_rem дн.!)"
+                    else
+                        echo -e "    • Домен ${CYAN}$c_dom${NC}: ${RED}ИСТЕК!${NC}"
+                    fi
+                fi
+            done
+        fi
+    done
+    [ "$found_cert" -eq 0 ] && echo -e "    • Сертификаты:       ${YELLOW}не найдены${NC}"
+
+    # 7. Безопасность и Маскировка Censys
+    echo -e "\n  ${WHITE}${BOLD}[7/7] Аудит маскировки и защита от активных сканеров:${NC}"
+    local ip_resp
+    ip_resp=$(curl -sk -o /dev/null -w "%{http_code}" --connect-timeout 2 "https://127.0.0.1:443/" 2>/dev/null || echo "DROP")
+    if [ "$ip_resp" = "000" ] || [ "$ip_resp" = "DROP" ]; then
+        echo -e "    • Запрос по IP (без SNI):   ${GREEN}СБРОС СОЕДИНЕНИЯ (TLS DROP) — Censys не увидит сертификат!${NC}"
+    elif [ "$ip_resp" = "444" ]; then
+        echo -e "    • Запрос по IP (без SNI):   ${GREEN}HTTP 444 (Сброс соединения)${NC}"
+    else
+        echo -e "    • Запрос по IP (без SNI):   ${YELLOW}Ответил код $ip_resp (рекомендуется сброс)${NC}"
+    fi
+
+    if [ -n "${PRIMARY_DOMAIN:-}" ]; then
+        local dom_resp
+        dom_resp=$(curl -sk -o /dev/null -w "%{http_code}" --resolve "${PRIMARY_DOMAIN}:443:127.0.0.1" --connect-timeout 2 "https://${PRIMARY_DOMAIN}/" 2>/dev/null || echo "ERR")
+        if [ "$dom_resp" = "200" ]; then
+            echo -e "    • Домен https://${PRIMARY_DOMAIN}/:  ${GREEN}HTTP 200 OK (Веб-маска активна)${NC}"
+        else
+            echo -e "    • Домен https://${PRIMARY_DOMAIN}/:  ${YELLOW}Код $dom_resp${NC}"
+        fi
+    fi
+
+    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qw "active"; then
+        echo -e "    • Файервол UFW:              ${GREEN}активен${NC}"
+        local leak=0
+        for lp in 9443 "${STEAL_PORT:-45443}" "${CLASSIC_PORT:-46443}" "${XHTTP_STREAM_PORT:-50443}"; do
+            if ufw status | grep -E "^$lp/tcp.*ALLOW" >/dev/null 2>&1; then
+                echo -e "    • ${RED}ВНИМАНИЕ: Порт $lp/tcp открыт в UFW наружу!${NC}"
+                leak=1
+            fi
+        done
+        [ "$leak" -eq 0 ] && echo -e "    • Изоляция локальных сокетов:  ${GREEN}OK (внутренние порты 9443, 45443, 46443, 50443 не открыты наружу)${NC}"
+    else
+        echo -e "    • Файервол UFW:              ${YELLOW}не активен или не установлен${NC}"
+    fi
+
+    echo -e "\n  ${DIM}────────────────────────────────────────────────────────────${NC}"
+    echo -e "  ${GREEN}Диагностика завершена.${NC}\n"
+    exit 0
+}
+
+if [ "$CHECK_MODE" -eq 1 ]; then
+    run_doctor_check
+    exit 0
+fi
 
 if [ "$NON_INTERACTIVE" -eq 1 ]; then
     log "Включен НЕИНТЕРАКТИВНЫЙ режим (Ansible / Cloud-Init / CI)."
@@ -2141,15 +2600,12 @@ mkdir -p /etc/nginx/conf.d
 chown -R "$NGINX_USER:$NGINX_USER" "$WEBROOT" /var/cache/nginx /var/www/mirror /var/www/proxy_temp
 chmod 755 "$WEBROOT" /var/cache/nginx /var/www/mirror /var/www/proxy_temp
 
-rm -rf /etc/nginx/sites-enabled/* \
-       /etc/nginx/sites-available/* \
-       /etc/nginx/conf.d/* \
-       /etc/nginx/stream.d/*
+# Стартовый HTTP-сервер для верификации ACME (создается только если Шаг 4 выполняется)
+if [ "$SSL_ENGINE_CHOICE" = "1" ] && [ "${RESUME_STEP:-1}" -le 4 ]; then
+    NGINX_80_SERVER_NAMES="${ALL_DOMAINS[*]}"
 
-NGINX_80_SERVER_NAMES="${ALL_DOMAINS[*]}"
-
-log "Создание стартового HTTP-сервера для верификации ACME..."
-cat << EOF > "/etc/nginx/conf.d/00-acme.conf"
+    log "Создание стартового HTTP-сервера для верификации ACME..."
+    cat << EOF > "/etc/nginx/conf.d/00-acme.conf"
 server {
     listen 80;
     server_name $NGINX_80_SERVER_NAMES;
@@ -2162,11 +2618,12 @@ server {
 }
 EOF
 
-if ! nginx -t >/dev/null 2>&1; then
-    nginx -t
-    die "Ошибка синтаксиса начальной конфигурации Nginx."
+    if ! nginx -t >/dev/null 2>&1; then
+        nginx -t
+        die "Ошибка синтаксиса начальной конфигурации Nginx."
+    fi
+    systemctl restart nginx >/dev/null 2>&1 || systemctl start nginx >/dev/null 2>&1
 fi
-systemctl restart nginx >/dev/null 2>&1 || systemctl start nginx >/dev/null 2>&1
 
 # =============================================================
 #  ВЫПУСК SSL-СЕРТИФИКАТОВ (CERTBOT ИЛИ ACME.SH)
@@ -2800,6 +3257,14 @@ fi
 if ! should_skip_step 6; then
     step_begin 6
     log "Сборка конфигурации Nginx Mainline (Stream L4 + HTTP/2 Upstream Engine)..."
+
+    # Резервное копирование существующих конфигураций Nginx перед перезаписью
+    backup_nginx_configs
+
+    rm -rf /etc/nginx/sites-enabled/* \
+           /etc/nginx/sites-available/* \
+           /etc/nginx/conf.d/* \
+           /etc/nginx/stream.d/*
 
     # 1. Глобальный файл конфигурации /etc/nginx/nginx.conf
     cat << EOF > /etc/nginx/nginx.conf
@@ -3923,9 +4388,12 @@ conn.close()
     step_finish 8
 fi
 
+# Итоговая проверка работоспособности ключевых сервисов (Smoke Test)
+post_install_sanity_check
+
 echo
 echo -e "${GREEN}=====================================================================${NC}"
-echo -e "   ИНФРАСТРУКТУРА УСПЕШНО РАЗВЕРНУТА (v6.9.0 PUBLIC EDITION)!       "
+echo -e "   ИНФРАСТРУКТУРА УСПЕШНО РАЗВЕРНУТА (v6.9.1 PUBLIC EDITION)!       "
 echo -e "${GREEN}=====================================================================${NC}"
 echo -e "  Главная страница:            ${CYAN}https://${PRIMARY_DOMAIN}/${NC} (${DECOY_NAME})"
 echo -e "  Вход в панель 3X-UI:         ${GREEN}https://${PRIMARY_DOMAIN}${PANEL_PATH}${NC}"

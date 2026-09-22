@@ -45,7 +45,7 @@ declare -A DOMAIN_TO_PORT=()
 declare -A EXT_SNI_TO_PORT=()
 declare -A STEP_NAMES=(
     [1]="Установка базовых системных зависимостей"
-    [2]="Оптимизация сетевого стека ядра Linux (BBR + fq)"
+    [2]="Оптимизация сетевого стека ядра Linux (BBR + fq + MSS Clamping)"
     [3]="Подключение репозитория и установка Nginx Mainline"
     [4]="Выпуск SSL-сертификатов Let's Encrypt"
     [5]="Развертывание сайта-маскировки (Decoy Front)"
@@ -925,6 +925,18 @@ www-data hard nofile 524288
 nginx soft nofile 524288
 nginx hard nofile 524288
 EOF
+
+    # TCP MSS Clamping — предотвращение PMTU Blackhole при блокировке ICMP
+    # Срабатывает только на SYN-пакетах (1 раз за соединение, нулевой overhead)
+    # Решает проблему зависания TCP на мобильных ISP и при прохождении через ТСПУ
+    if ! iptables -t mangle -C FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null; then
+        iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+    fi
+
+    # Персистентность MSS Clamping через /etc/ufw/before.rules
+    if [ -f /etc/ufw/before.rules ] && ! grep -q '^\*mangle' /etc/ufw/before.rules 2>/dev/null; then
+        sed -i '/^\*filter/i\# TCP MSS Clamping - prevents PMTU blackhole (added by setup_mask.sh)\n*mangle\n:FORWARD ACCEPT [0:0]\n-A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu\nCOMMIT\n' /etc/ufw/before.rules
+    fi
 }
 
 setup_nginx_mainline() {

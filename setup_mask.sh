@@ -788,6 +788,7 @@ AGH_USER="${AGH_USER:-admin}"
 AGH_PASS="${AGH_PASS:-}"
 AGH_CLIENT_ID="${AGH_CLIENT_ID:-home-router}"
 AGH_XRAY_DNS="$agh_xray_save"
+SHOW_TIPS="${SHOW_TIPS:-y}"
 
 TIME_LOCATION="${TIME_LOCATION:-}"
 TRAFFIC_RESET_DAY="${TRAFFIC_RESET_DAY:-1}"
@@ -924,6 +925,7 @@ CONFIG_FILE=""
 NON_INTERACTIVE=${NON_INTERACTIVE:-0}
 DEBUG_MODE=${DEBUG_MODE:-0}
 EXPERT_MODE=${EXPERT_MODE:-0}
+SHOW_TIPS=${SHOW_TIPS:-}
 CHECK_MODE=0
 GEN_CONFIG=0
 FORCE_DNS=${FORCE_DNS:-0}
@@ -2158,10 +2160,12 @@ for item in res:
     q_step_domain() {
         echo
         echo -e "${YELLOW}━━━ Шаг 1/13: Конфигурация главного сайта (домена) ━━━${NC}"
-        echo -e "  ${CYAN}💡 Что это:${NC} Ваш основной домен (например, ${BOLD}yourdomain.online${NC})."
-        echo -e "     На нем будет работать веб-маска (декой-сайт), панель 3X-UI,"
-        echo -e "     сервер подписок и протокол VLESS xHTTP (HTTP/2 Stream-One)."
-        echo
+        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+            echo -e "  ${CYAN}💡 Что это:${NC} Ваш основной домен (например, ${BOLD}yourdomain.online${NC})."
+            echo -e "     На нем будет работать веб-маска (декой-сайт), панель 3X-UI,"
+            echo -e "     сервер подписок и протокол VLESS xHTTP (HTTP/2 Stream-One)."
+            echo
+        fi
 
         while true; do
             if [ -n "${PRIMARY_DOMAIN:-}" ]; then
@@ -2190,7 +2194,7 @@ for item in res:
         SERVER_PREFIX="${SERVER_PREFIX:-Server}"
 
         if [[ ! "$PRIMARY_DOMAIN" =~ ^www\. ]]; then
-            echo -e "  ${DIM}• Рекомендуется выпустить сертификат и для www.$PRIMARY_DOMAIN для защиты от ошибок SSL.${NC}"
+            [ "${SHOW_TIPS:-y}" = "y" ] && echo -e "  ${DIM}• Рекомендуется выпустить сертификат и для www.$PRIMARY_DOMAIN для защиты от ошибок SSL.${NC}"
             prompt_yes_no "  Добавить алиас 'www.$PRIMARY_DOMAIN' для выпуска SSL и привязки к Nginx?" "${ADD_WWW:-y}" ADD_WWW || return $?
         else
             ADD_WWW="n"
@@ -2204,10 +2208,12 @@ for item in res:
     q_step_steal() {
         echo
         echo -e "${YELLOW}━━━ Шаг 2/13: Настройка VLESS Steal-Oneself REALITY ━━━${NC}"
-        echo -e "  ${CYAN}💡 Что это:${NC} Режим REALITY, маскирующийся под ${BOLD}собственный поддомен${NC} (напр. cdn.$PRIMARY_DOMAIN)."
-        echo -e "     ${GREEN}Преимущество:${NC} Трафик выглядит как обычный HTTPS к вашему сайту. Полный"
-        echo -e "     иммунитет к блокировкам чужих SNI со стороны систем DPI / ТСПУ."
-        echo
+        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+            echo -e "  ${CYAN}💡 Что это:${NC} Режим REALITY, маскирующийся под ${BOLD}собственный поддомен${NC} (напр. cdn.$PRIMARY_DOMAIN)."
+            echo -e "     ${GREEN}Преимущество:${NC} Трафик выглядит как обычный HTTPS к вашему сайту. Полный"
+            echo -e "     иммунитет к блокировкам чужих SNI со стороны систем DPI / ТСПУ."
+            echo
+        fi
 
         prompt_yes_no "Включить Steal-Oneself REALITY?" "${ENABLE_STEAL:-y}" ENABLE_STEAL || return $?
 
@@ -2241,7 +2247,7 @@ for item in res:
             ok "  Домен $s_dom_in привязан к инбаунд-порту $STEAL_PORT"
 
             echo ""
-            echo -e "  ${CYAN}[i]${NC} ${DIM}Одного инбаунда Steal-Oneself достаточно для всех ваших устройств.${NC}"
+            [ "${SHOW_TIPS:-y}" = "y" ] && echo -e "  ${CYAN}[i]${NC} ${DIM}Одного инбаунда Steal-Oneself достаточно для всех ваших устройств.${NC}"
             local add_more
             prompt_yes_no "  Создать еще одно изолированное подключение (на другом порту)?" "n" add_more || return $?
             if [[ "${add_more,,}" == "y" ]]; then
@@ -2271,10 +2277,12 @@ for item in res:
     q_step_classic() {
         echo
         echo -e "${YELLOW}━━━ Шаг 3/13: Настройка VLESS Classic External REALITY ━━━${NC}"
-        echo -e "  ${CYAN}💡 Что это:${NC} Режим REALITY, маскирующийся под ${BOLD}известные зарубежные сервисы${NC}."
-        echo -e "     ${GREEN}Преимущество:${NC} Даже если ваш домен попадет под подозрение, этот инбаунд продолжит"
-        echo -e "     работать, используя валидный TLS 1.3 с серверов Apple, Microsoft, Google или Samsung."
-        echo
+        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+            echo -e "  ${CYAN}💡 Что это:${NC} Режим REALITY, маскирующийся под ${BOLD}известные зарубежные сервисы${NC}."
+            echo -e "     ${GREEN}Преимущество:${NC} Даже если ваш домен попадет под подозрение, этот инбаунд продолжит"
+            echo -e "     работать, используя валидный TLS 1.3 с серверов Apple, Microsoft, Google или Samsung."
+            echo
+        fi
 
         prompt_yes_no "Включить Classic External REALITY?" "${ENABLE_CLASSIC:-y}" ENABLE_CLASSIC || return $?
 
@@ -2373,16 +2381,20 @@ for item in res:
     q_step_ports() {
         echo
         echo -e "${YELLOW}━━━ Шаг 4/13: Настройка путей и внутренних портов (3X-UI и VLESS xHTTP) ━━━${NC}"
-        echo -e "  ${CYAN}💡 Что это:${NC} Внутренние порты и секретные URI-пути для веб-панели 3X-UI,"
-        echo -e "     сервера подписок для клиентов и инбаунда VLESS xHTTP (HTTP/2 Stream-One)."
-        echo
-        echo -e "  ${BOLD}Выберите вариант настройки:${NC}"
-        echo -e "    ${GREEN}[1] Рекомендованные безопасные настройки (Enter / Быстро)${NC}"
-        echo -e "        ${DIM}• Порты: Панель :10443, Подписки :55443, xHTTP :50443${NC}"
-        echo -e "        ${DIM}• Пути: Случайные криптостойкие URI (защита от сетевых сканеров и ботов)${NC}"
-        echo -e "        ${DIM}• Логин: admin, Пароль: случайный стойкий хэш${NC}"
-        echo -e "    ${CYAN}[2] Ручная экспертная настройка (задать все порты, логин, пароль и пути вручную)${NC}"
-        echo
+        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+            echo -e "  ${CYAN}💡 Что это:${NC} Внутренние порты и секретные URI-пути для веб-панели 3X-UI,"
+            echo -e "     сервера подписок для клиентов и инбаунда VLESS xHTTP (HTTP/2 Stream-One)."
+            echo
+            echo -e "  ${BOLD}Выберите вариант настройки:${NC}"
+            echo -e "    ${GREEN}[1] Рекомендованные безопасные настройки (Enter / Быстро)${NC}"
+            echo -e "        ${DIM}• Порты: Панель :10443, Подписки :55443, xHTTP :50443${NC}"
+            echo -e "        ${DIM}• Пути: Случайные криптостойкие URI (защита от сетевых сканеров и ботов)${NC}"
+            echo -e "        ${DIM}• Логин: admin, Пароль: случайный стойкий хэш${NC}"
+            echo -e "    ${CYAN}[2] Ручная экспертная настройка (задать все порты, логин, пароль и пути вручную)${NC}"
+            echo
+        else
+            echo -e "  ${BOLD}Вариант настройки:${NC} [1] Рекомендованные порты/пути (Enter)  [2] Ручная экспертная настройка"
+        fi
 
         prompt_default "  Ваш выбор (1 или 2)" "${PORTS_SETUP_MODE:-1}" PORTS_SETUP_MODE || return $?
 
@@ -2448,10 +2460,12 @@ for item in res:
     q_step_hy2() {
         echo
         echo -e "${YELLOW}━━━ Шаг 5/13: Настройка протокола Hysteria 2 (UDP) ━━━${NC}"
-        echo -e "  ${CYAN}💡 Что это:${NC} Сверхбыстрый протокол на базе QUIC/UDP с алгоритмом Brutal."
-        echo -e "     Обеспечивает максимальную скорость стриминга и загрузки даже на плохом"
-        echo -e "     мобильном интернете (LTE/5G) с потерей пакетов до 20-30%."
-        echo
+        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+            echo -e "  ${CYAN}💡 Что это:${NC} Сверхбыстрый протокол на базе QUIC/UDP с алгоритмом Brutal."
+            echo -e "     Обеспечивает максимальную скорость стриминга и загрузки даже на плохом"
+            echo -e "     мобильном интернете (LTE/5G) с потерей пакетов до 20-30%."
+            echo
+        fi
 
         prompt_yes_no "Установить и настроить Hysteria 2?" "${ENABLE_HY2:-y}" ENABLE_HY2 || return $?
 
@@ -2461,8 +2475,8 @@ for item in res:
             prompt_default "  Домен/поддомен для подключения Hysteria 2" "${HY2_DOMAIN:-$PRIMARY_DOMAIN}" HY2_DOMAIN || return $?
             HY2_DOMAIN=$(echo "$HY2_DOMAIN" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
 
-            echo -e "  ${DIM}• Port Hopping позволяет клиентам скакать по портам для обхода шейпинга операторов,${NC}"
-            echo -e "    ${DIM}но делает диапазон 20000-50000 видимым в сетевых сканерах (Censys/Shodan).${NC}"
+            [ "${SHOW_TIPS:-y}" = "y" ] && echo -e "  ${DIM}• Port Hopping позволяет клиентам скакать по портам для обхода шейпинга операторов,${NC}"
+            [ "${SHOW_TIPS:-y}" = "y" ] && echo -e "    ${DIM}но делает диапазон 20000-50000 видимым в сетевых сканерах (Censys/Shodan).${NC}"
             prompt_yes_no "  Включить Port Hopping для Hysteria 2 (UDP 20000:50000)?" "${HY2_PORT_HOPPING:-n}" HY2_PORT_HOPPING || return $?
             if [[ "${HY2_PORT_HOPPING,,}" == "y" || "${HY2_PORT_HOPPING:-}" == "1" ]]; then
                 HY2_PORT_HOPPING="y"
@@ -2488,9 +2502,11 @@ for item in res:
     q_step_awg_v3() {
         echo
         echo -e "${YELLOW}━━━ Шаг 6/13: Настройка протокола AmneziaWG v3.1 ━━━${NC}"
-        echo -e "  ${CYAN}💡 Что это:${NC} Усовершенствованный WireGuard с обфускацией пакетов (Junk/Init/Resp)."
-        echo -e "     Специально разработан для обхода ТСПУ/DPI в России. Трафик выглядит как случайный шум."
-        echo
+        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+            echo -e "  ${CYAN}💡 Что это:${NC} Усовершенствованный WireGuard с обфускацией пакетов (Junk/Init/Resp)."
+            echo -e "     Специально разработан для обхода ТСПУ/DPI в России. Трафик выглядит как случайный шум."
+            echo
+        fi
 
         prompt_yes_no "Установить и настроить AmneziaWG v3.1?" "${ENABLE_AWG_V3:-y}" ENABLE_AWG_V3 || return $?
         if [[ "${ENABLE_AWG_V3,,}" == "y" || "${ENABLE_AWG_V3:-}" == "1" ]]; then
@@ -2508,10 +2524,12 @@ for item in res:
     q_step_awg_v2() {
         echo
         echo -e "${YELLOW}━━━ Шаг 7/13: Настройка протокола AmneziaWG v2.0 / Legacy ━━━${NC}"
-        echo -e "  ${CYAN}💡 Что это:${NC} Классическая версия AmneziaWG (заголовки H1-H4)."
-        echo -e "     ${GREEN}Зачем нужна:${NC} Для совместимости со старыми роутерами (Keenetic, OpenWrt)"
-        echo -e "     и клиентами, которые еще не обновились до версии 3.1."
-        echo
+        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+            echo -e "  ${CYAN}💡 Что это:${NC} Классическая версия AmneziaWG (заголовки H1-H4)."
+            echo -e "     ${GREEN}Зачем нужна:${NC} Для совместимости со старыми роутерами (Keenetic, OpenWrt)"
+            echo -e "     и клиентами, которые еще не обновились до версии 3.1."
+            echo
+        fi
 
         prompt_yes_no "Установить и настроить AmneziaWG v2.0 / Legacy?" "${ENABLE_AWG_V2:-y}" ENABLE_AWG_V2 || return $?
         if [[ "${ENABLE_AWG_V2,,}" == "y" || "${ENABLE_AWG_V2:-}" == "1" ]]; then
@@ -2529,10 +2547,12 @@ for item in res:
     q_step_agh() {
         echo
         echo -e "${YELLOW}━━━ Шаг 8/13: Настройка приватного AdGuard Home DoH + Split-DNS ━━━${NC}"
-        echo -e "  ${CYAN}💡 Что это:${NC} Приватный шифрованный DNS (DNS-over-HTTPS) с защитой от рекламы и трекеров."
-        echo -e "     ${GREEN}Split-DNS:${NC} Запросы к российским сайтам (.ru, банки, Госуслуги) направляются"
-        echo -e "     через надежные локальные DNS, предотвращая ошибки доступа и сбои авторизации."
-        echo
+        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+            echo -e "  ${CYAN}💡 Что это:${NC} Приватный шифрованный DNS (DNS-over-HTTPS) с защитой от рекламы и трекеров."
+            echo -e "     ${GREEN}Split-DNS:${NC} Запросы к российским сайтам (.ru, банки, Госуслуги) направляются"
+            echo -e "     через надежные локальные DNS, предотвращая ошибки доступа и сбои авторизации."
+            echo
+        fi
 
         prompt_yes_no "Установить приватный AdGuard Home DoH со Split-DNS?" "${ENABLE_AGH:-y}" ENABLE_AGH || return $?
         if [[ "${ENABLE_AGH,,}" == "y" || "${ENABLE_AGH:-}" == "1" ]]; then
@@ -2540,10 +2560,10 @@ for item in res:
             echo
             echo -e "  ${BOLD}Режим доступа к AdGuard Home DoH:${NC}"
             echo -e "    ${GREEN}1)${NC} На основном домене (${PRIMARY_DOMAIN}/dns-query/)"
-            echo -e "       ${DIM}— Не нужен отдельный поддомен и дополнительный сертификат${NC}"
-            echo -e "       ${DIM}— Быстрая настройка, рекомендовано для большинства${NC}"
+            [ "${SHOW_TIPS:-y}" = "y" ] && echo -e "       ${DIM}— Не нужен отдельный поддомен и дополнительный сертификат${NC}"
+            [ "${SHOW_TIPS:-y}" = "y" ] && echo -e "       ${DIM}— Быстрая настройка, рекомендовано для большинства${NC}"
             echo -e "    ${GREEN}2)${NC} На отдельном поддомене (dns.${PRIMARY_DOMAIN})"
-            echo -e "       ${DIM}— Требуется A-запись у регистратора, полная изоляция DNS${NC}"
+            [ "${SHOW_TIPS:-y}" = "y" ] && echo -e "       ${DIM}— Требуется A-запись у регистратора, полная изоляция DNS${NC}"
             echo
 
             prompt_default "  Ваш выбор (1 или 2)" "${AGH_MODE:-1}" AGH_MODE || return $?
@@ -2574,22 +2594,26 @@ for item in res:
     q_step_decoy() {
         echo
         echo -e "${YELLOW}━━━ Шаг 9/13: Выбор темы для сайта-маскировки (Decoy Site) ━━━${NC}"
-        echo -e "  ${CYAN}💡 Что это:${NC} Веб-сайт, который отображается в браузере при обращении к вашему домену."
-        echo -e "     Защищает сервер от выявления цензорами, активными сканерами и сетевыми ботами."
-        echo
-        echo -e "  ${BOLD}Доступные варианты маскировки:${NC}"
-        echo -e "    ${GREEN}[1] DataSphere Analytics Enterprise (Рекомендуется)${NC}"
-        echo -e "        ${DIM}• Корпоративный SaaS-портал облачной аналитики и метрик${NC}"
-        echo -e "        ${DIM}• Живая интерактивная телеметрия (CPU, RAM, Network) с динамикой ±10%${NC}"
-        echo -e "        ${DIM}• Документация API, статус сервисов и корпоративный футер${NC}"
-        echo
-        echo -e "    ${GREEN}[2] CosmosCloud NextGen${NC}"
-        echo -e "        ${DIM}• Корпоративное облачное хранилище файлов (аналог Nextcloud / OwnCloud)${NC}"
-        echo -e "        ${DIM}• Форма входа в хранилище, сессионные cookies, реалистичный брендинг${NC}"
-        echo
-        echo -e "    ${GREEN}[3] Стандартная заглушка Nginx${NC}"
-        echo -e "        ${DIM}• Классическая системная страница «Welcome to nginx!»${NC}"
-        echo
+        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+            echo -e "  ${CYAN}💡 Что это:${NC} Веб-сайт, который отображается в браузере при обращении к вашему домену."
+            echo -e "     Защищает сервер от выявления цензорами, активными сканерами и сетевыми ботами."
+            echo
+            echo -e "  ${BOLD}Доступные варианты маскировки:${NC}"
+            echo -e "    ${GREEN}[1] DataSphere Analytics Enterprise (Рекомендуется)${NC}"
+            echo -e "        ${DIM}• Корпоративный SaaS-портал облачной аналитики и метрик${NC}"
+            echo -e "        ${DIM}• Живая интерактивная телеметрия (CPU, RAM, Network) с динамикой ±10%${NC}"
+            echo -e "        ${DIM}• Документация API, статус сервисов и корпоративный футер${NC}"
+            echo
+            echo -e "    ${GREEN}[2] CosmosCloud NextGen${NC}"
+            echo -e "        ${DIM}• Корпоративное облачное хранилище файлов (аналог Nextcloud / OwnCloud)${NC}"
+            echo -e "        ${DIM}• Форма входа в хранилище, сессионные cookies, реалистичный брендинг${NC}"
+            echo
+            echo -e "    ${GREEN}[3] Стандартная заглушка Nginx${NC}"
+            echo -e "        ${DIM}• Классическая системная страница «Welcome to nginx!»${NC}"
+            echo
+        else
+            echo -e "  ${BOLD}Варианты маскировки:${NC} [1] DataSphere Enterprise (Рекомендуется)  [2] CosmosCloud  [3] Заглушка Nginx"
+        fi
 
         prompt_default "  Выберите вариант маскировки (1, 2 или 3)" "${DECOY_MODE:-1}" DECOY_MODE || return $?
         case "$DECOY_MODE" in
@@ -2603,8 +2627,10 @@ for item in res:
     q_step_ssl_domains() {
         echo
         echo -e "${YELLOW}━━━ Шаг 10/13: Реестр SSL-сертификатов и дополнительные домены ━━━${NC}"
-        echo -e "  ${CYAN}💡 Что это:${NC} Список доменов, для которых будут автоматически получены SSL-сертификаты."
-        echo -e "  ${DIM}Следующие домены уже включены автоматически из предыдущих шагов:${NC}"
+        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+            echo -e "  ${CYAN}💡 Что это:${NC} Список доменов, для которых будут автоматически получены SSL-сертификаты."
+            echo -e "  ${DIM}Следующие домены уже включены автоматически из предыдущих шагов:${NC}"
+        fi
         rebuild_all_domains
         for d in "${ALL_DOMAINS[@]}"; do
             echo -e "    ${GREEN}✔ ${WHITE}$d${NC}"
@@ -2639,12 +2665,16 @@ for item in res:
     q_step_ssl_engine() {
         echo
         echo -e "${YELLOW}━━━ Шаг 11/13: Выбор метода выпуска SSL-сертификатов ━━━${NC}"
-        echo -e "  ${CYAN}💡 Что это:${NC} Способ валидации владения доменом для Let's Encrypt."
-        echo -e "    ${GREEN}[1] Классический Certbot (HTTP-01, Рекомендуется)${NC}"
-        echo -e "        ${DIM}• Простая валидация через порт 80 Nginx. Не требует API-ключей.${NC}"
-        echo -e "    ${GREEN}[2] acme.sh + Cloudflare DNS-01${NC}"
-        echo -e "        ${DIM}• Валидация через DNS API Cloudflare. Позволяет выпускать Wildcard (*.domain).${NC}"
-        echo
+        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+            echo -e "  ${CYAN}💡 Что это:${NC} Способ валидации владения доменом для Let's Encrypt."
+            echo -e "    ${GREEN}[1] Классический Certbot (HTTP-01, Рекомендуется)${NC}"
+            echo -e "        ${DIM}• Простая валидация через порт 80 Nginx. Не требует API-ключей.${NC}"
+            echo -e "    ${GREEN}[2] acme.sh + Cloudflare DNS-01${NC}"
+            echo -e "        ${DIM}• Валидация через DNS API Cloudflare. Позволяет выпускать Wildcard (*.domain).${NC}"
+            echo
+        else
+            echo -e "  ${BOLD}Метод SSL:${NC} [1] Certbot (HTTP-01)  [2] acme.sh + Cloudflare DNS-01"
+        fi
 
         prompt_default "  Выберите метод сертификации (1 или 2)" "${SSL_ENGINE_CHOICE:-1}" SSL_ENGINE_CHOICE || return $?
         prompt_default "  Email для Let's Encrypt уведомлений (Enter - без почты)" "${LE_EMAIL:-}" LE_EMAIL || return $?
@@ -2677,10 +2707,12 @@ for item in res:
     q_step_3xui_auto() {
         echo
         echo -e "${YELLOW}━━━ Шаг 12/13: Автоматическая настройка базы данных панели 3X-UI ━━━${NC}"
-        echo -e "  ${CYAN}💡 Что это:${NC} Автоматическое создание всех инбаундов (Steal-Oneself, Classic REALITY, xHTTP)"
-        echo -e "     в базе данных панели 3X-UI, а также настройка секретных путей и подписок."
-        echo -e "     Вам не придется добавлять инбаунды вручную через браузер."
-        echo
+        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+            echo -e "  ${CYAN}💡 Что это:${NC} Автоматическое создание всех инбаундов (Steal-Oneself, Classic REALITY, xHTTP)"
+            echo -e "     в базе данных панели 3X-UI, а также настройка секретных путей и подписок."
+            echo -e "     Вам не придется добавлять инбаунды вручную через браузер."
+            echo
+        fi
 
         prompt_yes_no "Автоматически настроить инбаунды и пути в панели 3X-UI?" "${AUTO_SETUP_3XUI:-y}" AUTO_SETUP_3XUI || return $?
         return 0
@@ -2689,11 +2721,13 @@ for item in res:
     q_step_warp() {
         echo
         echo -e "${YELLOW}━━━ Шаг 13/13: Исходящий туннель Cloudflare WARP ━━━${NC}"
-        echo -e "  ${CYAN}💡 Что это:${NC} Исходящий WireGuard туннель от вашего VPS в сеть Cloudflare."
-        echo -e "     ${GREEN}Преимущество:${NC} Полностью избавляет от капч Google/Cloudflare и разблокирует"
-        echo -e "     доступ к зарубежным AI-сервисам (ChatGPT, Claude, Gemini). Видео YouTube и"
-        echo -e "     российские сайты продолжают работать напрямую на полной скорости."
-        echo
+        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+            echo -e "  ${CYAN}💡 Что это:${NC} Исходящий WireGuard туннель от вашего VPS в сеть Cloudflare."
+            echo -e "     ${GREEN}Преимущество:${NC} Полностью избавляет от капч Google/Cloudflare и разблокирует"
+            echo -e "     доступ к зарубежным AI-сервисам (ChatGPT, Claude, Gemini). Видео YouTube и"
+            echo -e "     российские сайты продолжают работать напрямую на полной скорости."
+            echo
+        fi
 
         prompt_yes_no "Включить интеграцию Cloudflare WARP?" "${ENABLE_WARP:-n}" ENABLE_WARP || return $?
         if [[ "${ENABLE_WARP,,}" == "y" || "${ENABLE_WARP:-}" == "1" ]]; then
@@ -2814,6 +2848,19 @@ for item in res:
     if [ "$NON_INTERACTIVE" -eq 1 ]; then
         run_non_interactive_setup
     else
+        if [ "$EXPERT_MODE" -eq 1 ]; then
+            SHOW_TIPS="n"
+            log "Экспертный режим (--expert): подробные подсказки отключены."
+        else
+            echo
+            prompt_yes_no "Показывать подробные пояснения и подсказки к каждому шагу?" "${SHOW_TIPS:-y}" SHOW_TIPS
+            if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+                ok "Включен подробный режим: для каждого протокола будут выводиться подсказки и пояснения."
+            else
+                ok "Включен экспертный режим: вопросы выводятся коротко и по делу."
+            fi
+        fi
+
         WIZARD_ALLOW_BACK=1
         CURRENT_STEP=1
         TOTAL_STEPS=14
@@ -2846,7 +2893,20 @@ for item in res:
                 elif [ "$CURRENT_STEP" -gt 1 ]; then
                     CURRENT_STEP=$((CURRENT_STEP - 1))
                 else
-                    warn "Вы уже на первом шаге."
+                    if [ "$EXPERT_MODE" -eq 0 ]; then
+                        echo
+                        local old_back="$WIZARD_ALLOW_BACK"
+                        WIZARD_ALLOW_BACK=0
+                        prompt_yes_no "Показывать подробные пояснения и подсказки к каждому шагу?" "${SHOW_TIPS:-y}" SHOW_TIPS
+                        WIZARD_ALLOW_BACK="$old_back"
+                        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+                            ok "Включен подробный режим: для каждого протокола будут выводиться подсказки и пояснения."
+                        else
+                            ok "Включен экспертный режим: вопросы выводятся коротко и по делу."
+                        fi
+                    else
+                        warn "Вы уже на первом шаге."
+                    fi
                 fi
             elif [ "$res" -ge 101 ] && [ "$res" -le 113 ]; then
                 # Переход к конкретному шагу из экрана Review

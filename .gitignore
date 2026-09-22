@@ -1,0 +1,12 @@
+# Environment & Session files
+*.env
+!*.env.example
+setup_mask.env
+
+# Backups & Archives
+*.tar.gz
+*.zip
+
+# Scratch & Temporary files
+scratch/
+.tmp/

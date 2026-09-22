@@ -9,7 +9,7 @@
 [Инструкция для новичков](docs/BEGINNER_GUIDE.md) • [Техническая архитектура](docs/ARCHITECTURE.md) • [Быстрый старт](#-быстрый-старт-установка-в-1-команду)
 
 [![CI](https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/actions/workflows/ci.yml/badge.svg)](https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/actions/workflows/ci.yml)
-[![Версия](https://img.shields.io/badge/версия-v7.0.0-blue?style=flat-square)](https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui)
+[![Версия](https://img.shields.io/badge/версия-v7.1.0-blue?style=flat-square)](https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui)
 [![ОС](https://img.shields.io/badge/ОС-Ubuntu%20%7C%20Debian-informational?style=flat-square)](docs/BEGINNER_GUIDE.md#1-сервер-vps)
 [![Лицензия](https://img.shields.io/badge/лицензия-MIT-success?style=flat-square)](LICENSE)
 
@@ -149,6 +149,9 @@ sudo ./setup_mask.sh
 
 # Экспресс-диагностика всех сервисов, портов и SSL за 2 секунды
 sudo ./setup_mask.sh --check
+
+# Экспертный режим (компактный мастер без подробных подсказок к протоколам)
+sudo ./setup_mask.sh --expert
 
 # Возобновление прерванной установки с последнего шага
 sudo ./setup_mask.sh --resume

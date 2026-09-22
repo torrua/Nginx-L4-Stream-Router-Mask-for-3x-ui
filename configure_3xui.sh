@@ -795,6 +795,8 @@ else:
     target_sub_uri = f"https://{domain}/{sub_path}/"
     target_sub_domain = domain
     target_sub_path = f"/{sub_path}/"
+    target_sub_json_path = f"/{sub_path.strip('/')}json/"
+    target_sub_json_uri = f"https://{domain}{target_sub_json_path}"
 
 time_location = os.environ.get("TIME_LOCATION", "Europe/Moscow").strip()
 traffic_reset_day = os.environ.get("TRAFFIC_RESET_DAY", "1").strip()
@@ -812,6 +814,8 @@ settings_updates = {
     "subPort": sub_port,
     "subPath": target_sub_path,
     "subURI": target_sub_uri,
+    "subJsonPath": target_sub_json_path,
+    "subJsonURI": target_sub_json_uri,
     "subDomain": target_sub_domain,
     "subCertFile": "",
     "subKeyFile": "",

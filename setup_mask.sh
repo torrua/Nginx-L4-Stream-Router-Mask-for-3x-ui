@@ -1270,6 +1270,7 @@ if [ "$SKIP_INTERVIEW" -eq 1 ]; then
     RAW_SUB_PATH="${RAW_SUB_PATH#/}"
     RAW_SUB_PATH="${RAW_SUB_PATH%/}"
     SUB_PATH="/${RAW_SUB_PATH}/"
+    SUB_JSON_PATH="/${RAW_SUB_PATH}json/"
 
     XHTTP_STREAM_PORT="${XHTTP_STREAM_PORT:-50443}"
     RAW_XHTTP_STREAM_PATH="${XHTTP_STREAM_PATH:-Stream-One-Path}"
@@ -1357,6 +1358,7 @@ if [ "$EXPRESS_MODE" -eq 1 ]; then
     SUB_PORT="55443"
     RAW_SUB_PATH="sub-$(head /dev/urandom | tr -dc a-z0-9 | head -c 6)"
     SUB_PATH="/${RAW_SUB_PATH}/"
+    SUB_JSON_PATH="/${RAW_SUB_PATH}json/"
     XHTTP_STREAM_PORT="50443"
     RAW_XHTTP_STREAM_PATH="xhttp-stream"
     XHTTP_STREAM_PATH="/${RAW_XHTTP_STREAM_PATH}/"
@@ -1750,6 +1752,7 @@ prompt_default "Секретный URI-путь подписок (без слэ�
 validate_path_segment "$RAW_SUB_PATH" "URI подписок"
 SUB_PATH="/${RAW_SUB_PATH#/}"
 SUB_PATH="${SUB_PATH%/}/"
+SUB_JSON_PATH="/${RAW_SUB_PATH#/}json/"
 
 prompt_default "Внутренний порт инбаунда VLESS xHTTP (HTTP/2 Stream-One)" "50443" XHTTP_STREAM_PORT
 RAND_XHTTP_PATH="vless-$(head /dev/urandom | tr -dc a-z0-9 | head -c 8)"
@@ -2888,7 +2891,9 @@ http {
         ~^.*:/.well-known/security\.txt(\?|\$) 0;
         ~^1:[01]:${PANEL_PATH} 0;
         ~^1:[01]:${SUB_PATH} 0;
+        ~^1:[01]:${SUB_JSON_PATH} 0;
         ~^1:[01]:/sub/ 0;
+        ~^1:[01]:/json/ 0;
         ~^1:[01]:${XHTTP_STREAM_PATH} 0;
         ~^1:[01]:/dns-query 0;
         ~^1:[01]:/agh/ 0;
@@ -3223,6 +3228,18 @@ server {
         proxy_set_header Connection \$connection_upgrade;
     }
 
+    location ^~ ${SUB_JSON_PATH} {
+        limit_req zone=subs burst=60 nodelay;
+        limit_req_status 429;
+        proxy_pass http://127.0.0.1:$SUB_PORT;
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection \$connection_upgrade;
+    }
+
     # --- ЛОКАЦИЯ 3: VLESS xHTTP (Native HTTP/2 Stream-One + VLESSENC + Безотказный сокет) ---
     location ^~ ${XHTTP_STREAM_PATH} {
         if (\$request_method != POST) {
@@ -3349,6 +3366,18 @@ server {
     }
 
     location ^~ ${SUB_PATH} {
+        limit_req zone=subs burst=60 nodelay;
+        limit_req_status 429;
+        proxy_pass http://127.0.0.1:$SUB_PORT;
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection \$connection_upgrade;
+    }
+
+    location ^~ ${SUB_JSON_PATH} {
         limit_req zone=subs burst=60 nodelay;
         limit_req_status 429;
         proxy_pass http://127.0.0.1:$SUB_PORT;
@@ -3641,6 +3670,55 @@ else
             bash "$CONFIG_EXEC" --config "$SAVED_CONFIG_FILE" -y
         }
         run_with_spinner "Автоматическая настройка базы 3X-UI и создание инбаундов" run_configure_3xui_task
+
+        # 3. Настройка службы и таймера автоматического еженедельного обновления geosite/geoip
+        setup_xray_geo_timer_task() {
+            cat << 'EOF_GEO' > /usr/local/bin/update-xray-geo.sh
+#!/bin/bash
+set -e
+GEO_DIR="/usr/local/x-ui/bin"
+[ -d "$GEO_DIR" ] || GEO_DIR="/etc/x-ui/bin"
+mkdir -p "$GEO_DIR"
+
+curl -fsSL --connect-timeout 15 "https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat" -o "$GEO_DIR/geosite.dat.tmp" 2>/dev/null || true
+curl -fsSL --connect-timeout 15 "https://github.com/v2fly/geoip/releases/latest/download/geoip.dat" -o "$GEO_DIR/geoip.dat.tmp" 2>/dev/null || true
+
+if [ -s "$GEO_DIR/geosite.dat.tmp" ]; then
+    mv -f "$GEO_DIR/geosite.dat.tmp" "$GEO_DIR/geosite.dat"
+fi
+if [ -s "$GEO_DIR/geoip.dat.tmp" ]; then
+    mv -f "$GEO_DIR/geoip.dat.tmp" "$GEO_DIR/geoip.dat"
+fi
+systemctl restart x-ui >/dev/null 2>&1 || true
+EOF_GEO
+            chmod +x /usr/local/bin/update-xray-geo.sh
+
+            cat << 'EOF_GEOSVC' > /etc/systemd/system/xray-geo-update.service
+[Unit]
+Description=Weekly update of Xray GeoSite and GeoIP databases
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/update-xray-geo.sh
+EOF_GEOSVC
+
+            cat << 'EOF_GEOTMR' > /etc/systemd/system/xray-geo-update.timer
+[Unit]
+Description=Weekly timer for Xray GeoSite and GeoIP databases update
+
+[Timer]
+OnCalendar=Sun *-*-* 03:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF_GEOTMR
+
+            systemctl daemon-reload
+            systemctl enable --now xray-geo-update.timer >/dev/null 2>&1 || true
+        }
+        run_with_spinner "Активация таймера еженедельного обновления geosite.dat и geoip.dat" setup_xray_geo_timer_task
     else
         warn "Скрипт configure_3xui.sh не найден. Выполните настройку вручную."
     fi
@@ -3832,6 +3910,7 @@ if [ -n "${ADMIN_PASSWORD:-}" ]; then
     echo -e "  Пароль администратора:       ${BOLD}${ADMIN_PASSWORD}${NC}"
 fi
 echo -e "  Канал подписок:              ${GREEN}https://${PRIMARY_DOMAIN}${SUB_PATH}${NC}"
+echo -e "  Канал подписок (JSON):       ${GREEN}https://${PRIMARY_DOMAIN}${SUB_JSON_PATH}${NC}"
 if [[ "${ENABLE_WARP,,}" == "y" || "${ENABLE_WARP:-}" == "1" ]]; then
     echo -e "  Cloudflare WARP Outbound:    ${GREEN}АКТИВИРОВАН (Google, Gemini, ChatGPT / MTU 1280)${NC}"
 fi
@@ -3853,11 +3932,12 @@ if [ -n "${ADMIN_PASSWORD:-}" ]; then
 УЧЕТНЫЕ ДАННЫЕ ПАНЕЛИ И СЕРВИСОВ 3X-UI
 Файл создан: $(date '+%Y-%m-%d %H:%M:%S')
 =====================================================================
-Панель управления:     https://${PRIMARY_DOMAIN}${PANEL_PATH}
-Логин администратора:   ${ADMIN_USERNAME:-admin}
-Пароль администратора:  ${ADMIN_PASSWORD}
+Панель управления:         https://${PRIMARY_DOMAIN}${PANEL_PATH}
+Логин администратора:       ${ADMIN_USERNAME:-admin}
+Пароль администратора:      ${ADMIN_PASSWORD}
 
-Ссылка на подписку:    https://${PRIMARY_DOMAIN}${SUB_PATH}
+Ссылка на подписку:        https://${PRIMARY_DOMAIN}${SUB_PATH}
+Ссылка на подписку (JSON): https://${PRIMARY_DOMAIN}${SUB_JSON_PATH}
 EOF_CRED
     if [[ "${ENABLE_AGH,,}" == "y" || "${ENABLE_AGH:-}" == "1" ]]; then
         cat << EOF_AGH_CRED >> "$CRED_FILE"
@@ -3956,6 +4036,7 @@ echo -e "    * Для инбаунда xHTTP: Flow: строго ${RED}пуст�
 echo -e "  - ${YELLOW}Настройки подписок (Панель -> Подписка):${NC}"
 echo -e "    * Subscription Port: ${GREEN}$SUB_PORT${NC} | Subscription Path: ${GREEN}$SUB_PATH${NC}"
 echo -e "    * Subscription URL: ${CYAN}https://${PRIMARY_DOMAIN}${SUB_PATH}${NC}"
+echo -e "    * Subscription URL (JSON): ${CYAN}https://${PRIMARY_DOMAIN}${SUB_JSON_PATH}${NC}"
 echo -e "  - ${YELLOW}В разделе «Хосты» (Hosts) добавьте 2 правила:${NC}"
 echo -e "    1) ${BOLD}MAIN_SAME_443:${NC} Инбаунды: ${CYAN}REALITY + Hysteria 2${NC} -> Порт: ${GREEN}443${NC} | Безопасность: ${GREEN}same${NC}"
 echo -e "    2) ${BOLD}XHTTP_TLS_443:${NC} Инбаунд: ${CYAN}${SERVER_PREFIX} (VLESS xHTTP)${NC} -> Порт: ${GREEN}443${NC} | Безопасность: ${GREEN}tls${NC} (SNI: ${CYAN}$PRIMARY_DOMAIN${NC})"

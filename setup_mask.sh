@@ -408,6 +408,10 @@ ENABLE_HY2="y"
 HY2_PORT="443"
 # Отдельный домен для Hysteria 2 (по умолчанию равен PRIMARY_DOMAIN)
 HY2_DOMAIN="yourdomain.online"
+# Port Hopping: клиент «прыгает» по UDP-портам, усложняя блокировку ТСПУ [y/n]
+HY2_PORT_HOPPING="y"
+# Диапазон UDP-портов для Port Hopping (формат: START:END)
+HY2_PORT_HOPPING_RANGE="20000:50000"
 
 # AmneziaWG v3.1 (Transport Protection) [y/n]
 ENABLE_AWG_V3="y"
@@ -658,6 +662,8 @@ XHTTP_STREAM_PATH="${_save_xhttp_path}"
 ENABLE_HY2="$hy2_save"
 HY2_PORT="${HY2_PORT:-443}"
 HY2_DOMAIN="${HY2_DOMAIN:-$PRIMARY_DOMAIN}"
+HY2_PORT_HOPPING="${HY2_PORT_HOPPING:-y}"
+HY2_PORT_HOPPING_RANGE="${HY2_PORT_HOPPING_RANGE:-20000:50000}"
 
 ENABLE_AWG_V3="$awg_v3_save"
 AWG_V3_PORT="${AWG_V3_PORT:-8443}"
@@ -3273,6 +3279,39 @@ done
 fi
 
 # =============================================================
+#  PORT HOPPING ДЛЯ HYSTERIA 2 (UDP → NAT REDIRECT)
+# =============================================================
+if [[ "${ENABLE_HY2:-0}" == "1" || "${ENABLE_HY2,,}" == "y" ]] && \
+   [[ "${HY2_PORT_HOPPING,,}" == "y" || "${HY2_PORT_HOPPING:-}" == "1" ]] && \
+   [ -n "${HY2_PORT:-}" ] && [ -n "${HY2_PORT_HOPPING_RANGE:-}" ]; then
+
+    PH_RANGE="${HY2_PORT_HOPPING_RANGE}"
+
+    # 1. Применяем NAT REDIRECT правило (runtime, идемпотентно)
+    if ! iptables -t nat -C PREROUTING -p udp --dport "$PH_RANGE" -j REDIRECT --to-ports "$HY2_PORT" 2>/dev/null; then
+        iptables -t nat -A PREROUTING -p udp --dport "$PH_RANGE" -j REDIRECT --to-ports "$HY2_PORT" 2>/dev/null || true
+        ok "Port Hopping: NAT REDIRECT UDP ${PH_RANGE} → порт ${HY2_PORT} [Активирован]"
+    else
+        ok "Port Hopping: NAT REDIRECT UDP ${PH_RANGE} → порт ${HY2_PORT} [Уже активен]"
+    fi
+
+    # 2. Персистентность через /etc/ufw/before.rules (секция *nat)
+    if [ -f /etc/ufw/before.rules ] && ! grep -q "Hy2 Port Hopping" /etc/ufw/before.rules 2>/dev/null; then
+        if grep -q '^\*nat' /etc/ufw/before.rules 2>/dev/null; then
+            # Секция *nat уже есть — добавляем правило перед COMMIT
+            sed -i "/^\*nat/,/^COMMIT/{/^COMMIT/i\\-A PREROUTING -p udp --dport ${PH_RANGE} -j REDIRECT --to-ports ${HY2_PORT} # Hy2 Port Hopping
+            }" /etc/ufw/before.rules
+        else
+            # Секции *nat нет — создаём перед *mangle или *filter
+            insert_before="*filter"
+            grep -q '^\*mangle' /etc/ufw/before.rules 2>/dev/null && insert_before="*mangle"
+            grep -q '^# TCP MSS Clamping' /etc/ufw/before.rules 2>/dev/null && insert_before="# TCP MSS Clamping"
+            sed -i "/${insert_before}/i\\# Port Hopping for Hysteria 2 (added by setup_mask.sh)\n*nat\n:PREROUTING ACCEPT [0:0]\n-A PREROUTING -p udp --dport ${PH_RANGE} -j REDIRECT --to-ports ${HY2_PORT} # Hy2 Port Hopping\nCOMMIT\n" /etc/ufw/before.rules
+        fi
+    fi
+fi
+
+# =============================================================
 #  ФОРМИРОВАНИЕ ИТОГОВ И ИНСТРУКЦИИ ДЛЯ 3X-UI
 # =============================================================
 UFW_DENY_LIST=""
@@ -3288,6 +3327,10 @@ if [[ "${ENABLE_HY2:-}" == "1" || "${ENABLE_HY2,,}" == "y" ]] && [ -n "${HY2_POR
         UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${HY2_PORT}/udp"
     else
         UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow 443/udp"
+    fi
+    # Port Hopping: открываем диапазон UDP-портов
+    if [[ "${HY2_PORT_HOPPING,,}" == "y" || "${HY2_PORT_HOPPING:-}" == "1" ]] && [ -n "${HY2_PORT_HOPPING_RANGE:-}" ]; then
+        UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${HY2_PORT_HOPPING_RANGE//:/ }/udp"
     fi
 fi
 if [[ "${ENABLE_AWG_V3:-}" == "1" || "${ENABLE_AWG_V3,,}" == "y" ]] && [ -n "${AWG_V3_PORT:-}" ]; then
@@ -3482,6 +3525,10 @@ echo -e "  - ${YELLOW}Вкладка «Поток»:${NC} Masquerade: тип ${G
 echo -e "  - ${YELLOW}Вкладка «Безопасность»:${NC} ${GREEN}TLS${NC} | SNI: ${CYAN}${hy2_active_dom}${NC} | ALPN: ${GREEN}h3${NC}"
 echo -e "    * Публичный ключ: ${CYAN}${SSL_BASE_DIR}/${hy2_active_dom}/fullchain.pem${NC}"
 echo -e "    * Приватный ключ: ${CYAN}${SSL_BASE_DIR}/${hy2_active_dom}/privkey.pem${NC}"
+if [[ "${HY2_PORT_HOPPING,,}" == "y" || "${HY2_PORT_HOPPING:-}" == "1" ]] && [ -n "${HY2_PORT_HOPPING_RANGE:-}" ]; then
+echo -e "  - ${YELLOW}Port Hopping:${NC} ${GREEN}Активирован${NC} | Диапазон: ${CYAN}UDP ${HY2_PORT_HOPPING_RANGE//:/-}${NC} → порт ${GREEN}${HY2_PORT}${NC}"
+echo -e "    * Адрес подключения клиента: ${CYAN}${hy2_active_dom}:${HY2_PORT},${HY2_PORT_HOPPING_RANGE//:/-}${NC}"
+fi
 echo
 fi
 

@@ -509,6 +509,11 @@ DECOY_MODE="1"
 # Автоматически настроить инбаунды и пути подписок в базе данных 3X-UI через configure_3xui.sh [y/n]
 AUTO_SETUP_3XUI="y"
 
+# Создать API-токен для подключения сервера как узла (3X-UI Node) [y/n]
+ENABLE_NODE_TOKEN="n"
+# Название API-токена ноды (если не указано, формируется как <SERVER_PREFIX>-Node или Master-Node-Cluster)
+NODE_TOKEN_NAME=""
+
 # Автоматически обновлять ядро Xray-core до последней официальной версии (v26.9.9+) [y/n]
 UPDATE_XRAY_CORE="y"
 
@@ -669,6 +674,100 @@ install_prerequisites() {
 # Примечание: show_help() и generate_config_template() определены выше (до проверки root/OS),
 # чтобы --help и --gen-config работали без привилегий суперпользователя.
 
+reconstruct_arrays_from_vars() {
+    [ -n "${PRIMARY_DOMAIN:-}" ] || return 0
+
+    ALL_DOMAINS=("$PRIMARY_DOMAIN")
+    local v_www="${ADD_WWW:-y}"
+    if [[ "${v_www,,}" == "y" || "$v_www" == "1" ]]; then
+        ALL_DOMAINS+=("www.$PRIMARY_DOMAIN")
+    fi
+    IFS=',' read -r -a extra_arr <<< "${EXTRA_SSL_DOMAINS:-}"
+    for ed in "${extra_arr[@]}"; do
+        ed=$(echo "$ed" | tr -d '[:space:]')
+        [ -n "$ed" ] && ALL_DOMAINS+=("$ed")
+    done
+
+    local steal_raw="${STEAL_DOMAINS_STR:-${STEAL_DOMAINS[*]:-}}"
+    STEAL_DOMAINS=()
+    declare -g -A DOMAIN_TO_PORT=()
+    local v_stl="${ENABLE_STEAL:-y}"
+    if [[ "${v_stl,,}" == "y" || "$v_stl" == "1" ]]; then
+        STEAL_ENABLED=1
+        STEAL_PORTS_LIST=(${STEAL_PORT:-45443})
+        for sd in ${steal_raw//,/ }; do
+            sd=$(echo "$sd" | tr -d '[:space:]')
+            if [ -n "$sd" ]; then
+                STEAL_DOMAINS+=("$sd")
+                DOMAIN_TO_PORT["$sd"]="${STEAL_PORTS_LIST[0]}"
+                [[ " ${ALL_DOMAINS[*]} " =~ " ${sd} " ]] || ALL_DOMAINS+=("$sd")
+            fi
+        done
+        [ ${#STEAL_DOMAINS[@]} -gt 0 ] || {
+            STEAL_DOMAINS=("cdn.$PRIMARY_DOMAIN")
+            DOMAIN_TO_PORT["cdn.$PRIMARY_DOMAIN"]="${STEAL_PORTS_LIST[0]}"
+            ALL_DOMAINS+=("cdn.$PRIMARY_DOMAIN")
+        }
+    else
+        STEAL_ENABLED=0
+        STEAL_PORTS_LIST=()
+    fi
+
+    declare -g -A EXT_SNI_TO_PORT=()
+    local v_cls="${ENABLE_CLASSIC:-y}"
+    if [[ "${v_cls,,}" == "y" || "$v_cls" == "1" ]]; then
+        CLASSIC_ENABLED=1
+        CLASSIC_PORTS_LIST=(${CLASSIC_PORT:-46443})
+        local classic_raw="${CLASSIC_SNI:-gateway.icloud.com}"
+        EXT_SNI_LIST=()
+        for cs in ${classic_raw//,/ }; do
+            cs=$(echo "$cs" | tr -d '[:space:]')
+            if [ -n "$cs" ]; then
+                EXT_SNI_LIST+=("$cs")
+                EXT_SNI_TO_PORT["$cs"]="${CLASSIC_PORTS_LIST[0]}"
+            fi
+        done
+        [ ${#EXT_SNI_TO_PORT[@]} -gt 0 ] || {
+            EXT_SNI_LIST=("gateway.icloud.com")
+            EXT_SNI_TO_PORT["gateway.icloud.com"]="${CLASSIC_PORTS_LIST[0]}"
+        }
+    else
+        CLASSIC_ENABLED=0
+        CLASSIC_PORTS_LIST=()
+        EXT_SNI_LIST=()
+    fi
+
+    ALL_REALITY_PORTS=()
+    for p in "${STEAL_PORTS_LIST[@]:-}"; do [ -n "$p" ] && ALL_REALITY_PORTS+=("$p"); done
+    for p in "${CLASSIC_PORTS_LIST[@]:-}"; do [ -n "$p" ] && ALL_REALITY_PORTS+=("$p"); done
+
+    PANEL_PORT="${PANEL_PORT:-10443}"
+    RAW_PATH="${PANEL_PATH:-${RAW_PATH:-my-3x-panel}}"
+    RAW_PATH="${RAW_PATH#/}"
+    RAW_PATH="${RAW_PATH%/}"
+    PANEL_PATH="/${RAW_PATH}/"
+
+    SUB_PORT="${SUB_PORT:-55443}"
+    RAW_SUB_PATH="${SUB_PATH:-${RAW_SUB_PATH:-my-post-key}}"
+    RAW_SUB_PATH="${RAW_SUB_PATH#/}"
+    RAW_SUB_PATH="${RAW_SUB_PATH%/}"
+    SUB_PATH="/${RAW_SUB_PATH}/"
+    SUB_JSON_PATH="/${RAW_SUB_PATH}json/"
+
+    XHTTP_STREAM_PORT="${XHTTP_STREAM_PORT:-50443}"
+    RAW_XHTTP_STREAM_PATH="${XHTTP_STREAM_PATH:-${RAW_XHTTP_STREAM_PATH:-Stream-One-Path}}"
+    RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH#/}"
+    RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH%/}"
+    XHTTP_STREAM_PATH="/${RAW_XHTTP_STREAM_PATH}/"
+
+    SERVER_PREFIX="${SERVER_PREFIX:-Server}"
+    ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
+    ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
+    DECOY_MODE="${DECOY_MODE:-1}"
+    SSL_ENGINE_CHOICE="${SSL_ENGINE_CHOICE:-1}"
+    LE_EMAIL="${LE_EMAIL:-}"
+}
+
 load_env_file() {
     local env_file="$1"
     [ -f "$env_file" ] || return 0
@@ -687,6 +786,7 @@ load_env_file() {
             declare -g "$key=$val"
         fi
     done < "$env_file"
+    reconstruct_arrays_from_vars
 }
 
 save_session_state() {
@@ -696,24 +796,27 @@ save_session_state() {
     old_umask=$(umask)
     umask 077
 
+    local v=""
     local steal_save="n"
-    [[ "${ENABLE_STEAL:-}" == "1" || "${ENABLE_STEAL,,}" == "y" ]] && steal_save="y"
+    v="${ENABLE_STEAL:-n}"; [[ "$v" == "1" || "${v,,}" == "y" ]] && steal_save="y"
     local classic_save="n"
-    [[ "${ENABLE_CLASSIC:-}" == "1" || "${ENABLE_CLASSIC,,}" == "y" ]] && classic_save="y"
+    v="${ENABLE_CLASSIC:-n}"; [[ "$v" == "1" || "${v,,}" == "y" ]] && classic_save="y"
     local hy2_save="n"
-    [[ "${ENABLE_HY2:-}" == "1" || "${ENABLE_HY2,,}" == "y" ]] && hy2_save="y"
+    v="${ENABLE_HY2:-n}"; [[ "$v" == "1" || "${v,,}" == "y" ]] && hy2_save="y"
     local awg_v3_save="n"
-    [[ "${ENABLE_AWG_V3:-}" == "1" || "${ENABLE_AWG_V3,,}" == "y" ]] && awg_v3_save="y"
+    v="${ENABLE_AWG_V3:-n}"; [[ "$v" == "1" || "${v,,}" == "y" ]] && awg_v3_save="y"
     local awg_v2_save="n"
-    [[ "${ENABLE_AWG_V2:-}" == "1" || "${ENABLE_AWG_V2,,}" == "y" ]] && awg_v2_save="y"
+    v="${ENABLE_AWG_V2:-n}"; [[ "$v" == "1" || "${v,,}" == "y" ]] && awg_v2_save="y"
     local auto_setup_3xui_save="n"
-    [[ "${AUTO_SETUP_3XUI:-}" == "1" || "${AUTO_SETUP_3XUI,,}" == "y" ]] && auto_setup_3xui_save="y"
+    v="${AUTO_SETUP_3XUI:-n}"; [[ "$v" == "1" || "${v,,}" == "y" ]] && auto_setup_3xui_save="y"
+    local node_token_save="n"
+    v="${ENABLE_NODE_TOKEN:-n}"; [[ "$v" == "1" || "${v,,}" == "y" ]] && node_token_save="y"
     local warp_save="n"
-    [[ "${ENABLE_WARP:-}" == "1" || "${ENABLE_WARP,,}" == "y" ]] && warp_save="y"
+    v="${ENABLE_WARP:-n}"; [[ "$v" == "1" || "${v,,}" == "y" ]] && warp_save="y"
     local agh_save="n"
-    [[ "${ENABLE_AGH:-}" == "1" || "${ENABLE_AGH,,}" == "y" ]] && agh_save="y"
+    v="${ENABLE_AGH:-n}"; [[ "$v" == "1" || "${v,,}" == "y" ]] && agh_save="y"
     local agh_xray_save="n"
-    [[ "${AGH_XRAY_DNS:-}" == "1" || "${AGH_XRAY_DNS,,}" == "y" ]] && agh_xray_save="y"
+    v="${AGH_XRAY_DNS:-n}"; [[ "$v" == "1" || "${v,,}" == "y" ]] && agh_xray_save="y"
 
     local _save_panel_path="${RAW_PATH:-${PANEL_PATH:-my-3x-panel}}"
     _save_panel_path="${_save_panel_path#/}"
@@ -778,6 +881,9 @@ AWG_V2_PORT="${AWG_V2_PORT:-8444}"
 
 DECOY_MODE="${DECOY_MODE:-1}"
 AUTO_SETUP_3XUI="$auto_setup_3xui_save"
+ENABLE_NODE_TOKEN="$node_token_save"
+NODE_TOKEN_NAME="${NODE_TOKEN_NAME:-}"
+NODE_TOKEN="${NODE_TOKEN:-}"
 
 ENABLE_WARP="$warp_save"
 WARP_LICENSE_KEY="${WARP_LICENSE_KEY:-}"
@@ -801,7 +907,11 @@ WEB_LISTEN="${WEB_LISTEN:-127.0.0.1}"
 SUB_LISTEN="${SUB_LISTEN:-127.0.0.1}"
 LAST_COMPLETED_STEP="${LAST_COMPLETED_STEP:-0}"
 EOF_SAVE
-    chmod 600 "$save_path"
+    chmod 600 "$save_path" 2>/dev/null || true
+    if [ "$save_path" != "/etc/setup_mask.env" ]; then
+        cp -f "$save_path" /etc/setup_mask.env 2>/dev/null || true
+        chmod 600 /etc/setup_mask.env 2>/dev/null || true
+    fi
     umask "$old_umask"
     ok "Конфигурация текущей сессии сохранена в '$save_path' (chmod 600)."
 }
@@ -814,7 +924,8 @@ prompt_default() {
     local effective_default="${cur_val:-$default_val}"
 
     if [ "$NON_INTERACTIVE" -eq 1 ]; then
-        declare -g "$var_name=$effective_default"
+        printf -v "$var_name" '%s' "$effective_default"
+        declare -g "$var_name=$effective_default" 2>/dev/null || true
         log "Параметр $var_name: ${GREEN}$effective_default${NC} (авто)"
         return 0
     fi
@@ -832,7 +943,9 @@ prompt_default() {
             return 10
         fi
     fi
-    declare -g "$var_name=${input_val:-$effective_default}"
+    local res_val="${input_val:-$effective_default}"
+    printf -v "$var_name" '%s' "$res_val"
+    declare -g "$var_name=$res_val" 2>/dev/null || true
     return 0
 }
 
@@ -845,8 +958,14 @@ prompt_yes_no() {
 
     if [ "$NON_INTERACTIVE" -eq 1 ]; then
         case "${effective_default,,}" in
-            y|yes|1|true) declare -g "$var_name=y" ;;
-            *) declare -g "$var_name=n" ;;
+            y|yes|1|true)
+                printf -v "$var_name" '%s' "y"
+                declare -g "$var_name=y" 2>/dev/null || true
+                ;;
+            *)
+                printf -v "$var_name" '%s' "n"
+                declare -g "$var_name=n" 2>/dev/null || true
+                ;;
         esac
         log "Выбор $var_name: ${GREEN}${!var_name}${NC} (авто)"
         return 0
@@ -872,8 +991,16 @@ prompt_yes_no() {
         fi
         input_val="${input_val:-$effective_default}"
         case "${input_val,,}" in
-            y|yes|1|true) declare -g "$var_name=y"; return 0 ;;
-            n|no|0|false) declare -g "$var_name=n"; return 0 ;;
+            y|yes|1|true)
+                printf -v "$var_name" '%s' "y"
+                declare -g "$var_name=y" 2>/dev/null || true
+                return 0
+                ;;
+            n|no|0|false)
+                printf -v "$var_name" '%s' "n"
+                declare -g "$var_name=n" 2>/dev/null || true
+                return 0
+                ;;
             *) warn "Пожалуйста, введите 'y' или 'n' (или 'b' для возврата назад)." ;;
         esac
     done
@@ -887,7 +1014,8 @@ prompt_secret() {
     local effective_default="${cur_val:-$default_val}"
 
     if [ "$NON_INTERACTIVE" -eq 1 ]; then
-        declare -g "$var_name=$effective_default"
+        printf -v "$var_name" '%s' "$effective_default"
+        declare -g "$var_name=$effective_default" 2>/dev/null || true
         if [ -n "$effective_default" ]; then
             log "Параметр $var_name: ${GREEN}***скрыто***${NC} (авто)"
         else
@@ -908,7 +1036,9 @@ prompt_secret() {
             return 10
         fi
     fi
-    declare -g "$var_name=${input_val:-$effective_default}"
+    local res_val="${input_val:-$effective_default}"
+    printf -v "$var_name" '%s' "$res_val"
+    declare -g "$var_name=$res_val" 2>/dev/null || true
     return 0
 }
 
@@ -998,9 +1128,16 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Автообнаружение конфигурационного файла, если путь не передан явно
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
 if [ -z "$CONFIG_FILE" ]; then
     if [ -f "./setup_mask.env" ]; then
         CONFIG_FILE="./setup_mask.env"
+        log "Автообнаружен конфигурационный файл: $CONFIG_FILE"
+    elif [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/setup_mask.env" ]; then
+        CONFIG_FILE="$SCRIPT_DIR/setup_mask.env"
+        log "Автообнаружен конфигурационный файл: $CONFIG_FILE"
+    elif [ -f "/etc/setup_mask.env" ]; then
+        CONFIG_FILE="/etc/setup_mask.env"
         log "Автообнаружен конфигурационный файл: $CONFIG_FILE"
     elif [ "$NON_INTERACTIVE" -eq 0 ] && [ -f "./.env" ]; then
         # В неинтерактивном режиме .env не загружается автоматически — только setup_mask.env
@@ -1013,8 +1150,8 @@ if [ -n "$CONFIG_FILE" ]; then
     load_env_file "$CONFIG_FILE"
 fi
 
-# Сессия всегда сохраняется в setup_mask.env (не перезаписываем исходный -c файл)
-SAVED_CONFIG_FILE="./setup_mask.env"
+# Сессия всегда сохраняется в setup_mask.env в текущей папке или рядом со скриптом
+SAVED_CONFIG_FILE="${CONFIG_FILE:-./setup_mask.env}"
 
 # =============================================================
 #  ФУНКЦИИ ДИАГНОСТИКИ, РЕЗЕРВНОГО КОПИРОВАНИЯ И SMOKE-TEST
@@ -1803,7 +1940,52 @@ if [ "$SKIP_INTERVIEW" -eq 1 ]; then
 else
     if [ "$NON_INTERACTIVE" -eq 0 ]; then
         start_background_preinstall
-        if [ "$EXPRESS_MODE" -eq 0 ] && [ "$EXPERT_MODE" -eq 0 ]; then
+        START_AT_REVIEW=0
+        if [ -n "${PRIMARY_DOMAIN:-}" ]; then
+            echo
+            echo -e "  ${YELLOW}${BOLD}Обнаружена сохраненная конфигурация предыдущей сессии!${NC}"
+            echo -e "    ${DIM}• Домен:${NC} ${GREEN}${PRIMARY_DOMAIN}${NC}  ${DIM}• Префикс сервера:${NC} ${WHITE}${SERVER_PREFIX:-Server}${NC}"
+            echo
+            echo -e "    ${CYAN}${BOLD}[1] Перейти сразу к экрану подтверждения (Review) и установке${NC} (Рекомендуется)"
+            echo -e "    ${GREEN}[2] Пошагово проверить/изменить параметры${NC} (ранее выбранные значения будут по умолчанию)"
+            echo -e "    ${RED}[3] Начать заново с чистого листа${NC}"
+            echo
+            local cfg_choice=""
+            read -rp "  Ваш выбор [1/2/3] (по умолчанию: 1): " cfg_choice </dev/tty || read -r cfg_choice || cfg_choice="1"
+            cfg_choice=$(echo "${cfg_choice:-1}" | tr -d '[:space:]')
+            case "$cfg_choice" in
+                2)
+                    EXPRESS_MODE=0
+                    EXPERT_MODE=1
+                    START_AT_REVIEW=0
+                    ok "Пошаговый режим: сохраненные значения подставлены по умолчанию."
+                    ;;
+                3)
+                    PRIMARY_DOMAIN=""
+                    SERVER_PREFIX=""
+                    ADD_WWW=""
+                    ENABLE_STEAL=""
+                    ENABLE_CLASSIC=""
+                    ENABLE_HY2=""
+                    ENABLE_AWG_V3=""
+                    ENABLE_AWG_V2=""
+                    ENABLE_AGH=""
+                    ENABLE_NODE_TOKEN=""
+                    ENABLE_WARP=""
+                    AUTO_SETUP_3XUI=""
+                    START_AT_REVIEW=0
+                    ok "Параметры сброшены. Начинаем с чистого листа."
+                    ;;
+                *)
+                    EXPRESS_MODE=0
+                    EXPERT_MODE=1
+                    START_AT_REVIEW=1
+                    ok "Переход к подтверждению конфигурации (Review)..."
+                    ;;
+            esac
+        fi
+
+        if [ -z "${PRIMARY_DOMAIN:-}" ] && [ "$EXPRESS_MODE" -eq 0 ] && [ "$EXPERT_MODE" -eq 0 ]; then
             echo -e "  ${WHITE}${BOLD}Выберите режим настройки:${NC}\n"
             echo -e "    ${CYAN}${BOLD}[1] Экспресс-установка (Рекомендуется)${NC} — Настройка в 2 вопроса"
             echo -e "        ${DIM}• Ввод только домена и email для Let's Encrypt.${NC}"
@@ -1886,6 +2068,9 @@ if [ "$EXPRESS_MODE" -eq 1 ]; then
     DECOY_MODE="1"
     SSL_ENGINE_CHOICE="1"
     AUTO_SETUP_3XUI="y"
+    ENABLE_NODE_TOKEN="${ENABLE_NODE_TOKEN:-n}"
+    NODE_TOKEN_NAME="${NODE_TOKEN_NAME:-}"
+    NODE_TOKEN="${NODE_TOKEN:-}"
     ENABLE_WARP="${ENABLE_WARP:-y}"
     WARP_LICENSE_KEY="${WARP_LICENSE_KEY:-}"
     ENABLE_AGH="${ENABLE_AGH:-y}"
@@ -2141,6 +2326,19 @@ for item in res:
         LE_EMAIL="${LE_EMAIL:-}"
         CF_AUTH_METHOD="${CF_AUTH_METHOD:-1}"
         AUTO_SETUP_3XUI="${AUTO_SETUP_3XUI:-y}"
+        if [[ "${ENABLE_NODE_TOKEN,,}" == "y" || "${ENABLE_NODE_TOKEN:-}" == "1" ]]; then
+            ENABLE_NODE_TOKEN="y"
+            if [ -z "${NODE_TOKEN_NAME:-}" ]; then
+                local def_token_name="${SERVER_PREFIX:+$SERVER_PREFIX-Node}"
+                if [[ -z "$SERVER_PREFIX" || "${SERVER_PREFIX,,}" =~ ^(-|none|off|no)$ ]]; then
+                    def_token_name="Master-Node-Cluster"
+                fi
+                NODE_TOKEN_NAME="$def_token_name"
+            fi
+        else
+            ENABLE_NODE_TOKEN="n"
+            NODE_TOKEN_NAME=""
+        fi
         if [[ "${ENABLE_WARP,,}" == "y" || "${ENABLE_WARP:-}" == "1" ]]; then
             ENABLE_WARP="y"
             WARP_LICENSE_KEY="${WARP_LICENSE_KEY:-}"
@@ -2172,7 +2370,7 @@ for item in res:
                 prompt_default "  Введите ваш основной домен" "$PRIMARY_DOMAIN" PRIMARY_DOMAIN || return $?
             else
                 echo -ne "  ${WHITE}${ARROW} Введите ваш основной домен (например, yourdomain.online) ${DIM}(b - назад)${NC}: "
-                local d_input
+                local d_input=""
                 read -r d_input </dev/tty || read -r d_input || true
                 if [[ "${d_input,,}" == "b" || "${d_input,,}" == "back" || "${d_input,,}" == "назад" ]]; then
                     warn "  Вы уже на первом шаге мастера."
@@ -2222,7 +2420,7 @@ for item in res:
             STEAL_PORTS_LIST=()
             STEAL_DOMAINS=()
 
-            local port_input
+            local port_input=""
             prompt_default "  Локальный порт Xray для Steal-Oneself" "${STEAL_PORT:-45443}" port_input || return $?
             STEAL_PORT="$port_input"
             if [[ ! "$STEAL_PORT" =~ ^[0-9]+$ ]] || [ "$STEAL_PORT" -le 0 ] || [ "$STEAL_PORT" -gt 65535 ]; then
@@ -2233,7 +2431,7 @@ for item in res:
 
             local default_steal_dom="cdn.$PRIMARY_DOMAIN"
             local cur_steal_dom="${STEAL_DOMAINS[0]:-$default_steal_dom}"
-            local s_dom_in
+            local s_dom_in=""
             prompt_default "  Поддомен для Steal-Oneself на порту $STEAL_PORT" "$cur_steal_dom" s_dom_in || return $?
             s_dom_in=$(echo "${s_dom_in:-$default_steal_dom}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
 
@@ -2248,10 +2446,10 @@ for item in res:
 
             echo ""
             [ "${SHOW_TIPS:-y}" = "y" ] && echo -e "  ${CYAN}[i]${NC} ${DIM}Одного инбаунда Steal-Oneself достаточно для всех ваших устройств.${NC}"
-            local add_more
+            local add_more=""
             prompt_yes_no "  Создать еще одно изолированное подключение (на другом порту)?" "n" add_more || return $?
             if [[ "${add_more,,}" == "y" ]]; then
-                local extra_port extra_dom
+                local extra_port="" extra_dom=""
                 prompt_default "    Второй порт Steal-Oneself" "45444" extra_port || return $?
                 prompt_default "    Второй поддомен (напр. xr.$PRIMARY_DOMAIN)" "xr.$PRIMARY_DOMAIN" extra_dom || return $?
                 extra_dom=$(echo "${extra_dom:-}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
@@ -2291,7 +2489,7 @@ for item in res:
             CLASSIC_PORTS_LIST=()
             EXT_SNI_LIST=()
 
-            local port_input
+            local port_input=""
             prompt_default "  Локальный порт Xray для Classic REALITY" "${CLASSIC_PORT:-46443}" port_input || return $?
             CLASSIC_PORT="$port_input"
             if [[ ! "$CLASSIC_PORT" =~ ^[0-9]+$ ]] || [ "$CLASSIC_PORT" -le 0 ] || [ "$CLASSIC_PORT" -gt 65535 ]; then
@@ -2335,7 +2533,7 @@ for item in res:
 
             while true; do
                 echo -ne "  ${WHITE}${ARROW} Выберите номер [1-${#scanned_snis[@]}], домен или Enter для [${GREEN}${default_classic_sni}${WHITE}] ${DIM}(b - назад)${NC}: "
-                local ext_input
+                local ext_input=""
                 read -r ext_input </dev/tty || read -r ext_input || true
                 ext_input=$(echo "${ext_input:-}" | tr -d '[:space:]')
                 if [[ "${ext_input,,}" == "b" || "${ext_input,,}" == "back" || "${ext_input,,}" == "назад" ]]; then
@@ -2639,7 +2837,7 @@ for item in res:
 
         while true; do
             echo -ne "  ${WHITE}${ARROW} Добавить дополнительный домен в сертификат? (Enter = пропустить) ${DIM}(b - назад)${NC}: "
-            local extra_d
+            local extra_d=""
             read -r extra_d </dev/tty || read -r extra_d || true
             extra_d=$(echo "${extra_d:-}" | tr -d '[:space:]')
             if [[ "${extra_d,,}" == "b" || "${extra_d,,}" == "back" || "${extra_d,,}" == "назад" ]]; then
@@ -2715,6 +2913,37 @@ for item in res:
         fi
 
         prompt_yes_no "Автоматически настроить инбаунды и пути в панели 3X-UI?" "${AUTO_SETUP_3XUI:-y}" AUTO_SETUP_3XUI || return $?
+        if [[ "${AUTO_SETUP_3XUI,,}" == "y" || "${AUTO_SETUP_3XUI:-}" == "1" ]]; then
+            AUTO_SETUP_3XUI="y"
+            if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+                echo
+                echo -e "  ${CYAN}💡 3X-UI Node:${NC} Генерация API-токена позволяет подключить этот сервер"
+                echo -e "     как ведомый узел (Node) к другой мастер-панели 3X-UI или внешней системе управления."
+                echo
+            fi
+
+            prompt_yes_no "Создать API-токен для подключения сервера как узла (3X-UI Node)?" "${ENABLE_NODE_TOKEN:-n}" ENABLE_NODE_TOKEN || return $?
+            if [[ "${ENABLE_NODE_TOKEN,,}" == "y" || "${ENABLE_NODE_TOKEN:-}" == "1" ]]; then
+                ENABLE_NODE_TOKEN="y"
+                local def_token_name="${SERVER_PREFIX:+$SERVER_PREFIX-Node}"
+                if [[ -z "$SERVER_PREFIX" || "${SERVER_PREFIX,,}" =~ ^(-|none|off|no)$ ]]; then
+                    def_token_name="Master-Node-Cluster"
+                fi
+                if [[ "${PORTS_SETUP_MODE:-1}" == "2" ]]; then
+                    prompt_default "  Имя API-токена ноды" "${NODE_TOKEN_NAME:-$def_token_name}" NODE_TOKEN_NAME || return $?
+                else
+                    NODE_TOKEN_NAME="${NODE_TOKEN_NAME:-$def_token_name}"
+                fi
+                ok "API-токен ноды будет создан с именем: ${WHITE}$NODE_TOKEN_NAME${NC}"
+            else
+                ENABLE_NODE_TOKEN="n"
+                NODE_TOKEN_NAME=""
+            fi
+        else
+            AUTO_SETUP_3XUI="n"
+            ENABLE_NODE_TOKEN="n"
+            NODE_TOKEN_NAME=""
+        fi
         return 0
     }
 
@@ -2805,6 +3034,9 @@ for item in res:
 
         local auto_3xui_str="${GREEN}Да${NC}"
         [[ "${AUTO_SETUP_3XUI,,}" == "n" || "${AUTO_SETUP_3XUI:-}" == "0" ]] && auto_3xui_str="${RED}Нет${NC}"
+        if [[ "${ENABLE_NODE_TOKEN,,}" == "y" || "${ENABLE_NODE_TOKEN:-}" == "1" ]]; then
+            auto_3xui_str="${auto_3xui_str} ${DIM}(+ Node Token: ${WHITE}${NODE_TOKEN_NAME}${DIM})${NC}"
+        fi
         echo -e "  ${CYAN}[12]${NC} ${BOLD}3X-UI автонастройка:${NC}  $auto_3xui_str"
 
         local warp_status="${RED}Отключен${NC}"
@@ -2820,12 +3052,13 @@ for item in res:
         echo
 
         while true; do
-            local choice
+            local choice=""
             echo -ne "  ${WHITE}${ARROW} Ваш выбор [${GREEN}Enter = начать${WHITE}]: ${NC}"
             read -r choice </dev/tty || read -r choice || true
             choice=$(echo "${choice:-}" | tr -d '[:space:]')
 
             if [ -z "$choice" ] || [[ "${choice,,}" == "y" ]] || [[ "${choice,,}" == "yes" ]]; then
+                save_session_state "$SAVED_CONFIG_FILE" >/dev/null 2>&1 || true
                 return 0
             fi
 
@@ -2862,28 +3095,33 @@ for item in res:
         fi
 
         WIZARD_ALLOW_BACK=1
-        CURRENT_STEP=1
+        if [ "${START_AT_REVIEW:-0}" -eq 1 ]; then
+            CURRENT_STEP=14
+            EDITING_FROM_REVIEW=1
+        else
+            CURRENT_STEP=1
+            EDITING_FROM_REVIEW=0
+        fi
         TOTAL_STEPS=14
-        EDITING_FROM_REVIEW=0
 
         while [ "$CURRENT_STEP" -le "$TOTAL_STEPS" ]; do
+            res=0
             case "$CURRENT_STEP" in
-                1) q_step_domain ;;
-                2) q_step_steal ;;
-                3) q_step_classic ;;
-                4) q_step_ports ;;
-                5) q_step_hy2 ;;
-                6) q_step_awg_v3 ;;
-                7) q_step_awg_v2 ;;
-                8) q_step_agh ;;
-                9) q_step_decoy ;;
-                10) q_step_ssl_domains ;;
-                11) q_step_ssl_engine ;;
-                12) q_step_3xui_auto ;;
-                13) q_step_warp ;;
-                14) q_step_review ;;
+                1) q_step_domain || res=$? ;;
+                2) q_step_steal || res=$? ;;
+                3) q_step_classic || res=$? ;;
+                4) q_step_ports || res=$? ;;
+                5) q_step_hy2 || res=$? ;;
+                6) q_step_awg_v3 || res=$? ;;
+                7) q_step_awg_v2 || res=$? ;;
+                8) q_step_agh || res=$? ;;
+                9) q_step_decoy || res=$? ;;
+                10) q_step_ssl_domains || res=$? ;;
+                11) q_step_ssl_engine || res=$? ;;
+                12) q_step_3xui_auto || res=$? ;;
+                13) q_step_warp || res=$? ;;
+                14) q_step_review || res=$? ;;
             esac
-            res=$?
 
             if [ "$res" -eq 10 ]; then
                 # Запрос перехода назад
@@ -4639,9 +4877,17 @@ else
             export ENABLE_AGH
             export AGH_XRAY_DNS
             export UPDATE_XRAY_CORE="${UPDATE_XRAY_CORE:-y}"
+            export ENABLE_NODE_TOKEN
+            export NODE_TOKEN_NAME
             bash "$CONFIG_EXEC" --config "$SAVED_CONFIG_FILE" -y
         }
         run_with_spinner "Автоматическая настройка базы 3X-UI и создание инбаундов" run_configure_3xui_task
+
+        if [ -f "/tmp/3xui_node_token.env" ]; then
+            source "/tmp/3xui_node_token.env" 2>/dev/null || true
+            rm -f "/tmp/3xui_node_token.env" 2>/dev/null || true
+            save_session_state "$SAVED_CONFIG_FILE" >/dev/null 2>&1 || true
+        fi
 
         # 3. Настройка службы и таймера автоматического еженедельного обновления geosite/geoip
         setup_xray_geo_timer_task() {
@@ -4898,6 +5144,9 @@ if [[ "${ENABLE_AGH,,}" == "y" || "${ENABLE_AGH:-}" == "1" ]]; then
         echo -e "  Приватный DoH для роутера:   ${GREEN}https://${PRIMARY_DOMAIN}/dns-query/${AGH_CLIENT_ID}${NC}"
     fi
 fi
+if [[ "${ENABLE_NODE_TOKEN,,}" == "y" || "${ENABLE_NODE_TOKEN:-}" == "1" ]]; then
+    echo -e "  3X-UI Node API Token:        ${GREEN}${NODE_TOKEN:-Создан в 3X-UI}${NC} (${WHITE}${NODE_TOKEN_NAME}${NC})"
+fi
 
 # Сохранение учетных данных в защищенный файл
 if [ -n "${ADMIN_PASSWORD:-}" ]; then
@@ -4922,6 +5171,20 @@ EOF_CRED
 Пароль администратора: ${AGH_PASS}
 URL DoH для роутера:   $([ "${AGH_MODE:-1}" = "2" ] && echo "https://${AGH_DOMAIN}/dns-query/${AGH_CLIENT_ID}" || echo "https://${PRIMARY_DOMAIN}/dns-query/${AGH_CLIENT_ID}")
 EOF_AGH_CRED
+    fi
+    if [[ "${ENABLE_NODE_TOKEN,,}" == "y" || "${ENABLE_NODE_TOKEN:-}" == "1" ]]; then
+        cat << EOF_NODE_CRED >> "$CRED_FILE"
+=====================================================================
+ПОДКЛЮЧЕНИЕ СЕРВЕРА КАК УЗЛА (3X-UI NODE)
+Имя узла (Node Name):  ${NODE_TOKEN_NAME}
+Адрес хоста (Host):    ${PRIMARY_DOMAIN}
+Порт (Port):           443 (HTTPS через Nginx L4/L7)
+Базовый путь:          ${PANEL_PATH}
+API Token:             ${NODE_TOKEN:-Создан в базе 3X-UI}
+Логин администратора:  ${ADMIN_USERNAME:-admin}
+Пароль администратора: ${ADMIN_PASSWORD}
+TLS сертификат:        Действительный (Let's Encrypt / acme.sh)
+EOF_NODE_CRED
     fi
     echo "=====================================================================" >> "$CRED_FILE"
     chmod 600 "$CRED_FILE" 2>/dev/null || true
@@ -5049,6 +5312,22 @@ if [[ "${ENABLE_AGH,,}" == "y" || "${ENABLE_AGH:-}" == "1" ]]; then
     echo -e "  ${YELLOW}Инструкция по настройке OpenWrt (Podkop / https-dns-proxy):${NC}"
     echo -e "    1. Services -> HTTPS DNS Proxy -> Добавить upstream"
     echo -e "    2. Custom URL: ${CYAN}${local_agh_doh_url}${NC}"
+fi
+
+if [[ "${ENABLE_NODE_TOKEN,,}" == "y" || "${ENABLE_NODE_TOKEN:-}" == "1" ]]; then
+    echo
+    echo -e "${YELLOW}ПОДКЛЮЧЕНИЕ СЕРВЕРА КАК УЗЛА (3X-UI NODE):${NC}"
+    echo -e "  - ${YELLOW}Имя узла (Node Name):${NC}       ${GREEN}${NODE_TOKEN_NAME}${NC}"
+    echo -e "  - ${YELLOW}Адрес хоста (Host):${NC}         ${CYAN}${PRIMARY_DOMAIN}${NC}"
+    echo -e "  - ${YELLOW}Порт (Port):${NC}                ${GREEN}443${NC} (HTTPS через Nginx L4/L7 маскировку)"
+    echo -e "  - ${YELLOW}Базовый путь (Base Path):${NC}   ${CYAN}${PANEL_PATH}${NC}"
+    if [ -n "${NODE_TOKEN:-}" ]; then
+        echo -e "  - ${YELLOW}API Token:${NC}                  ${GREEN}${NODE_TOKEN}${NC}"
+    else
+        echo -e "  - ${YELLOW}API Token:${NC}                  ${GREEN}Сгенерирован в базе 3X-UI${NC}"
+    fi
+    echo -e "  - ${YELLOW}Авторизация (Fallback):${NC}     Логин: ${WHITE}${ADMIN_USERNAME:-admin}${NC}, Пароль: ${YELLOW}${ADMIN_PASSWORD}${NC}"
+    echo -e "  - ${YELLOW}Проверка сертификата (TLS):${NC}  ${GREEN}Включена (Действительный сертификат Let's Encrypt)${NC}"
 fi
 echo -e "${GREEN}=====================================================================${NC}"
 

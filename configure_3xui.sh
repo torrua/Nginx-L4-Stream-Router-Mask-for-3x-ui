@@ -83,6 +83,9 @@ show_help() {
   --warp                  Включить исходящий туннель Cloudflare WARP (обход капч и AI)
   --no-warp               Отключить исходящий туннель Cloudflare WARP
   --warp-key <KEY>        Указать лицензионный ключ WARP+
+  --node-token            Создать API-токен для подключения сервера как узла (3X-UI Node)
+  --no-node-token         Не создавать API-токен для подключения сервера как узла
+  --node-token-name <NAME> Название API-токена ноды (по умолчанию: <SERVER_PREFIX>-Node)
   -y, --yes               Неинтерактивное выполнение (без подтверждений)
   -h, --help              Показать эту справку и выйти
 
@@ -103,6 +106,8 @@ FORCE_REMARKS=0
 NON_INTERACTIVE=0
 CLI_ENABLE_WARP=""
 CLI_WARP_KEY=""
+CLI_ENABLE_NODE_TOKEN=""
+CLI_NODE_TOKEN_NAME=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -139,6 +144,19 @@ while [[ $# -gt 0 ]]; do
         --warp-key)
             [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: лицензионный ключ WARP+."
             CLI_WARP_KEY="$2"
+            shift 2
+            ;;
+        --node-token)
+            CLI_ENABLE_NODE_TOKEN="y"
+            shift
+            ;;
+        --no-node-token)
+            CLI_ENABLE_NODE_TOKEN="n"
+            shift
+            ;;
+        --node-token-name)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: имя API-токена ноды."
+            CLI_NODE_TOKEN_NAME="$2"
             shift 2
             ;;
         -y|--yes|--non-interactive)
@@ -238,6 +256,22 @@ AWG_RANDOM_TRAILERS="${AWG_RANDOM_TRAILERS:-true}"
 
 ENABLE_WARP="${CLI_ENABLE_WARP:-${ENABLE_WARP:-n}}"
 WARP_LICENSE_KEY="${CLI_WARP_KEY:-${WARP_LICENSE_KEY:-}}"
+
+ENABLE_NODE_TOKEN="${CLI_ENABLE_NODE_TOKEN:-${ENABLE_NODE_TOKEN:-n}}"
+NODE_TOKEN_NAME="${CLI_NODE_TOKEN_NAME:-${NODE_TOKEN_NAME:-}}"
+NODE_TOKEN="${NODE_TOKEN:-}"
+
+if [[ "${ENABLE_NODE_TOKEN,,}" == "y" || "${ENABLE_NODE_TOKEN:-}" == "1" ]]; then
+    ENABLE_NODE_TOKEN="y"
+    if [ -z "$NODE_TOKEN_NAME" ]; then
+        local_prefix="${SERVER_PREFIX:-}"
+        if [[ -z "$local_prefix" || "${local_prefix,,}" =~ ^(-|none|off|no)$ ]]; then
+            NODE_TOKEN_NAME="Master-Node-Cluster"
+        else
+            NODE_TOKEN_NAME="${local_prefix}-Node"
+        fi
+    fi
+fi
 
 # Определение системного часового пояса
 SYSTEM_TZ=""
@@ -1792,19 +1826,20 @@ EOF_PYTHON_CONFIG
 if [ "$DRY_RUN" -eq 0 ]; then
     chmod 644 "$DB_PATH" 2>/dev/null || true
 
+    # Обнаружение исполняемого файла CLI 3X-UI
+    XUI_BIN=""
+    for candidate in "/usr/local/x-ui/x-ui" "/usr/bin/x-ui" "/usr/local/bin/x-ui"; do
+        if [ -x "$candidate" ]; then
+            XUI_BIN="$candidate"
+            break
+        fi
+    done
+    if [ -z "$XUI_BIN" ] && command -v x-ui >/dev/null 2>&1; then
+        XUI_BIN="$(command -v x-ui)"
+    fi
+
     # Синхронизация учетных данных администратора через нативный CLI 3X-UI (bcrypt + сброс login_epoch)
     if [ -n "${ADMIN_USERNAME:-}" ] || [ -n "${ADMIN_PASSWORD:-}" ]; then
-        XUI_BIN=""
-        for candidate in "/usr/local/x-ui/x-ui" "/usr/bin/x-ui" "/usr/local/bin/x-ui"; do
-            if [ -x "$candidate" ]; then
-                XUI_BIN="$candidate"
-                break
-            fi
-        done
-        if [ -z "$XUI_BIN" ] && command -v x-ui >/dev/null 2>&1; then
-            XUI_BIN="$(command -v x-ui)"
-        fi
-
         if [ -n "$XUI_BIN" ]; then
             xui_user_args=()
             [ -n "${ADMIN_USERNAME:-}" ] && xui_user_args+=("-username" "$ADMIN_USERNAME")
@@ -1815,6 +1850,95 @@ if [ "$DRY_RUN" -eq 0 ]; then
             else
                 warn "Предупреждение при вызове '$XUI_BIN setting': $(cat /tmp/xui_setting.log 2>/dev/null)"
             fi
+        fi
+    fi
+
+    # Генерация API-токена ноды (3X-UI Node)
+    if [[ "${ENABLE_NODE_TOKEN,,}" == "y" || "${ENABLE_NODE_TOKEN:-}" == "1" ]]; then
+        log "Генерация API-токена для подключения сервера как узла ('$NODE_TOKEN_NAME')..."
+        NODE_TOKEN=""
+        if [ -n "$XUI_BIN" ]; then
+            # 1. Попытка с флагом -tokenName (PR #6405 / новые версии 3X-UI)
+            token_out=$("$XUI_BIN" setting -getApiToken -tokenName "$NODE_TOKEN_NAME" 2>&1 || true)
+            NODE_TOKEN=$(echo "$token_out" | grep -Eo 'apiToken: [^ ]+' | awk '{print $2}' || true)
+
+            # 2. Если флаг -tokenName не поддерживается, вызываем без него и обновляем имя в SQLite
+            if [ -z "$NODE_TOKEN" ]; then
+                token_out=$("$XUI_BIN" setting -getApiToken 2>&1 || true)
+                NODE_TOKEN=$(echo "$token_out" | grep -Eo 'apiToken: [^ ]+' | awk '{print $2}' || true)
+                if [ -n "$NODE_TOKEN" ] && [ -f "$DB_PATH" ]; then
+                    "$PYTHON_CMD" -c "
+import sqlite3
+try:
+    conn = sqlite3.connect('$DB_PATH')
+    cur = conn.cursor()
+    cur.execute(\"UPDATE api_tokens SET name = ? WHERE name IN ('install', 'cli-fallback')\", ('$NODE_TOKEN_NAME',))
+    conn.commit()
+    conn.close()
+except Exception:
+    pass
+" 2>/dev/null || true
+                fi
+            fi
+        fi
+
+        # 3. Резервный Python-метод, если CLI не вернул токен
+        if [ -z "$NODE_TOKEN" ] && [ -f "$DB_PATH" ]; then
+            NODE_TOKEN=$("$PYTHON_CMD" -c "
+import sqlite3, secrets, hashlib
+try:
+    conn = sqlite3.connect('$DB_PATH')
+    cur = conn.cursor()
+    cur.execute(\"SELECT name FROM sqlite_master WHERE type='table' AND name='api_tokens'\")
+    if cur.fetchone():
+        plain_token = secrets.token_hex(32)
+        token_hash = hashlib.sha256(plain_token.encode('utf-8')).hexdigest()
+        cur.execute(\"SELECT id FROM api_tokens WHERE name = ?\", ('$NODE_TOKEN_NAME',))
+        row = cur.fetchone()
+        if row:
+            cur.execute(\"UPDATE api_tokens SET token = ?, enabled = 1 WHERE id = ?\", (token_hash, row[0]))
+        else:
+            cur.execute(\"INSERT INTO api_tokens (name, token, enabled) VALUES (?, ?, 1)\", ('$NODE_TOKEN_NAME', token_hash))
+        conn.commit()
+        conn.close()
+        print(plain_token)
+    else:
+        conn.close()
+except Exception:
+    pass
+" 2>/dev/null || true)
+        fi
+
+        if [ -n "$NODE_TOKEN" ]; then
+            ok "API-токен ноды '$NODE_TOKEN_NAME' успешно сгенерирован!"
+            # Экспорт для setup_mask.sh
+            cat << EOF_NODE_ENV > /tmp/3xui_node_token.env
+ENABLE_NODE_TOKEN="y"
+NODE_TOKEN_NAME="$NODE_TOKEN_NAME"
+NODE_TOKEN="$NODE_TOKEN"
+EOF_NODE_ENV
+            chmod 600 /tmp/3xui_node_token.env 2>/dev/null || true
+
+            # Сохранение в .env файл, если он указан
+            if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
+                if grep -q "^ENABLE_NODE_TOKEN=" "$CONFIG_FILE"; then
+                    sed -i "s/^ENABLE_NODE_TOKEN=.*/ENABLE_NODE_TOKEN=\"y\"/" "$CONFIG_FILE"
+                else
+                    echo 'ENABLE_NODE_TOKEN="y"' >> "$CONFIG_FILE"
+                fi
+                if grep -q "^NODE_TOKEN_NAME=" "$CONFIG_FILE"; then
+                    sed -i "s/^NODE_TOKEN_NAME=.*/NODE_TOKEN_NAME=\"$NODE_TOKEN_NAME\"/" "$CONFIG_FILE"
+                else
+                    echo "NODE_TOKEN_NAME=\"$NODE_TOKEN_NAME\"" >> "$CONFIG_FILE"
+                fi
+                if grep -q "^NODE_TOKEN=" "$CONFIG_FILE"; then
+                    sed -i "s/^NODE_TOKEN=.*/NODE_TOKEN=\"$NODE_TOKEN\"/" "$CONFIG_FILE"
+                else
+                    echo "NODE_TOKEN=\"$NODE_TOKEN\"" >> "$CONFIG_FILE"
+                fi
+            fi
+        else
+            warn "Не удалось автоматически создать API-токен ноды в 3X-UI."
         fi
     fi
 
@@ -1947,6 +2071,10 @@ else
     if [ -n "${UNIFIED_AWG_HPK:-}" ]; then
         echo -e "  - ${BOLD}AmneziaWG v3.1 HPK:${NC}     ${YELLOW}${UNIFIED_AWG_HPK}${NC} (UDP :${UNIFIED_AWG_PORT:-8443})"
     fi
+    if [[ "${ENABLE_NODE_TOKEN,,}" == "y" || "${ENABLE_NODE_TOKEN:-}" == "1" ]] && [ -n "${NODE_TOKEN:-}" ]; then
+        echo -e "  - ${BOLD}3X-UI Node API:${NC}         ${GREEN}${NODE_TOKEN_NAME}${NC} (Host: ${CYAN}${PRIMARY_DOMAIN}:443${NC}, Path: ${CYAN}/${PANEL_PATH#/}/${NC})"
+        echo -e "  - ${BOLD}API Bearer Token:${NC}       ${YELLOW}${NODE_TOKEN}${NC}"
+    fi
 fi
 
 # Сохранение учетных данных в защищенный файл
@@ -1966,7 +2094,8 @@ $([ -n "$INSTALLED_XRAY_VER" ] && echo "Ядро Xray-core:        ${INSTALLED_X
 Канал подписок:        https://${PRIMARY_DOMAIN}/${SUB_PATH}/
 Прямая ссылка подписки: https://${PRIMARY_DOMAIN}/${SUB_PATH}/${UNIFIED_SUB_ID}
 $([ -n "${UNIFIED_AWG_HPK:-}" ] && echo "AmneziaWG v3.1 HPK:    ${UNIFIED_AWG_HPK} (UDP :${UNIFIED_AWG_PORT:-8443})")
-(Объединяет все 6 конфигураций: Steal REALITY, Classic REALITY, xHTTP, Hysteria 2, AWG v3, AWG v2)
+$([ -n "${NODE_TOKEN:-}" ] && printf "3X-UI Node Token:      %s\nИмя ноды (Node Name):  %s (Host: %s:443, Path: /%s/)\n" "${NODE_TOKEN}" "${NODE_TOKEN_NAME}" "${PRIMARY_DOMAIN}" "${PANEL_PATH#/}")
+(Объединяет все конфигурации: Steal REALITY, Classic REALITY, xHTTP, Hysteria 2, AWG v3, AWG v2)
 =====================================================================
 EOF_CRED
     chmod 600 "$CRED_FILE" 2>/dev/null || true

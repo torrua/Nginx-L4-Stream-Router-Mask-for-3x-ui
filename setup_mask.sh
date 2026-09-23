@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # ==============================================================================
-# Production AutoSetup: Hardened Engine v7.1.0 Universal (Public Edition)
+# Production AutoSetup: Hardened Engine v7.1.1 Universal (Public Edition)
 # Nginx L4 Stream + 3X-UI + Unix Sockets + Native proxy_http_version 2 + 3 Decoys
 # ==============================================================================
 # Архитектура:
@@ -27,7 +27,7 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="v7.1.0"
+SCRIPT_VERSION="v7.1.1"
 
 # --------------------------- Замеры времени и телеметрия ---------------------------
 SCRIPT_START_TIME=$(date +%s)
@@ -419,7 +419,7 @@ generate_config_template() {
     local target_file="${1:-setup_mask.env.example}"
     cat << 'EOF_CONF' > "$target_file"
 # ==============================================================================
-# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v7.1.0 Universal)
+# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v7.1.1 Universal)
 # ==============================================================================
 # Данный файл позволяет выполнять полностью автоматическую установку:
 # ./setup_mask.sh --config setup_mask.env --non-interactive --force
@@ -2363,13 +2363,15 @@ for item in res:
 
         prompt_yes_no "Включить Steal-Oneself REALITY?" "${ENABLE_STEAL:-y}" ENABLE_STEAL || return $?
 
-        if [[ "${ENABLE_STEAL,,}" == "y" || "${ENABLE_STEAL:-}" == "1" ]]; then
+        if is_true "${ENABLE_STEAL:-y}"; then
             STEAL_ENABLED=1
+            local old_steal_dom="${STEAL_DOMAINS[0]:-${STEAL_DOMAINS_STR:-cdn.$PRIMARY_DOMAIN}}"
+            local old_steal_port="${STEAL_PORTS_LIST[0]:-${STEAL_PORT:-45443}}"
             STEAL_PORTS_LIST=()
             STEAL_DOMAINS=()
 
             local port_input=""
-            prompt_default "  Локальный порт Xray для Steal-Oneself" "${STEAL_PORT:-45443}" port_input || return $?
+            prompt_default "  Локальный порт Xray для Steal-Oneself" "$old_steal_port" port_input || return $?
             STEAL_PORT="$port_input"
             if [[ ! "$STEAL_PORT" =~ ^[0-9]+$ ]] || [ "$STEAL_PORT" -le 0 ] || [ "$STEAL_PORT" -gt 65535 ]; then
                 warn "  Некорректный номер порта. Установлен порт по умолчанию: 45443."
@@ -2377,15 +2379,13 @@ for item in res:
             fi
             STEAL_PORTS_LIST+=("$STEAL_PORT")
 
-            local default_steal_dom="cdn.$PRIMARY_DOMAIN"
-            local cur_steal_dom="${STEAL_DOMAINS[0]:-$default_steal_dom}"
             local s_dom_in=""
-            prompt_default "  Поддомен для Steal-Oneself на порту $STEAL_PORT" "$cur_steal_dom" s_dom_in || return $?
-            s_dom_in=$(echo "${s_dom_in:-$default_steal_dom}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+            prompt_default "  Домен/поддомен для Steal-Oneself на порту $STEAL_PORT" "$old_steal_dom" s_dom_in || return $?
+            s_dom_in=$(echo "${s_dom_in:-$old_steal_dom}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
 
             if [[ ! "$s_dom_in" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; then
-                warn "  Некорректный синтаксис домена '$s_dom_in'. Использован $default_steal_dom."
-                s_dom_in="$default_steal_dom"
+                warn "  Некорректный синтаксис домена '$s_dom_in'. Использован $old_steal_dom."
+                s_dom_in="$old_steal_dom"
             fi
 
             STEAL_DOMAINS=("$s_dom_in")
@@ -5072,7 +5072,7 @@ post_install_sanity_check
 
 echo
 echo -e "${GREEN}=====================================================================${NC}"
-echo -e "   ИНФРАСТРУКТУРА УСПЕШНО РАЗВЕРНУТА (v7.1.0 PUBLIC EDITION)!       "
+echo -e "   ИНФРАСТРУКТУРА УСПЕШНО РАЗВЕРНУТА (v7.1.1 PUBLIC EDITION)!       "
 echo -e "${GREEN}=====================================================================${NC}"
 echo -e "  Главная страница:            ${CYAN}https://${PRIMARY_DOMAIN}/${NC} (${DECOY_NAME})"
 echo -e "  Вход в панель 3X-UI:         ${GREEN}https://${PRIMARY_DOMAIN}${PANEL_PATH}${NC}"

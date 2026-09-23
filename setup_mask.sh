@@ -1950,7 +1950,7 @@ else
             echo -e "    ${GREEN}[2] Пошагово проверить/изменить параметры${NC} (ранее выбранные значения будут по умолчанию)"
             echo -e "    ${RED}[3] Начать заново с чистого листа${NC}"
             echo
-            local cfg_choice=""
+            cfg_choice=""
             read -rp "  Ваш выбор [1/2/3] (по умолчанию: 1): " cfg_choice </dev/tty || read -r cfg_choice || cfg_choice="1"
             cfg_choice=$(echo "${cfg_choice:-1}" | tr -d '[:space:]')
             case "$cfg_choice" in
@@ -3133,7 +3133,7 @@ for item in res:
                 else
                     if [ "$EXPERT_MODE" -eq 0 ]; then
                         echo
-                        local old_back="$WIZARD_ALLOW_BACK"
+                        old_back="$WIZARD_ALLOW_BACK"
                         WIZARD_ALLOW_BACK=0
                         prompt_yes_no "Показывать подробные пояснения и подсказки к каждому шагу?" "${SHOW_TIPS:-y}" SHOW_TIPS
                         WIZARD_ALLOW_BACK="$old_back"

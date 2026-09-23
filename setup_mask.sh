@@ -498,11 +498,17 @@ AWG_V3_PORT="8443"
 # Защита заголовков Handshake (пусто = автогенерация 32-байтного ключа, 'none' = выкл)
 AWG_HEADER_PROTECTION_KEY=""
 # Рандомизация хвостов пакетов против анализа длины трафика WireGuard [true/false]
-AWG_RANDOM_TRAILERS="true"
+AWG_RANDOM_TRAILERS="false"
 
 # AmneziaWG v2.0 / Legacy (Для роутеров) [y/n]
 ENABLE_AWG_V2="y"
 AWG_V2_PORT="8444"
+
+# Настройки сети и DNS для клиентов AmneziaWG:
+AWG_PRIMARY_DNS="9.9.9.9"
+AWG_SECONDARY_DNS="76.76.2.0"
+AWG_SUBNET_IP="10.8.0.0"
+AWG_SUBNET_CIDR="22"
 
 # --- 5. САЙТ-МАСКИРОВКА (DECOY FRONT) ---
 # 1 = DataSphere Analytics Enterprise (SPA с живой телеметрией)
@@ -891,10 +897,15 @@ HY2_PORT_HOPPING_RANGE="${HY2_PORT_HOPPING_RANGE:-20000:50000}"
 ENABLE_AWG_V3="$awg_v3_save"
 AWG_V3_PORT="${AWG_V3_PORT:-8443}"
 AWG_HEADER_PROTECTION_KEY="${AWG_HEADER_PROTECTION_KEY:-}"
-AWG_RANDOM_TRAILERS="${AWG_RANDOM_TRAILERS:-true}"
+AWG_RANDOM_TRAILERS="${AWG_RANDOM_TRAILERS:-false}"
 
 ENABLE_AWG_V2="$awg_v2_save"
 AWG_V2_PORT="${AWG_V2_PORT:-8444}"
+
+AWG_PRIMARY_DNS="${AWG_PRIMARY_DNS:-9.9.9.9}"
+AWG_SECONDARY_DNS="${AWG_SECONDARY_DNS:-76.76.2.0}"
+AWG_SUBNET_IP="${AWG_SUBNET_IP:-10.8.0.0}"
+AWG_SUBNET_CIDR="${AWG_SUBNET_CIDR:-22}"
 
 DECOY_MODE="${DECOY_MODE:-1}"
 AUTO_SETUP_3XUI="$auto_setup_3xui_save"
@@ -4829,6 +4840,11 @@ else
             export UPDATE_XRAY_CORE="${UPDATE_XRAY_CORE:-y}"
             export ENABLE_NODE_TOKEN
             export NODE_TOKEN_NAME
+            export AWG_PRIMARY_DNS
+            export AWG_SECONDARY_DNS
+            export AWG_SUBNET_IP
+            export AWG_SUBNET_CIDR
+            export AWG_RANDOM_TRAILERS
             bash "$CONFIG_EXEC" --config "$SAVED_CONFIG_FILE" -y
         }
         run_with_spinner "Автоматическая настройка базы 3X-UI и создание инбаундов" run_configure_3xui_task
@@ -5190,19 +5206,19 @@ echo -e "    * Порядок в подписке: ${GREEN}1${NC} | Порт: ${
 echo -e "    * Общий расход: ${GREEN}0${NC} | Сброс трафика: ${GREEN}Никогда${NC}"
 echo -e "  - ${YELLOW}Вкладка «Протокол»:${NC}"
 echo -e "    * Ключи: нажать ${CYAN}«Сгенерировать»${NC} (иконка обновления рядом с приватным ключом)"
-echo -e "    * Сеть: Подсеть: ${GREEN}10.8.1.0${NC} | Маска подсети (CIDR): ${GREEN}24${NC} | MTU: ${GREEN}1360${NC}"
-echo -e "    * DNS: Основной DNS: ${GREEN}8.8.8.8${NC} | Резервный DNS: ${GREEN}8.8.4.4${NC}"
+echo -e "    * Сеть: Подсеть: ${GREEN}10.8.0.0${NC} | Маска подсети (CIDR): ${GREEN}22${NC} | MTU: ${GREEN}1280${NC}"
+echo -e "    * DNS: Основной DNS: ${GREEN}9.9.9.9${NC} | Резервный DNS: ${GREEN}76.76.2.0${NC}"
 echo -e "    * Внешний интерфейс: ${GREEN}eth0${NC} (или оставить пустым) | Включить IPv6: ${RED}Выключить${NC}"
 echo -e "  - ${YELLOW}Параметры обфускации:${NC}"
-echo -e "    * Мусорные пакеты: ${CYAN}Jc = 4${NC}, ${CYAN}Jmin = 50${NC}, ${CYAN}Jmax = 160${NC}"
-echo -e "    * Мусорные смещения: ${CYAN}S1 = 45${NC}, ${CYAN}S2 = 60${NC}, ${CYAN}S3 = 24${NC}, ${CYAN}S4 = 16${NC}"
+echo -e "    * Мусорные пакеты: ${CYAN}Jc = 2${NC}, ${CYAN}Jmin = 20${NC}, ${CYAN}Jmax = 50${NC}"
+echo -e "    * Мусорные смещения: ${CYAN}S1 = 16${NC}, ${CYAN}S2 = 20${NC}, ${CYAN}S3 = 24${NC}, ${CYAN}S4 = 16${NC}"
 echo -e "    * Заголовки ${CYAN}H1 - H4${NC}: ${GREEN}Оставить ПУСТЫМИ${NC} (по умолчанию 1/2/3/4)"
 echo -e "    * Сигнатурные пакеты ${CYAN}I1 - I5${NC}: ${GREEN}Оставить ПУСТЫМИ${NC}"
 echo -e "    * Защита заголовков (${CYAN}HeaderProtectionKey${NC}): ${GREEN}Авто (32 байта base64)${NC} (шифрование handshake против ТСПУ)"
-echo -e "    * Паддинг содержимого (${CYAN}ContentPaddingAddition${NC}): ${GREEN}3-16${NC}"
-echo -e "    * Тайминги ключей: ${CYAN}RekeyAfterTime = 107-135${NC}, ${CYAN}RekeyTimeout = 3-4${NC}, ${CYAN}RejectAfterTime = 178-211${NC}"
-echo -e "    * Тайминги соединения: ${CYAN}KeepaliveTimeout = 8-10${NC}, ${CYAN}MaxHandshakeAttempts = 21-26${NC}"
-echo -e "    * Переключатели: ${CYAN}RandomTrailers:${NC} ${GREEN}Включить (ON)${NC} | ${CYAN}DisableCookies:${NC} ${GREEN}Включить${NC}"
+echo -e "    * Паддинг содержимого (${CYAN}ContentPaddingAddition${NC}): ${GREEN}ПУСТО (Выключено)${NC}"
+echo -e "    * Тайминги ключей: ${CYAN}RekeyAfterTime = 120-180${NC}, ${CYAN}RekeyTimeout = 3-4${NC}, ${CYAN}RejectAfterTime = 180-210${NC}"
+echo -e "    * Тайминги соединения: ${CYAN}KeepaliveTimeout = 15-20${NC}, ${CYAN}MaxHandshakeAttempts = 20-25${NC}"
+echo -e "    * Переключатели: ${CYAN}RandomTrailers:${NC} ${RED}Выключить (OFF, критично для скорости!)${NC} | ${CYAN}DisableCookies:${NC} ${GREEN}Включить${NC}"
 echo
 fi
 
@@ -5212,8 +5228,8 @@ echo -e "  - ${YELLOW}Вкладка «Основное»:${NC} Протокол
 echo -e "  - ${YELLOW}Вкладка «Параметры AWG» (Для роутеров Keenetic / OpenWrt и старых клиентов):${NC}"
 echo -e "    * ${CYAN}H1-H4 (Строки):${NC} ${GREEN}\"149419586\", \"878791997\", \"1251051976\", \"1657628296\"${NC}"
 echo -e "    * ${CYAN}HeaderProtectionKey:${NC} ${RED}ПУСТО (Выключено)${NC}"
-echo -e "    * ${CYAN}Смещения (>= 12):${NC} ${GREEN}S1 = 45, S2 = 60, S3 = 24, S4 = 16${NC}"
-echo -e "    * ${CYAN}Junk packets:${NC} ${GREEN}Jc = 4, Jmin = 50, Jmax = 160${NC} | ${CYAN}MTU:${NC} ${GREEN}1360${NC}"
+echo -e "    * ${CYAN}Смещения (>= 12):${NC} ${GREEN}S1 = 16, S2 = 20, S3 = 24, S4 = 16${NC}"
+echo -e "    * ${CYAN}Junk packets:${NC} ${GREEN}Jc = 2, Jmin = 20, Jmax = 50${NC} | ${CYAN}MTU:${NC} ${GREEN}1280${NC}"
 echo
 fi
 

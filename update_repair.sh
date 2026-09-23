@@ -258,9 +258,11 @@ export HY2_PORT="${HY2_PORT:-443}"
 export ENABLE_AWG_V3="${ENABLE_AWG_V3:-y}"
 export AWG_V3_PORT="${AWG_V3_PORT:-8443}"
 export AWG_HEADER_PROTECTION_KEY="${AWG_HEADER_PROTECTION_KEY:-}"
-export AWG_RANDOM_TRAILERS="${AWG_RANDOM_TRAILERS:-true}"
+export AWG_RANDOM_TRAILERS="${AWG_RANDOM_TRAILERS:-false}"
 export ENABLE_AWG_V2="${ENABLE_AWG_V2:-y}"
 export AWG_V2_PORT="${AWG_V2_PORT:-8444}"
+export AWG_PRIMARY_DNS="${AWG_PRIMARY_DNS:-9.9.9.9}"
+export AWG_SECONDARY_DNS="${AWG_SECONDARY_DNS:-76.76.2.0}"
 export SSL_ENGINE_CHOICE="${SSL_ENGINE_CHOICE:-1}"
 
 # Определение системного часового пояса
@@ -359,7 +361,9 @@ hy2_port = int(os.environ.get("HY2_PORT") or "443")
 enable_awg_v3 = os.environ.get("ENABLE_AWG_V3", "y").lower() in ("1", "y", "true")
 awg_v3_port = int(os.environ.get("AWG_V3_PORT") or "8443")
 awg_hpk_env = os.environ.get("AWG_HEADER_PROTECTION_KEY", "").strip()
-awg_random_trailers_env = os.environ.get("AWG_RANDOM_TRAILERS", "true").strip().lower() in ("1", "y", "true")
+awg_random_trailers_env = os.environ.get("AWG_RANDOM_TRAILERS", "false").strip().lower() in ("1", "y", "true")
+awg_primary_dns = os.environ.get("AWG_PRIMARY_DNS") or "9.9.9.9"
+awg_secondary_dns = os.environ.get("AWG_SECONDARY_DNS") or "76.76.2.0"
 
 enable_awg_v2 = os.environ.get("ENABLE_AWG_V2", "y").lower() in ("1", "y", "true")
 awg_v2_port = int(os.environ.get("AWG_V2_PORT") or "8444")
@@ -740,15 +744,27 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
         for param in ["jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "h1", "h2", "h3", "h4", "headerProtectionKey", "randomTrailers", "disableCookies", "mtu", "subnetIp", "subnetCidr"]:
             if param in cur_srv:
                 target_settings["server"][param] = cur_srv[param]
-        if cur_srv.get("headerProtectionKey"):
-            preserved.append("HeaderProtectionKey AWG")
-        if cur_srv.get("randomTrailers") is not None:
-            preserved.append("randomTrailers AWG")
+        # Аудит и скоростная оптимизация AmneziaWG (v3.1 и v2.0):
+        # 1. Ликвидация бага 100-кратного падения скорости от RandomTrailers
+        force_rt = os.environ.get("AWG_FORCE_RANDOM_TRAILERS", "").strip().lower() in ("1", "y", "true")
+        if target_settings["server"].get("randomTrailers") and not force_rt and not awg_random_trailers_env:
+            target_settings["server"]["randomTrailers"] = False
+            repairs.append("отключен randomTrailers (устранение критической 100-кратной просадки скорости)")
 
-        # Защитный аудит AmneziaWG 3.0+: S1, S2, S3, S4 должны быть >= 12 при активном HeaderProtectionKey
+        # 2. Фиксация безопасного MTU 1280 (устранение PMTU blackhole и сотовой фрагментации)
+        cur_mtu = target_settings["server"].get("mtu")
+        try:
+            cur_mtu_int = int(cur_mtu) if cur_mtu is not None else 1280
+        except (TypeError, ValueError):
+            cur_mtu_int = 1280
+        if cur_mtu_int > 1280:
+            target_settings["server"]["mtu"] = 1280
+            repairs.append(f"исправлен MTU={cur_mtu_int} -> 1280 (защита от сотовой фрагментации)")
+
+        # 3. Аудит смещений S1-S4: должны быть >= 12 при активном HeaderProtectionKey
         has_hpk = bool(target_settings["server"].get("headerProtectionKey"))
         if has_hpk:
-            s_defaults = {"s1": 45, "s2": 60, "s3": 24, "s4": 16}
+            s_defaults = {"s1": 16, "s2": 20, "s3": 24, "s4": 16}
             for s_param, min_val in [("s1", 12), ("s2", 12), ("s3", 12), ("s4", 12)]:
                 val = target_settings["server"].get(s_param)
                 try:
@@ -758,6 +774,25 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
                 if val_int < min_val:
                     target_settings["server"][s_param] = s_defaults[s_param]
                     repairs.append(f"исправлен {s_param}={val} -> {s_defaults[s_param]} (защита AWG 3.0+ от зависания handshake)")
+
+        # 4. Оптимизация мусорных пакетов Jc / Jmin / Jmax (ускорение инициализации сессии)
+        cur_jc = target_settings["server"].get("jc")
+        if cur_jc is not None:
+            try:
+                if int(cur_jc) > 2:
+                    target_settings["server"]["jc"] = 2
+                    repairs.append(f"оптимизирован Jc={cur_jc} -> 2 (ускорение handshake)")
+            except (TypeError, ValueError):
+                target_settings["server"]["jc"] = 2
+        cur_jmax = target_settings["server"].get("jmax")
+        if cur_jmax is not None:
+            try:
+                if int(cur_jmax) > 50:
+                    target_settings["server"]["jmin"] = 20
+                    target_settings["server"]["jmax"] = 50
+                    repairs.append("оптимизированы Jmin=20, Jmax=50 (снижение оверхеда канала)")
+            except (TypeError, ValueError):
+                pass
 
     # Е. Проверка и сохранение externalProxy (:443 и кастомных доменов узлов)
     cur_ext = cur_stream.get("externalProxy", [])
@@ -883,15 +918,15 @@ if enable_awg_v3:
             "allowedIPs": ["10.8.1.2/32"], "email": "Client-1", "enable": True
         }],
         "server": {
-            "contentPaddingAddition": "3-16", "disableCookies": True,
-            "h1": "", "h2": "", "h3": "", "h4": "", "jc": 3, "jmax": 80, "jmin": 40,
-            "keepaliveTimeout": "10", "maxHandshakeAttempts": "20", "mtu": 1280,
-            "primaryDns": "76.76.2.0", "secondaryDns": "76.76.10.0",
+            "disableCookies": True,
+            "h1": "", "h2": "", "h3": "", "h4": "", "jc": 2, "jmax": 50, "jmin": 20,
+            "keepaliveTimeout": "15-20", "maxHandshakeAttempts": "20-25", "mtu": 1280,
+            "primaryDns": awg_primary_dns, "secondaryDns": awg_secondary_dns,
             "privateKey": def_wg_s_priv, "publicKey": def_wg_s_pub,
             "headerProtectionKey": def_wg_hpk,
             "randomTrailers": awg_random_trailers_env,
-            "rejectAfterTime": "180", "rekeyAfterTime": "120",
-            "rekeyTimeout": "3", "s1": 45, "s2": 60, "s3": 24, "s4": 16,
+            "rejectAfterTime": "180-210", "rekeyAfterTime": "120-180",
+            "rekeyTimeout": "3-4", "s1": 16, "s2": 20, "s3": 24, "s4": 16,
             "subnetCidr": 22, "subnetIp": "10.8.0.0"
         }
     }
@@ -907,9 +942,9 @@ if enable_awg_v2:
         }],
         "server": {
             "h1": "149419586", "h2": "878791997", "h3": "1251051976", "h4": "1657628296",
-            "jc": 4, "jmax": 160, "jmin": 50, "mtu": 1360, "primaryDns": "8.8.8.8",
+            "jc": 2, "jmax": 50, "jmin": 20, "mtu": 1280, "primaryDns": awg_primary_dns, "secondaryDns": awg_secondary_dns,
             "privateKey": def_wg_s_priv, "publicKey": def_wg_s_pub,
-            "s1": 45, "s2": 60, "s3": 24, "s4": 16, "subnetCidr": 24, "subnetIp": "10.8.2.0"
+            "s1": 16, "s2": 20, "s3": 24, "s4": 16, "subnetCidr": 24, "subnetIp": "10.8.2.0"
         }
     }
     a2_str = {"externalProxy": [{"dest": domain, "port": awg_v2_port, "remark": "AmneziaWG v2.0"}]}

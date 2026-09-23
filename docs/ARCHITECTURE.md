@@ -132,13 +132,13 @@ net.ipv6.conf.lo.disable_ipv6 = 1
   * **Скрытный режим по умолчанию (Stealth Mode):** Для исключения видимости сервера в сетевых сканерах (Censys, Shodan) механизм Port Hopping по умолчанию **отключен** (`HY2_PORT_HOPPING=n`), сервер принимает трафик исключительно на стандартном порту `443/udp`.
   * **Опциональный Port Hopping (`20000:50000/udp`):** Может быть включен в мастере настройки при необходимости обхода агрессивного UDP-шейпинга сотовых операторов (открывает диапазон в UFW и генерирует диапазоны портов в ссылках клиентов).
 * **AmneziaWG (AWG v3.1 / v2.0):**
-  * Параметры обфускации: Junk-пакеты `Jc=3`, `Jmin=40`, `Jmax=80`.
-  * Длины сигнатур: `S1=45, S2=60, S3=24, S4=16` (соблюдение жесткого правила AWG 3.0+ $S1..S4 \ge 12$).
+  * Параметры обфускации: Junk-пакеты `Jc=2`, `Jmin=20`, `Jmax=50` (минимизация задержки и накладных расходов).
+  * Длины сигнатур: `S1=16, S2=20, S3=24, S4=16` (соблюдение жесткого правила AWG 3.0+ $S1..S4 \ge 12$).
   * Фиксированный `MTU=1280` против фрагментации в сетях сотовых операторов РФ.
   * Расширенная клиентская подсеть `/22` (`10.8.0.0/22`, диапазон до 1022 адресов клиентов).
-  * Быстрый Anycast DNS от Control D (`76.76.2.0, 76.76.10.0`).
+  * Быстрый Anycast DNS от Quad9 и Control D (`9.9.9.9, 76.76.2.0`).
   * `HeaderProtectionKey`: 32-байтный base64-ключ для криптографической защиты служебных пакетов Handshake от ТСПУ/РКН без малейшей просадки скорости трафика.
-  * `RandomTrailers`: Включено (`true`) для рандомизации хвостов пакетов и ликвидации статистических сигнатур WireGuard.
+  * `RandomTrailers`: Отключено (`false`) для исключения катастрофической 100-кратной деградации пропускной способности при активных смещениях S1..S4.
 ### 2.6. Межпроцессная связь через Unix Sockets в RAM
 * Внутренний обмен между Nginx L4 Stream и Nginx L7 HTTP Core выполняется через сокет в оперативной памяти (**`unix:/dev/shm/nginx-http.sock`**), исключая сетевой оверхед виртуального loopback.
 * Использование директивы `ssl_reject_handshake on` на дефолтном сервере для мгновенного сброса сканеров при прямом обращении по IP без раскрытия SSL-сертификата.
@@ -316,13 +316,13 @@ sudo ufw deny 9443/tcp comment 'Block Direct Anti-Loop Port'
 * **Основное:** Порт: `8443` | Listen IP: `0.0.0.0` | Протокол: `amneziawg`
 * **Протокол:**
   * Подсеть: `10.8.0.0` | Маска (CIDR): `22` (до 1022 клиентов) | MTU: `1280`
-  * DNS: `76.76.2.0, 76.76.10.0` (Control D Anycast)
+  * DNS: `9.9.9.9, 76.76.2.0` (Quad9 & Control D Anycast)
 * **Параметры обфускации:**
-  * `Jc = 3`, `Jmin = 40`, `Jmax = 80`
-  * `S1 = 45`, `S2 = 60`, `S3 = 24`, `S4 = 16` (все $\ge 12$)
+  * `Jc = 2`, `Jmin = 20`, `Jmax = 50`
+  * `S1 = 16`, `S2 = 20`, `S3 = 24`, `S4 = 16` (все $\ge 12$)
   * `HeaderProtectionKey`: 32 байта base64 (защита Handshake от DPI)
-  * `RandomTrailers`: `Включено (true)`
-  * `KeepaliveTimeout`: `10` | `RekeyAfterTime`: `120` | `RekeyTimeout`: `3` | `RejectAfterTime`: `180` | `MaxHandshakeAttempts`: `20`
+  * `RandomTrailers`: `Выключено (false)` (критично для скорости)
+  * `KeepaliveTimeout`: `15-20` | `RekeyAfterTime`: `120-180` | `RekeyTimeout`: `3-4` | `RejectAfterTime`: `180-210` | `MaxHandshakeAttempts`: `20-25`
   * `DisableCookies`: `Включено (true)`
 
 #### F. Инбаунд `<Префикс> (AmneziaWG v2)` (UDP 8444)
@@ -330,7 +330,7 @@ sudo ufw deny 9443/tcp comment 'Block Direct Anti-Loop Port'
 * **Параметры:**
   * H1–H4: `"149419586", "878791997", "1251051976", "1657628296"`
   * `HeaderProtectionKey`: ПУСТО | `MTU`: `1280`
-  * `Jc = 3, Jmin = 40, Jmax = 80`, `S1 = 45, S2 = 60, S3 = 24, S4 = 16`
+  * `Jc = 2, Jmin = 20, Jmax = 50`, `S1 = 16, S2 = 20, S3 = 24, S4 = 16`
 
 ---
 
@@ -755,12 +755,12 @@ nginx -t && systemctl start nginx x-ui AdGuardHome
     "ip": "10.8.0.1",
     "subnet": "10.8.0.0/22",
     "mtu": 1280,
-    "dns": ["76.76.2.0", "76.76.10.0"],
-    "jc": 3,
-    "jmin": 40,
-    "jmax": 80,
-    "s1": 45,
-    "s2": 60,
+    "dns": ["9.9.9.9", "76.76.2.0"],
+    "jc": 2,
+    "jmin": 20,
+    "jmax": 50,
+    "s1": 16,
+    "s2": 20,
     "s3": 24,
     "s4": 16,
     "h1": "",
@@ -773,12 +773,12 @@ nginx -t && systemctl start nginx x-ui AdGuardHome
     "i4": "",
     "i5": "",
     "headerProtectionKey": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
-    "randomTrailers": true,
-    "keepaliveTimeout": "10",
-    "rekeyAfterTime": "120",
-    "rekeyTimeout": "3",
-    "rejectAfterTime": "180",
-    "maxHandshakeAttempts": "20",
+    "randomTrailers": false,
+    "keepaliveTimeout": "15-20",
+    "rekeyAfterTime": "120-180",
+    "rekeyTimeout": "3-4",
+    "rejectAfterTime": "180-210",
+    "maxHandshakeAttempts": "20-25",
     "disableCookies": true,
     "peers": []
   }

@@ -65,6 +65,11 @@ format_duration() {
     fi
 }
 
+is_true() {
+    local val="${1:-0}"
+    [[ "$val" == "1" || "${val,,}" == "y" || "${val,,}" == "true" ]]
+}
+
 record_step_completed() {
     local step_num="$1"
     LAST_COMPLETED_STEP="$step_num"
@@ -766,6 +771,18 @@ reconstruct_arrays_from_vars() {
     DECOY_MODE="${DECOY_MODE:-1}"
     SSL_ENGINE_CHOICE="${SSL_ENGINE_CHOICE:-1}"
     LE_EMAIL="${LE_EMAIL:-}"
+
+    # Нормализация логических переменных (1/0 и y/n)
+    local _v
+    _v="${ENABLE_STEAL:-${STEAL_ENABLED:-y}}"; if is_true "$_v"; then ENABLE_STEAL="y"; STEAL_ENABLED=1; else ENABLE_STEAL="n"; STEAL_ENABLED=0; fi
+    _v="${ENABLE_CLASSIC:-${CLASSIC_ENABLED:-y}}"; if is_true "$_v"; then ENABLE_CLASSIC="y"; CLASSIC_ENABLED=1; else ENABLE_CLASSIC="n"; CLASSIC_ENABLED=0; fi
+    _v="${ENABLE_HY2:-n}"; if is_true "$_v"; then ENABLE_HY2=1; else ENABLE_HY2=0; fi
+    _v="${ENABLE_AWG_V3:-n}"; if is_true "$_v"; then ENABLE_AWG_V3=1; else ENABLE_AWG_V3=0; fi
+    _v="${ENABLE_AWG_V2:-n}"; if is_true "$_v"; then ENABLE_AWG_V2=1; else ENABLE_AWG_V2=0; fi
+    _v="${ENABLE_AGH:-n}"; if is_true "$_v"; then ENABLE_AGH=1; else ENABLE_AGH=0; fi
+    _v="${ENABLE_WARP:-n}"; if is_true "$_v"; then ENABLE_WARP="y"; else ENABLE_WARP="n"; fi
+    _v="${ENABLE_NODE_TOKEN:-n}"; if is_true "$_v"; then ENABLE_NODE_TOKEN="y"; else ENABLE_NODE_TOKEN="n"; fi
+    _v="${AGH_XRAY_DNS:-n}"; if is_true "$_v"; then AGH_XRAY_DNS="y"; else AGH_XRAY_DNS="n"; fi
 }
 
 load_env_file() {
@@ -798,25 +815,25 @@ save_session_state() {
 
     local v=""
     local steal_save="n"
-    v="${ENABLE_STEAL:-n}"; [[ "$v" == "1" || "${v,,}" == "y" ]] && steal_save="y"
+    v="${ENABLE_STEAL:-${STEAL_ENABLED:-n}}"; is_true "$v" && steal_save="y"
     local classic_save="n"
-    v="${ENABLE_CLASSIC:-n}"; [[ "$v" == "1" || "${v,,}" == "y" ]] && classic_save="y"
+    v="${ENABLE_CLASSIC:-${CLASSIC_ENABLED:-n}}"; is_true "$v" && classic_save="y"
     local hy2_save="n"
-    v="${ENABLE_HY2:-n}"; [[ "$v" == "1" || "${v,,}" == "y" ]] && hy2_save="y"
+    v="${ENABLE_HY2:-n}"; is_true "$v" && hy2_save="y"
     local awg_v3_save="n"
-    v="${ENABLE_AWG_V3:-n}"; [[ "$v" == "1" || "${v,,}" == "y" ]] && awg_v3_save="y"
+    v="${ENABLE_AWG_V3:-n}"; is_true "$v" && awg_v3_save="y"
     local awg_v2_save="n"
-    v="${ENABLE_AWG_V2:-n}"; [[ "$v" == "1" || "${v,,}" == "y" ]] && awg_v2_save="y"
+    v="${ENABLE_AWG_V2:-n}"; is_true "$v" && awg_v2_save="y"
     local auto_setup_3xui_save="n"
-    v="${AUTO_SETUP_3XUI:-n}"; [[ "$v" == "1" || "${v,,}" == "y" ]] && auto_setup_3xui_save="y"
+    v="${AUTO_SETUP_3XUI:-n}"; is_true "$v" && auto_setup_3xui_save="y"
     local node_token_save="n"
-    v="${ENABLE_NODE_TOKEN:-n}"; [[ "$v" == "1" || "${v,,}" == "y" ]] && node_token_save="y"
+    v="${ENABLE_NODE_TOKEN:-n}"; is_true "$v" && node_token_save="y"
     local warp_save="n"
-    v="${ENABLE_WARP:-n}"; [[ "$v" == "1" || "${v,,}" == "y" ]] && warp_save="y"
+    v="${ENABLE_WARP:-n}"; is_true "$v" && warp_save="y"
     local agh_save="n"
-    v="${ENABLE_AGH:-n}"; [[ "$v" == "1" || "${v,,}" == "y" ]] && agh_save="y"
+    v="${ENABLE_AGH:-n}"; is_true "$v" && agh_save="y"
     local agh_xray_save="n"
-    v="${AGH_XRAY_DNS:-n}"; [[ "$v" == "1" || "${v,,}" == "y" ]] && agh_xray_save="y"
+    v="${AGH_XRAY_DNS:-n}"; is_true "$v" && agh_xray_save="y"
 
     local _save_panel_path="${RAW_PATH:-${PANEL_PATH:-my-3x-panel}}"
     _save_panel_path="${_save_panel_path#/}"
@@ -1853,85 +1870,8 @@ fi
 
 if [ "$SKIP_INTERVIEW" -eq 1 ]; then
     # Восстановление массивов из сохраненных скалярных параметров конфигурации
-    ALL_DOMAINS=("$PRIMARY_DOMAIN")
-    if [[ "${ADD_WWW,,}" == "y" || "${ADD_WWW:-}" == "1" ]]; then
-        ALL_DOMAINS+=("www.$PRIMARY_DOMAIN")
-    fi
-    IFS=',' read -r -a extra_arr <<< "${EXTRA_SSL_DOMAINS:-}"
-    for ed in "${extra_arr[@]}"; do
-        ed=$(echo "$ed" | tr -d '[:space:]')
-        [ -n "$ed" ] && ALL_DOMAINS+=("$ed")
-    done
-
-    steal_raw="${STEAL_DOMAINS_STR:-${STEAL_DOMAINS[*]:-}}"
-    STEAL_DOMAINS=()
-    declare -A DOMAIN_TO_PORT=()
-    if [[ "${ENABLE_STEAL,,}" == "y" || "${ENABLE_STEAL:-}" == "1" ]]; then
-        STEAL_ENABLED=1
-        STEAL_PORTS_LIST=(${STEAL_PORT:-45443})
-        for sd in ${steal_raw//,/ }; do
-            sd=$(echo "$sd" | tr -d '[:space:]')
-            if [ -n "$sd" ]; then
-                STEAL_DOMAINS+=("$sd")
-                DOMAIN_TO_PORT["$sd"]="${STEAL_PORTS_LIST[0]}"
-                [[ " ${ALL_DOMAINS[*]} " =~ " ${sd} " ]] || ALL_DOMAINS+=("$sd")
-            fi
-        done
-        [ ${#STEAL_DOMAINS[@]} -gt 0 ] || {
-            STEAL_DOMAINS=("cdn.$PRIMARY_DOMAIN")
-            DOMAIN_TO_PORT["cdn.$PRIMARY_DOMAIN"]="${STEAL_PORTS_LIST[0]}"
-            ALL_DOMAINS+=("cdn.$PRIMARY_DOMAIN")
-        }
-    else
-        STEAL_ENABLED=0
-        STEAL_PORTS_LIST=()
-    fi
-
-    declare -A EXT_SNI_TO_PORT=()
-    if [[ "${ENABLE_CLASSIC,,}" == "y" || "${ENABLE_CLASSIC:-}" == "1" ]]; then
-        CLASSIC_ENABLED=1
-        CLASSIC_PORTS_LIST=(${CLASSIC_PORT:-46443})
-        classic_raw="${CLASSIC_SNI:-gateway.icloud.com}"
-        for cs in ${classic_raw//,/ }; do
-            cs=$(echo "$cs" | tr -d '[:space:]')
-            if [ -n "$cs" ]; then
-                EXT_SNI_TO_PORT["$cs"]="${CLASSIC_PORTS_LIST[0]}"
-            fi
-        done
-        [ ${#EXT_SNI_TO_PORT[@]} -gt 0 ] || EXT_SNI_TO_PORT["gateway.icloud.com"]="${CLASSIC_PORTS_LIST[0]}"
-    else
-        CLASSIC_ENABLED=0
-        CLASSIC_PORTS_LIST=()
-    fi
-
-    ALL_REALITY_PORTS=()
-    for p in "${STEAL_PORTS_LIST[@]:-}"; do [ -n "$p" ] && ALL_REALITY_PORTS+=("$p"); done
-    for p in "${CLASSIC_PORTS_LIST[@]:-}"; do [ -n "$p" ] && ALL_REALITY_PORTS+=("$p"); done
-
-    PANEL_PORT="${PANEL_PORT:-10443}"
-    RAW_PATH="${PANEL_PATH:-my-3x-panel}"
-    RAW_PATH="${RAW_PATH#/}"
-    RAW_PATH="${RAW_PATH%/}"
-    PANEL_PATH="/${RAW_PATH}/"
-
-    SUB_PORT="${SUB_PORT:-55443}"
-    RAW_SUB_PATH="${SUB_PATH:-my-post-key}"
-    RAW_SUB_PATH="${RAW_SUB_PATH#/}"
-    RAW_SUB_PATH="${RAW_SUB_PATH%/}"
-    SUB_PATH="/${RAW_SUB_PATH}/"
-    SUB_JSON_PATH="/${RAW_SUB_PATH}json/"
-
-    XHTTP_STREAM_PORT="${XHTTP_STREAM_PORT:-50443}"
-    RAW_XHTTP_STREAM_PATH="${XHTTP_STREAM_PATH:-Stream-One-Path}"
-    RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH#/}"
-    RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH%/}"
-    XHTTP_STREAM_PATH="/${RAW_XHTTP_STREAM_PATH}/"
-
-    REALITY_FALLBACK_PORT=9443
-    ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
-    SERVER_PREFIX="${SERVER_PREFIX:-Server}"
-    DECOY_MODE="${DECOY_MODE:-1}"
-    SSL_ENGINE_CHOICE="${SSL_ENGINE_CHOICE:-1}"
+    reconstruct_arrays_from_vars
+    REALITY_FALLBACK_PORT="9443"
     if [ "$SSL_ENGINE_CHOICE" = "1" ]; then
         SSL_BASE_DIR="/etc/letsencrypt/live"
     else
@@ -1973,6 +1913,13 @@ else
                     ENABLE_NODE_TOKEN=""
                     ENABLE_WARP=""
                     AUTO_SETUP_3XUI=""
+                    STEAL_DOMAINS=()
+                    EXT_SNI_LIST=()
+                    STEAL_PORTS_LIST=()
+                    CLASSIC_PORTS_LIST=()
+                    ALL_REALITY_PORTS=()
+                    declare -g -A DOMAIN_TO_PORT=()
+                    declare -g -A EXT_SNI_TO_PORT=()
                     START_AT_REVIEW=0
                     ok "Параметры сброшены. Начинаем с чистого листа."
                     ;;
@@ -2109,23 +2056,24 @@ if [ "$EXPRESS_MODE" -eq 1 ]; then
     echo ""
 else
     # Инициализация глобальных структур и вспомогательных функций мастера настройки
-    declare -g -A DOMAIN_TO_PORT=()
-    declare -g -A EXT_SNI_TO_PORT=()
-    STEAL_PORTS_LIST=()
-    CLASSIC_PORTS_LIST=()
-    ALL_REALITY_PORTS=()
-    STEAL_DOMAINS=()
-    EXT_SNI_LIST=()
-    ALL_EXT_SNIS=()
-    EXTRA_DOMAINS_USER=()
-    REALITY_FALLBACK_PORT="9443"
+    [[ -v DOMAIN_TO_PORT ]] || declare -g -A DOMAIN_TO_PORT=()
+    [[ -v EXT_SNI_TO_PORT ]] || declare -g -A EXT_SNI_TO_PORT=()
+    [ -n "${STEAL_PORTS_LIST[*]:-}" ] || STEAL_PORTS_LIST=()
+    [ -n "${CLASSIC_PORTS_LIST[*]:-}" ] || CLASSIC_PORTS_LIST=()
+    [ -n "${ALL_REALITY_PORTS[*]:-}" ] || ALL_REALITY_PORTS=()
+    [ -n "${STEAL_DOMAINS[*]:-}" ] || STEAL_DOMAINS=()
+    [ -n "${EXT_SNI_LIST[*]:-}" ] || EXT_SNI_LIST=()
+    [ -n "${ALL_EXT_SNIS[*]:-}" ] || ALL_EXT_SNIS=()
+    [ -n "${EXTRA_DOMAINS_USER[*]:-}" ] || EXTRA_DOMAINS_USER=()
+    REALITY_FALLBACK_PORT="${REALITY_FALLBACK_PORT:-9443}"
+    reconstruct_arrays_from_vars
 
     rebuild_all_domains() {
         ALL_DOMAINS=("$PRIMARY_DOMAIN")
         if [[ "${ADD_WWW,,}" == "y" && ! "$PRIMARY_DOMAIN" =~ ^www\. ]]; then
             ALL_DOMAINS+=("www.$PRIMARY_DOMAIN")
         fi
-        if [ "${STEAL_ENABLED:-0}" -eq 1 ]; then
+        if is_true "${STEAL_ENABLED:-0}"; then
             for s_dom in "${STEAL_DOMAINS[@]}"; do
                 [ -n "$s_dom" ] || continue
                 if [[ ! " ${ALL_DOMAINS[*]} " == *" ${s_dom} "* ]]; then
@@ -2133,12 +2081,12 @@ else
                 fi
             done
         fi
-        if [[ "${ENABLE_HY2:-0}" -eq 1 && -n "${HY2_DOMAIN:-}" ]]; then
+        if is_true "${ENABLE_HY2:-0}" && [ -n "${HY2_DOMAIN:-}" ]; then
             if [[ ! " ${ALL_DOMAINS[*]} " == *" ${HY2_DOMAIN} "* ]]; then
                 ALL_DOMAINS+=("$HY2_DOMAIN")
             fi
         fi
-        if [[ "${ENABLE_AGH:-0}" -eq 1 && "${AGH_MODE:-1}" = "2" && -n "${AGH_DOMAIN:-}" ]]; then
+        if is_true "${ENABLE_AGH:-0}" && [ "${AGH_MODE:-1}" = "2" ] && [ -n "${AGH_DOMAIN:-}" ]; then
             if [[ ! " ${ALL_DOMAINS[*]} " == *" ${AGH_DOMAIN} "* ]]; then
                 ALL_DOMAINS+=("$AGH_DOMAIN")
             fi
@@ -2152,12 +2100,12 @@ else
 
     sync_reality_ports() {
         ALL_REALITY_PORTS=()
-        if [ "${STEAL_ENABLED:-0}" -eq 1 ]; then
+        if is_true "${STEAL_ENABLED:-0}"; then
             for p in "${STEAL_PORTS_LIST[@]:-}"; do
                 [ -n "$p" ] && ALL_REALITY_PORTS+=("$p")
             done
         fi
-        if [ "${CLASSIC_ENABLED:-0}" -eq 1 ]; then
+        if is_true "${CLASSIC_ENABLED:-0}"; then
             for p in "${CLASSIC_PORTS_LIST[@]:-}"; do
                 [ -n "$p" ] && ALL_REALITY_PORTS+=("$p")
             done
@@ -2983,13 +2931,13 @@ for item in res:
         echo -e "  ${CYAN}[1]${NC} ${BOLD}Основной домен:${NC}       ${WHITE}$PRIMARY_DOMAIN${NC} (Префикс клиентов: ${GREEN}$SERVER_PREFIX${NC}, www: ${ADD_WWW})"
 
         local steal_status="${RED}Отключен${NC}"
-        if [ "${STEAL_ENABLED:-0}" -eq 1 ]; then
+        if is_true "${STEAL_ENABLED:-0}"; then
             steal_status="${GREEN}Включен${NC} (${WHITE}${STEAL_DOMAINS[*]}${NC} -> 127.0.0.1:${STEAL_PORTS_LIST[*]})"
         fi
         echo -e "  ${CYAN}[2]${NC} ${BOLD}Steal-Oneself:${NC}        $steal_status"
 
         local classic_status="${RED}Отключен${NC}"
-        if [ "${CLASSIC_ENABLED:-0}" -eq 1 ]; then
+        if is_true "${CLASSIC_ENABLED:-0}"; then
             classic_status="${GREEN}Включен${NC} (SNI: ${WHITE}${EXT_SNI_LIST[*]}${NC} -> 127.0.0.1:${CLASSIC_PORTS_LIST[*]})"
         fi
         echo -e "  ${CYAN}[3]${NC} ${BOLD}Classic REALITY:${NC}      $classic_status"
@@ -2998,7 +2946,7 @@ for item in res:
         echo -e "      ${DIM}Доступ в 3X-UI:${NC}       Логин: ${WHITE}$ADMIN_USERNAME${NC}, Пароль: ${YELLOW}$ADMIN_PASSWORD${NC}"
 
         local hy2_status="${RED}Отключена${NC}"
-        if [ "${ENABLE_HY2:-0}" -eq 1 ]; then
+        if is_true "${ENABLE_HY2:-0}"; then
             local hop_str=""
             [ "$HY2_PORT_HOPPING" = "y" ] && hop_str=" + Hopping $HY2_PORT_HOPPING_RANGE"
             hy2_status="${GREEN}Включена${NC} (:${HY2_PORT}/udp, ${HY2_DOMAIN}${hop_str})"
@@ -3006,15 +2954,15 @@ for item in res:
         echo -e "  ${CYAN}[5]${NC} ${BOLD}Hysteria 2 (UDP):${NC}     $hy2_status"
 
         local awg3_status="${RED}Отключен${NC}"
-        [ "${ENABLE_AWG_V3:-0}" -eq 1 ] && awg3_status="${GREEN}Включен${NC} (:${AWG_V3_PORT}/udp)"
+        is_true "${ENABLE_AWG_V3:-0}" && awg3_status="${GREEN}Включен${NC} (:${AWG_V3_PORT}/udp)"
         echo -e "  ${CYAN}[6]${NC} ${BOLD}AmneziaWG v3.1:${NC}       $awg3_status"
 
         local awg2_status="${RED}Отключен${NC}"
-        [ "${ENABLE_AWG_V2:-0}" -eq 1 ] && awg2_status="${GREEN}Включен${NC} (:${AWG_V2_PORT}/udp)"
+        is_true "${ENABLE_AWG_V2:-0}" && awg2_status="${GREEN}Включен${NC} (:${AWG_V2_PORT}/udp)"
         echo -e "  ${CYAN}[7]${NC} ${BOLD}AmneziaWG v2.0:${NC}       $awg2_status"
 
         local agh_status="${RED}Отключен${NC}"
-        if [ "${ENABLE_AGH:-0}" -eq 1 ]; then
+        if is_true "${ENABLE_AGH:-0}"; then
             local m_desc="Основной домен"
             [ "$AGH_MODE" = "2" ] && m_desc="Поддомен $AGH_DOMAIN"
             agh_status="${GREEN}Включен${NC} (Режим: $m_desc, ClientID: $AGH_CLIENT_ID)"
@@ -3033,14 +2981,14 @@ for item in res:
         echo -e "  ${CYAN}[11]${NC} ${BOLD}Метод выпуска SSL:${NC}    ${WHITE}$ssl_name${NC}"
 
         local auto_3xui_str="${GREEN}Да${NC}"
-        [[ "${AUTO_SETUP_3XUI,,}" == "n" || "${AUTO_SETUP_3XUI:-}" == "0" ]] && auto_3xui_str="${RED}Нет${NC}"
-        if [[ "${ENABLE_NODE_TOKEN,,}" == "y" || "${ENABLE_NODE_TOKEN:-}" == "1" ]]; then
+        is_true "${AUTO_SETUP_3XUI:-y}" || auto_3xui_str="${RED}Нет${NC}"
+        if is_true "${ENABLE_NODE_TOKEN:-n}"; then
             auto_3xui_str="${auto_3xui_str} ${DIM}(+ Node Token: ${WHITE}${NODE_TOKEN_NAME}${DIM})${NC}"
         fi
         echo -e "  ${CYAN}[12]${NC} ${BOLD}3X-UI автонастройка:${NC}  $auto_3xui_str"
 
         local warp_status="${RED}Отключен${NC}"
-        [ "$ENABLE_WARP" = "y" ] && warp_status="${GREEN}Включен${NC} (WireGuard MTU: 1280)"
+        is_true "${ENABLE_WARP:-n}" && warp_status="${GREEN}Включен${NC} (WireGuard MTU: 1280)"
         echo -e "  ${CYAN}[13]${NC} ${BOLD}Cloudflare WARP:${NC}      $warp_status"
 
         echo
@@ -3097,7 +3045,7 @@ for item in res:
         WIZARD_ALLOW_BACK=1
         if [ "${START_AT_REVIEW:-0}" -eq 1 ]; then
             CURRENT_STEP=14
-            EDITING_FROM_REVIEW=1
+            EDITING_FROM_REVIEW=0
         else
             CURRENT_STEP=1
             EDITING_FROM_REVIEW=0
@@ -3151,7 +3099,9 @@ for item in res:
                 CURRENT_STEP=$((res - 100))
                 EDITING_FROM_REVIEW=1
             elif [ "$res" -eq 0 ]; then
-                if [ "$EDITING_FROM_REVIEW" -eq 1 ]; then
+                if [ "$CURRENT_STEP" -eq 14 ]; then
+                    break
+                elif [ "$EDITING_FROM_REVIEW" -eq 1 ]; then
                     CURRENT_STEP=14
                     EDITING_FROM_REVIEW=0
                 else
@@ -4151,7 +4101,7 @@ STREAM_MAP_RULES=""
 REALITY_UPSTREAMS=""
 
 for dom in "${ALL_DOMAINS[@]}"; do
-    if [ "$STEAL_ENABLED" -eq 1 ] && [ -n "${DOMAIN_TO_PORT[$dom]:-}" ]; then
+    if is_true "${STEAL_ENABLED:-0}" && [ -n "${DOMAIN_TO_PORT[$dom]:-}" ]; then
         port="${DOMAIN_TO_PORT[$dom]}"
         STREAM_MAP_RULES+="        ${dom}     reality_backend_${port};"$'\n'
     else
@@ -4159,7 +4109,7 @@ for dom in "${ALL_DOMAINS[@]}"; do
     fi
 done
 
-if [ "$CLASSIC_ENABLED" -eq 1 ]; then
+if is_true "${CLASSIC_ENABLED:-0}"; then
     for ext_sni in "${!EXT_SNI_TO_PORT[@]}"; do
         port="${EXT_SNI_TO_PORT[$ext_sni]}"
         STREAM_MAP_RULES+="        ${ext_sni}     reality_backend_${port};"$'\n'
@@ -4176,7 +4126,7 @@ for port in "${ALL_REALITY_PORTS[@]:-}"; do
     fi
 done
 
-if [ "$CLASSIC_ENABLED" -eq 1 ]; then
+if is_true "${CLASSIC_ENABLED:-0}"; then
     DEFAULT_PORT="${CLASSIC_PORTS_LIST[0]:-46443}"
     DEFAULT_FALLBACK="reality_backend_${DEFAULT_PORT}"
 else
@@ -4777,7 +4727,7 @@ for dom in "${ALL_DOMAINS[@]}"; do
 done
 
 REALITY_INBOUNDS_REPORT=""
-if [ "$STEAL_ENABLED" -eq 1 ]; then
+if is_true "${STEAL_ENABLED:-0}"; then
     REALITY_INBOUNDS_REPORT+="\n  ${BOLD}[Сценарий 1: Steal-Oneself (Кража у самого себя с защитой Anti-Loop)]${NC}\n"
     for port in "${STEAL_PORTS_LIST[@]}"; do
         p_doms=()
@@ -4800,7 +4750,7 @@ if [ "$STEAL_ENABLED" -eq 1 ]; then
     done
 fi
 
-if [ "$CLASSIC_ENABLED" -eq 1 ]; then
+if is_true "${CLASSIC_ENABLED:-0}"; then
     REALITY_INBOUNDS_REPORT+="\n  ${BOLD}[Сценарий 2: Classic External REALITY]${NC}\n"
     for port in "${CLASSIC_PORTS_LIST[@]}"; do
         p_snis=()

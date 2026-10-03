@@ -7,7 +7,7 @@
 # Exit on severe unhandled errors
 set -o pipefail
 
-SCRIPT_VERSION="v7.1.1"
+SCRIPT_VERSION="v7.2.0"
 
 
 # --- Color Palette & Typography ---

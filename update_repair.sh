@@ -245,6 +245,7 @@ export PANEL_PORT="${PANEL_PORT:-10443}"
 export PANEL_PATH="${PANEL_PATH:-}"
 export SUB_PORT="${SUB_PORT:-55443}"
 export SUB_PATH="${SUB_PATH:-}"
+export SUB_CLASH_PATH="${SUB_CLASH_PATH:-}"
 export XHTTP_STREAM_PORT="${XHTTP_STREAM_PORT:-50443}"
 export XHTTP_STREAM_PATH="${XHTTP_STREAM_PATH:-}"
 export ENABLE_STEAL="${ENABLE_STEAL:-y}"
@@ -340,6 +341,13 @@ panel_path = panel_path.strip("/")
 sub_port = os.environ.get("SUB_PORT") or existing_settings.get("subPort") or "55443"
 sub_path = os.environ.get("SUB_PATH") or existing_settings.get("subPath") or "my-post-key"
 sub_path = sub_path.strip("/")
+sub_clash_env = os.environ.get("SUB_CLASH_PATH", "").strip().strip("/")
+if sub_clash_env:
+    sub_clash_path = sub_clash_env
+elif existing_settings.get("subClashPath"):
+    sub_clash_path = existing_settings.get("subClashPath").strip("/")
+else:
+    sub_clash_path = f"{sub_path}clash"
 
 xhttp_port = int(os.environ.get("XHTTP_STREAM_PORT") or "50443")
 xhttp_raw_path = os.environ.get("XHTTP_STREAM_PATH") or "Stream-One-Path"
@@ -472,10 +480,18 @@ if is_custom_sub and not force_sub:
     target_sub_uri = old_sub_uri
     target_sub_domain = old_sub_domain
     target_sub_path = old_sub_path
+    target_sub_json_path = existing_settings.get("subJsonPath") or f"/{sub_path.strip('/')}json/"
+    target_sub_json_uri = existing_settings.get("subJsonURI") or f"https://{domain}{target_sub_json_path}"
+    target_sub_clash_path = existing_settings.get("subClashPath") or f"/{sub_clash_path.strip('/')}/"
+    target_sub_clash_uri = existing_settings.get("subClashURI") or f"https://{domain}{target_sub_clash_path}"
 else:
     target_sub_uri = f"https://{domain}/{sub_path}/"
     target_sub_domain = domain
     target_sub_path = f"/{sub_path}/"
+    target_sub_json_path = f"/{sub_path.strip('/')}json/"
+    target_sub_json_uri = f"https://{domain}{target_sub_json_path}"
+    target_sub_clash_path = f"/{sub_clash_path.strip('/')}/"
+    target_sub_clash_uri = f"https://{domain}{target_sub_clash_path}"
 
 time_location = os.environ.get("TIME_LOCATION", "Europe/Moscow").strip()
 traffic_reset_day = os.environ.get("TRAFFIC_RESET_DAY", "1").strip()
@@ -493,6 +509,14 @@ settings_updates = {
     "subPort": sub_port,
     "subPath": target_sub_path,
     "subURI": target_sub_uri,
+    "subJsonPath": target_sub_json_path,
+    "subJsonURI": target_sub_json_uri,
+    "subJsonEnable": "true",
+    "subJsonAlwaysArray": "true",
+    "subClashPath": target_sub_clash_path,
+    "subClashURI": target_sub_clash_uri,
+    "subClashEnable": "true",
+    "subClashAutoDetect": "true",
     "subDomain": target_sub_domain,
     "subCertFile": "",
     "subKeyFile": "",
@@ -1003,6 +1027,7 @@ else
     echo -e "  - ${BOLD}Подключения клиентов:${NC}   ${GREEN}100% сохранены без разрыва и сброса ключей${NC}"
     echo -e "  - ${BOLD}Вход в панель 3X-UI:${NC}    ${CYAN}https://${PRIMARY_DOMAIN:-домен}/${PANEL_PATH:-my-3x-panel}/${NC}"
     echo -e "  - ${BOLD}Ссылка на подписку:${NC}     ${CYAN}https://${PRIMARY_DOMAIN:-домен}/${SUB_PATH:-my-post-key}/${NC}"
+    echo -e "  - ${BOLD}Ссылка (Clash):${NC}         ${CYAN}https://${PRIMARY_DOMAIN:-домен}/${SUB_CLASH_PATH:-${SUB_PATH:-my-post-key}clash}/${NC}"
 fi
 echo -e "${GREEN}=====================================================================${NC}"
 echo

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  CONFIGURE 3X-UI INBOUNDS & SETTINGS (v7.1.1 Universal Companion & Smart Reconcile)
+#  CONFIGURE 3X-UI INBOUNDS & SETTINGS (v7.2.0 Universal Companion & Smart Reconcile)
 # ==============================================================================
 #  Скрипт автоматического конфигурирования и самовосстановления базы 3X-UI.
 #  Безопасен для повторного запуска:
@@ -222,6 +222,7 @@ PANEL_PORT="${PANEL_PORT:-10443}"
 PANEL_PATH="${PANEL_PATH:-my-3x-panel}"
 SUB_PORT="${SUB_PORT:-55443}"
 SUB_PATH="${SUB_PATH:-my-post-key}"
+SUB_CLASH_PATH="${SUB_CLASH_PATH:-${SUB_PATH%/}/clash}"
 XHTTP_STREAM_PORT="${XHTTP_STREAM_PORT:-50443}"
 XHTTP_STREAM_PATH="${XHTTP_STREAM_PATH:-Stream-One-Path}"
 
@@ -410,6 +411,7 @@ export PANEL_PORT
 export PANEL_PATH
 export SUB_PORT
 export SUB_PATH
+export SUB_CLASH_PATH
 export XHTTP_STREAM_PORT
 export XHTTP_STREAM_PATH
 export ENABLE_STEAL
@@ -511,6 +513,7 @@ panel_path = (os.environ.get("PANEL_PATH") or existing_settings.get("webBasePath
 
 sub_port = os.environ.get("SUB_PORT") or existing_settings.get("subPort") or "55443"
 sub_path = (os.environ.get("SUB_PATH") or existing_settings.get("subPath") or "my-post-key").strip("/")
+sub_clash_path = (os.environ.get("SUB_CLASH_PATH") or existing_settings.get("subClashPath") or f"{sub_path}clash").strip("/")
 
 xhttp_port = int(os.environ.get("XHTTP_STREAM_PORT") or "50443")
 xhttp_raw_path = os.environ.get("XHTTP_STREAM_PATH") or "Stream-One-Path"
@@ -833,12 +836,18 @@ if is_custom_sub and not force_sub:
     target_sub_uri = old_sub_uri
     target_sub_domain = old_sub_domain
     target_sub_path = old_sub_path
+    target_sub_json_path = existing_settings.get("subJsonPath") or f"/{sub_path.strip('/')}json/"
+    target_sub_json_uri = existing_settings.get("subJsonURI") or f"https://{domain}{target_sub_json_path}"
+    target_sub_clash_path = existing_settings.get("subClashPath") or f"/{sub_clash_path.strip('/')}/"
+    target_sub_clash_uri = existing_settings.get("subClashURI") or f"https://{domain}{target_sub_clash_path}"
 else:
     target_sub_uri = f"https://{domain}/{sub_path}/"
     target_sub_domain = domain
     target_sub_path = f"/{sub_path}/"
     target_sub_json_path = f"/{sub_path.strip('/')}json/"
     target_sub_json_uri = f"https://{domain}{target_sub_json_path}"
+    target_sub_clash_path = f"/{sub_clash_path.strip('/')}/"
+    target_sub_clash_uri = f"https://{domain}{target_sub_clash_path}"
 
 time_location = os.environ.get("TIME_LOCATION", "Europe/Moscow").strip()
 traffic_reset_day = os.environ.get("TRAFFIC_RESET_DAY", "1").strip()
@@ -858,6 +867,12 @@ settings_updates = {
     "subURI": target_sub_uri,
     "subJsonPath": target_sub_json_path,
     "subJsonURI": target_sub_json_uri,
+    "subJsonEnable": "true",
+    "subJsonAlwaysArray": "true",
+    "subClashPath": target_sub_clash_path,
+    "subClashURI": target_sub_clash_uri,
+    "subClashEnable": "true",
+    "subClashAutoDetect": "true",
     "subDomain": target_sub_domain,
     "subCertFile": "",
     "subKeyFile": "",
@@ -2097,9 +2112,11 @@ else
     if [ -n "${ADMIN_PASSWORD:-}" ]; then
         echo -e "  - ${BOLD}Пароль панели:${NC}          ${WHITE}${ADMIN_PASSWORD}${NC}"
     fi
-    echo -e "  - ${BOLD}Канал подписок:${NC}        ${CYAN}https://${PRIMARY_DOMAIN}/${SUB_PATH}/${NC}"
+    echo -e "  - ${BOLD}Канал подписок:${NC}        ${CYAN}https://${PRIMARY_DOMAIN}/${SUB_PATH#/}/${NC}"
+    echo -e "  - ${BOLD}Канал подписок (Clash):${NC}  ${CYAN}https://${PRIMARY_DOMAIN}/${SUB_CLASH_PATH#/}/${NC}"
     if [ -n "${UNIFIED_SUB_ID:-}" ]; then
-        echo -e "  - ${BOLD}Прямая подписка:${NC}       ${GREEN}https://${PRIMARY_DOMAIN}/${SUB_PATH}/${UNIFIED_SUB_ID}${NC}"
+        echo -e "  - ${BOLD}Прямая подписка:${NC}       ${GREEN}https://${PRIMARY_DOMAIN}/${SUB_PATH#/}/${UNIFIED_SUB_ID}${NC}"
+        echo -e "  - ${BOLD}Прямая подписка (Clash):${NC} ${GREEN}https://${PRIMARY_DOMAIN}/${SUB_CLASH_PATH#/}/${UNIFIED_SUB_ID}${NC}"
     fi
     if [ -n "${UNIFIED_AWG_HPK:-}" ]; then
         echo -e "  - ${BOLD}AmneziaWG v3.1 HPK:${NC}     ${YELLOW}${UNIFIED_AWG_HPK}${NC} (UDP :${UNIFIED_AWG_PORT:-8443})"
@@ -2124,8 +2141,10 @@ if [ "$DRY_RUN" -eq 0 ] && [ -n "${ADMIN_PASSWORD:-}" ]; then
 $([ -n "$INSTALLED_XRAY_VER" ] && echo "Ядро Xray-core:        ${INSTALLED_XRAY_VER}")
 
 Единый клиент:          ${UNIFIED_CLIENT_TAG:-Client}
-Канал подписок:        https://${PRIMARY_DOMAIN}/${SUB_PATH}/
-Прямая ссылка подписки: https://${PRIMARY_DOMAIN}/${SUB_PATH}/${UNIFIED_SUB_ID}
+Канал подписок:        https://${PRIMARY_DOMAIN}/${SUB_PATH#/}/
+Канал подписок (Clash): https://${PRIMARY_DOMAIN}/${SUB_CLASH_PATH#/}/
+Прямая ссылка подписки: https://${PRIMARY_DOMAIN}/${SUB_PATH#/}/${UNIFIED_SUB_ID}
+Прямая ссылка (Clash):  https://${PRIMARY_DOMAIN}/${SUB_CLASH_PATH#/}/${UNIFIED_SUB_ID}
 $([ -n "${UNIFIED_AWG_HPK:-}" ] && echo "AmneziaWG v3.1 HPK:    ${UNIFIED_AWG_HPK} (UDP :${UNIFIED_AWG_PORT:-8443})")
 $([ -n "${NODE_TOKEN:-}" ] && printf "3X-UI Node Token:      %s\nИмя ноды (Node Name):  %s (Host: %s:443, Path: /%s/)\n" "${NODE_TOKEN}" "${NODE_TOKEN_NAME}" "${PRIMARY_DOMAIN}" "${PANEL_PATH#/}")
 (Объединяет все конфигурации: Steal REALITY, Classic REALITY, xHTTP, Hysteria 2, AWG v3, AWG v2)

@@ -347,7 +347,7 @@ if sub_clash_env:
 elif existing_settings.get("subClashPath"):
     sub_clash_path = existing_settings.get("subClashPath").strip("/")
 else:
-    sub_clash_path = f"{sub_path}clash"
+    sub_clash_path = f"{sub_path}/clash"
 
 xhttp_port = int(os.environ.get("XHTTP_STREAM_PORT") or "50443")
 xhttp_raw_path = os.environ.get("XHTTP_STREAM_PATH") or "Stream-One-Path"
@@ -480,7 +480,7 @@ if is_custom_sub and not force_sub:
     target_sub_uri = old_sub_uri
     target_sub_domain = old_sub_domain
     target_sub_path = old_sub_path
-    target_sub_json_path = existing_settings.get("subJsonPath") or f"/{sub_path.strip('/')}json/"
+    target_sub_json_path = existing_settings.get("subJsonPath") or f"/{sub_path.strip('/')}/json/"
     target_sub_json_uri = existing_settings.get("subJsonURI") or f"https://{domain}{target_sub_json_path}"
     target_sub_clash_path = existing_settings.get("subClashPath") or f"/{sub_clash_path.strip('/')}/"
     target_sub_clash_uri = existing_settings.get("subClashURI") or f"https://{domain}{target_sub_clash_path}"
@@ -488,7 +488,7 @@ else:
     target_sub_uri = f"https://{domain}/{sub_path}/"
     target_sub_domain = domain
     target_sub_path = f"/{sub_path}/"
-    target_sub_json_path = f"/{sub_path.strip('/')}json/"
+    target_sub_json_path = f"/{sub_path.strip('/')}/json/"
     target_sub_json_uri = f"https://{domain}{target_sub_json_path}"
     target_sub_clash_path = f"/{sub_clash_path.strip('/')}/"
     target_sub_clash_uri = f"https://{domain}{target_sub_clash_path}"
@@ -512,11 +512,9 @@ settings_updates = {
     "subJsonPath": target_sub_json_path,
     "subJsonURI": target_sub_json_uri,
     "subJsonEnable": "true",
-    "subJsonAlwaysArray": "true",
     "subClashPath": target_sub_clash_path,
     "subClashURI": target_sub_clash_uri,
     "subClashEnable": "true",
-    "subClashAutoDetect": "true",
     "subDomain": target_sub_domain,
     "subCertFile": "",
     "subKeyFile": "",

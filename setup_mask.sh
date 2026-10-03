@@ -18,7 +18,7 @@
 #      - Certbot (HTTP-01): /etc/letsencrypt/live/
 #      - acme.sh + Cloudflare (DNS-01): /etc/ssl/acme/ (изоляция от /root/ и 755/644)
 #   8) 3 автономных локальных режима маскировки (Decoy Front):
-#      - 1: DataSphere Analytics Enterprise (Decoy Shield v4.0 Ultra)
+#      - 1: DataSphere Analytics (SPA с 3D-сферой и телеметрией)
 #      - 2: Облако CosmosCloud 
 #      - 3: Стандартная заглушка Nginx (Welcome to nginx)
 #   9) Комплексная защита от ботов, сканеров уязвимостей, AI-парсеров (444/404)
@@ -513,7 +513,7 @@ AWG_SUBNET_IP="10.8.0.0"
 AWG_SUBNET_CIDR="22"
 
 # --- 5. САЙТ-МАСКИРОВКА (DECOY FRONT) ---
-# 1 = DataSphere Analytics Enterprise (SPA с живой телеметрией)
+# 1 = DataSphere Analytics (SPA с 3D-сферой и телеметрией)
 # 2 = CosmosCloud NextGen (Облачное хранилище)
 # 3 = Welcome to nginx (Стандартная заглушка)
 DECOY_MODE="1"
@@ -2074,7 +2074,7 @@ if [ "$EXPRESS_MODE" -eq 1 ]; then
     echo -e "    ${DIM}• VLESS xHTTP:${NC}    ${WHITE}$XHTTP_STREAM_PATH -> 127.0.0.1:$XHTTP_STREAM_PORT${NC}"
     echo -e "    ${DIM}• UDP Стек:${NC}       ${WHITE}Hysteria 2 (:443), AWG v3 (:8443), AWG v2 (:8444)${NC}"
     echo -e "    ${DIM}• Cloudflare WARP:${NC} ${WHITE}Активирован (Google, Gemini, AI / YouTube direct)${NC}"
-    echo -e "    ${DIM}• Веб-маска:${NC}      ${WHITE}DataSphere Analytics Enterprise${NC}"
+    echo -e "    ${DIM}• Веб-маска:${NC}      ${WHITE}DataSphere Analytics${NC}"
     echo ""
 else
     # Инициализация глобальных структур и вспомогательных функций мастера настройки
@@ -2770,10 +2770,10 @@ for item in res:
             echo -e "     Защищает сервер от выявления цензорами, активными сканерами и сетевыми ботами."
             echo
             echo -e "  ${BOLD}Доступные варианты маскировки:${NC}"
-            echo -e "    ${GREEN}[1] DataSphere Analytics Enterprise (Рекомендуется)${NC}"
-            echo -e "        ${DIM}• Корпоративный SaaS-портал облачной аналитики и метрик${NC}"
-            echo -e "        ${DIM}• Живая интерактивная телеметрия (CPU, RAM, Network) с динамикой ±10%${NC}"
-            echo -e "        ${DIM}• Документация API, статус сервисов и корпоративный футер${NC}"
+            echo -e "    ${GREEN}[1] DataSphere Analytics (Рекомендуется)${NC}"
+            echo -e "        ${DIM}• Корпоративный портал распределенной аналитики данных${NC}"
+            echo -e "        ${DIM}• Интерактивная 3D-сфера узлов, Anycast-телеметрия потока и Web CLI${NC}"
+            echo -e "        ${DIM}• Документация API, статус сервисов и строгий Zero-Inline CSP${NC}"
             echo
             echo -e "    ${GREEN}[2] CosmosCloud NextGen${NC}"
             echo -e "        ${DIM}• Корпоративное облачное хранилище файлов (аналог Nextcloud / OwnCloud)${NC}"
@@ -2783,14 +2783,14 @@ for item in res:
             echo -e "        ${DIM}• Классическая системная страница «Welcome to nginx!»${NC}"
             echo
         else
-            echo -e "  ${BOLD}Варианты маскировки:${NC} [1] DataSphere Enterprise (Рекомендуется)  [2] CosmosCloud  [3] Заглушка Nginx"
+            echo -e "  ${BOLD}Варианты маскировки:${NC} [1] DataSphere Analytics (Рекомендуется)  [2] CosmosCloud  [3] Заглушка Nginx"
         fi
 
         prompt_default "  Выберите вариант маскировки (1, 2 или 3)" "${DECOY_MODE:-1}" DECOY_MODE || return $?
         case "$DECOY_MODE" in
             2) ok "Выбрана тема: CosmosCloud NextGen" ;;
             3) ok "Выбрана стандартная заглушка Nginx" ;;
-            *) DECOY_MODE="1"; ok "Выбрана тема: DataSphere Analytics Enterprise" ;;
+            *) DECOY_MODE="1"; ok "Выбрана тема: DataSphere Analytics" ;;
         esac
         return 0
     }
@@ -2994,7 +2994,7 @@ for item in res:
         fi
         echo -e "  ${CYAN}[8]${NC} ${BOLD}AdGuard Home DoH:${NC}     $agh_status"
 
-        local decoy_name="DataSphere Analytics Enterprise"
+        local decoy_name="DataSphere Analytics"
         [ "$DECOY_MODE" = "2" ] && decoy_name="CosmosCloud NextGen"
         [ "$DECOY_MODE" = "3" ] && decoy_name="Стандартная заглушка Nginx"
         echo -e "  ${CYAN}[9]${NC} ${BOLD}Тема маскировки:${NC}      ${WHITE}$decoy_name${NC}"
@@ -3425,7 +3425,7 @@ if ! should_skip_step 5; then
     log "Формирование выбранного маскировочного портала..."
 
     if [ "$DECOY_MODE" = "1" ]; then
-    # 1. DataSphere Analytics Enterprise (DataSphere Decoy Shield v4.0 Ultra)
+    # 1. DataSphere Analytics (SPA с 3D-сферой и телеметрией)
     mkdir -p "$WEBROOT/assets/css" "$WEBROOT/assets/js" "$WEBROOT/assets/img"
 
 cat << 'EOF' > $WEBROOT/assets/img/favicon.svg
@@ -4440,10 +4440,10 @@ fi
 DECOY_LOCATION_BLOCKS=""
 
 if [ "$DECOY_MODE" = "1" ]; then
-    # Режим 1: DataSphere Analytics Enterprise (Decoy Shield v4.0 Ultra)
+    # Режим 1: DataSphere Analytics
     DECOY_LOCATION_BLOCKS="
         add_header Content-Security-Policy \"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none';\" always;
-        add_header X-DataSphere-Engine \"v4.0.2-enterprise-ultra\" always;
+        add_header X-DataSphere-Engine \"v4.0.2\" always;
 
         location ~ ^/(api/v1/datasphere/status|status)\$ {
             default_type application/json;
@@ -5117,7 +5117,7 @@ if is_true "${CLASSIC_ENABLED:-0}"; then
 fi
 
 DECOY_NAME="Локальный Front"
-if [ "$DECOY_MODE" = "1" ]; then DECOY_NAME="DataSphere Analytics Enterprise (Геометрическая маска)";
+if [ "$DECOY_MODE" = "1" ]; then DECOY_NAME="DataSphere Analytics";
 elif [ "$DECOY_MODE" = "2" ]; then DECOY_NAME="CosmosCloud NextGen";
 elif [ "$DECOY_MODE" = "3" ]; then DECOY_NAME="Default Nginx Stub";
 fi

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # ==============================================================================
-# Production AutoSetup: Hardened Engine v7.2.0 Universal (Public Edition)
+# Production AutoSetup: Hardened Engine v7.2.1 Universal (Public Edition)
 # Nginx L4 Stream + 3X-UI + Unix Sockets + Native proxy_http_version 2 + 3 Decoys
 # ==============================================================================
 # Архитектура:
@@ -27,7 +27,7 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="v7.2.0"
+SCRIPT_VERSION="v7.2.1"
 
 # --------------------------- Замеры времени и телеметрия ---------------------------
 SCRIPT_START_TIME=$(date +%s)
@@ -527,7 +527,7 @@ ENABLE_NODE_TOKEN="n"
 # Название API-токена ноды (если не указано, формируется как <SERVER_PREFIX>-Node или Master-Node-Cluster)
 NODE_TOKEN_NAME=""
 
-# Автоматически обновлять ядро Xray-core до последней официальной версии (v26.9.9+) [y/n]
+# Автоматически обновлять ядро Xray-core до последней официальной версии (v26.9.30+) [y/n]
 UPDATE_XRAY_CORE="y"
 
 # --- 7. ИСХОДЯЩИЙ ТУННЕЛЬ CLOUDFLARE WARP ---
@@ -935,8 +935,6 @@ AGH_XRAY_DNS="$agh_xray_save"
 SHOW_TIPS="${SHOW_TIPS:-y}"
 
 TIME_LOCATION="${TIME_LOCATION:-}"
-TRAFFIC_RESET_DAY="${TRAFFIC_RESET_DAY:-1}"
-SUB_SHOW_INFO="${SUB_SHOW_INFO:-true}"
 SUB_UPDATES="${SUB_UPDATES:-1}"
 SUB_ENCRYPT="${SUB_ENCRYPT:-true}"
 BLOCK_SMTP="${BLOCK_SMTP:-true}"
@@ -5159,8 +5157,6 @@ else
             export ENABLE_WARP
             export WARP_LICENSE_KEY
             export TIME_LOCATION
-            export TRAFFIC_RESET_DAY
-            export SUB_SHOW_INFO
             export SUB_UPDATES
             export SUB_ENCRYPT
             export SUB_CLASH_PATH

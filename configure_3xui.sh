@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  CONFIGURE 3X-UI INBOUNDS & SETTINGS (v7.2.0 Universal Companion & Smart Reconcile)
+#  CONFIGURE 3X-UI INBOUNDS & SETTINGS (v7.2.1 Universal Companion & Smart Reconcile)
 # ==============================================================================
 #  Скрипт автоматического конфигурирования и самовосстановления базы 3X-UI.
 #  Безопасен для повторного запуска:
@@ -286,8 +286,6 @@ if [ -z "$SYSTEM_TZ" ] && [ -L /etc/localtime ]; then
 fi
 TIME_LOCATION="${TIME_LOCATION:-${SYSTEM_TZ:-Europe/Moscow}}"
 
-TRAFFIC_RESET_DAY="${TRAFFIC_RESET_DAY:-1}"
-SUB_SHOW_INFO="${SUB_SHOW_INFO:-true}"
 SUB_UPDATES="${SUB_UPDATES:-1}"
 SUB_ENCRYPT="${SUB_ENCRYPT:-true}"
 BLOCK_SMTP="${BLOCK_SMTP:-y}"
@@ -443,8 +441,6 @@ export SERVER_PREFIX
 export ENABLE_WARP
 export WARP_LICENSE_KEY
 export TIME_LOCATION
-export TRAFFIC_RESET_DAY
-export SUB_SHOW_INFO
 export SUB_UPDATES
 export SUB_ENCRYPT
 export BLOCK_SMTP
@@ -850,8 +846,6 @@ else:
     target_sub_clash_uri = f"https://{domain}{target_sub_clash_path}"
 
 time_location = os.environ.get("TIME_LOCATION", "Europe/Moscow").strip()
-traffic_reset_day = os.environ.get("TRAFFIC_RESET_DAY", "1").strip()
-sub_show_info = os.environ.get("SUB_SHOW_INFO", "true").strip().lower()
 sub_updates = os.environ.get("SUB_UPDATES", "1").strip()
 sub_encrypt = os.environ.get("SUB_ENCRYPT", "true").strip().lower()
 block_smtp = os.environ.get("BLOCK_SMTP", "y").strip().lower() in ("1", "y", "true")
@@ -875,8 +869,6 @@ settings_updates = {
     "subCertFile": "",
     "subKeyFile": "",
     "timeLocation": time_location,
-    "trafficResetDay": traffic_reset_day,
-    "subShowInfo": sub_show_info,
     "subUpdates": sub_updates,
     "subEncrypt": sub_encrypt
 }
@@ -1904,11 +1896,17 @@ if [ "$DRY_RUN" -eq 0 ]; then
         log "Генерация API-токена для подключения сервера как узла ('$NODE_TOKEN_NAME')..."
         NODE_TOKEN=""
         if [ -n "$XUI_BIN" ]; then
-            # 1. Попытка с флагом -tokenName (PR #6405 / новые версии 3X-UI)
-            token_out=$("$XUI_BIN" setting -getApiToken -tokenName "$NODE_TOKEN_NAME" 2>&1 || true)
+            # 1. Попытка с флагами -tokenName и -tokenScope admin (3X-UI v3.9.0+ / PR #6700)
+            token_out=$("$XUI_BIN" setting -getApiToken -tokenName "$NODE_TOKEN_NAME" -tokenScope admin 2>&1 || true)
             NODE_TOKEN=$(echo "$token_out" | grep -Eo 'apiToken: [^ ]+' | awk '{print $2}' || true)
 
-            # 2. Если флаг -tokenName не поддерживается, вызываем без него и обновляем имя в SQLite
+            # 2. Попытка только с флагом -tokenName (PR #6405)
+            if [ -z "$NODE_TOKEN" ]; then
+                token_out=$("$XUI_BIN" setting -getApiToken -tokenName "$NODE_TOKEN_NAME" 2>&1 || true)
+                NODE_TOKEN=$(echo "$token_out" | grep -Eo 'apiToken: [^ ]+' | awk '{print $2}' || true)
+            fi
+
+            # 3. Если флаги не поддерживаются, вызываем без них и обновляем имя в SQLite
             if [ -z "$NODE_TOKEN" ]; then
                 token_out=$("$XUI_BIN" setting -getApiToken 2>&1 || true)
                 NODE_TOKEN=$(echo "$token_out" | grep -Eo 'apiToken: [^ ]+' | awk '{print $2}' || true)
@@ -1928,23 +1926,35 @@ except Exception:
             fi
         fi
 
-        # 3. Резервный Python-метод, если CLI не вернул токен
+        # 4. Резервный Python-метод, если CLI не вернул токен
         if [ -z "$NODE_TOKEN" ] && [ -f "$DB_PATH" ]; then
             NODE_TOKEN=$("$PYTHON_CMD" -c "
-import sqlite3, secrets, hashlib
+import sqlite3, secrets, hashlib, time
 try:
     conn = sqlite3.connect('$DB_PATH')
     cur = conn.cursor()
     cur.execute(\"SELECT name FROM sqlite_master WHERE type='table' AND name='api_tokens'\")
     if cur.fetchone():
+        cur.execute(\"PRAGMA table_info(api_tokens)\")
+        cols = set(r[1] for r in cur.fetchall())
         plain_token = secrets.token_hex(32)
         token_hash = hashlib.sha256(plain_token.encode('utf-8')).hexdigest()
         cur.execute(\"SELECT id FROM api_tokens WHERE name = ?\", ('$NODE_TOKEN_NAME',))
         row = cur.fetchone()
+        now_ts = int(time.time())
         if row:
             cur.execute(\"UPDATE api_tokens SET token = ?, enabled = 1 WHERE id = ?\", (token_hash, row[0]))
         else:
-            cur.execute(\"INSERT INTO api_tokens (name, token, enabled) VALUES (?, ?, 1)\", ('$NODE_TOKEN_NAME', token_hash))
+            ins_cols = ['name', 'token', 'enabled']
+            ins_vals = ['$NODE_TOKEN_NAME', token_hash, 1]
+            if 'scope' in cols:
+                ins_cols.append('scope')
+                ins_vals.append('admin')
+            if 'created_at' in cols:
+                ins_cols.append('created_at')
+                ins_vals.append(now_ts)
+            placeholders = ', '.join(['?'] * len(ins_cols))
+            cur.execute(f\"INSERT INTO api_tokens ({', '.join(ins_cols)}) VALUES ({placeholders})\", ins_vals)
         conn.commit()
         conn.close()
         print(plain_token)
@@ -1996,7 +2006,7 @@ EOF_NODE_ENV
         fi
     done
 
-    # Обновление ядра Xray-core до последней актуальной версии (v26.9.9+)
+    # Обновление ядра Xray-core до последней актуальной версии (v26.9.30+)
     INSTALLED_XRAY_VER=""
     if [[ "${UPDATE_XRAY_CORE:-y}" =~ ^[Yy1] ]]; then
         XRAY_BIN_DIR="/usr/local/x-ui/bin"
@@ -2025,7 +2035,7 @@ EOF_NODE_ENV
                 LATEST_TAG=$(echo "$gh_resp" | { grep -m1 '"tag_name":' || true; } | { cut -d '"' -f 4 || true; }) || LATEST_TAG=""
             fi
         fi
-        [ -n "$LATEST_TAG" ] || LATEST_TAG="v26.9.9"
+        [ -n "$LATEST_TAG" ] || LATEST_TAG="v26.9.30"
         CLEAN_LATEST="${LATEST_TAG#v}"
 
         if [ -z "$CURRENT_VER" ] || [ "$CURRENT_VER" != "$CLEAN_LATEST" ]; then

@@ -277,8 +277,6 @@ if [ -z "$SYSTEM_TZ" ] && [ -L /etc/localtime ]; then
     SYSTEM_TZ="$(readlink /etc/localtime 2>/dev/null | sed -E 's/.*zoneinfo\///')"
 fi
 export TIME_LOCATION="${TIME_LOCATION:-${SYSTEM_TZ:-Europe/Moscow}}"
-export TRAFFIC_RESET_DAY="${TRAFFIC_RESET_DAY:-1}"
-export SUB_SHOW_INFO="${SUB_SHOW_INFO:-true}"
 export SUB_UPDATES="${SUB_UPDATES:-1}"
 export SUB_ENCRYPT="${SUB_ENCRYPT:-true}"
 export BLOCK_SMTP="${BLOCK_SMTP:-y}"
@@ -494,8 +492,6 @@ else:
     target_sub_clash_uri = f"https://{domain}{target_sub_clash_path}"
 
 time_location = os.environ.get("TIME_LOCATION", "Europe/Moscow").strip()
-traffic_reset_day = os.environ.get("TRAFFIC_RESET_DAY", "1").strip()
-sub_show_info = os.environ.get("SUB_SHOW_INFO", "true").strip().lower()
 sub_updates = os.environ.get("SUB_UPDATES", "1").strip()
 sub_encrypt = os.environ.get("SUB_ENCRYPT", "true").strip().lower()
 block_smtp = os.environ.get("BLOCK_SMTP", "y").strip().lower() in ("1", "y", "true")
@@ -519,8 +515,6 @@ settings_updates = {
     "subCertFile": "",
     "subKeyFile": "",
     "timeLocation": time_location,
-    "trafficResetDay": traffic_reset_day,
-    "subShowInfo": sub_show_info,
     "subUpdates": sub_updates,
     "subEncrypt": sub_encrypt
 }

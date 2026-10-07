@@ -124,7 +124,7 @@ if [ "$ROLLBACK" -eq 1 ]; then
         systemctl stop x-ui 2>/dev/null || true
     fi
     cp -a "$LATEST_DB_BAK" "$DB_PATH"
-    chmod 644 "$DB_PATH"
+    chmod 600 "$DB_PATH"
     if command -v systemctl >/dev/null 2>&1; then
         systemctl start x-ui 2>/dev/null || true
     fi
@@ -460,6 +460,20 @@ def generate_wg_keypair():
     pub_b64 = base64.b64encode(pub_raw).decode()
     return priv_b64, pub_b64
 
+def generate_vlessenc_keypair():
+    for candidate in ["/usr/local/x-ui/bin/xray-linux-amd64", "/usr/local/x-ui/bin/xray-linux-arm64", "/usr/local/x-ui/bin/xray", "xray"]:
+        try:
+            res = subprocess.run([candidate, "vlessenc"], capture_output=True, text=True, timeout=5)
+            if res.returncode == 0:
+                out = res.stdout
+                de_m = re.search(r'"decryption":\s*"([^"]+)"', out)
+                en_m = re.search(r'"encryption":\s*"([^"]+)"', out)
+                if de_m and en_m:
+                    return de_m.group(1), en_m.group(1)
+        except Exception:
+            pass
+    return None, None
+
 # --- 1. СИНХРОНИЗАЦИЯ НАСТРОЕК СИСТЕМЫ (SETTINGS) ---
 print("\n[+] Проверка системных настроек панели и подписок...")
 
@@ -703,11 +717,11 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
 
         # Строгая гарантия параметров Steal-Oneself (Anti-Loop Fallback + Xver=1)
         if port == steal_port or tag == "in-steal-reality" or cur_tag == "in-steal-reality":
-            if not target_stream["realitySettings"].get("dest") or target_stream["realitySettings"]["dest"] != "127.0.0.1:9443":
-                target_stream["realitySettings"]["dest"] = "127.0.0.1:9443"
-                repairs.append("установлен dest: 127.0.0.1:9443 (защита от петли Steal-Oneself)")
+            if not target_stream["realitySettings"].get("dest") or target_stream["realitySettings"]["dest"] != "127.0.0.1:11443":
+                target_stream["realitySettings"]["dest"] = "127.0.0.1:11443"
+                repairs.append("установлен dest: 127.0.0.1:11443 (Anti-Loop Stub Nginx, Zero-RST)")
             else:
-                preserved.append("anti-loop dest 9443")
+                preserved.append("anti-loop dest 11443")
             if target_stream["realitySettings"].get("xver") != 1:
                 target_stream["realitySettings"]["xver"] = 1
                 repairs.append("установлен xver: 1 (Proxy Protocol для Nginx Anti-Loop)")
@@ -872,7 +886,7 @@ if enable_steal:
         "tcpSettings": {"acceptProxyProtocol": True},
         "security": "reality",
         "realitySettings": {
-            "show": False, "xver": 1, "dest": "127.0.0.1:9443",
+            "show": False, "xver": 1, "dest": "127.0.0.1:11443",
             "serverNames": [steal_dom], "privateKey": def_reality_priv,
             "shortIds": [def_reality_sid],
             "settings": {"publicKey": def_reality_pub, "fingerprint": "chrome", "spiderX": f"/{def_reality_sid}"}
@@ -898,8 +912,30 @@ if enable_classic:
     }
     smart_reconcile_inbound(classic_port, "vless", "in-classic-reality", "VLESS_CLASSIC", c_set, c_str, listen="127.0.0.1")
 
-# 3. VLESS xHTTP (Stream-One)
-x_set = {"clients": [{"id": def_uuid}], "decryption": "none"}
+# 3. VLESS xHTTP (Stream-One) - сохраняем или генерируем постквантовый ML-KEM-768
+cur.execute("SELECT settings FROM inbounds WHERE port = ?", (xhttp_port,))
+row_xh = cur.fetchone()
+prev_xh_dec = "none"
+prev_xh_enc = None
+if row_xh and row_xh[0]:
+    try:
+        prev_s = json.loads(row_xh[0])
+        if prev_s.get("decryption") and prev_s["decryption"] != "none":
+            prev_xh_dec = prev_s["decryption"]
+            prev_xh_enc = prev_s.get("encryption")
+    except Exception:
+        pass
+
+if prev_xh_dec != "none":
+    x_set = {"clients": [{"id": def_uuid, "flow": "xtls-rprx-vision"}], "decryption": prev_xh_dec}
+    if prev_xh_enc:
+        x_set["encryption"] = prev_xh_enc
+else:
+    vless_dekey, vless_enkey = generate_vlessenc_keypair()
+    if vless_dekey and vless_enkey:
+        x_set = {"clients": [{"id": def_uuid, "flow": "xtls-rprx-vision"}], "decryption": vless_dekey, "encryption": vless_enkey}
+    else:
+        x_set = {"clients": [{"id": def_uuid, "flow": "xtls-rprx-vision"}], "decryption": "none"}
 x_str = {
     "network": "xhttp",
     "xhttpSettings": {
@@ -976,9 +1012,9 @@ if not dry_run:
 conn.close()
 EOF_PYTHON_RECONCILE
 
-# --- ЭТАП 3: ПРОВЕРКА И ПЕРЕЗАПУСК СЛУЖБ ---
+# --- ЭТАП 3: ПРОВЕРКА И ПЕРЕЗАПУСК СЛУЖБ (Hardened: chmod 600 для защиты от локальной утечки) ---
 if [ "$DRY_RUN" -eq 0 ]; then
-    chmod 644 "$DB_PATH" 2>/dev/null || true
+    chmod 600 "$DB_PATH" 2>/dev/null || true
     
     # Запуск x-ui
     if [ "${WAS_ACTIVE:-0}" -eq 1 ] || (command -v systemctl >/dev/null 2>&1 && systemctl is-enabled --quiet x-ui 2>/dev/null); then

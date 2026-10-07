@@ -1108,9 +1108,29 @@ while [[ $# -gt 0 ]]; do
             NON_INTERACTIVE=1
             shift
             ;;
+        --auto)
+            NON_INTERACTIVE=1
+            EXPRESS_MODE=1
+            shift
+            ;;
         -d|--domain)
             [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: доменное имя."
             PRIMARY_DOMAIN="$2"
+            shift 2
+            ;;
+        -m|--email)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: email."
+            LE_EMAIL="$2"
+            shift 2
+            ;;
+        --panel-port)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: порт панели."
+            PANEL_PORT="$2"
+            shift 2
+            ;;
+        --panel-path)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: путь к панели."
+            PANEL_PATH="$2"
             shift 2
             ;;
         -r|--resume)
@@ -1394,6 +1414,14 @@ run_doctor_check() {
         echo -e "    • MSS Clamping:      ${YELLOW}не обнаружен в iptables mangle${NC}"
     fi
 
+    local ipv6_all
+    ipv6_all=$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null || echo "0")
+    if [ "$ipv6_all" = "1" ] || [ ! -d /proc/sys/net/ipv6 ]; then
+        echo -e "    • Статус IPv6:       ${GREEN}ОТКЛЮЧЕН (no leak)${NC}"
+    else
+        echo -e "    • Статус IPv6:       ${RED}АКТИВЕН (возможны утечки DNS/IPv6)${NC}"
+    fi
+
     # 2. Nginx
     echo -e "\n  ${WHITE}${BOLD}[2/7] Веб-сервер Nginx (L4/L7 Router):${NC}"
     if command -v nginx >/dev/null 2>&1; then
@@ -1580,9 +1608,15 @@ net.ipv4.ip_forward = 1
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
 net.ipv4.tcp_syncookies = 1
-net.ipv4.conf.all.rp_filter = 1
-net.ipv4.conf.default.rp_filter = 1
+net.ipv4.conf.all.rp_filter = 2
+net.ipv4.conf.default.rp_filter = 2
+net.ipv4.ip_nonlocal_bind = 1
 vm.swappiness = 10
+
+# Disable IPv6 (Zero-leak policy)
+net.ipv6.conf.all.disable_ipv6 = 1
+net.ipv6.conf.default.disable_ipv6 = 1
+net.ipv6.conf.lo.disable_ipv6 = 1
 
 net.ipv4.ip_local_port_range = 1024 65535
 net.core.netdev_max_backlog = 16384
@@ -1621,6 +1655,56 @@ net.ipv4.tcp_notsent_lowat = 16384
 EOF
 
     sysctl --system >/dev/null 2>&1 || true
+
+    # Zero-Log Policy для journald (хранение логов в RAM, защита от дисковой форензики)
+    mkdir -p /etc/systemd/journald.conf.d/
+    cat << 'EOF' > /etc/systemd/journald.conf.d/00-volatile.conf
+[Journal]
+Storage=volatile
+RuntimeMaxUse=64M
+MaxRetentionSec=1day
+EOF
+    systemctl restart systemd-journald 2>/dev/null || true
+
+    # Disable IPv6 immediately on all active interfaces (runtime)
+    if [ -d /proc/sys/net/ipv6/conf ]; then
+        for iface in $(ls /proc/sys/net/ipv6/conf/ 2>/dev/null); do
+            sysctl -w net.ipv6.conf."$iface".disable_ipv6=1 >/dev/null 2>&1 || true
+        done
+    fi
+
+    # Hardware/Kernel level disable via GRUB (survives cloud network resets upon reboot)
+    if [ -f /etc/default/grub ]; then
+        if ! grep -q "ipv6.disable=1" /etc/default/grub; then
+            cp /etc/default/grub /etc/default/grub.bak 2>/dev/null || true
+            sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="/GRUB_CMDLINE_LINUX_DEFAULT="ipv6.disable=1 /' /etc/default/grub
+            sed -i "s/GRUB_CMDLINE_LINUX_DEFAULT='/GRUB_CMDLINE_LINUX_DEFAULT='ipv6.disable=1 /" /etc/default/grub
+            sed -i 's/GRUB_CMDLINE_LINUX="/GRUB_CMDLINE_LINUX="ipv6.disable=1 /' /etc/default/grub
+            sed -i "s/GRUB_CMDLINE_LINUX='/GRUB_CMDLINE_LINUX='ipv6.disable=1 /" /etc/default/grub
+            if command -v update-grub &>/dev/null; then
+                update-grub >/dev/null 2>&1 || true
+            elif command -v grub-mkconfig &>/dev/null; then
+                grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1 || true
+            fi
+        fi
+    fi
+
+    # Crontab guard against cloud-init / network daemon sysctl overrides on boot
+    if command -v crontab &>/dev/null; then
+        local cron_job="@reboot sleep 10 && sysctl --system"
+        if ! crontab -l 2>/dev/null | grep -Fq "$cron_job"; then
+            (crontab -l 2>/dev/null || true; echo "$cron_job") | crontab - 2>/dev/null || true
+        fi
+    fi
+
+    # Disable IPv6 in UFW configuration
+    if [ -f /etc/default/ufw ]; then
+        if grep -q "^IPV6=" /etc/default/ufw; then
+            sed -i 's/^IPV6=.*/IPV6=no/' /etc/default/ufw 2>/dev/null || true
+        else
+            echo "IPV6=no" >> /etc/default/ufw 2>/dev/null || true
+        fi
+    fi
 
     cat << 'EOF' > /etc/security/limits.d/99-proxy-limits.conf
 * soft nofile 524288
@@ -2009,12 +2093,18 @@ if [ "$EXPRESS_MODE" -eq 1 ]; then
     ENABLE_CLASSIC="y"
     CLASSIC_PORT="46443"
     CLASSIC_SNI_LIST=("gateway.icloud.com")
-    PANEL_PORT="10443"
+    PANEL_PORT="${PANEL_PORT:-10443}"
     ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
     ADMIN_PASSWORD="${ADMIN_PASSWORD:-$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 12)}"
     SERVER_PREFIX="${SERVER_PREFIX:-Server}"
-    RAW_PATH="panel-$(head /dev/urandom | tr -dc a-z0-9 | head -c 6)"
-    PANEL_PATH="/${RAW_PATH}/"
+    if [ -n "${PANEL_PATH:-}" ]; then
+        RAW_PATH="${PANEL_PATH#/}"
+        RAW_PATH="${RAW_PATH%/}"
+        PANEL_PATH="/${RAW_PATH}/"
+    else
+        RAW_PATH="panel-$(head /dev/urandom | tr -dc a-z0-9 | head -c 6)"
+        PANEL_PATH="/${RAW_PATH}/"
+    fi
     SUB_PORT="55443"
     RAW_SUB_PATH="sub-$(head /dev/urandom | tr -dc a-z0-9 | head -c 6)"
     SUB_PATH="/${RAW_SUB_PATH}/"
@@ -3393,13 +3483,16 @@ EOF
         done
     fi
 
-    # Настройка строгих прав доступа на каталоги SSL для чтения Nginx
+    # Настройка строгих прав доступа на каталоги SSL для чтения Nginx (Zero-Leak)
     if [ "$SSL_ENGINE_CHOICE" = "1" ]; then
-        chmod 755 /etc/letsencrypt /etc/letsencrypt/live /etc/letsencrypt/archive 2>/dev/null || true
+        chmod 755 /etc/letsencrypt /etc/letsencrypt/live 2>/dev/null || true
+        chmod 700 /etc/letsencrypt/archive 2>/dev/null || true
         for dom in "${ALL_DOMAINS[@]}"; do
             if [ -d "/etc/letsencrypt/live/$dom" ]; then
                 chmod 755 "/etc/letsencrypt/live/$dom" 2>/dev/null || true
-                chmod 644 /etc/letsencrypt/live/"$dom"/* 2>/dev/null || true
+                chmod 644 /etc/letsencrypt/live/"$dom"/*.pem 2>/dev/null || true
+                chmod 600 /etc/letsencrypt/live/"$dom"/privkey*.pem 2>/dev/null || true
+                chmod 600 /etc/letsencrypt/archive/"$dom"/privkey*.pem 2>/dev/null || true
             fi
         done
     else
@@ -3407,7 +3500,8 @@ EOF
         for dom in "${ALL_DOMAINS[@]}"; do
             if [ -d "/etc/ssl/acme/$dom" ]; then
                 chmod 755 "/etc/ssl/acme/$dom" 2>/dev/null || true
-                chmod 644 /etc/ssl/acme/"$dom"/* 2>/dev/null || true
+                chmod 644 /etc/ssl/acme/"$dom"/*.pem 2>/dev/null || true
+                chmod 600 /etc/ssl/acme/"$dom"/privkey*.pem 2>/dev/null || true
             fi
         done
     fi
@@ -4247,8 +4341,7 @@ http {
     proxy_cache_path /var/cache/nginx/img_cache levels=1:2 keys_zone=img_zone:10m max_size=1g inactive=7d use_temp_path=off;
     proxy_cache_path /var/cache/nginx/html_cache levels=1:2 keys_zone=html_zone:20m max_size=500m inactive=30d use_temp_path=off;
 
-    log_format main '\$ak_real_ip [\$time_local] "\$request" \$status \$body_bytes_sent "\$http_user_agent"';
-    access_log /var/log/nginx/access.log main buffer=32k flush=60s;
+    access_log off;
 
     keepalive_timeout 300s;
     keepalive_requests 100000;
@@ -4764,6 +4857,26 @@ server {
 }
 EOF
 
+    # 4.1. Anti-Loop Stub Server на порту 11443 для Steal-Oneself (Zero-Leak Active Probing Shield)
+    # Поглощает сканирование и активное зондирование (DPI/ЦМУ ССО) без сброса соединения (TCP RST)
+    local s_stub_names="${PRIMARY_DOMAIN} *.${PRIMARY_DOMAIN}"
+    for s_d in "${STEAL_DOMAINS[@]:-}"; do
+        [ -n "$s_d" ] && s_stub_names="${s_stub_names} ${s_d}"
+    done
+    cat << EOF > "/etc/nginx/conf.d/02-steal-stub.conf"
+server {
+    listen 127.0.0.1:11443 ssl proxy_protocol;
+    http2 on;
+    server_name ${s_stub_names};
+    ssl_certificate ${SSL_BASE_DIR}/$PRIMARY_DOMAIN/fullchain.pem;
+    ssl_certificate_key ${SSL_BASE_DIR}/$PRIMARY_DOMAIN/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_tickets off;
+    access_log off;
+    location / { return 404; }
+}
+EOF
+
 # 5. Генерация виртуальных хостов для дополнительных доменов
 for ((i=1; i<${#ALL_DOMAINS[@]}; i++)); do
     ext_dom="${ALL_DOMAINS[$i]}"
@@ -4997,13 +5110,15 @@ if [[ "${ENABLE_HY2:-0}" == "1" || "${ENABLE_HY2,,}" == "y" ]] && \
     if ! iptables -t nat -C PREROUTING -p udp --dport "$PH_RANGE" -j REDIRECT --to-ports "$HY2_PORT" 2>/dev/null; then
         iptables -t nat -A PREROUTING -p udp --dport "$PH_RANGE" -j REDIRECT --to-ports "$HY2_PORT" 2>/dev/null || true
     fi
-    # IPv6 (если ip6tables доступен)
-    if command -v ip6tables >/dev/null 2>&1; then
+    # IPv6 (если стек IPv6 активен и ip6tables доступен)
+    local hy2_v6_status=""
+    if [ -d /proc/sys/net/ipv6 ] && [ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null)" != "1" ] && command -v ip6tables >/dev/null 2>&1; then
         if ! ip6tables -t nat -C PREROUTING -p udp --dport "$PH_RANGE" -j REDIRECT --to-ports "$HY2_PORT" 2>/dev/null; then
             ip6tables -t nat -A PREROUTING -p udp --dport "$PH_RANGE" -j REDIRECT --to-ports "$HY2_PORT" 2>/dev/null || true
         fi
+        hy2_v6_status="+IPv6"
     fi
-    ok "Port Hopping: NAT REDIRECT UDP ${PH_RANGE} → порт ${HY2_PORT} (IPv4+IPv6) [Активирован]"
+    ok "Port Hopping: NAT REDIRECT UDP ${PH_RANGE} → порт ${HY2_PORT} (IPv4${hy2_v6_status}) [Активирован]"
 
     # 2. Персистентность через /etc/ufw/before.rules (IPv4, секция *nat)
     if [ -f /etc/ufw/before.rules ] && ! grep -q "Hy2 Port Hopping" /etc/ufw/before.rules 2>/dev/null; then
@@ -5018,8 +5133,8 @@ if [[ "${ENABLE_HY2:-0}" == "1" || "${ENABLE_HY2,,}" == "y" ]] && \
         fi
     fi
 
-    # 3. Персистентность через /etc/ufw/before6.rules (IPv6, секция *nat)
-    if [ -f /etc/ufw/before6.rules ] && ! grep -q "Hy2 Port Hopping" /etc/ufw/before6.rules 2>/dev/null; then
+    # 3. Персистентность через /etc/ufw/before6.rules (IPv6, секция *nat, если IPv6 включен в UFW)
+    if [ -f /etc/ufw/before6.rules ] && grep -q '^IPV6=yes' /etc/default/ufw 2>/dev/null && ! grep -q "Hy2 Port Hopping" /etc/ufw/before6.rules 2>/dev/null; then
         if grep -q '^\*nat' /etc/ufw/before6.rules 2>/dev/null; then
             sed -i "/^\*nat/,/^COMMIT/{/^COMMIT/i\\-A PREROUTING -p udp --dport ${PH_RANGE} -j REDIRECT --to-ports ${HY2_PORT} # Hy2 Port Hopping
             }" /etc/ufw/before6.rules

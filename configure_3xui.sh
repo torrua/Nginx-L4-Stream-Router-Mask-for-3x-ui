@@ -817,6 +817,20 @@ def generate_wg_keypair():
     pub_b64 = base64.b64encode(pub_raw).decode()
     return priv_b64, pub_b64
 
+def generate_vlessenc_keypair():
+    for candidate in ["/usr/local/x-ui/bin/xray-linux-amd64", "/usr/local/x-ui/bin/xray-linux-arm64", "/usr/local/x-ui/bin/xray", "xray"]:
+        try:
+            res = subprocess.run([candidate, "vlessenc"], capture_output=True, text=True, timeout=5)
+            if res.returncode == 0:
+                out = res.stdout
+                de_m = re.search(r'"decryption":\s*"([^"]+)"', out)
+                en_m = re.search(r'"encryption":\s*"([^"]+)"', out)
+                if de_m and en_m:
+                    return de_m.group(1), en_m.group(1)
+        except Exception:
+            pass
+    return None, None
+
 # ----------------- 1. Настройки панели и подписок (settings) -----------------
 print("\n[+] Синхронизация системных настроек панели и подписок...")
 
@@ -1557,11 +1571,11 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
 
         # Строгая гарантия параметров Steal-Oneself (Anti-Loop Fallback + Xver=1)
         if port == steal_port or tag == "in-steal-reality" or cur_tag == "in-steal-reality":
-            if not target_stream["realitySettings"].get("dest") or target_stream["realitySettings"]["dest"] != "127.0.0.1:9443":
-                target_stream["realitySettings"]["dest"] = "127.0.0.1:9443"
-                repairs.append("установлен dest: 127.0.0.1:9443 (защита от петли Steal-Oneself)")
+            if not target_stream["realitySettings"].get("dest") or target_stream["realitySettings"]["dest"] != "127.0.0.1:11443":
+                target_stream["realitySettings"]["dest"] = "127.0.0.1:11443"
+                repairs.append("установлен dest: 127.0.0.1:11443 (Anti-Loop Stub Nginx, Zero-RST)")
             else:
-                preserved.append("anti-loop dest 9443")
+                preserved.append("anti-loop dest 11443")
             if target_stream["realitySettings"].get("xver") != 1:
                 target_stream["realitySettings"]["xver"] = 1
                 repairs.append("установлен xver: 1 (Proxy Protocol для Nginx Anti-Loop)")
@@ -1723,7 +1737,7 @@ if enable_steal:
         "tcpSettings": {"acceptProxyProtocol": True},
         "security": "reality",
         "realitySettings": {
-            "show": False, "xver": 1, "dest": "127.0.0.1:9443",
+            "show": False, "xver": 1, "dest": "127.0.0.1:11443",
             "serverNames": [steal_dom], "privateKey": def_reality_priv,
             "shortIds": [def_reality_sid],
             "settings": {"publicKey": def_reality_pub, "fingerprint": "chrome", "spiderX": f"/{def_reality_sid}"}
@@ -1752,7 +1766,11 @@ if enable_classic:
     smart_reconcile_inbound(classic_port, "vless", "in-classic-reality", classic_remark, c_set, c_str, listen="127.0.0.1")
 
 # 3. VLESS xHTTP (50443)
-x_set = {"clients": [{"id": unified_uuid, "email": unified_email, "subId": unified_sub_id, "enable": True}], "decryption": "none"}
+vless_dekey, vless_enkey = generate_vlessenc_keypair()
+if vless_dekey and vless_enkey:
+    x_set = {"clients": [{"id": unified_uuid, "flow": "xtls-rprx-vision", "email": unified_email, "subId": unified_sub_id, "enable": True}], "decryption": vless_dekey, "encryption": vless_enkey}
+else:
+    x_set = {"clients": [{"id": unified_uuid, "flow": "xtls-rprx-vision", "email": unified_email, "subId": unified_sub_id, "enable": True}], "decryption": "none"}
 x_str = {
     "network": "xhttp",
     "xhttpSettings": {
@@ -1846,23 +1864,27 @@ if not dry_run:
         pass
     conn.commit()
 
-    # Сохранение параметров единого клиента во временный файл для отчета bash
+    # Сохранение параметров единого клиента во временный файл в /run (tmpfs) с безопасными правами
     try:
-        with open("/tmp/3xui_unified_client.env", "w") as f:
+        run_file = "/run/3xui_unified_client.env" if os.path.isdir("/run") else "/tmp/3xui_unified_client.env"
+        old_umask = os.umask(0o077)
+        with open(run_file, "w") as f:
             f.write(f"UNIFIED_CLIENT_TAG='{unified_email}'\n")
             f.write(f"UNIFIED_SUB_ID='{unified_sub_id}'\n")
             f.write(f"UNIFIED_UUID='{unified_uuid}'\n")
             f.write(f"UNIFIED_AWG_HPK='{unified_awg_hpk}'\n")
             f.write(f"UNIFIED_AWG_PORT='{awg_v3_port}'\n")
+        os.umask(old_umask)
+        os.chmod(run_file, 0o600)
     except Exception:
         pass
 
 conn.close()
 EOF_PYTHON_CONFIG
 
-# Нормализация прав доступа и перезапуск служб
+# Нормализация прав доступа и перезапуск служб (Hardened: chmod 600 для защиты от локальной утечки)
 if [ "$DRY_RUN" -eq 0 ]; then
-    chmod 644 "$DB_PATH" 2>/dev/null || true
+    chmod 600 "$DB_PATH" 2>/dev/null || true
 
     # Обнаружение исполняемого файла CLI 3X-UI
     XUI_BIN=""
@@ -1967,13 +1989,15 @@ except Exception:
 
         if [ -n "$NODE_TOKEN" ]; then
             ok "API-токен ноды '$NODE_TOKEN_NAME' успешно сгенерирован!"
-            # Экспорт для setup_mask.sh
-            cat << EOF_NODE_ENV > /tmp/3xui_node_token.env
+            # Экспорт для setup_mask.sh (в /run или /tmp)
+            NODE_ENV_FILE="/run/3xui_node_token.env"
+            [ -d "/run" ] || NODE_ENV_FILE="/tmp/3xui_node_token.env"
+            cat << EOF_NODE_ENV > "$NODE_ENV_FILE"
 ENABLE_NODE_TOKEN="y"
 NODE_TOKEN_NAME="$NODE_TOKEN_NAME"
 NODE_TOKEN="$NODE_TOKEN"
 EOF_NODE_ENV
-            chmod 600 /tmp/3xui_node_token.env 2>/dev/null || true
+            chmod 600 "$NODE_ENV_FILE" 2>/dev/null || true
 
             # Сохранение в .env файл, если он указан
             if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
@@ -2098,10 +2122,12 @@ fi
 # Чтение параметров единого клиента, экспортированных из Python
 UNIFIED_CLIENT_TAG=""
 UNIFIED_SUB_ID=""
-if [ -f "/tmp/3xui_unified_client.env" ]; then
-    source "/tmp/3xui_unified_client.env"
-    rm -f "/tmp/3xui_unified_client.env"
-fi
+for c_env in "/run/3xui_unified_client.env" "/tmp/3xui_unified_client.env"; do
+    if [ -f "$c_env" ]; then
+        source "$c_env"
+        rm -f "$c_env"
+    fi
+done
 
 echo
 echo -e "${GREEN}=====================================================================${NC}"

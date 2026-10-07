@@ -27,7 +27,7 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="v7.2.1"
+SCRIPT_VERSION="v7.3.0"
 
 # --------------------------- Замеры времени и телеметрия ---------------------------
 SCRIPT_START_TIME=$(date +%s)

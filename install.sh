@@ -9,6 +9,31 @@ set -o pipefail
 
 SCRIPT_VERSION="v7.3.0"
 
+# Защита от аварийного обрыва SSH-сессии при установке
+trap 'echo -e "\n[!] Внимание: получен сигнал SIGHUP, процесс установки продолжается в фоне..." >> "${INSTALL_LOG:-/var/log/nginx_mask_install.log}" 2>&1' SIGHUP
+
+detect_active_ssh_port() {
+    local active_port=""
+    if [ -n "${SSH_CONNECTION:-}" ]; then
+        active_port=$(echo "$SSH_CONNECTION" | awk '{print $4}')
+    fi
+    if [ -z "$active_port" ] || ! [[ "$active_port" =~ ^[0-9]+$ ]]; then
+        active_port=$(ss -tlnp 2>/dev/null | grep -E 'sshd|ssh' | grep -vE '127\.0\.0\.1|::1' | awk '{print $4}' | awk -F: '{print $NF}' | sort -n | tail -n1 || echo "")
+    fi
+    if [ -z "$active_port" ] || ! [[ "$active_port" =~ ^[0-9]+$ ]]; then
+        active_port="22"
+    fi
+    echo "$active_port"
+}
+
+get_ssh_service_name() {
+    if systemctl list-unit-files 2>/dev/null | grep -q "^sshd\.service"; then
+        echo "sshd"
+    else
+        echo "ssh"
+    fi
+}
+
 
 # --- Color Palette & Typography ---
 BOLD=$'\033[1m'
@@ -77,35 +102,50 @@ run_with_spinner() {
     shift
     local cmd=("$@")
     
-    # Spinner glyphs
-    local spin_chars=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
-    local delay=0.08
-    
     # Run command in background and redirect output to log
     "${cmd[@]}" >> "$INSTALL_LOG" 2>&1 &
     local pid=$!
+    local exit_code=0
     
-    # Hide cursor
-    tput civis 2>/dev/null || echo -ne "\033[?25l"
-    
-    local i=0
-    while kill -0 "$pid" 2>/dev/null; do
-        i=$(( (i + 1) % 10 ))
-        printf "\r  ${CYAN}${spin_chars[$i]}${RESET}  ${WHITE}%-52s${RESET}" "$task_name..."
-        sleep "$delay"
-    done
-    
-    wait "$pid"
-    local exit_code=$?
-    
-    # Show cursor
-    tput cnorm 2>/dev/null || echo -ne "\033[?25h"
+    if [ ! -t 1 ]; then
+        echo -e "  ${CYAN}*${RESET}  ${WHITE}${task_name}...${RESET}"
+        wait "$pid"
+        exit_code=$?
+    else
+        # Spinner glyphs
+        local spin_chars=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+        local delay=0.08
+        
+        # Hide cursor
+        tput civis 2>/dev/null || echo -ne "\033[?25l"
+        
+        local i=0
+        while kill -0 "$pid" 2>/dev/null; do
+            i=$(( (i + 1) % 10 ))
+            printf "\r  ${CYAN}${spin_chars[$i]}${RESET}  ${WHITE}%-52s${RESET}" "$task_name..."
+            sleep "$delay"
+        done
+        
+        wait "$pid"
+        exit_code=$?
+        
+        # Show cursor
+        tput cnorm 2>/dev/null || echo -ne "\033[?25h"
+    fi
     
     if [ $exit_code -eq 0 ]; then
-        printf "\r  ${GREEN}${CHECK}${RESET}  ${WHITE}%-52s${RESET} ${GREEN}[DONE]${RESET}\n" "$task_name"
+        if [ ! -t 1 ]; then
+            printf "  ${GREEN}${CHECK}${RESET}  ${WHITE}%-52s${RESET} ${GREEN}[DONE]${RESET}\n" "$task_name"
+        else
+            printf "\r  ${GREEN}${CHECK}${RESET}  ${WHITE}%-52s${RESET} ${GREEN}[DONE]${RESET}\n" "$task_name"
+        fi
         return 0
     else
-        printf "\r  ${RED}${CROSS}${RESET}  ${WHITE}%-52s${RESET} ${RED}[FAILED]${RESET}\n" "$task_name"
+        if [ ! -t 1 ]; then
+            printf "  ${RED}${CROSS}${RESET}  ${WHITE}%-52s${RESET} ${RED}[FAILED]${RESET}\n" "$task_name"
+        else
+            printf "\r  ${RED}${CROSS}${RESET}  ${WHITE}%-52s${RESET} ${RED}[FAILED]${RESET}\n" "$task_name"
+        fi
         echo -e "\n  ${RED}${BOLD}Ошибка при выполнении:${RESET} ${YELLOW}$task_name${RESET}"
         echo -e "  ${DIM}Подробности записаны в лог:${RESET} ${WHITE}$INSTALL_LOG${RESET}"
         echo -e "  ${DIM}Последние строки лога:${RESET}"
@@ -185,6 +225,26 @@ collect_express_inputs() {
     echo -e "  ${MAGENTA}${BOLD}Ввод основных параметров:${RESET}"
     echo -e "  ${DIM}────────────────────────────────────────────────────────────${RESET}"
     
+    # Автоопределение текущего активного порта SSH
+    SSH_ACTIVE_PORT=$(detect_active_ssh_port)
+
+    # Неинтерактивный режим: если параметры уже переданы через переменные окружения
+    if [[ -n "${PRIMARY_DOMAIN:-}" && -n "${LE_EMAIL:-}" ]]; then
+        PRIMARY_DOMAIN=$(echo "$PRIMARY_DOMAIN" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+        LE_EMAIL=$(echo "$LE_EMAIL" | tr -d '[:space:]')
+        SSH_PORT="${SSH_PORT:-$SSH_ACTIVE_PORT}"
+        echo -e "  ${GREEN}${CHECK} Параметры приняты из переменных окружения:${RESET}"
+        echo -e "    ${DIM}• Домен:${RESET}      ${WHITE}${BOLD}$PRIMARY_DOMAIN${RESET}"
+        echo -e "    ${DIM}• Email:${RESET}      ${WHITE}$LE_EMAIL${RESET}"
+        echo -e "    ${DIM}• SSH Порт:${RESET}   ${WHITE}$SSH_PORT${RESET} ${DIM}(активный: $SSH_ACTIVE_PORT)${RESET}"
+        echo ""
+        PANEL_USER="admin_$(head /dev/urandom | tr -dc a-z0-9 | head -c 6)"
+        PANEL_PASS="$(head /dev/urandom | tr -dc A-Za-z0-9_\- | head -c 16)"
+        PANEL_SECRET="$(head /dev/urandom | tr -dc a-z0-9 | head -c 12)"
+        PANEL_INTERNAL_PORT="2053"
+        return 0
+    fi
+
     echo -e "  ${YELLOW}${INFO} ВАЖНО О DNS-ЗАПИСЯХ:${RESET}"
     echo -e "  ${DIM}Для работы маскировки Nginx и Steal-Oneself REALITY в DNS нужны 2 A-записи:${RESET}"
     echo -e "    ${DIM}1) Основной домен (напр. domain.com)  ➜ IP вашего VPS (Маска, Панель, xHTTP)${RESET}"
@@ -194,8 +254,8 @@ collect_express_inputs() {
     # 1. Domain
     while true; do
         echo -ne "  ${WHITE}${ARROW} Введите ваш основной домен (напр. domain.com или vpn.domain.com): ${RESET}"
-        read -r PRIMARY_DOMAIN </dev/tty
-        PRIMARY_DOMAIN=$(echo "$PRIMARY_DOMAIN" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+        read -r PRIMARY_DOMAIN </dev/tty 2>/dev/null || read -r PRIMARY_DOMAIN 2>/dev/null || true
+        PRIMARY_DOMAIN=$(echo "${PRIMARY_DOMAIN:-}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
         
         if [[ -z "$PRIMARY_DOMAIN" ]]; then
             echo -e "  ${RED}${CROSS} Домен не может быть пустым!${RESET}"
@@ -212,8 +272,8 @@ collect_express_inputs() {
     # 2. Email
     while true; do
         echo -ne "  ${WHITE}${ARROW} Введите Email для сертификатов Let's Encrypt: ${RESET}"
-        read -r LE_EMAIL </dev/tty
-        LE_EMAIL=$(echo "$LE_EMAIL" | tr -d '[:space:]')
+        read -r LE_EMAIL </dev/tty 2>/dev/null || read -r LE_EMAIL 2>/dev/null || true
+        LE_EMAIL=$(echo "${LE_EMAIL:-}" | tr -d '[:space:]')
         
         if [[ -z "$LE_EMAIL" ]]; then
             echo -e "  ${RED}${CROSS} Email не может быть пустым!${RESET}"
@@ -228,13 +288,13 @@ collect_express_inputs() {
     done
 
     # 3. Optional SSH port
-    echo -ne "  ${WHITE}${ARROW} Оставить порт SSH по умолчанию (22)? [Y/n]: ${RESET}"
-    read -r KEEP_SSH </dev/tty || KEEP_SSH="y"
+    echo -ne "  ${WHITE}${ARROW} Оставить текущий порт SSH (${SSH_ACTIVE_PORT})? [Y/n]: ${RESET}"
+    read -r KEEP_SSH </dev/tty 2>/dev/null || read -r KEEP_SSH 2>/dev/null || KEEP_SSH="y"
     KEEP_SSH=${KEEP_SSH:-y}
     if [[ "$KEEP_SSH" =~ ^[Nn]$ ]]; then
         while true; do
             echo -ne "  ${WHITE}${ARROW} Введите новый порт SSH (1024-65535): ${RESET}"
-            read -r CUSTOM_SSH_PORT </dev/tty
+            read -r CUSTOM_SSH_PORT </dev/tty 2>/dev/null || read -r CUSTOM_SSH_PORT 2>/dev/null || true
             if [[ "$CUSTOM_SSH_PORT" =~ ^[0-9]+$ ]] && [ "$CUSTOM_SSH_PORT" -ge 1024 ] && [ "$CUSTOM_SSH_PORT" -le 65535 ]; then
                 SSH_PORT=$CUSTOM_SSH_PORT
                 break
@@ -242,7 +302,7 @@ collect_express_inputs() {
             echo -e "  ${RED}${CROSS} Порт должен быть числом от 1024 до 65535.${RESET}"
         done
     else
-        SSH_PORT=22
+        SSH_PORT="$SSH_ACTIVE_PORT"
     fi
 
     # Generate secure random credentials for 3X-UI
@@ -255,14 +315,58 @@ collect_express_inputs() {
     echo -e "  ${GREEN}${CHECK} Параметры приняты:${RESET}"
     echo -e "    ${DIM}• Домен:${RESET}      ${WHITE}${BOLD}$PRIMARY_DOMAIN${RESET}"
     echo -e "    ${DIM}• Email:${RESET}      ${WHITE}$LE_EMAIL${RESET}"
-    echo -e "    ${DIM}• SSH Порт:${RESET}   ${WHITE}$SSH_PORT${RESET}"
+    echo -e "    ${DIM}• SSH Порт:${RESET}   ${WHITE}$SSH_PORT${RESET} ${DIM}(активный: $SSH_ACTIVE_PORT)${RESET}"
     echo ""
     echo -ne "  ${WHITE}${ARROW} Начать автоматическое развертывание? [Y/n]: ${RESET}"
-    read -r CONFIRM </dev/tty || CONFIRM="y"
+    read -r CONFIRM </dev/tty 2>/dev/null || read -r CONFIRM 2>/dev/null || CONFIRM="y"
     CONFIRM=${CONFIRM:-y}
     if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
         echo -e "  ${YELLOW}Установка отменена пользователем.${RESET}"
         exit 0
+    fi
+}
+
+# --- SSH Configuration & Hardening ---
+apply_ssh_configuration() {
+    local target_port="$1"
+    local active_port="$2"
+
+    if [ "$target_port" -eq "$active_port" ]; then
+        return 0
+    fi
+
+    local ssh_svc
+    ssh_svc=$(get_ssh_service_name)
+
+    # 1. Отключаем systemd socket-activation (Ubuntu 22.10+, Ubuntu 24.04 LTS)
+    systemctl stop ssh.socket 2>/dev/null || true
+    systemctl disable ssh.socket 2>/dev/null || true
+    systemctl enable "${ssh_svc}.service" 2>/dev/null || true
+
+    # 2. Обновляем базовый /etc/ssh/sshd_config с гарантией Include
+    if [ -f /etc/ssh/sshd_config ]; then
+        sed -i -E "s/^[#\s]*Port [0-9]+/Port ${target_port}/" /etc/ssh/sshd_config || true
+        if ! grep -q "^Include /etc/ssh/sshd_config.d/\*\.conf" /etc/ssh/sshd_config 2>/dev/null; then
+            sed -i '1i Include /etc/ssh/sshd_config.d/*.conf' /etc/ssh/sshd_config 2>/dev/null || true
+        fi
+    fi
+
+    # 3. Drop-in конфигурация для OpenSSH с явным портом
+    mkdir -p /etc/ssh/sshd_config.d/
+    cat << EOF > /etc/ssh/sshd_config.d/99-hardening.conf
+Port ${target_port}
+AddressFamily inet
+PubkeyAuthentication yes
+EOF
+
+    # 4. Проверяем валидность конфигурации sshd перед перезапуском
+    mkdir -p /run/sshd
+    if /usr/sbin/sshd -t 2>/dev/null; then
+        systemctl restart "${ssh_svc}.service" || true
+    else
+        # При синтаксической ошибке — безопасный откат
+        rm -f /etc/ssh/sshd_config.d/99-hardening.conf
+        systemctl restart "${ssh_svc}.service" || true
     fi
 }
 
@@ -274,8 +378,8 @@ step_os_hardening() {
     # Update package lists
     apt-get update -y
     
-    # Install foundational tools
-    apt-get install -y curl wget git jq ufw certbot fail2ban ca-certificates lsb-release gnupg sed coreutils
+    # Install foundational tools (включая python3-systemd для fail2ban backend=systemd)
+    apt-get install -y curl wget git jq ufw certbot fail2ban python3-systemd ca-certificates lsb-release gnupg sed coreutils
     
     # 1. Enable BBR & System Network Tuning
     cat <<'EOF' > /etc/sysctl.d/99-vps-tuning.conf
@@ -344,16 +448,13 @@ EOF
         fi
     fi
 
-    # 2. SSH Configuration & Fail2ban
-    if [ "$SSH_PORT" -ne 22 ]; then
-        sed -i -E "s/^#?Port [0-9]+/Port $SSH_PORT/" /etc/ssh/sshd_config
-        systemctl restart ssh || systemctl restart sshd || true
-    fi
+    # 2. SSH Configuration & Fail2ban (Zero-Lockout)
+    apply_ssh_configuration "$SSH_PORT" "$SSH_ACTIVE_PORT"
 
     cat << EOF > /etc/fail2ban/jail.local
 [sshd]
 enabled = true
-port = $SSH_PORT
+port = ${SSH_ACTIVE_PORT},${SSH_PORT}
 maxretry = 5
 findtime = 10m
 bantime = 1h
@@ -374,7 +475,14 @@ EOF
     fi
     ufw default deny incoming >/dev/null 2>&1 || true
     ufw default allow outgoing >/dev/null 2>&1 || true
-    ufw allow "$SSH_PORT"/tcp comment 'SSH Port' >/dev/null 2>&1 || true
+
+    # КРИТИЧЕСКАЯ ЗАЩИТА: Всегда разрешаем ТЕКУЩИЙ активный порт SSH
+    ufw allow "${SSH_ACTIVE_PORT}/tcp" comment 'Current SSH Port' >/dev/null 2>&1 || true
+
+    # Если задан новый целевой порт — разрешаем и его параллельно (Zero-Lockout)
+    if [ "$SSH_PORT" -ne "$SSH_ACTIVE_PORT" ]; then
+        ufw allow "${SSH_PORT}/tcp" comment 'Target SSH Port' >/dev/null 2>&1 || true
+    fi
     ufw allow 80/tcp comment 'HTTP / ACME' >/dev/null 2>&1 || true
     ufw allow 443/tcp comment 'HTTPS / L4 Router' >/dev/null 2>&1 || true
     ufw allow 443/udp comment 'QUIC / H3 / Hysteria 2' >/dev/null 2>&1 || true
@@ -424,8 +532,16 @@ step_install_nginx_and_mask() {
     mkdir -p /root/nginx_mask_setup
     cd /root/nginx_mask_setup
     
-    wget -qO setup_mask.sh "${REPO_URL}/setup_mask.sh" || cp "${SCRIPT_DIR}/setup_mask.sh" ./setup_mask.sh
-    wget -qO configure_3xui.sh "${REPO_URL}/configure_3xui.sh" || cp "${SCRIPT_DIR}/configure_3xui.sh" ./configure_3xui.sh
+    if [ -f "${SCRIPT_DIR}/setup_mask.sh" ]; then
+        cp "${SCRIPT_DIR}/setup_mask.sh" ./setup_mask.sh
+    else
+        wget -qO setup_mask.sh "${REPO_URL}/setup_mask.sh"
+    fi
+    if [ -f "${SCRIPT_DIR}/configure_3xui.sh" ]; then
+        cp "${SCRIPT_DIR}/configure_3xui.sh" ./configure_3xui.sh
+    else
+        wget -qO configure_3xui.sh "${REPO_URL}/configure_3xui.sh"
+    fi
     chmod +x setup_mask.sh configure_3xui.sh
     
     # Download decoy template if needed
@@ -510,6 +626,13 @@ print_dashboard() {
     echo -e "    ${DIM}• Фаервол UFW:${RESET}    ${GREEN}Порты протоколов (10443, 55443 и др.) изолированы${RESET}"
     echo -e "    ${DIM}• Ядро Linux:${RESET}     ${GREEN}BBR активирован, IPv6 отключен (no leak)${RESET}"
     echo ""
+    if [ "$SSH_PORT" -ne "${SSH_ACTIVE_PORT:-22}" ]; then
+        echo -e "  ${YELLOW}${BOLD}⚠️  ВНИМАНИЕ: Порт SSH изменен на ${WHITE}${SSH_PORT}${YELLOW}!${RESET}"
+        echo -e "    ${DIM}1. Проверьте вход в НОВОМ окне терминала:${RESET} ${CYAN}ssh -p ${SSH_PORT} root@${PRIMARY_DOMAIN}${RESET}"
+        echo -e "    ${DIM}2. После успешной проверки закройте старый порт ${SSH_ACTIVE_PORT} в UFW:${RESET}"
+        echo -e "       ${WHITE}ufw delete allow ${SSH_ACTIVE_PORT}/tcp${RESET}"
+        echo ""
+    fi
     echo -e "  ${WHITE}${BOLD}Безопасность учетных данных:${RESET}"
     echo -e "    ${DIM}Все доступы сохранены в защищенный файл:${RESET} ${YELLOW}${CREDENTIALS_FILE}${RESET}"
     echo -e "    ${DIM}Для повторного просмотра:${RESET} ${CYAN}cat /root/vpn_credentials.txt${RESET}"

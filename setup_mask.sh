@@ -4899,7 +4899,7 @@ EOF
 
     # 4.1. Anti-Loop Stub Server на порту 11443 для Steal-Oneself (Zero-Leak Active Probing Shield)
     # Поглощает сканирование и активное зондирование (DPI/ЦМУ ССО) без сброса соединения (TCP RST)
-    local s_stub_names="${PRIMARY_DOMAIN} *.${PRIMARY_DOMAIN}"
+    s_stub_names="${PRIMARY_DOMAIN} *.${PRIMARY_DOMAIN}"
     for s_d in "${STEAL_DOMAINS[@]:-}"; do
         [ -n "$s_d" ] && s_stub_names="${s_stub_names} ${s_d}"
     done
@@ -5151,7 +5151,7 @@ if [[ "${ENABLE_HY2:-0}" == "1" || "${ENABLE_HY2,,}" == "y" ]] && \
         iptables -t nat -A PREROUTING -p udp --dport "$PH_RANGE" -j REDIRECT --to-ports "$HY2_PORT" 2>/dev/null || true
     fi
     # IPv6 (если стек IPv6 активен и ip6tables доступен)
-    local hy2_v6_status=""
+    hy2_v6_status=""
     if [ -d /proc/sys/net/ipv6 ] && [ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null)" != "1" ] && command -v ip6tables >/dev/null 2>&1; then
         if ! ip6tables -t nat -C PREROUTING -p udp --dport "$PH_RANGE" -j REDIRECT --to-ports "$HY2_PORT" 2>/dev/null; then
             ip6tables -t nat -A PREROUTING -p udp --dport "$PH_RANGE" -j REDIRECT --to-ports "$HY2_PORT" 2>/dev/null || true
@@ -5333,7 +5333,7 @@ else
         }
         run_with_spinner "Автоматическая настройка базы 3X-UI и создание инбаундов" run_configure_3xui_task || die "Ошибка настройки базы 3X-UI."
 
-        local token_file=""
+        token_file=""
         [ -f "/run/3xui_node_token.env" ] && token_file="/run/3xui_node_token.env"
         [ -z "$token_file" ] && [ -f "/tmp/3xui_node_token.env" ] && token_file="/tmp/3xui_node_token.env"
         if [ -n "$token_file" ]; then

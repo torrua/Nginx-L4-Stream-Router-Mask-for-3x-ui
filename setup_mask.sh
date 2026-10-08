@@ -800,7 +800,14 @@ reconstruct_arrays_from_vars() {
     local _v
     _v="${ENABLE_STEAL:-${STEAL_ENABLED:-y}}"; if is_true "$_v"; then ENABLE_STEAL="y"; STEAL_ENABLED=1; else ENABLE_STEAL="n"; STEAL_ENABLED=0; fi
     _v="${ENABLE_CLASSIC:-${CLASSIC_ENABLED:-y}}"; if is_true "$_v"; then ENABLE_CLASSIC="y"; CLASSIC_ENABLED=1; else ENABLE_CLASSIC="n"; CLASSIC_ENABLED=0; fi
-    _v="${ENABLE_HY2:-n}"; if is_true "$_v"; then ENABLE_HY2=1; else ENABLE_HY2=0; fi
+    _v="${ENABLE_HY2:-n}"
+    if is_true "$_v"; then
+        ENABLE_HY2=1
+        HY2_PORT="${HY2_PORT:-443}"
+        HY2_DOMAIN="${HY2_DOMAIN:-$PRIMARY_DOMAIN}"
+    else
+        ENABLE_HY2=0
+    fi
     _v="${ENABLE_AWG_V3:-n}"; if is_true "$_v"; then ENABLE_AWG_V3=1; else ENABLE_AWG_V3=0; fi
     _v="${ENABLE_AWG_V2:-n}"; if is_true "$_v"; then ENABLE_AWG_V2=1; else ENABLE_AWG_V2=0; fi
     _v="${ENABLE_AGH:-n}"; if is_true "$_v"; then ENABLE_AGH=1; else ENABLE_AGH=0; fi
@@ -1117,6 +1124,7 @@ CLI_PANEL_PORT=""
 CLI_PANEL_PATH=""
 CLI_ADMIN_USERNAME=""
 CLI_ADMIN_PASSWORD=""
+CLI_ENABLE_HY2=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -1148,6 +1156,16 @@ while [[ $# -gt 0 ]]; do
         --no-www)
             ADD_WWW="n"
             CLI_ADD_WWW="n"
+            shift
+            ;;
+        --hy2)
+            ENABLE_HY2="y"
+            CLI_ENABLE_HY2="y"
+            shift
+            ;;
+        --no-hy2)
+            ENABLE_HY2="n"
+            CLI_ENABLE_HY2="n"
             shift
             ;;
         -m|--email)
@@ -1261,6 +1279,7 @@ fi
 [ -n "${CLI_PANEL_PATH:-}" ]     && PANEL_PATH="$CLI_PANEL_PATH"
 [ -n "${CLI_ADMIN_USERNAME:-}" ] && ADMIN_USERNAME="$CLI_ADMIN_USERNAME"
 [ -n "${CLI_ADMIN_PASSWORD:-}" ] && ADMIN_PASSWORD="$CLI_ADMIN_PASSWORD"
+[ -n "${CLI_ENABLE_HY2:-}" ]      && ENABLE_HY2="$CLI_ENABLE_HY2"
 
 # Сессия всегда сохраняется в setup_mask.env в текущей папке или рядом со скриптом
 SAVED_CONFIG_FILE="${CONFIG_FILE:-./setup_mask.env}"

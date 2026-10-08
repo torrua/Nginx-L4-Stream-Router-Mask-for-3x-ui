@@ -266,25 +266,38 @@ run_with_spinner() {
                 ( eval "$*" ) >> "$log_file" 2>&1 &
             fi
             local pid=$!
-            tput civis 2>/dev/null || echo -ne "\033[?25l"
-
-            local i=0
-            while kill -0 "$pid" 2>/dev/null; do
-                i=$(( (i + 1) % 10 ))
-                printf "\r  ${CYAN}${spin_chars[$i]}${NC}  ${WHITE}%-54s${NC}" "$task_name..."
-                sleep "$delay"
-            done
-
-            wait "$pid"
-            exit_code=$?
-            tput cnorm 2>/dev/null || echo -ne "\033[?25h"
+            
+            if [ ! -t 1 ]; then
+                echo -e "  ${CYAN}*${NC}  ${WHITE}${task_name}...${NC}"
+                wait "$pid"
+                exit_code=$?
+            else
+                tput civis 2>/dev/null || echo -ne "\033[?25l"
+                local i=0
+                while kill -0 "$pid" 2>/dev/null; do
+                    i=$(( (i + 1) % 10 ))
+                    printf "\r  ${CYAN}${spin_chars[$i]}${NC}  ${WHITE}%-54s${NC}" "$task_name..."
+                    sleep "$delay"
+                done
+                wait "$pid"
+                exit_code=$?
+                tput cnorm 2>/dev/null || echo -ne "\033[?25h"
+            fi
 
             if [ $exit_code -eq 0 ]; then
-                printf "\r  ${GREEN}${CHECK}${NC}  ${WHITE}%-54s${NC} ${GREEN}[ГОТОВО]${NC}\n" "$task_name"
+                if [ ! -t 1 ]; then
+                    printf "  ${GREEN}${CHECK}${NC}  ${WHITE}%-54s${NC} ${GREEN}[ГОТОВО]${NC}\n" "$task_name"
+                else
+                    printf "\r  ${GREEN}${CHECK}${NC}  ${WHITE}%-54s${NC} ${GREEN}[ГОТОВО]${NC}\n" "$task_name"
+                fi
                 return 0
             fi
 
-            printf "\r  ${RED}${CROSS}${NC}  ${WHITE}%-54s${NC} ${RED}[ОШИБКА]${NC}\n" "$task_name"
+            if [ ! -t 1 ]; then
+                printf "  ${RED}${CROSS}${NC}  ${WHITE}%-54s${NC} ${RED}[ОШИБКА]${NC}\n" "$task_name"
+            else
+                printf "\r  ${RED}${CROSS}${NC}  ${WHITE}%-54s${NC} ${RED}[ОШИБКА]${NC}\n" "$task_name"
+            fi
             echo -e "\n  ${RED}${BOLD}Полный лог ошибки:${NC}"
             echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
             [ -f "$log_file" ] && cat "$log_file" | sed 's/^/    /' || true
@@ -5293,9 +5306,12 @@ else
         }
         run_with_spinner "Автоматическая настройка базы 3X-UI и создание инбаундов" run_configure_3xui_task
 
-        if [ -f "/tmp/3xui_node_token.env" ]; then
-            source "/tmp/3xui_node_token.env" 2>/dev/null || true
-            rm -f "/tmp/3xui_node_token.env" 2>/dev/null || true
+        local token_file=""
+        [ -f "/run/3xui_node_token.env" ] && token_file="/run/3xui_node_token.env"
+        [ -z "$token_file" ] && [ -f "/tmp/3xui_node_token.env" ] && token_file="/tmp/3xui_node_token.env"
+        if [ -n "$token_file" ]; then
+            source "$token_file" 2>/dev/null || true
+            rm -f "$token_file" 2>/dev/null || true
             save_session_state "$SAVED_CONFIG_FILE" >/dev/null 2>&1 || true
         fi
 

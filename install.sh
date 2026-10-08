@@ -310,10 +310,26 @@ collect_express_inputs() {
         SSH_PORT="$SSH_ACTIVE_PORT"
     fi
 
-    # Generate secure random credentials for 3X-UI
-    PANEL_USER="admin_$(head /dev/urandom | tr -dc a-z0-9 | head -c 6)"
-    PANEL_PASS="$(head /dev/urandom | tr -dc A-Za-z0-9_\- | head -c 16)"
-    PANEL_SECRET="$(head /dev/urandom | tr -dc a-z0-9 | head -c 12)"
+    # Сохраняем существующие учетные данные при повторном запуске, чтобы не инвалидировать доступ
+    local existing_env="/root/nginx_mask_setup/setup_mask.env"
+    [ ! -f "$existing_env" ] && [ -f "/etc/setup_mask.env" ] && existing_env="/etc/setup_mask.env"
+    if [ -f "$existing_env" ]; then
+        local saved_user saved_pass saved_path
+        saved_user=$(grep -E '^ADMIN_USERNAME=' "$existing_env" 2>/dev/null | cut -d= -f2- | tr -d '"'\''')
+        saved_pass=$(grep -E '^ADMIN_PASSWORD=' "$existing_env" 2>/dev/null | cut -d= -f2- | tr -d '"'\''')
+        saved_path=$(grep -E '^PANEL_PATH=' "$existing_env" 2>/dev/null | cut -d= -f2- | tr -d '"'\''')
+        [ -n "$saved_user" ] && PANEL_USER="$saved_user"
+        [ -n "$saved_pass" ] && PANEL_PASS="$saved_pass"
+        if [ -n "$saved_path" ]; then
+            PANEL_SECRET="${saved_path#/}"
+            PANEL_SECRET="${PANEL_SECRET%/}"
+        fi
+    fi
+
+    # Generate secure random credentials for 3X-UI if not restored
+    [ -z "${PANEL_USER:-}" ] && PANEL_USER="admin_$(head /dev/urandom | tr -dc a-z0-9 | head -c 6)"
+    [ -z "${PANEL_PASS:-}" ] && PANEL_PASS="$(head /dev/urandom | tr -dc A-Za-z0-9_\- | head -c 16)"
+    [ -z "${PANEL_SECRET:-}" ] && PANEL_SECRET="$(head /dev/urandom | tr -dc a-z0-9 | head -c 12)"
     PANEL_INTERNAL_PORT="2053"
 
     echo ""
@@ -383,8 +399,29 @@ step_os_hardening() {
     # Update package lists
     apt-get update -y
     
-    # Install foundational tools (включая python3-systemd для fail2ban и python3-bcrypt для 3x-ui)
-    apt-get install -y curl wget git jq ufw certbot fail2ban python3-systemd python3-bcrypt ca-certificates lsb-release gnupg sed coreutils
+    # Install foundational tools (включая python3-systemd для fail2ban, python3-bcrypt для 3x-ui и sqlite3)
+    apt-get install -y curl wget git jq ufw certbot fail2ban python3-systemd python3-bcrypt sqlite3 ca-certificates lsb-release gnupg sed coreutils
+
+    # 0. Инициализация Swapfile для систем с малым объемом памяти (<= 2GB)
+    local total_mem_kb
+    total_mem_kb=$(grep MemTotal /proc/meminfo 2>/dev/null | awk '{print $2}' || echo "0")
+    if [ "$total_mem_kb" -gt 0 ] && [ "$total_mem_kb" -lt 2500000 ]; then
+        if ! swapon --show 2>/dev/null | grep -q "/swapfile" || [ ! -s /swapfile ]; then
+            if [ -f /swapfile ] && [ ! -s /swapfile ]; then
+                swapoff /swapfile >/dev/null 2>&1 || true
+                rm -f /swapfile
+            fi
+            if [ ! -f /swapfile ]; then
+                fallocate -l 2G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
+                chmod 600 /swapfile
+                mkswap /swapfile >/dev/null 2>&1 || true
+                swapon /swapfile >/dev/null 2>&1 || true
+                if ! grep -q "^/swapfile" /etc/fstab 2>/dev/null; then
+                    echo "/swapfile swap swap defaults 0 0" >> /etc/fstab
+                fi
+            fi
+        fi
+    fi
     
     # 1. Enable BBR & System Network Tuning
     cat <<'EOF' > /etc/sysctl.d/99-vps-tuning.conf
@@ -592,6 +629,23 @@ step_configure_inbounds() {
 
 # Save credentials and connection summary
 save_and_display_summary() {
+    # Считываем актуальные примененные данные из конфигурационного файла (источник правды)
+    local cfg_source=""
+    [ -f "/root/nginx_mask_setup/setup_mask.env" ] && cfg_source="/root/nginx_mask_setup/setup_mask.env"
+    [ -z "$cfg_source" ] && [ -f "/etc/setup_mask.env" ] && cfg_source="/etc/setup_mask.env"
+    if [ -n "$cfg_source" ]; then
+        local env_user env_pass env_path
+        env_user=$(grep -E '^ADMIN_USERNAME=' "$cfg_source" 2>/dev/null | cut -d= -f2- | tr -d '"'\''')
+        env_pass=$(grep -E '^ADMIN_PASSWORD=' "$cfg_source" 2>/dev/null | cut -d= -f2- | tr -d '"'\''')
+        env_path=$(grep -E '^PANEL_PATH=' "$cfg_source" 2>/dev/null | cut -d= -f2- | tr -d '"'\''')
+        [ -n "$env_user" ] && PANEL_USER="$env_user"
+        [ -n "$env_pass" ] && PANEL_PASS="$env_pass"
+        if [ -n "$env_path" ]; then
+            PANEL_SECRET="${env_path#/}"
+            PANEL_SECRET="${PANEL_SECRET%/}"
+        fi
+    fi
+
     cat <<EOF > "$CREDENTIALS_FILE"
 ====================================================================
  NGINX L4 STREAM ROUTER & 3X-UI — УЧЕТНЫЕ ДАННЫЕ СЕРВЕРА

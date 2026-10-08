@@ -226,7 +226,7 @@ PRIMARY_DOMAIN="${PRIMARY_DOMAIN:-yourdomain.online}"
 PANEL_PORT="${PANEL_PORT:-10443}"
 PANEL_PATH="${PANEL_PATH:-my-3x-panel}"
 SUB_PORT="${SUB_PORT:-55443}"
-SUB_PATH="${SUB_PATH:-my-post-key}"
+SUB_PATH="${SUB_PATH:-}"
 SUB_CLASH_PATH="${SUB_CLASH_PATH:-${SUB_PATH%/}/clash}"
 XHTTP_STREAM_PORT="${XHTTP_STREAM_PORT:-50443}"
 XHTTP_STREAM_PATH="${XHTTP_STREAM_PATH:-Stream-One-Path}"
@@ -513,7 +513,16 @@ panel_port = os.environ.get("PANEL_PORT") or existing_settings.get("webPort") or
 panel_path = (os.environ.get("PANEL_PATH") or existing_settings.get("webBasePath") or "my-3x-panel").strip("/")
 
 sub_port = os.environ.get("SUB_PORT") or existing_settings.get("subPort") or "55443"
-sub_path = (os.environ.get("SUB_PATH") or existing_settings.get("subPath") or "my-post-key").strip("/")
+sub_env = (os.environ.get("SUB_PATH") or "").strip("/")
+if sub_env and sub_env != "my-post-key":
+    sub_path = sub_env
+else:
+    sub_db = (existing_settings.get("subPath") or "").strip("/")
+    if sub_db and sub_db != "my-post-key":
+        sub_path = sub_db
+    else:
+        import secrets
+        sub_path = "sub-" + secrets.token_hex(4)
 sub_clash_path = (os.environ.get("SUB_CLASH_PATH") or existing_settings.get("subClashPath") or f"{sub_path}clash").strip("/")
 
 xhttp_port = int(os.environ.get("XHTTP_STREAM_PORT") or "50443")
@@ -844,7 +853,7 @@ old_sub_uri = existing_settings.get("subURI", "").strip()
 old_sub_path = existing_settings.get("subPath", "").strip()
 
 # Проверка: настроена ли кастомная подписка
-is_custom_sub = bool(old_sub_uri and (old_sub_domain != domain or old_sub_path.strip("/") != sub_path))
+is_custom_sub = bool(old_sub_uri and (old_sub_domain != domain or (old_sub_path.strip("/") != sub_path and old_sub_path.strip("/") != "my-post-key")))
 
 if is_custom_sub and not force_sub:
     print(f"  [СОХРАНЕНО] Кастомная подписка сохранена: {old_sub_uri}")

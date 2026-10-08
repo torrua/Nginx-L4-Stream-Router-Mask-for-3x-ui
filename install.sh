@@ -60,6 +60,11 @@ STAR="★"
 LOCK="🔒"
 SHIELD="🛡"
 
+die() {
+    echo -e "  ${RED}${CROSS} $*${RESET}" >&2
+    exit 1
+}
+
 # --- Global Paths & Logs ---
 INSTALL_LOG="/var/log/nginx_mask_install.log"
 CREDENTIALS_FILE="/root/vpn_credentials.txt"

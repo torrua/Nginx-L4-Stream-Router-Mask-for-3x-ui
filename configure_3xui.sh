@@ -121,6 +121,11 @@ while [[ $# -gt 0 ]]; do
             DB_PATH="$2"
             shift 2
             ;;
+        --domain)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: домен."
+            PRIMARY_DOMAIN="$2"
+            shift 2
+            ;;
         --dry-run)
             DRY_RUN=1
             shift

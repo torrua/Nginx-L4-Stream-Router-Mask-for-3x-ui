@@ -1146,6 +1146,16 @@ while [[ $# -gt 0 ]]; do
             PANEL_PATH="$2"
             shift 2
             ;;
+        -u|--user|--admin-user)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: логин администратора 3X-UI."
+            ADMIN_USERNAME="$2"
+            shift 2
+            ;;
+        -p|--pass|--admin-pass)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: пароль администратора 3X-UI."
+            ADMIN_PASSWORD="$2"
+            shift 2
+            ;;
         -r|--resume)
             RESUME_MODE=1
             shift
@@ -3253,7 +3263,7 @@ fi
 
 # Проверка DNS-записей
 log "Проверка A-записей для всех собственных доменов..."
-WAN_IP=$(curl -s4 --connect-timeout 5 icanhazip.com || curl -s4 --connect-timeout 5 ifconfig.me || echo "")
+WAN_IP=$(curl -s4 --connect-timeout 4 icanhazip.com || curl -s4 --connect-timeout 4 api.ipify.org || curl -s4 --connect-timeout 4 ifconfig.me || echo "")
 if [ -n "$WAN_IP" ]; then
     valid_domains=()
     for dom in "${ALL_DOMAINS[@]}"; do
@@ -3278,8 +3288,16 @@ if [ -n "$WAN_IP" ]; then
                 if [ "$FORCE_DNS" -eq 1 ]; then
                     warn "Внимание: несовпадение DNS проигнорировано (флаг --force / FORCE_DNS=1)."
                     valid_domains+=("$dom")
+                elif [ "$dom" = "$PRIMARY_DOMAIN" ]; then
+                    die "Критическая ошибка: Главный домен $dom не указывает на $WAN_IP. Укажите -f / --force или настройте A-запись в DNS."
                 else
-                    die "Критическая ошибка: Домен $dom не указывает на $WAN_IP. Укажите -f / --force или проверьте DNS."
+                    warn "Внимание: Дополнительный домен '$dom' не указывает на IP сервера ($WAN_IP) и временно исключен из текущей установки."
+                    new_steal=()
+                    for sd in "${STEAL_DOMAINS[@]:-}"; do
+                        [ "$sd" != "$dom" ] && new_steal+=("$sd")
+                    done
+                    STEAL_DOMAINS=("${new_steal[@]:-}")
+                    unset "DOMAIN_TO_PORT[$dom]" 2>/dev/null || true
                 fi
             elif [ "$dom" = "$PRIMARY_DOMAIN" ]; then
                 read -rp "  [!] Основной домен $dom не совпадает с IP сервера ($WAN_IP). Продолжить выпуск SSL? [y/N]: " dns_ans </dev/tty || read -r dns_ans || true
@@ -3460,11 +3478,12 @@ EOF
         mkdir -p /etc/letsencrypt/renewal-hooks/deploy/
         cat << 'EOF' > /etc/letsencrypt/renewal-hooks/deploy/nginx-reload.sh
 #!/bin/bash
-chmod 755 /etc/letsencrypt /etc/letsencrypt/live /etc/letsencrypt/archive 2>/dev/null || true
-chmod 755 /etc/letsencrypt/archive/* 2>/dev/null || true
+chmod 755 /etc/letsencrypt /etc/letsencrypt/live 2>/dev/null || true
+chmod 700 /etc/letsencrypt/archive 2>/dev/null || true
 chmod 755 /etc/letsencrypt/live/* 2>/dev/null || true
-chmod 644 /etc/letsencrypt/archive/*/* 2>/dev/null || true
-chmod 644 /etc/letsencrypt/live/*/* 2>/dev/null || true
+chmod 644 /etc/letsencrypt/live/*/*.pem 2>/dev/null || true
+chmod 600 /etc/letsencrypt/live/*/privkey*.pem 2>/dev/null || true
+chmod 600 /etc/letsencrypt/archive/*/privkey*.pem 2>/dev/null || true
 systemctl reload nginx
 EOF
         chmod +x /etc/letsencrypt/renewal-hooks/deploy/nginx-reload.sh

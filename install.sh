@@ -378,8 +378,8 @@ step_os_hardening() {
     # Update package lists
     apt-get update -y
     
-    # Install foundational tools (включая python3-systemd для fail2ban backend=systemd)
-    apt-get install -y curl wget git jq ufw certbot fail2ban python3-systemd ca-certificates lsb-release gnupg sed coreutils
+    # Install foundational tools (включая python3-systemd для fail2ban и python3-bcrypt для 3x-ui)
+    apt-get install -y curl wget git jq ufw certbot fail2ban python3-systemd python3-bcrypt ca-certificates lsb-release gnupg sed coreutils
     
     # 1. Enable BBR & System Network Tuning
     cat <<'EOF' > /etc/sysctl.d/99-vps-tuning.conf
@@ -505,24 +505,28 @@ EOF
 }
 
 step_install_3xui() {
-    # Install official 3X-UI non-interactively
-    # We download MHSanaei 3x-ui installer
     export DEBIAN_FRONTEND=noninteractive
     
     # Kill any existing service if reinstalling
     systemctl stop x-ui >/dev/null 2>&1 || true
     
-    # Download and run official 3x-ui release
-    bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) <<EOF
-y
-$PANEL_USER
-$PANEL_PASS
-$PANEL_INTERNAL_PORT
-/$PANEL_SECRET/
-EOF
+    # Download and run official 3x-ui release with default quick install
+    # (Все параметры: логин, пароль, порт и webBasePath настраиваются через SQLite в configure_3xui.sh)
+    local ui_installer="/tmp/3x-ui-install.sh"
+    rm -f "$ui_installer"
+    if ! curl -fsSL --connect-timeout 15 "https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh" -o "$ui_installer" 2>/dev/null; then
+        curl -fsSL --connect-timeout 15 "https://ghfast.top/https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh" -o "$ui_installer" 2>/dev/null || true
+    fi
+    
+    if [ -f "$ui_installer" ]; then
+        printf "n\n" | bash "$ui_installer" >/dev/null 2>&1 || true
+        rm -f "$ui_installer"
+    else
+        printf "n\n" | bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) >/dev/null 2>&1 || true
+    fi
 
     # Allow service to settle
-    sleep 3
+    sleep 2
     systemctl enable x-ui >/dev/null 2>&1 || true
     systemctl restart x-ui >/dev/null 2>&1 || true
 }
@@ -549,18 +553,19 @@ step_install_nginx_and_mask() {
         cp "${SCRIPT_DIR}/site.tar.gz" /root/nginx_mask_setup/
     fi
 
-    # Run setup_mask.sh in automated mode
-    # setup_mask.sh supports automated parameters or piped input
-    # In express mode, we feed inputs to setup_mask.sh:
-    # 1. Domain
-    # 2. Let's Encrypt Email
-    # 3. Decoy type (HTML5 game/template)
-    # 4. Confirmations
+    # Run setup_mask.sh in automated mode with explicit admin credentials
+    export ADMIN_USERNAME="$PANEL_USER"
+    export ADMIN_PASSWORD="$PANEL_PASS"
+    export PANEL_PORT="$PANEL_INTERNAL_PORT"
+    export PANEL_PATH="/$PANEL_SECRET/"
+
     bash ./setup_mask.sh --auto \
         --domain "$PRIMARY_DOMAIN" \
         --email "$LE_EMAIL" \
         --panel-port "$PANEL_INTERNAL_PORT" \
-        --panel-path "/$PANEL_SECRET/" || {
+        --panel-path "/$PANEL_SECRET/" \
+        --user "$PANEL_USER" \
+        --pass "$PANEL_PASS" || {
             # Fallback if --auto flag isn't supported by setup_mask.sh
             printf "%s\n%s\n1\ny\n" "$PRIMARY_DOMAIN" "$LE_EMAIL" | bash ./setup_mask.sh
         }
@@ -569,6 +574,10 @@ step_install_nginx_and_mask() {
 step_configure_inbounds() {
     cd /root/nginx_mask_setup
     if [ -f "./configure_3xui.sh" ]; then
+        export ADMIN_USERNAME="$PANEL_USER"
+        export ADMIN_PASSWORD="$PANEL_PASS"
+        export PANEL_PORT="$PANEL_INTERNAL_PORT"
+        export PANEL_PATH="/$PANEL_SECRET/"
         # Run 3X-UI database configuration
         bash ./configure_3xui.sh --non-interactive --domain "$PRIMARY_DOMAIN" || true
     fi

@@ -581,8 +581,9 @@ step_configure_inbounds() {
         export ADMIN_PASSWORD="$PANEL_PASS"
         export PANEL_PORT="$PANEL_INTERNAL_PORT"
         export PANEL_PATH="/$PANEL_SECRET/"
-        # Run 3X-UI database configuration
-        bash ./configure_3xui.sh --non-interactive --domain "$PRIMARY_DOMAIN" || true
+        local cfg_arg=()
+        [ -f "/root/nginx_mask_setup/setup_mask.env" ] && cfg_arg=(--config "/root/nginx_mask_setup/setup_mask.env")
+        bash ./configure_3xui.sh --non-interactive --domain "$PRIMARY_DOMAIN" "${cfg_arg[@]}" || true
     fi
     
     # Ensure Nginx is reloaded and active

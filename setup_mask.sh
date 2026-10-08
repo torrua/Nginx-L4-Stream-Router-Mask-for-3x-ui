@@ -328,7 +328,7 @@ run_with_spinner() {
                     ;;
             esac
         else
-            die "Шаг завершился с ошибкой (exit $exit_code): $task_name"
+            return $exit_code
         fi
     done
 }
@@ -704,7 +704,7 @@ reconstruct_arrays_from_vars() {
     [ -n "${PRIMARY_DOMAIN:-}" ] || return 0
 
     ALL_DOMAINS=("$PRIMARY_DOMAIN")
-    local v_www="${ADD_WWW:-y}"
+    local v_www="${ADD_WWW:-n}"
     if [[ "${v_www,,}" == "y" || "$v_www" == "1" ]]; then
         ALL_DOMAINS+=("www.$PRIMARY_DOMAIN")
     fi
@@ -1130,6 +1130,14 @@ while [[ $# -gt 0 ]]; do
             [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: доменное имя."
             PRIMARY_DOMAIN="$2"
             shift 2
+            ;;
+        --add-www)
+            ADD_WWW="y"
+            shift
+            ;;
+        --no-www)
+            ADD_WWW="n"
+            shift
             ;;
         -m|--email)
             [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: email."
@@ -2296,7 +2304,7 @@ for item in res:
         SERVER_PREFIX="${SERVER_PREFIX:-$(hostname -s 2>/dev/null || echo "Server")}"
         [[ "$SERVER_PREFIX" =~ ^(localhost|ubuntu|debian|centos|vps.*)$ ]] && SERVER_PREFIX="Server"
 
-        ADD_WWW="${ADD_WWW:-y}"
+        ADD_WWW="${ADD_WWW:-n}"
 
         # Steal-Oneself
         if [[ "${ENABLE_STEAL,,}" == "y" || "${ENABLE_STEAL:-}" == "1" ]]; then
@@ -3253,6 +3261,7 @@ for item in res:
         sync_reality_ports
     fi
 fi
+fi
 
 # Определение системного каталога для хранения SSL
 if [ "$SSL_ENGINE_CHOICE" = "1" ]; then
@@ -3337,7 +3346,6 @@ if [ -n "$WAN_IP" ]; then
     done
     ALL_DOMAINS=("${valid_domains[@]}")
 fi
-fi
 
 # Сохраняем состояние сессии в файл конфигурации для защиты от обрыва SSH или повторного вызова
 save_session_state "$SAVED_CONFIG_FILE"
@@ -3360,7 +3368,7 @@ if ! should_skip_step 1; then
     if [ "$PREINSTALL_COMPLETED" -eq 1 ]; then
         ok "Базовые утилиты (curl, socat, dig, ufw) установлены [В фоне]"
     else
-        run_with_spinner "Проверка и установка базовых утилит (curl, socat, dig, ufw)" install_prerequisites
+        run_with_spinner "Проверка и установка базовых утилит (curl, socat, dig, ufw)" install_prerequisites || die "Ошибка установки базовых утилит."
     fi
     step_finish 1
 fi
@@ -3371,7 +3379,7 @@ if ! should_skip_step 2; then
     if [ "$PREINSTALL_COMPLETED" -eq 1 ]; then
         ok "Системные параметры BBR и лимиты дескрипторов применены [В фоне]"
     else
-        run_with_spinner "Применение системных параметров BBR и лимитов дескрипторов" apply_sysctl_and_limits
+        run_with_spinner "Применение системных параметров BBR и лимитов дескрипторов" apply_sysctl_and_limits || die "Ошибка применения сетевого тюнинга."
     fi
     step_finish 2
 fi
@@ -3382,7 +3390,7 @@ if ! should_skip_step 3; then
     if [ "$PREINSTALL_COMPLETED" -eq 1 ]; then
         ok "Репозиторий nginx.org подключен, Nginx Mainline установлен [В фоне]"
     else
-        run_with_spinner "Подключение репозитория nginx.org и установка Nginx" setup_nginx_mainline
+        run_with_spinner "Подключение репозитория nginx.org и установка Nginx" setup_nginx_mainline || die "Ошибка установки Nginx Mainline."
     fi
     step_finish 3
 fi
@@ -3447,7 +3455,7 @@ if ! should_skip_step 4; then
     step_begin 4
 
     if [ "$SSL_ENGINE_CHOICE" = "1" ]; then
-        run_with_spinner "Инициализация подсистемы Certbot (APT / Snap)" install_certbot_package
+        run_with_spinner "Инициализация подсистемы Certbot (APT / Snap)" install_certbot_package || die "Ошибка установки Certbot."
 
         mkdir -p /etc/letsencrypt
         if [ -n "$LE_EMAIL" ]; then
@@ -3489,7 +3497,7 @@ EOF
         chmod +x /etc/letsencrypt/renewal-hooks/deploy/nginx-reload.sh
 
     else
-        run_with_spinner "Инициализация подсистемы acme.sh" install_acmesh
+        run_with_spinner "Инициализация подсистемы acme.sh" install_acmesh || die "Ошибка установки acme.sh."
         _ACME="${HOME:-/root}/.acme.sh/acme.sh"
 
         if [ "$CF_AUTH_METHOD" = "1" ]; then
@@ -5124,7 +5132,7 @@ EOF
         rm -f "/etc/nginx/conf.d/03-adguard.conf" 2>/dev/null || true
     fi
 
-    run_with_spinner "Тестирование конфигурации и перезапуск Nginx Mainline" nginx_reload_task
+    run_with_spinner "Тестирование конфигурации и перезапуск Nginx Mainline" nginx_reload_task || die "Ошибка запуска Nginx."
     step_finish 6
 fi
 
@@ -5284,7 +5292,7 @@ else
             curl -Ls --connect-timeout 15 https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh -o /tmp/install_3xui.sh
             printf "n\n" | bash /tmp/install_3xui.sh
         }
-        run_with_spinner "Установка официального ядра 3X-UI (mhsanaei)" install_3xui_core_task
+        run_with_spinner "Установка официального ядра 3X-UI (mhsanaei)" install_3xui_core_task || die "Ошибка установки ядра 3X-UI."
     fi
 
     # 2. Загружаем всегда самую актуальную версию configure_3xui.sh
@@ -5323,7 +5331,7 @@ else
             export AWG_RANDOM_TRAILERS
             bash "$CONFIG_EXEC" --config "$SAVED_CONFIG_FILE" -y
         }
-        run_with_spinner "Автоматическая настройка базы 3X-UI и создание инбаундов" run_configure_3xui_task
+        run_with_spinner "Автоматическая настройка базы 3X-UI и создание инбаундов" run_configure_3xui_task || die "Ошибка настройки базы 3X-UI."
 
         local token_file=""
         [ -f "/run/3xui_node_token.env" ] && token_file="/run/3xui_node_token.env"
@@ -5558,7 +5566,7 @@ conn.close()
         fi
     }
 
-    run_with_spinner "Установка и настройка AdGuard Home (DoH + Split-DNS + OISD)" install_agh_task
+    run_with_spinner "Установка и настройка AdGuard Home (DoH + Split-DNS + OISD)" install_agh_task || die "Ошибка установки AdGuard Home."
     step_finish 8
 fi
 

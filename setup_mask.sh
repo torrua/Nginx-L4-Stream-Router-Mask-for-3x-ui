@@ -1110,6 +1110,14 @@ GEN_CONFIG=0
 FORCE_DNS=${FORCE_DNS:-0}
 SAVED_CONFIG_FILE="setup_mask.env"
 
+CLI_PRIMARY_DOMAIN=""
+CLI_ADD_WWW=""
+CLI_LE_EMAIL=""
+CLI_PANEL_PORT=""
+CLI_PANEL_PATH=""
+CLI_ADMIN_USERNAME=""
+CLI_ADMIN_PASSWORD=""
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -c|--config)
@@ -1129,39 +1137,47 @@ while [[ $# -gt 0 ]]; do
         -d|--domain)
             [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: доменное имя."
             PRIMARY_DOMAIN="$2"
+            CLI_PRIMARY_DOMAIN="$2"
             shift 2
             ;;
         --add-www)
             ADD_WWW="y"
+            CLI_ADD_WWW="y"
             shift
             ;;
         --no-www)
             ADD_WWW="n"
+            CLI_ADD_WWW="n"
             shift
             ;;
         -m|--email)
             [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: email."
             LE_EMAIL="$2"
+            CLI_LE_EMAIL="$2"
             shift 2
             ;;
         --panel-port)
             [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: порт панели."
             PANEL_PORT="$2"
+            CLI_PANEL_PORT="$2"
             shift 2
             ;;
         --panel-path)
             [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: путь к панели."
             PANEL_PATH="$2"
+            CLI_PANEL_PATH="$2"
             shift 2
             ;;
         -u|--user|--admin-user)
             [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: логин администратора 3X-UI."
             ADMIN_USERNAME="$2"
+            CLI_ADMIN_USERNAME="$2"
             shift 2
             ;;
         -p|--pass|--admin-pass)
             [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: пароль администратора 3X-UI."
             ADMIN_PASSWORD="$2"
+            CLI_ADMIN_PASSWORD="$2"
             shift 2
             ;;
         -r|--resume)
@@ -1236,6 +1252,15 @@ fi
 if [ -n "$CONFIG_FILE" ]; then
     load_env_file "$CONFIG_FILE"
 fi
+
+# Явные аргументы командной строки имеют абсолютный приоритет над файлом конфигурации
+[ -n "${CLI_PRIMARY_DOMAIN:-}" ] && PRIMARY_DOMAIN="$CLI_PRIMARY_DOMAIN"
+[ -n "${CLI_ADD_WWW:-}" ]        && ADD_WWW="$CLI_ADD_WWW"
+[ -n "${CLI_LE_EMAIL:-}" ]       && LE_EMAIL="$CLI_LE_EMAIL"
+[ -n "${CLI_PANEL_PORT:-}" ]     && PANEL_PORT="$CLI_PANEL_PORT"
+[ -n "${CLI_PANEL_PATH:-}" ]     && PANEL_PATH="$CLI_PANEL_PATH"
+[ -n "${CLI_ADMIN_USERNAME:-}" ] && ADMIN_USERNAME="$CLI_ADMIN_USERNAME"
+[ -n "${CLI_ADMIN_PASSWORD:-}" ] && ADMIN_PASSWORD="$CLI_ADMIN_PASSWORD"
 
 # Сессия всегда сохраняется в setup_mask.env в текущей папке или рядом со скриптом
 SAVED_CONFIG_FILE="${CONFIG_FILE:-./setup_mask.env}"
@@ -2346,7 +2371,11 @@ for item in res:
         PANEL_PORT="${PANEL_PORT:-10443}"
         ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
         ADMIN_PASSWORD="${ADMIN_PASSWORD:-$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 12 || echo "Admin1234567")}"
-        RAW_PATH="${RAW_PATH:-${PANEL_PATH:-panel-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "3xui${RANDOM}")}}"
+        if [ -n "${PANEL_PATH:-}" ]; then
+            RAW_PATH="${PANEL_PATH#/}"; RAW_PATH="${RAW_PATH%/}"
+        elif [ -z "${RAW_PATH:-}" ]; then
+            RAW_PATH="panel-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "3xui${RANDOM}")"
+        fi
         RAW_PATH="${RAW_PATH#/}"; RAW_PATH="${RAW_PATH%/}"
         validate_path_segment "$RAW_PATH" "URI панели"
         PANEL_PATH="/${RAW_PATH#/}"; PANEL_PATH="${PANEL_PATH%/}/"
@@ -2721,7 +2750,11 @@ for item in res:
             ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
             [ -n "${ADMIN_PASSWORD:-}" ] || ADMIN_PASSWORD="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 12 || echo "Admin1234567")"
 
-            [ -n "${RAW_PATH:-}" ] || RAW_PATH="panel-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "3xui${RANDOM}")"
+            if [ -n "${PANEL_PATH:-}" ]; then
+                RAW_PATH="${PANEL_PATH#/}"; RAW_PATH="${RAW_PATH%/}"
+            elif [ -z "${RAW_PATH:-}" ]; then
+                RAW_PATH="panel-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "3xui${RANDOM}")"
+            fi
             RAW_PATH="${RAW_PATH#/}"; RAW_PATH="${RAW_PATH%/}"
             PANEL_PATH="/${RAW_PATH#/}"; PANEL_PATH="${PANEL_PATH%/}/"
 

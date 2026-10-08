@@ -489,7 +489,7 @@ ADMIN_PASSWORD=""
 SERVER_PREFIX="Server"
 
 SUB_PORT="55443"
-SUB_PATH="my-post-key"
+SUB_PATH=""
 # Секретный путь для Clash/Mihomo подписок (по умолчанию: <SUB_PATH>clash)
 SUB_CLASH_PATH=""
 
@@ -774,7 +774,13 @@ reconstruct_arrays_from_vars() {
     PANEL_PATH="/${RAW_PATH}/"
 
     SUB_PORT="${SUB_PORT:-55443}"
-    RAW_SUB_PATH="${SUB_PATH:-${RAW_SUB_PATH:-my-post-key}}"
+    if [ -z "${RAW_SUB_PATH:-}" ] || [ "${RAW_SUB_PATH:-}" = "my-post-key" ]; then
+        if [ -n "${SUB_PATH:-}" ] && [ "${SUB_PATH:-}" != "my-post-key" ] && [ "${SUB_PATH:-}" != "/my-post-key/" ]; then
+            RAW_SUB_PATH="${SUB_PATH}"
+        else
+            RAW_SUB_PATH="sub-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "sub${RANDOM}")"
+        fi
+    fi
     RAW_SUB_PATH="${RAW_SUB_PATH#/}"
     RAW_SUB_PATH="${RAW_SUB_PATH%/}"
     SUB_PATH="/${RAW_SUB_PATH}/"
@@ -1122,6 +1128,7 @@ CLI_ADD_WWW=""
 CLI_LE_EMAIL=""
 CLI_PANEL_PORT=""
 CLI_PANEL_PATH=""
+CLI_SUB_PATH=""
 CLI_ADMIN_USERNAME=""
 CLI_ADMIN_PASSWORD=""
 CLI_ENABLE_HY2=""
@@ -1184,6 +1191,12 @@ while [[ $# -gt 0 ]]; do
             [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: путь к панели."
             PANEL_PATH="$2"
             CLI_PANEL_PATH="$2"
+            shift 2
+            ;;
+        --sub-path)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: путь к подпискам."
+            SUB_PATH="$2"
+            CLI_SUB_PATH="$2"
             shift 2
             ;;
         -u|--user|--admin-user)
@@ -1277,6 +1290,7 @@ fi
 [ -n "${CLI_LE_EMAIL:-}" ]       && LE_EMAIL="$CLI_LE_EMAIL"
 [ -n "${CLI_PANEL_PORT:-}" ]     && PANEL_PORT="$CLI_PANEL_PORT"
 [ -n "${CLI_PANEL_PATH:-}" ]     && PANEL_PATH="$CLI_PANEL_PATH"
+[ -n "${CLI_SUB_PATH:-}" ]       && SUB_PATH="$CLI_SUB_PATH"
 [ -n "${CLI_ADMIN_USERNAME:-}" ] && ADMIN_USERNAME="$CLI_ADMIN_USERNAME"
 [ -n "${CLI_ADMIN_PASSWORD:-}" ] && ADMIN_PASSWORD="$CLI_ADMIN_PASSWORD"
 [ -n "${CLI_ENABLE_HY2:-}" ]      && ENABLE_HY2="$CLI_ENABLE_HY2"

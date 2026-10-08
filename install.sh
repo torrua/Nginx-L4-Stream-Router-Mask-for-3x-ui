@@ -246,6 +246,7 @@ collect_express_inputs() {
         PANEL_USER="admin_$(head /dev/urandom | tr -dc a-z0-9 | head -c 6)"
         PANEL_PASS="$(head /dev/urandom | tr -dc A-Za-z0-9_\- | head -c 16)"
         PANEL_SECRET="$(head /dev/urandom | tr -dc a-z0-9 | head -c 12)"
+        SUB_SECRET="sub-$(head /dev/urandom | tr -dc a-z0-9 | head -c 8)"
         PANEL_INTERNAL_PORT="2053"
         return 0
     fi
@@ -314,15 +315,20 @@ collect_express_inputs() {
     local existing_env="/root/nginx_mask_setup/setup_mask.env"
     [ ! -f "$existing_env" ] && [ -f "/etc/setup_mask.env" ] && existing_env="/etc/setup_mask.env"
     if [ -f "$existing_env" ]; then
-        local saved_user saved_pass saved_path
+        local saved_user saved_pass saved_path saved_sub
         saved_user=$(grep -E '^ADMIN_USERNAME=' "$existing_env" 2>/dev/null | cut -d= -f2- | tr -d '"'\''')
         saved_pass=$(grep -E '^ADMIN_PASSWORD=' "$existing_env" 2>/dev/null | cut -d= -f2- | tr -d '"'\''')
         saved_path=$(grep -E '^PANEL_PATH=' "$existing_env" 2>/dev/null | cut -d= -f2- | tr -d '"'\''')
+        saved_sub=$(grep -E '^SUB_PATH=' "$existing_env" 2>/dev/null | cut -d= -f2- | tr -d '"'\''')
         [ -n "$saved_user" ] && PANEL_USER="$saved_user"
         [ -n "$saved_pass" ] && PANEL_PASS="$saved_pass"
         if [ -n "$saved_path" ]; then
             PANEL_SECRET="${saved_path#/}"
             PANEL_SECRET="${PANEL_SECRET%/}"
+        fi
+        if [ -n "$saved_sub" ] && [ "$saved_sub" != "my-post-key" ] && [ "$saved_sub" != "/my-post-key/" ]; then
+            SUB_SECRET="${saved_sub#/}"
+            SUB_SECRET="${SUB_SECRET%/}"
         fi
     fi
 
@@ -330,6 +336,7 @@ collect_express_inputs() {
     [ -z "${PANEL_USER:-}" ] && PANEL_USER="admin_$(head /dev/urandom | tr -dc a-z0-9 | head -c 6)"
     [ -z "${PANEL_PASS:-}" ] && PANEL_PASS="$(head /dev/urandom | tr -dc A-Za-z0-9_\- | head -c 16)"
     [ -z "${PANEL_SECRET:-}" ] && PANEL_SECRET="$(head /dev/urandom | tr -dc a-z0-9 | head -c 12)"
+    [ -z "${SUB_SECRET:-}" ] && SUB_SECRET="sub-$(head /dev/urandom | tr -dc a-z0-9 | head -c 8)"
     PANEL_INTERNAL_PORT="2053"
 
     echo ""
@@ -600,6 +607,7 @@ step_install_nginx_and_mask() {
     export ADMIN_PASSWORD="$PANEL_PASS"
     export PANEL_PORT="$PANEL_INTERNAL_PORT"
     export PANEL_PATH="/$PANEL_SECRET/"
+    export SUB_PATH="/$SUB_SECRET/"
 
     bash ./setup_mask.sh --auto \
         --domain "$PRIMARY_DOMAIN" \
@@ -608,6 +616,7 @@ step_install_nginx_and_mask() {
         --hy2 \
         --panel-port "$PANEL_INTERNAL_PORT" \
         --panel-path "/$PANEL_SECRET/" \
+        --sub-path "/$SUB_SECRET/" \
         --user "$PANEL_USER" \
         --pass "$PANEL_PASS" || die "Ошибка при развертывании маскировки Nginx (setup_mask.sh)."
 }
@@ -619,6 +628,7 @@ step_configure_inbounds() {
         export ADMIN_PASSWORD="$PANEL_PASS"
         export PANEL_PORT="$PANEL_INTERNAL_PORT"
         export PANEL_PATH="/$PANEL_SECRET/"
+        export SUB_PATH="/$SUB_SECRET/"
         local cfg_arg=()
         [ -f "/root/nginx_mask_setup/setup_mask.env" ] && cfg_arg=(--config "/root/nginx_mask_setup/setup_mask.env")
         bash ./configure_3xui.sh --non-interactive --domain "$PRIMARY_DOMAIN" "${cfg_arg[@]}" || true

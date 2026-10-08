@@ -562,13 +562,11 @@ step_install_nginx_and_mask() {
     bash ./setup_mask.sh --auto \
         --domain "$PRIMARY_DOMAIN" \
         --email "$LE_EMAIL" \
+        --no-www \
         --panel-port "$PANEL_INTERNAL_PORT" \
         --panel-path "/$PANEL_SECRET/" \
         --user "$PANEL_USER" \
-        --pass "$PANEL_PASS" || {
-            # Fallback if --auto flag isn't supported by setup_mask.sh
-            printf "%s\n%s\n1\ny\n" "$PRIMARY_DOMAIN" "$LE_EMAIL" | bash ./setup_mask.sh
-        }
+        --pass "$PANEL_PASS" || die "Ошибка при развертывании маскировки Nginx (setup_mask.sh)."
 }
 
 step_configure_inbounds() {

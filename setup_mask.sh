@@ -492,9 +492,10 @@ SUB_PORT="55443"
 SUB_PATH=""
 # Секретный путь для Clash/Mihomo подписок (по умолчанию: <SUB_PATH>clash)
 SUB_CLASH_PATH=""
+SUB_TITLE=""
 
 XHTTP_STREAM_PORT="50443"
-XHTTP_STREAM_PATH="Stream-One-Path"
+XHTTP_STREAM_PATH=""
 
 # --- 4. UDP ТУННЕЛИ (Hysteria 2 / AmneziaWG) ---
 # Hysteria 2 (UDP 443) [y/n]
@@ -790,7 +791,13 @@ reconstruct_arrays_from_vars() {
     SUB_CLASH_PATH="/${_c_path}/"
 
     XHTTP_STREAM_PORT="${XHTTP_STREAM_PORT:-50443}"
-    RAW_XHTTP_STREAM_PATH="${XHTTP_STREAM_PATH:-${RAW_XHTTP_STREAM_PATH:-Stream-One-Path}}"
+    if [ -z "${RAW_XHTTP_STREAM_PATH:-}" ] || [ "${RAW_XHTTP_STREAM_PATH:-}" = "Stream-One-Path" ] || [[ "${RAW_XHTTP_STREAM_PATH:-}" == vless-* ]]; then
+        if [ -n "${XHTTP_STREAM_PATH:-}" ] && [ "${XHTTP_STREAM_PATH:-}" != "Stream-One-Path" ] && [ "${XHTTP_STREAM_PATH:-}" != "/Stream-One-Path/" ] && [[ "${XHTTP_STREAM_PATH:-}" != *vless-* ]]; then
+            RAW_XHTTP_STREAM_PATH="${XHTTP_STREAM_PATH}"
+        else
+            RAW_XHTTP_STREAM_PATH="$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "xh${RANDOM}")"
+        fi
+    fi
     RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH#/}"
     RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH%/}"
     XHTTP_STREAM_PATH="/${RAW_XHTTP_STREAM_PATH}/"
@@ -884,9 +891,12 @@ save_session_state() {
     _save_sub_clash_path="${_save_sub_clash_path#/}"
     _save_sub_clash_path="${_save_sub_clash_path%/}"
 
-    local _save_xhttp_path="${RAW_XHTTP_STREAM_PATH:-${XHTTP_STREAM_PATH:-Stream-One-Path}}"
+    local _save_xhttp_path="${RAW_XHTTP_STREAM_PATH:-${XHTTP_STREAM_PATH:-}}"
     _save_xhttp_path="${_save_xhttp_path#/}"
     _save_xhttp_path="${_save_xhttp_path%/}"
+    if [ -z "$_save_xhttp_path" ] || [ "$_save_xhttp_path" = "Stream-One-Path" ] || [[ "$_save_xhttp_path" == vless-* ]]; then
+        _save_xhttp_path="$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "xh${RANDOM}")"
+    fi
 
     cat << EOF_SAVE > "$save_path"
 # ==============================================================================
@@ -921,6 +931,7 @@ SERVER_PREFIX="${SERVER_PREFIX:-Server}"
 SUB_PORT="${SUB_PORT:-55443}"
 SUB_PATH="${_save_sub_path}"
 SUB_CLASH_PATH="${_save_sub_clash_path}"
+SUB_TITLE="${SUB_TITLE:-}"
 XHTTP_STREAM_PORT="${XHTTP_STREAM_PORT:-50443}"
 XHTTP_STREAM_PATH="${_save_xhttp_path}"
 
@@ -1129,6 +1140,8 @@ CLI_LE_EMAIL=""
 CLI_PANEL_PORT=""
 CLI_PANEL_PATH=""
 CLI_SUB_PATH=""
+CLI_SUB_TITLE=""
+CLI_XHTTP_STREAM_PATH=""
 CLI_ADMIN_USERNAME=""
 CLI_ADMIN_PASSWORD=""
 CLI_ENABLE_HY2=""
@@ -1197,6 +1210,17 @@ while [[ $# -gt 0 ]]; do
             [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: путь к подпискам."
             SUB_PATH="$2"
             CLI_SUB_PATH="$2"
+            shift 2
+            ;;
+        --sub-title)
+            SUB_TITLE="${2:-}"
+            CLI_SUB_TITLE="${2:-}"
+            shift 2
+            ;;
+        --xhttp-path)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: путь к xHTTP."
+            XHTTP_STREAM_PATH="$2"
+            CLI_XHTTP_STREAM_PATH="$2"
             shift 2
             ;;
         -u|--user|--admin-user)
@@ -1291,6 +1315,8 @@ fi
 [ -n "${CLI_PANEL_PORT:-}" ]     && PANEL_PORT="$CLI_PANEL_PORT"
 [ -n "${CLI_PANEL_PATH:-}" ]     && PANEL_PATH="$CLI_PANEL_PATH"
 [ -n "${CLI_SUB_PATH:-}" ]       && SUB_PATH="$CLI_SUB_PATH"
+[ -n "${CLI_SUB_TITLE:-}" ]      && SUB_TITLE="$CLI_SUB_TITLE"
+[ -n "${CLI_XHTTP_STREAM_PATH:-}" ] && XHTTP_STREAM_PATH="$CLI_XHTTP_STREAM_PATH"
 [ -n "${CLI_ADMIN_USERNAME:-}" ] && ADMIN_USERNAME="$CLI_ADMIN_USERNAME"
 [ -n "${CLI_ADMIN_PASSWORD:-}" ] && ADMIN_PASSWORD="$CLI_ADMIN_PASSWORD"
 [ -n "${CLI_ENABLE_HY2:-}" ]      && ENABLE_HY2="$CLI_ENABLE_HY2"
@@ -2200,7 +2226,7 @@ if [ "$EXPRESS_MODE" -eq 1 ]; then
     SUB_JSON_PATH="${SUB_PATH}json/"
     SUB_CLASH_PATH="${SUB_PATH}clash/"
     XHTTP_STREAM_PORT="50443"
-    RAW_XHTTP_STREAM_PATH="xhttp-stream"
+    RAW_XHTTP_STREAM_PATH="$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "xh${RANDOM}")"
     XHTTP_STREAM_PATH="/${RAW_XHTTP_STREAM_PATH}/"
     ENABLE_HY2="1"
     HY2_PORT="443"
@@ -2422,7 +2448,7 @@ for item in res:
         SUB_CLASH_PATH="${SUB_PATH}clash/"
 
         XHTTP_STREAM_PORT="${XHTTP_STREAM_PORT:-50443}"
-        RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH:-${XHTTP_STREAM_PATH:-vless-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "xhttp${RANDOM}")}}"
+        RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH:-${XHTTP_STREAM_PATH:-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "xh${RANDOM}")}}"
         RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH#/}"; RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH%/}"
         validate_path_segment "$RAW_XHTTP_STREAM_PATH" "URI xHTTP"
         XHTTP_STREAM_PATH="/${RAW_XHTTP_STREAM_PATH#/}"; XHTTP_STREAM_PATH="${XHTTP_STREAM_PATH%/}/"
@@ -2770,9 +2796,10 @@ for item in res:
             SUB_PATH="/${RAW_SUB_PATH#/}"; SUB_PATH="${SUB_PATH%/}/"
             SUB_JSON_PATH="${SUB_PATH}json/"
             SUB_CLASH_PATH="${SUB_PATH}clash/"
+            prompt_default "  Заголовок подписки для клиентов (Enter - без заголовка)" "${SUB_TITLE:-}" SUB_TITLE || return $?
 
             prompt_default "  Внутренний порт инбаунда VLESS xHTTP" "${XHTTP_STREAM_PORT:-50443}" XHTTP_STREAM_PORT || return $?
-            local rand_x_path="vless-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "xhttp${RANDOM}")"
+            local rand_x_path="$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "xh${RANDOM}")"
             local r_xhttp="${RAW_XHTTP_STREAM_PATH:-${XHTTP_STREAM_PATH:-$rand_x_path}}"
             r_xhttp="${r_xhttp#/}"; r_xhttp="${r_xhttp%/}"
             prompt_default "  URI-путь для xHTTP Stream-One" "$r_xhttp" RAW_XHTTP_STREAM_PATH || return $?
@@ -2799,7 +2826,7 @@ for item in res:
             SUB_CLASH_PATH="${SUB_PATH}clash/"
 
             XHTTP_STREAM_PORT="${XHTTP_STREAM_PORT:-50443}"
-            [ -n "${RAW_XHTTP_STREAM_PATH:-}" ] || RAW_XHTTP_STREAM_PATH="vless-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "xhttp${RANDOM}")"
+            [ -n "${RAW_XHTTP_STREAM_PATH:-}" ] || RAW_XHTTP_STREAM_PATH="$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "xh${RANDOM}")"
             RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH#/}"; RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH%/}"
             XHTTP_STREAM_PATH="/${RAW_XHTTP_STREAM_PATH#/}"; XHTTP_STREAM_PATH="${XHTTP_STREAM_PATH%/}/"
 
@@ -4902,7 +4929,7 @@ server {
 
     # --- ЛОКАЦИЯ 3: VLESS xHTTP (Native HTTP/2 Stream-One + VLESSENC + Безотказный сокет) ---
     location ^~ ${XHTTP_STREAM_PATH} {
-        if (\$request_method != POST) {
+        if (\$request_method !~ ^(GET|POST)\$) {
             return 404;
         }
 
@@ -4915,6 +4942,7 @@ server {
         # Полное отключение задержек и буферизации для сквозного H2C-потока
         proxy_request_buffering off;
         proxy_buffering off;
+        chunked_transfer_encoding on;
         tcp_nodelay on;
         proxy_socket_keepalive on;
 
@@ -4963,25 +4991,8 @@ server {
 }
 EOF
 
-    # 4.1. Anti-Loop Stub Server на порту 11443 для Steal-Oneself (Zero-Leak Active Probing Shield)
-    # Поглощает сканирование и активное зондирование (DPI/ЦМУ ССО) без сброса соединения (TCP RST)
-    s_stub_names="${PRIMARY_DOMAIN} *.${PRIMARY_DOMAIN}"
-    for s_d in "${STEAL_DOMAINS[@]:-}"; do
-        [ -n "$s_d" ] && s_stub_names="${s_stub_names} ${s_d}"
-    done
-    cat << EOF > "/etc/nginx/conf.d/02-steal-stub.conf"
-server {
-    listen 127.0.0.1:11443 ssl proxy_protocol;
-    http2 on;
-    server_name ${s_stub_names};
-    ssl_certificate ${SSL_BASE_DIR}/$PRIMARY_DOMAIN/fullchain.pem;
-    ssl_certificate_key ${SSL_BASE_DIR}/$PRIMARY_DOMAIN/privkey.pem;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_session_tickets off;
-    access_log off;
-    location / { return 404; }
-}
-EOF
+    # 4.1. Очистка устаревшего stub-сервера 11443 (Anti-Loop Fallback теперь обслуживается напрямую через 9443 с полным SNI)
+    rm -f "/etc/nginx/conf.d/02-steal-stub.conf" 2>/dev/null || true
 
 # 5. Генерация виртуальных хостов для дополнительных доменов
 for ((i=1; i<${#ALL_DOMAINS[@]}; i++)); do

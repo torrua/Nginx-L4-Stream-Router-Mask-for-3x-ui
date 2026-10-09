@@ -228,8 +228,9 @@ PANEL_PATH="${PANEL_PATH:-my-3x-panel}"
 SUB_PORT="${SUB_PORT:-55443}"
 SUB_PATH="${SUB_PATH:-}"
 SUB_CLASH_PATH="${SUB_CLASH_PATH:-${SUB_PATH%/}/clash}"
+SUB_TITLE="${SUB_TITLE:-}"
 XHTTP_STREAM_PORT="${XHTTP_STREAM_PORT:-50443}"
-XHTTP_STREAM_PATH="${XHTTP_STREAM_PATH:-Stream-One-Path}"
+XHTTP_STREAM_PATH="${XHTTP_STREAM_PATH:-}"
 
 ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
@@ -526,13 +527,28 @@ else:
 sub_clash_path = (os.environ.get("SUB_CLASH_PATH") or existing_settings.get("subClashPath") or f"{sub_path}clash").strip("/")
 
 xhttp_port = int(os.environ.get("XHTTP_STREAM_PORT") or "50443")
-xhttp_raw_path = os.environ.get("XHTTP_STREAM_PATH") or "Stream-One-Path"
+xhttp_raw_path = (os.environ.get("XHTTP_STREAM_PATH") or "").strip("/")
+if not xhttp_raw_path or xhttp_raw_path == "Stream-One-Path" or xhttp_raw_path.startswith("vless-"):
+    cur.execute("SELECT stream_settings FROM inbounds WHERE port = ?", (xhttp_port,))
+    row_xh = cur.fetchone()
+    found_p = None
+    if row_xh and row_xh[0]:
+        try:
+            found_p = json.loads(row_xh[0]).get("xhttpSettings", {}).get("path", "").strip("/")
+        except Exception:
+            pass
+    if found_p and found_p != "Stream-One-Path" and not found_p.startswith("vless-"):
+        xhttp_raw_path = found_p
+    else:
+        import secrets
+        xhttp_raw_path = secrets.token_hex(4)
 xhttp_path = "/" + xhttp_raw_path.strip("/") + "/"
 
 enable_steal = os.environ.get("ENABLE_STEAL", "y").lower() in ("1", "y", "true")
 steal_port = int(os.environ.get("STEAL_PORT") or "45443")
 steal_dom = os.environ.get("STEAL_DOMAINS") or f"cdn.{domain}"
 steal_dom = steal_dom.split()[0] if steal_dom.strip() else f"cdn.{domain}"
+reality_fallback_port = int(os.environ.get("REALITY_FALLBACK_PORT") or "9443")
 
 enable_classic = os.environ.get("ENABLE_CLASSIC", "y").lower() in ("1", "y", "true")
 classic_port = int(os.environ.get("CLASSIC_PORT") or "46443")
@@ -880,10 +896,14 @@ block_smtp = os.environ.get("BLOCK_SMTP", "y").strip().lower() in ("1", "y", "tr
 block_lan = os.environ.get("BLOCK_LAN", "y").strip().lower() in ("1", "y", "true")
 web_listen = os.environ.get("WEB_LISTEN", "").strip()
 sub_listen = os.environ.get("SUB_LISTEN", "").strip()
+sub_title = os.environ.get("SUB_TITLE", "").strip()
+if not sub_title:
+    sub_title = existing_settings.get("subTitle", "").strip()
 
 settings_updates = {
     "webPort": panel_port,
     "webBasePath": f"/{panel_path}/",
+    "subEnable": "true",
     "subPort": sub_port,
     "subPath": target_sub_path,
     "subURI": target_sub_uri,
@@ -900,6 +920,9 @@ settings_updates = {
     "subUpdates": sub_updates,
     "subEncrypt": sub_encrypt
 }
+
+if sub_title:
+    settings_updates["subTitle"] = sub_title
 
 if web_listen:
     settings_updates["webListen"] = web_listen
@@ -1429,6 +1452,7 @@ unified_sub_id = harvested_sub_id or secrets.token_hex(8)
 unified_hy2_pass = harvested_hy2_pass or secrets.token_hex(12)
 def_reality_priv, def_reality_pub = generate_reality_keypair()
 def_reality_sid = unified_sub_id
+def_reality_sids = [def_reality_sid] + [secrets.token_hex(n) for n in (1, 2, 3, 6)]
 def_wg_s_priv, def_wg_s_pub = generate_wg_keypair()
 if harvested_wg_c_priv and harvested_wg_c_pub:
     def_wg_c_priv, def_wg_c_pub = harvested_wg_c_priv, harvested_wg_c_pub
@@ -1583,22 +1607,25 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             target_stream["realitySettings"]["dest"] = old_dest or target_stream["realitySettings"]["dest"]
             preserved.append(f"SNI ({','.join(old_snis)})")
 
-        # Строгая гарантия параметров Steal-Oneself (Anti-Loop Fallback + Xver=1)
+        # Строгая гарантия параметров Steal-Oneself (Nginx Fallback + Xver=1 + target)
         if port == steal_port or tag == "in-steal-reality" or cur_tag == "in-steal-reality":
-            if not target_stream["realitySettings"].get("dest") or target_stream["realitySettings"]["dest"] != "127.0.0.1:11443":
-                target_stream["realitySettings"]["dest"] = "127.0.0.1:11443"
-                repairs.append("установлен dest: 127.0.0.1:11443 (Anti-Loop Stub Nginx, Zero-RST)")
+            fallback_dest = f"127.0.0.1:{reality_fallback_port}"
+            if not target_stream["realitySettings"].get("dest") or target_stream["realitySettings"]["dest"] != fallback_dest:
+                target_stream["realitySettings"]["dest"] = fallback_dest
+                repairs.append(f"установлен dest: {fallback_dest} (Nginx SSL Fallback, Zero-RST)")
             else:
-                preserved.append("anti-loop dest 11443")
+                preserved.append(f"anti-loop dest {reality_fallback_port}")
+            target_stream["realitySettings"]["target"] = fallback_dest
             if target_stream["realitySettings"].get("xver") != 1:
                 target_stream["realitySettings"]["xver"] = 1
                 repairs.append("установлен xver: 1 (Proxy Protocol для Nginx Anti-Loop)")
 
-        # Строгая гарантия параметров Classic External REALITY (xver=0 и dest: 443)
+        # Строгая гарантия параметров Classic External REALITY (xver=0, dest: 443, target: 443)
         if port == classic_port or tag == "in-classic-reality" or cur_tag == "in-classic-reality":
             if not target_stream["realitySettings"].get("dest"):
                 target_stream["realitySettings"]["dest"] = f"{classic_sni}:443"
                 repairs.append(f"восстановлен пустой dest -> {classic_sni}:443")
+            target_stream["realitySettings"]["target"] = target_stream["realitySettings"]["dest"]
             target_stream["realitySettings"]["xver"] = 0
 
     # В. Проверка и ремонт xHTTP
@@ -1748,13 +1775,13 @@ if enable_steal:
     s_set = {"clients": [{"id": unified_uuid, "flow": "xtls-rprx-vision", "email": unified_email, "subId": unified_sub_id, "enable": True}], "decryption": "none"}
     s_str = {
         "network": "tcp",
-        "tcpSettings": {"acceptProxyProtocol": True},
+        "tcpSettings": {"acceptProxyProtocol": True, "header": {"type": "none"}},
         "security": "reality",
         "realitySettings": {
-            "show": False, "xver": 1, "dest": "127.0.0.1:11443",
+            "show": False, "xver": 1, "dest": f"127.0.0.1:{reality_fallback_port}", "target": f"127.0.0.1:{reality_fallback_port}",
             "serverNames": [steal_dom], "privateKey": def_reality_priv,
-            "shortIds": [def_reality_sid],
-            "settings": {"publicKey": def_reality_pub, "fingerprint": "chrome", "spiderX": f"/{def_reality_sid}"}
+            "shortIds": def_reality_sids,
+            "settings": {"publicKey": def_reality_pub, "fingerprint": "chrome", "spiderX": "/"}
         },
         "externalProxy": [{"dest": domain, "port": 443, "forceTls": "same", "remark": make_remark("VLESS Steal")}]
     }
@@ -1766,13 +1793,13 @@ if enable_classic:
     c_set = {"clients": [{"id": unified_uuid, "flow": "xtls-rprx-vision", "email": unified_email, "subId": unified_sub_id, "enable": True}], "decryption": "none"}
     c_str = {
         "network": "tcp",
-        "tcpSettings": {"acceptProxyProtocol": True},
+        "tcpSettings": {"acceptProxyProtocol": True, "header": {"type": "none"}},
         "security": "reality",
         "realitySettings": {
-            "show": False, "xver": 0, "dest": f"{classic_sni}:443",
+            "show": False, "xver": 0, "dest": f"{classic_sni}:443", "target": f"{classic_sni}:443",
             "serverNames": [classic_sni], "privateKey": def_reality_priv,
-            "shortIds": [def_reality_sid],
-            "settings": {"publicKey": def_reality_pub, "fingerprint": "chrome", "spiderX": f"/{def_reality_sid}"}
+            "shortIds": def_reality_sids,
+            "settings": {"publicKey": def_reality_pub, "fingerprint": "chrome", "spiderX": "/"}
         },
         "externalProxy": [{"dest": domain, "port": 443, "forceTls": "same", "remark": make_remark("VLESS Classic")}]
     }
@@ -1788,9 +1815,9 @@ else:
 x_str = {
     "network": "xhttp",
     "xhttpSettings": {
-        "path": xhttp_path, "host": domain, "mode": "stream-one",
+        "path": f"/{xhttp_path.strip('/')}/", "host": domain, "mode": "stream-one",
         "noSSEHeader": True,
-        "xPaddingBytes": "100-500", "xPaddingObfsMode": True, "xPaddingKey": "X-Amz-Meta-Trace",
+        "xPaddingBytes": "", "xPaddingObfsMode": False, "xPaddingKey": "",
         "xmux": {
             "maxConcurrency": "0",
             "maxConnections": "1-3",

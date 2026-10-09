@@ -348,13 +348,28 @@ else:
     sub_clash_path = f"{sub_path}/clash"
 
 xhttp_port = int(os.environ.get("XHTTP_STREAM_PORT") or "50443")
-xhttp_raw_path = os.environ.get("XHTTP_STREAM_PATH") or "Stream-One-Path"
+xhttp_raw_path = (os.environ.get("XHTTP_STREAM_PATH") or "").strip("/")
+if not xhttp_raw_path or xhttp_raw_path == "Stream-One-Path" or xhttp_raw_path.startswith("vless-"):
+    cur.execute("SELECT stream_settings FROM inbounds WHERE port = ?", (xhttp_port,))
+    row_xh = cur.fetchone()
+    found_p = None
+    if row_xh and row_xh[0]:
+        try:
+            found_p = json.loads(row_xh[0]).get("xhttpSettings", {}).get("path", "").strip("/")
+        except Exception:
+            pass
+    if found_p and found_p != "Stream-One-Path" and not found_p.startswith("vless-"):
+        xhttp_raw_path = found_p
+    else:
+        import secrets
+        xhttp_raw_path = secrets.token_hex(4)
 xhttp_path = "/" + xhttp_raw_path.strip("/") + "/"
 
 enable_steal = os.environ.get("ENABLE_STEAL", "y").lower() in ("1", "y", "true")
 steal_port = int(os.environ.get("STEAL_PORT") or "45443")
 steal_dom = os.environ.get("STEAL_DOMAINS") or f"cdn.{domain}"
 steal_dom = steal_dom.split()[0] if steal_dom.strip() else f"cdn.{domain}"
+reality_fallback_port = int(os.environ.get("REALITY_FALLBACK_PORT") or "9443")
 
 enable_classic = os.environ.get("ENABLE_CLASSIC", "y").lower() in ("1", "y", "true")
 classic_port = int(os.environ.get("CLASSIC_PORT") or "46443")
@@ -512,10 +527,14 @@ block_smtp = os.environ.get("BLOCK_SMTP", "y").strip().lower() in ("1", "y", "tr
 block_lan = os.environ.get("BLOCK_LAN", "y").strip().lower() in ("1", "y", "true")
 web_listen = os.environ.get("WEB_LISTEN", "").strip()
 sub_listen = os.environ.get("SUB_LISTEN", "").strip()
+sub_title = os.environ.get("SUB_TITLE", "").strip()
+if not sub_title:
+    sub_title = existing_settings.get("subTitle", "").strip()
 
 settings_updates = {
     "webPort": panel_port,
     "webBasePath": f"/{panel_path}/",
+    "subEnable": "true",
     "subPort": sub_port,
     "subPath": target_sub_path,
     "subURI": target_sub_uri,
@@ -532,6 +551,9 @@ settings_updates = {
     "subUpdates": sub_updates,
     "subEncrypt": sub_encrypt
 }
+
+if sub_title:
+    settings_updates["subTitle"] = sub_title
 
 if web_listen:
     settings_updates["webListen"] = web_listen
@@ -630,14 +652,15 @@ if tpl and isinstance(tpl, dict):
 print("\n[+] Аудит и согласование инбаундов (Inbounds Smart Reconcile)...")
 
 def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, default_stream, listen="127.0.0.1"):
-    cur.execute("SELECT id, settings, stream_settings, protocol, tag, remark, listen FROM inbounds WHERE port = ? OR tag = ?", (port, tag))
+    cur.execute("SELECT id, settings, stream_settings, protocol, tag, remark, listen, sniffing FROM inbounds WHERE port = ? OR tag = ?", (port, tag))
     row = cur.fetchone()
     
     if not row:
         # Инбаунд полностью отсутствует -> создаем
         settings_json = json.dumps(default_settings, ensure_ascii=False)
         stream_json = json.dumps(default_stream, ensure_ascii=False)
-        sniffing_json = json.dumps({"enabled": True, "destOverride": ["http", "tls", "quic", "fakedns"]})
+        default_sniff = False if (protocol in ("hysteria", "amneziawg") or "realitySettings" in default_stream) else True
+        sniffing_json = json.dumps({"enabled": default_sniff, "destOverride": ["http", "tls", "quic", "fakedns"]})
         if not dry_run:
             cur.execute("""
                 INSERT INTO inbounds (
@@ -648,7 +671,7 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
         print(f"  [СОЗДАНО] Отсутствующий инбаунд: {remark} ({protocol.upper()} на порту {port}) добавлен.")
         return
 
-    inbound_id, raw_s, raw_st, proto, cur_tag, cur_remark, cur_listen = row
+    inbound_id, raw_s, raw_st, proto, cur_tag, cur_remark, cur_listen, raw_sniff = row
     try:
         cur_settings = json.loads(raw_s) if raw_s else {}
     except Exception:
@@ -715,22 +738,25 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             target_stream["realitySettings"]["dest"] = old_dest or target_stream["realitySettings"]["dest"]
             preserved.append(f"SNI ({','.join(old_snis)})")
 
-        # Строгая гарантия параметров Steal-Oneself (Anti-Loop Fallback + Xver=1)
+        # Строгая гарантия параметров Steal-Oneself (Nginx Fallback + Xver=1 + target)
         if port == steal_port or tag == "in-steal-reality" or cur_tag == "in-steal-reality":
-            if not target_stream["realitySettings"].get("dest") or target_stream["realitySettings"]["dest"] != "127.0.0.1:11443":
-                target_stream["realitySettings"]["dest"] = "127.0.0.1:11443"
-                repairs.append("установлен dest: 127.0.0.1:11443 (Anti-Loop Stub Nginx, Zero-RST)")
+            fallback_dest = f"127.0.0.1:{reality_fallback_port}"
+            if not target_stream["realitySettings"].get("dest") or target_stream["realitySettings"]["dest"] != fallback_dest:
+                target_stream["realitySettings"]["dest"] = fallback_dest
+                repairs.append(f"установлен dest: {fallback_dest} (Nginx SSL Fallback, Zero-RST)")
             else:
-                preserved.append("anti-loop dest 11443")
+                preserved.append(f"anti-loop dest {reality_fallback_port}")
+            target_stream["realitySettings"]["target"] = fallback_dest
             if target_stream["realitySettings"].get("xver") != 1:
                 target_stream["realitySettings"]["xver"] = 1
                 repairs.append("установлен xver: 1 (Proxy Protocol для Nginx Anti-Loop)")
 
-        # Строгая гарантия параметров Classic External REALITY (xver=0 и dest: 443)
+        # Строгая гарантия параметров Classic External REALITY (xver=0, dest: 443, target: 443)
         if port == classic_port or tag == "in-classic-reality" or cur_tag == "in-classic-reality":
             if not target_stream["realitySettings"].get("dest"):
                 target_stream["realitySettings"]["dest"] = f"{classic_sni}:443"
                 repairs.append(f"восстановлен пустой dest -> {classic_sni}:443")
+            target_stream["realitySettings"]["target"] = target_stream["realitySettings"]["dest"]
             target_stream["realitySettings"]["xver"] = 0
 
     # В. Проверка и ремонт xHTTP
@@ -873,6 +899,7 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
 def_uuid = str(uuid.uuid4())
 def_reality_priv, def_reality_pub = generate_reality_keypair()
 def_reality_sid = secrets.token_hex(8)
+def_reality_sids = [def_reality_sid] + [secrets.token_hex(n) for n in (1, 2, 3, 6)]
 def_hy2_pass = secrets.token_hex(12)
 def_wg_s_priv, def_wg_s_pub = generate_wg_keypair()
 def_wg_c_priv, def_wg_c_pub = generate_wg_keypair()
@@ -883,13 +910,13 @@ if enable_steal:
     s_set = {"clients": [{"id": def_uuid, "flow": "xtls-rprx-vision"}], "decryption": "none"}
     s_str = {
         "network": "tcp",
-        "tcpSettings": {"acceptProxyProtocol": True},
+        "tcpSettings": {"acceptProxyProtocol": True, "header": {"type": "none"}},
         "security": "reality",
         "realitySettings": {
-            "show": False, "xver": 1, "dest": "127.0.0.1:11443",
+            "show": False, "xver": 1, "dest": f"127.0.0.1:{reality_fallback_port}", "target": f"127.0.0.1:{reality_fallback_port}",
             "serverNames": [steal_dom], "privateKey": def_reality_priv,
-            "shortIds": [def_reality_sid],
-            "settings": {"publicKey": def_reality_pub, "fingerprint": "chrome", "spiderX": f"/{def_reality_sid}"}
+            "shortIds": def_reality_sids,
+            "settings": {"publicKey": def_reality_pub, "fingerprint": "chrome", "spiderX": "/"}
         },
         "externalProxy": [{"dest": domain, "port": 443, "forceTls": "same", "remark": "VLESS_STEAL"}]
     }
@@ -900,13 +927,13 @@ if enable_classic:
     c_set = {"clients": [{"id": def_uuid, "flow": "xtls-rprx-vision"}], "decryption": "none"}
     c_str = {
         "network": "tcp",
-        "tcpSettings": {"acceptProxyProtocol": True},
+        "tcpSettings": {"acceptProxyProtocol": True, "header": {"type": "none"}},
         "security": "reality",
         "realitySettings": {
-            "show": False, "xver": 0, "dest": f"{classic_sni}:443",
+            "show": False, "xver": 0, "dest": f"{classic_sni}:443", "target": f"{classic_sni}:443",
             "serverNames": [classic_sni], "privateKey": def_reality_priv,
-            "shortIds": [def_reality_sid],
-            "settings": {"publicKey": def_reality_pub, "fingerprint": "chrome", "spiderX": f"/{def_reality_sid}"}
+            "shortIds": def_reality_sids,
+            "settings": {"publicKey": def_reality_pub, "fingerprint": "chrome", "spiderX": "/"}
         },
         "externalProxy": [{"dest": domain, "port": 443, "forceTls": "same", "remark": "VLESS_CLASSIC"}]
     }
@@ -939,8 +966,8 @@ else:
 x_str = {
     "network": "xhttp",
     "xhttpSettings": {
-        "path": xhttp_path, "host": domain, "mode": "stream-one",
-        "xPaddingBytes": "100-500", "xPaddingObfsMode": True, "xPaddingKey": "X-Amz-Meta-Trace"
+        "path": f"/{xhttp_path.strip('/')}/", "host": domain, "mode": "stream-one",
+        "xPaddingBytes": "", "xPaddingObfsMode": False, "xPaddingKey": ""
     },
     "security": "none",
     "externalProxy": [{"dest": domain, "port": 443, "forceTls": "tls", "sni": domain, "fingerprint": "chrome", "remark": "VLESS_XHTTP"}]

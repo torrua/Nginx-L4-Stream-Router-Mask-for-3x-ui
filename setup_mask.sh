@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # ==============================================================================
-# Production AutoSetup: Hardened Engine v7.3.1 Universal (Public Edition)
+# Production AutoSetup: Hardened Engine v7.3.2 Universal (Public Edition)
 # Nginx L4 Stream + 3X-UI + Unix Sockets + Native proxy_http_version 2 + 3 Decoys
 # ==============================================================================
 # Архитектура:
@@ -27,7 +27,7 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="v7.3.1"
+SCRIPT_VERSION="v7.3.2"
 
 # --------------------------- Замеры времени и телеметрия ---------------------------
 SCRIPT_START_TIME=$(date +%s)
@@ -432,7 +432,7 @@ generate_config_template() {
     local target_file="${1:-setup_mask.env.example}"
     cat << 'EOF_CONF' > "$target_file"
 # ==============================================================================
-# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v7.3.1 Universal)
+# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v7.3.2 Universal)
 # ==============================================================================
 # Данный файл позволяет выполнять полностью автоматическую установку:
 # ./setup_mask.sh --config setup_mask.env --non-interactive --force
@@ -1850,32 +1850,83 @@ EOF
     fi
 }
 
-setup_nginx_mainline() {
-    export DEBIAN_FRONTEND=noninteractive
-    if command -v nginx >/dev/null 2>&1 && nginx -v >/dev/null 2>&1; then
+supports_x86_64_v3() {
+    local arch
+    arch=$(uname -m 2>/dev/null || echo "unknown")
+    if [ "$arch" != "x86_64" ]; then
         return 0
     fi
+    if [ -x /lib64/ld-linux-x86-64.so.2 ]; then
+        if /lib64/ld-linux-x86-64.so.2 --help 2>&1 | grep -E 'x86-64-v3' | grep -q 'supported'; then
+            return 0
+        fi
+    fi
+    if grep -q "avx2" /proc/cpuinfo 2>/dev/null && grep -q "bmi2" /proc/cpuinfo 2>/dev/null; then
+        return 0
+    fi
+    return 1
+}
+
+setup_nginx_mainline() {
+    export DEBIAN_FRONTEND=noninteractive
+    local os_id os_codename
+    os_id=$(lsb_release -is 2>/dev/null | tr '[:upper:]' '[:lower:]' || echo "ubuntu")
+    os_codename=$(lsb_release -cs 2>/dev/null || echo "jammy")
+
+    # 1. Если Nginx уже установлен — проверяем, запускается ли бинарник
+    if command -v nginx >/dev/null 2>&1; then
+        if nginx -v >/dev/null 2>&1; then
+            mkdir -p /etc/nginx/modules-enabled 2>/dev/null || true
+            return 0
+        fi
+        warn "Обнаружен несовместимый Nginx (CPU ISA level is lower than required). Очистка..."
+        rm -f /etc/apt/sources.list.d/nginx.list /etc/apt/preferences.d/99nginx
+        apt-get purge -y nginx nginx-common nginx-core libnginx* 2>/dev/null || apt-get remove -y nginx* 2>/dev/null || true
+        apt-get update -q || true
+    fi
+
     apt-get update -q || true
     apt-get install gnupg ca-certificates lsb-release openssl -y -q || true
 
-    mkdir -p /usr/share/keyrings
-    curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg --yes
+    # 2. Проверяем поддержку процессором микроархитектуры x86-64-v3
+    local can_use_nginx_org=1
+    if ! supports_x86_64_v3; then
+        warn "Процессор VPS (или профиль гипервизора) не поддерживает x86-64-v3 (AVX2/BMI2)."
+        log "Подключение Nginx из официального системного репозитория $os_id (100% совместимость со всеми CPU)..."
+        can_use_nginx_org=0
+    fi
 
-    local os_id os_codename
-    os_id=$(lsb_release -is | tr '[:upper:]' '[:lower:]')
-    os_codename=$(lsb_release -cs)
+    if [ "$can_use_nginx_org" -eq 1 ]; then
+        mkdir -p /usr/share/keyrings
+        curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg --yes 2>/dev/null || true
 
-    echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] https://nginx.org/packages/mainline/$os_id $os_codename nginx" \
-        > /etc/apt/sources.list.d/nginx.list
+        if [ -s /usr/share/keyrings/nginx-archive-keyring.gpg ]; then
+            echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] https://nginx.org/packages/mainline/$os_id $os_codename nginx" \
+                > /etc/apt/sources.list.d/nginx.list
 
-    cat << EOF > /etc/apt/preferences.d/99nginx
+            cat << EOF > /etc/apt/preferences.d/99nginx
 Package: nginx*
 Pin: origin nginx.org
 Pin-Priority: 900
 EOF
 
-    apt-get update -q || true
-    apt-get install -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" nginx -y -q
+            apt-get update -q || true
+            apt-get install -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" nginx -y -q || true
+        fi
+    fi
+
+    # 3. Валидация работоспособности установленного Nginx (Fail-Safe Fallback)
+    if ! command -v nginx >/dev/null 2>&1 || ! nginx -v >/dev/null 2>&1; then
+        warn "Сбой запуска Nginx из внешнего репозитория (или несовместимость с ISA процессора)."
+        log "Экстренный fallback: установка системного Nginx из репозитория $os_id..."
+        rm -f /etc/apt/sources.list.d/nginx.list /etc/apt/preferences.d/99nginx
+        apt-get purge -y nginx nginx-common nginx-core libnginx* 2>/dev/null || apt-get remove -y nginx* 2>/dev/null || true
+        apt-get update -q || true
+        apt-get install -y -q -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" nginx libnginx-mod-stream 2>/dev/null || apt-get install -y -q nginx
+    fi
+
+    mkdir -p /etc/nginx/modules-enabled 2>/dev/null || true
+    nginx -v >/dev/null 2>&1 || die "Не удалось установить рабочий Nginx, совместимый с данным процессором."
 }
 
 install_certbot_package() {
@@ -3547,8 +3598,12 @@ server {
 EOF
 
     if ! nginx -t >/dev/null 2>&1; then
-        nginx -t
-        die "Ошибка синтаксиса начальной конфигурации Nginx."
+        warn "Сбой проверки начальной конфигурации Nginx. Проверка на ошибки ISA или бинарника..."
+        setup_nginx_mainline
+        if ! nginx -t >/dev/null 2>&1; then
+            nginx -t
+            die "Ошибка синтаксиса начальной конфигурации Nginx."
+        fi
     fi
     systemctl restart nginx >/dev/null 2>&1 || systemctl start nginx >/dev/null 2>&1
 fi
@@ -4431,12 +4486,19 @@ if ! should_skip_step 6; then
            /etc/nginx/conf.d/* \
            /etc/nginx/stream.d/*
 
+    mkdir -p /etc/nginx/modules-enabled 2>/dev/null || true
+    local modules_load_block=""
+    if compgen -G "/etc/nginx/modules-enabled/*.conf" >/dev/null 2>&1; then
+        modules_load_block="include /etc/nginx/modules-enabled/*.conf;"
+    fi
+
     # 1. Глобальный файл конфигурации /etc/nginx/nginx.conf
     cat << EOF > /etc/nginx/nginx.conf
 user $NGINX_USER;
 worker_processes auto;
 pid /run/nginx.pid;
 worker_rlimit_nofile 524288;
+${modules_load_block}
 
 error_log /var/log/nginx/error.log warn;
 

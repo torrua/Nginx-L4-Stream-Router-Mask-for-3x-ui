@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # ==============================================================================
-# Production AutoSetup: Hardened Engine v7.3.3 Universal (Public Edition)
+# Production AutoSetup: Hardened Engine v7.3.4 Universal (Public Edition)
 # Nginx L4 Stream + 3X-UI + Unix Sockets + Native proxy_http_version 2 + 3 Decoys
 # ==============================================================================
 # Архитектура:
@@ -27,7 +27,7 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="v7.3.3"
+SCRIPT_VERSION="v7.3.4"
 
 # --------------------------- Замеры времени и телеметрия ---------------------------
 SCRIPT_START_TIME=$(date +%s)
@@ -432,7 +432,7 @@ generate_config_template() {
     local target_file="${1:-setup_mask.env.example}"
     cat << 'EOF_CONF' > "$target_file"
 # ==============================================================================
-# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v7.3.3 Universal)
+# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v7.3.4 Universal)
 # ==============================================================================
 # Данный файл позволяет выполнять полностью автоматическую установку:
 # ./setup_mask.sh --config setup_mask.env --non-interactive --force
@@ -3640,6 +3640,12 @@ fi
 if ! should_skip_step 4; then
     step_begin 4
 
+    # Обеспечиваем доступность портов 80 и 443 для ACME HTTP-01 проверки
+    command -v ufw >/dev/null 2>&1 && ufw allow 80/tcp >/dev/null 2>&1 || true
+    command -v ufw >/dev/null 2>&1 && ufw allow 443/tcp >/dev/null 2>&1 || true
+    command -v iptables >/dev/null 2>&1 && iptables -I INPUT -p tcp --dport 80 -j ACCEPT >/dev/null 2>&1 || true
+    command -v iptables >/dev/null 2>&1 && iptables -I INPUT -p tcp --dport 443 -j ACCEPT >/dev/null 2>&1 || true
+
     if [ "$SSL_ENGINE_CHOICE" = "1" ]; then
         run_with_spinner "Инициализация подсистемы Certbot (APT / Snap)" install_certbot_package || die "Ошибка установки Certbot."
 
@@ -3663,9 +3669,15 @@ EOF
                 :
             else
                 warn "Не удалось выпустить сертификат для $dom."
-                if [ "$dom" = "$PRIMARY_DOMAIN" ]; then
-                    die "Критическая ошибка: Выпуск сертификата для Главного домена $PRIMARY_DOMAIN провален."
-                fi
+            fi
+            # Защитный fallback: создаем самоподписанный сертификат, если боевой не был получен
+            if [ ! -f "/etc/letsencrypt/live/$dom/fullchain.pem" ] || [ ! -f "/etc/letsencrypt/live/$dom/privkey.pem" ]; then
+                warn "Генерация временного самоподписанного сертификата для $dom (для запуска веб-сервера)..."
+                mkdir -p "/etc/letsencrypt/live/$dom"
+                openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+                    -keyout "/etc/letsencrypt/live/$dom/privkey.pem" \
+                    -out "/etc/letsencrypt/live/$dom/fullchain.pem" \
+                    -subj "/CN=$dom" >/dev/null 2>&1 || true
             fi
         done
 
@@ -3702,9 +3714,15 @@ EOF
                 :
             else
                 warn "Ошибка при выпуске сертификата для $dom."
-                if [ "$dom" = "$PRIMARY_DOMAIN" ]; then
-                    die "Критическая ошибка: Выпуск сертификата для Главного домена $PRIMARY_DOMAIN провален."
-                fi
+            fi
+            # Защитный fallback: создаем самоподписанный сертификат, если боевой не был получен
+            if [ ! -f "/etc/ssl/acme/$dom/fullchain.pem" ] || [ ! -f "/etc/ssl/acme/$dom/privkey.pem" ]; then
+                warn "Генерация временного самоподписанного сертификата для $dom (для запуска веб-сервера)..."
+                mkdir -p "/etc/ssl/acme/$dom"
+                openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+                    -keyout "/etc/ssl/acme/$dom/privkey.pem" \
+                    -out "/etc/ssl/acme/$dom/fullchain.pem" \
+                    -subj "/CN=$dom" >/dev/null 2>&1 || true
             fi
         done
     fi
@@ -4513,7 +4531,7 @@ if ! should_skip_step 6; then
            /etc/nginx/stream.d/*
 
     mkdir -p /etc/nginx/modules-enabled 2>/dev/null || true
-    local modules_load_block=""
+    modules_load_block=""
     if compgen -G "/etc/nginx/modules-enabled/*.conf" >/dev/null 2>&1; then
         modules_load_block="include /etc/nginx/modules-enabled/*.conf;"
     fi
@@ -5033,7 +5051,7 @@ server {
             return 404;
         }
 
-        proxy_http_version 2;
+        proxy_http_version 1.1;
         proxy_set_header Host \$http_host;
         proxy_set_header X-Real-IP \$ak_real_ip;
         proxy_set_header X-Forwarded-For \$ak_real_ip;
@@ -5597,8 +5615,7 @@ EOF_RESOLVED
 
         # 2. Скачивание и распаковка AdGuard Home (если ещё не установлен)
         if [ ! -f /opt/AdGuardHome/AdGuardHome ]; then
-            local agh_arch="amd64"
-            local cur_arch
+            agh_arch="amd64"
             cur_arch=$(uname -m 2>/dev/null || echo "x86_64")
             case "$cur_arch" in
                 x86_64) agh_arch="amd64" ;;
@@ -5615,7 +5632,7 @@ EOF_RESOLVED
 
         # 3. Генерация bcrypt-хэша пароля через htpasswd
         which htpasswd >/dev/null 2>&1 || apt-get install -y -q apache2-utils >/dev/null 2>&1
-        local agh_pass_hash=""
+        agh_pass_hash=""
         if command -v htpasswd >/dev/null 2>&1; then
             agh_pass_hash=$(htpasswd -b -n -B -C 10 "" "$AGH_PASS" 2>/dev/null | tr -d '\n' | cut -d: -f2)
         fi
@@ -5713,7 +5730,7 @@ EOF_GOMEM
 
         # 7. Интеграция с Xray DNS (если выбрано AGH_XRAY_DNS=y)
         if [[ "${AGH_XRAY_DNS,,}" == "y" || "${AGH_XRAY_DNS:-}" == "1" ]]; then
-            local xui_db="/etc/x-ui/x-ui.db"
+            xui_db="/etc/x-ui/x-ui.db"
             [ -f "$xui_db" ] || xui_db="/usr/local/x-ui/bin/x-ui.db"
             if [ -f "$xui_db" ]; then
                 python3 -c "

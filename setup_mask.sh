@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # ==============================================================================
-# Production AutoSetup: Hardened Engine v7.2.1 Universal (Public Edition)
+# Production AutoSetup: Hardened Engine v7.3.1 Universal (Public Edition)
 # Nginx L4 Stream + 3X-UI + Unix Sockets + Native proxy_http_version 2 + 3 Decoys
 # ==============================================================================
 # Архитектура:
@@ -27,7 +27,7 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="v7.3.0"
+SCRIPT_VERSION="v7.3.1"
 
 # --------------------------- Замеры времени и телеметрия ---------------------------
 SCRIPT_START_TIME=$(date +%s)
@@ -432,7 +432,7 @@ generate_config_template() {
     local target_file="${1:-setup_mask.env.example}"
     cat << 'EOF_CONF' > "$target_file"
 # ==============================================================================
-# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v7.2.0 Universal)
+# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v7.3.1 Universal)
 # ==============================================================================
 # Данный файл позволяет выполнять полностью автоматическую установку:
 # ./setup_mask.sh --config setup_mask.env --non-interactive --force
@@ -725,6 +725,11 @@ reconstruct_arrays_from_vars() {
         for sd in ${steal_raw//,/ }; do
             sd=$(echo "$sd" | tr -d '[:space:]')
             if [ -n "$sd" ]; then
+                if [ "$sd" = "$PRIMARY_DOMAIN" ]; then
+                    warn "  Коллизия: '$sd' в STEAL_DOMAINS совпадает с PRIMARY_DOMAIN!"
+                    warn "  Главный домен зарезервирован за Nginx L7. Переключено на 'cdn.$PRIMARY_DOMAIN'."
+                    sd="cdn.$PRIMARY_DOMAIN"
+                fi
                 STEAL_DOMAINS+=("$sd")
                 DOMAIN_TO_PORT["$sd"]="${STEAL_PORTS_LIST[0]}"
                 [[ " ${ALL_DOMAINS[*]} " =~ " ${sd} " ]] || ALL_DOMAINS+=("$sd")
@@ -2615,6 +2620,13 @@ for item in res:
 
             if [[ ! "$s_dom_in" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; then
                 warn "  Некорректный синтаксис домена '$s_dom_in'. Использован $old_steal_dom."
+                s_dom_in="$old_steal_dom"
+            fi
+
+            if [ "$s_dom_in" = "$PRIMARY_DOMAIN" ]; then
+                warn "  Коллизия: '$s_dom_in' совпадает с главным доменом (PRIMARY_DOMAIN)!"
+                warn "  Главный домен зарезервирован за Nginx L7 (панель, веб-маска, подписки, xHTTP)."
+                warn "  Для Steal-REALITY укажите поддомен (например, cdn.$PRIMARY_DOMAIN)."
                 s_dom_in="$old_steal_dom"
             fi
 
@@ -5652,7 +5664,7 @@ post_install_sanity_check
 
 echo
 echo -e "${GREEN}=====================================================================${NC}"
-echo -e "   ИНФРАСТРУКТУРА УСПЕШНО РАЗВЕРНУТА (v7.2.0 PUBLIC EDITION)!       "
+echo -e "   ИНФРАСТРУКТУРА УСПЕШНО РАЗВЕРНУТА (${SCRIPT_VERSION} PUBLIC EDITION)!       "
 echo -e "${GREEN}=====================================================================${NC}"
 echo -e "  Главная страница:            ${CYAN}https://${PRIMARY_DOMAIN}/${NC} (${DECOY_NAME})"
 echo -e "  Вход в панель 3X-UI:         ${GREEN}https://${PRIMARY_DOMAIN}${PANEL_PATH}${NC}"

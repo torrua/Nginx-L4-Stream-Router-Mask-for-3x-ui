@@ -74,7 +74,7 @@ REPO_URL="https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-f
 # Clear screen & display header banner
 check_for_script_updates() {
     local remote_ver=""
-    remote_ver=$(curl -fsSL --connect-timeout 2 "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/VERSION" 2>/dev/null | tr -d '[:space:]' || true)
+    remote_ver=$(curl -fsSL --connect-timeout 2 "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/VERSION?v=$(date +%s)" 2>/dev/null | tr -d '[:space:]' || true)
     if [ -n "$remote_ver" ]; then
         if [ "$remote_ver" != "$SCRIPT_VERSION" ]; then
             echo -e "  ${YELLOW}⚠️  Доступно обновление скрипта: ${GREEN}$remote_ver${YELLOW} (текущая версия: ${CYAN}$SCRIPT_VERSION${YELLOW})${RESET}"

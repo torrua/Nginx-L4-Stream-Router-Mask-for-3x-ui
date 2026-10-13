@@ -60,7 +60,7 @@
 Подключитесь к серверу по SSH под пользователем `root` и запустите единый мастер:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/install.sh | sudo bash
+curl -sSL "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/install.sh?v=$(date +%s)" | sudo bash
 ```
 
 > **Что произойдет автоматически:**

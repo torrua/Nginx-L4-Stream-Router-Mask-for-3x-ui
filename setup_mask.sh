@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # ==============================================================================
-# Production AutoSetup: Hardened Engine v7.3.2 Universal (Public Edition)
+# Production AutoSetup: Hardened Engine v7.3.3 Universal (Public Edition)
 # Nginx L4 Stream + 3X-UI + Unix Sockets + Native proxy_http_version 2 + 3 Decoys
 # ==============================================================================
 # Архитектура:
@@ -27,7 +27,7 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="v7.3.2"
+SCRIPT_VERSION="v7.3.3"
 
 # --------------------------- Замеры времени и телеметрия ---------------------------
 SCRIPT_START_TIME=$(date +%s)
@@ -432,7 +432,7 @@ generate_config_template() {
     local target_file="${1:-setup_mask.env.example}"
     cat << 'EOF_CONF' > "$target_file"
 # ==============================================================================
-# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v7.3.2 Universal)
+# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v7.3.3 Universal)
 # ==============================================================================
 # Данный файл позволяет выполнять полностью автоматическую установку:
 # ./setup_mask.sh --config setup_mask.env --non-interactive --force
@@ -1977,7 +1977,21 @@ obtain_cert() {
     if [ -f "/etc/letsencrypt/live/$dom/fullchain.pem" ] && [ -f "/etc/letsencrypt/live/$dom/privkey.pem" ]; then
         return 0
     fi
-    certbot certonly --webroot -w "$WEBROOT" --expand -d "$dom" --non-interactive
+
+    # 1. Попытка через Nginx Webroot (если порт 80 слушается)
+    if ss -tlnp 2>/dev/null | grep -qE ':80\s'; then
+        if certbot certonly --webroot -w "$WEBROOT" --expand -d "$dom" --non-interactive; then
+            return 0
+        fi
+        warn "Сбой верификации через Nginx Webroot для $dom. Пробуем Standalone-режим..."
+    fi
+
+    # 2. Надежный fallback: Standalone (Certbot сам поднимает временный сервер на порту 80)
+    systemctl stop nginx 2>/dev/null || true
+    local res=0
+    certbot certonly --standalone --expand -d "$dom" --non-interactive || res=$?
+    systemctl start nginx 2>/dev/null || true
+    return $res
 }
 
 install_acmesh() {
@@ -3582,6 +3596,18 @@ chmod 755 "$WEBROOT" /var/cache/nginx /var/www/mirror /var/www/proxy_temp
 # Стартовый HTTP-сервер для верификации ACME (создается только если Шаг 4 выполняется)
 if [ "$SSL_ENGINE_CHOICE" = "1" ] && [ "${RESUME_STEP:-1}" -le 4 ]; then
     NGINX_80_SERVER_NAMES="${ALL_DOMAINS[*]}"
+
+    # Останавливаем конкурирующие веб-сервисы, если они были предустановлены
+    systemctl stop apache2 2>/dev/null || true
+    systemctl disable apache2 2>/dev/null || true
+
+    # Удаляем дефолтные конфигурации сайтов с [::]:80, которые приводят к сбою запуска при выключенном IPv6
+    rm -f /etc/nginx/sites-enabled/* /etc/nginx/sites-available/default /etc/nginx/conf.d/default.conf 2>/dev/null || true
+    mkdir -p /etc/nginx/sites-enabled /etc/nginx/conf.d /etc/nginx/modules-enabled "$WEBROOT/.well-known/acme-challenge" 2>/dev/null || true
+    chown -R "$NGINX_USER:$NGINX_USER" "$WEBROOT" 2>/dev/null || true
+
+    # Удаляем директивы listen [::]: из существующих файлов conf.d
+    sed -i '/\[::\]/d' /etc/nginx/conf.d/*.conf 2>/dev/null || true
 
     log "Создание стартового HTTP-сервера для верификации ACME..."
     cat << EOF > "/etc/nginx/conf.d/00-acme.conf"

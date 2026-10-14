@@ -943,7 +943,7 @@ for item in res:
             echo -e "    ${GREEN}[1] DataSphere Analytics (Рекомендуется)${NC}"
             echo -e "        ${DIM}• Корпоративный портал распределенной аналитики данных${NC}"
             echo -e "        ${DIM}• Интерактивная 3D-сфера узлов, Anycast-телеметрия потока и Web CLI${NC}"
-            echo -e "        ${DIM}• Документация API, статус сервисов и строгий Zero-Inline CSP${NC}"
+            echo -e "        ${DIM}• Документация API, статус сервисов и строгая политика CSP (без unsafe-inline)${NC}"
             echo
             echo -e "    ${GREEN}[2] CosmosCloud NextGen${NC}"
             echo -e "        ${DIM}• Корпоративное облачное хранилище файлов (аналог Nextcloud / OwnCloud)${NC}"

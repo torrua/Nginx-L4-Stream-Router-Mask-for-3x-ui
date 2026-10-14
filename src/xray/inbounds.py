@@ -129,7 +129,7 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             fallback_dest = f"127.0.0.1:{reality_fallback_port}"
             if not target_stream["realitySettings"].get("dest") or target_stream["realitySettings"]["dest"] != fallback_dest:
                 target_stream["realitySettings"]["dest"] = fallback_dest
-                repairs.append(f"установлен dest: {fallback_dest} (Nginx SSL Fallback, Zero-RST)")
+                repairs.append(f"установлен dest: {fallback_dest} (Nginx SSL Fallback, защита от сброса)")
             else:
                 preserved.append(f"anti-loop dest {reality_fallback_port}")
             target_stream["realitySettings"]["target"] = fallback_dest

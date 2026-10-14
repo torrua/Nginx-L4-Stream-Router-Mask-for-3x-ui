@@ -404,7 +404,7 @@ document.addEventListener("DOMContentLoaded", () => {
             } else if (val === "nodes") {
                 addLog("Активно узлов: 148 PoP (EU: 62, US: 54, APAC: 32) | Балансировка: FQ/BBR");
             } else if (val === "crypto") {
-                addLog("Шифрование сессий: ML-KEM-768 + X25519 (RFC 8446) | Zero-Knowledge");
+                addLog("Шифрование сессий: TLS 1.3 (RFC 8446) / ChaCha20-Poly1305 / AES-256-GCM");
             } else if (val === "clear") {
                 termLogs.innerHTML = "";
             } else {
@@ -508,7 +508,7 @@ cat << 'EOF' > $WEBROOT/index.html
             <div class="hero-text">
                 <div class="badge"><span class="badge-dot"></span><span>DataSphere Core v4.0 — Доступность 99.998%</span></div>
                 <h1>Распределенная сеть обработки и защиты корпоративных данных</h1>
-                <p>Высоконагруженная инфраструктура с аппаратной изоляцией памяти Zero-Copy, постквантовым обменом ключами ML-KEM-768 и магистральной Anycast-маршрутизацией.</p>
+                <p>Высоконагруженная инфраструктура с аппаратной изоляцией памяти, поддержкой современных стандартов шифрования TLS 1.3 и магистральной Anycast-маршрутизацией.</p>
                 <div style="display:flex; gap:14px; flex-wrap:wrap;">
                     <button type="button" id="connectNodeBtn" class="btn btn-primary">Подключить вычислительный узел</button>
                     <button type="button" id="netStatusBtn" class="btn">Статус Anycast-магистрали</button>

@@ -95,9 +95,10 @@ def main():
     for name in ["setup_mask.sh", "configure_3xui.sh", "update_repair.sh"]:
         r = bash_file(name, "--help")
         record("cli_help:"+name, "PASS" if r.returncode == 0 else "FAIL", exit_code=r.returncode)
+    expected_version = (ROOT / "VERSION").read_text(encoding="utf-8").strip() if (ROOT / "VERSION").exists() else "v7.4.0"
     for name in ["setup_mask.sh", "install.sh"]:
         r = bash_file(name, "--version")
-        record("cli_version:"+name, "PASS" if r.returncode == 0 and "v7.3.4" in r.stdout else "FAIL", exit_code=r.returncode)
+        record("cli_version:"+name, "PASS" if r.returncode == 0 and expected_version in r.stdout else "FAIL", exit_code=r.returncode)
 
     with tempfile.TemporaryDirectory(prefix="audit-fixture-", dir=OUT) as d:
         tmp = Path(d)

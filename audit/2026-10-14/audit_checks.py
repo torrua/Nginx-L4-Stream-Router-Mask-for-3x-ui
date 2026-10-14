@@ -111,14 +111,24 @@ def main():
                exit_code=r.returncode, reached_next_statement="REACHED_AFTER_GENERATION" in r.stdout)
 
         # Only in-memory initialization and selected noninteractive branch.
-        r = bash("set -euo pipefail\nwarn(){ :; }; ok(){ :; };\n" + source("setup_mask.sh", 68, 71) + source("setup_mask.sh", 704, 835) +
+        mask_lines = source("setup_mask.sh").splitlines()
+        is_true_start = next(i for i, l in enumerate(mask_lines) if l.startswith("is_true()"))
+        is_true_end = next(i for i in range(is_true_start, len(mask_lines)) if mask_lines[i] == "}")
+        is_true_src = "\n".join(mask_lines[is_true_start:is_true_end+1]) + "\n"
+        rec_start = next(i for i, l in enumerate(mask_lines) if l.startswith("reconstruct_arrays_from_vars()"))
+        rec_end = next(i for i in range(rec_start, len(mask_lines)) if mask_lines[i] == "}")
+        rec_src = "\n".join(mask_lines[rec_start:rec_end+1]) + "\n"
+        nat_idx = next(i for i, l in enumerate(mask_lines) if "PORT HOPPING ДЛЯ HYSTERIA 2" in l)
+        nat_src = "\n".join(mask_lines[nat_idx+2:nat_idx+5]) + "\n"
+
+        r = bash("set -euo pipefail\nwarn(){ :; }; ok(){ :; };\n" + is_true_src + rec_src +
                  "PRIMARY_DOMAIN=audit.example; ENABLE_HY2=y; PANEL_PATH=paneltest; SUB_PATH=subtest; XHTTP_STREAM_PATH=xhtest;\n" +
                  "reconstruct_arrays_from_vars\n" +
                  "for k in HY2_PORT_HOPPING AUTO_SETUP_3XUI CF_AUTH_METHOD; do if [[ -v $k ]]; then echo $k=defined; else echo $k=UNDEFINED; fi; done\n" +
-                 "echo AWG=$ENABLE_AWG_V3 AGH=$ENABLE_AGH WARP=$ENABLE_WARP\n" + source("setup_mask.sh", 5337, 5339) + "echo NAT_BRANCH; fi\n")
+                 "echo AWG=$ENABLE_AWG_V3 AGH=$ENABLE_AGH WARP=$ENABLE_WARP\n" + nat_src + "echo NAT_BRANCH; fi\n")
         record("noninteractive_missing_defaults", "DEFECT_REPRODUCED" if r.returncode != 0 else "NOT_REPRODUCED", exit_code=r.returncode,
                output=r.stdout.strip(), error=r.stderr.strip())
-        r = bash("set -euo pipefail\nwarn(){ :; };\n" + source("setup_mask.sh", 68, 71) + source("setup_mask.sh", 704, 835) +
+        r = bash("set -euo pipefail\nwarn(){ :; };\n" + is_true_src + rec_src +
                  "PRIMARY_DOMAIN=audit.example; ENABLE_HY2=y; HY2_DOMAIN=hy.audit.example; ENABLE_AGH=y; AGH_MODE=2; AGH_DOMAIN=dns.audit.example; PANEL_PATH=ptest; SUB_PATH=stest; XHTTP_STREAM_PATH=xtest;\nreconstruct_arrays_from_vars\nprintf '%s\\n' \"${ALL_DOMAINS[@]}\"\n")
         record("noninteractive_certificate_domains", "DEFECT_REPRODUCED" if "hy.audit.example" not in r.stdout and "dns.audit.example" not in r.stdout else "NOT_REPRODUCED", domains=r.stdout.splitlines())
 

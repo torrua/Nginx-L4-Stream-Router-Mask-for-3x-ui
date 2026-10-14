@@ -289,6 +289,21 @@ fi
 export WEB_LISTEN="${WEB_LISTEN:-$([ "$HAS_NGINX" -eq 1 ] && echo "127.0.0.1" || echo "")}"
 export SUB_LISTEN="${SUB_LISTEN:-$([ "$HAS_NGINX" -eq 1 ] && echo "127.0.0.1" || echo "")}"
 
+# Аварийная защита: гарантированный запуск x-ui при неожиданном падении скрипта
+cleanup_xui() {
+    local exit_code=$?
+    if [ "${WAS_ACTIVE:-0}" -eq 1 ]; then
+        if command -v systemctl >/dev/null 2>&1; then
+            if ! systemctl is-active --quiet x-ui 2>/dev/null; then
+                warn "Аварийное восстановление: перезапуск службы x-ui после сбоя скрипта..."
+                systemctl start x-ui 2>/dev/null || true
+            fi
+        fi
+    fi
+    exit "$exit_code"
+}
+trap cleanup_xui EXIT INT TERM
+
 # Остановка x-ui при реальном обновлении базы данных
 WAS_ACTIVE=0
 if [ "$DRY_RUN" -eq 0 ]; then
@@ -1046,7 +1061,7 @@ if [ "$DRY_RUN" -eq 0 ]; then
     # Запуск x-ui
     if [ "${WAS_ACTIVE:-0}" -eq 1 ] || (command -v systemctl >/dev/null 2>&1 && systemctl is-enabled --quiet x-ui 2>/dev/null); then
         log "Перезапуск службы 3X-UI..."
-        systemctl restart x-ui && ok "Служба 3X-UI успешно перезапущена." || warn "Сбой перезапуска 3X-UI."
+        systemctl restart x-ui && { ok "Служба 3X-UI успешно перезапущена."; WAS_ACTIVE=0; } || warn "Сбой перезапуска 3X-UI."
     fi
 
     # Проверка синтаксиса и мягкий reload Nginx

@@ -396,7 +396,7 @@
   "manifest": {
     "configure_3xui.sh": {
       "lines": 1885,
-      "sha256": "513390e9c04b5ef73f3db924da92abe89e315d60dad7edab14b37b03273ea058"
+      "sha256": "ef34abfc29916c2a3836daa9e7f4441c021731e1c53e3adf8d34d2d9fe3f0e03"
     },
     "install.sh": {
       "lines": 827,
@@ -420,7 +420,7 @@
     },
     "update_repair.sh": {
       "lines": 1351,
-      "sha256": "e1cba8154bf37da917d2cc02cc135b740c01068eb64f0b49cf6f8c86982a5c28"
+      "sha256": "6c3599e14c738257281467e89969c4c0dc99ecb43ac6b4b4ed834f888c47ef93"
     }
   }
 }

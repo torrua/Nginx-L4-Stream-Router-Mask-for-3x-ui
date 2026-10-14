@@ -1105,7 +1105,7 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
                 if int(cur_jmax) > 50:
                     target_settings["server"]["jmin"] = 20
                     target_settings["server"]["jmax"] = 50
-                    repairs.append("оптимизированы Jmin=20, Jmax=50 (снижение оверхеда канала)")
+                    repairs.append("оптимизированы Jmin=20, Jmax=50 (снижение лишней нагрузки на канал)")
             except (TypeError, ValueError):
                 pass
 

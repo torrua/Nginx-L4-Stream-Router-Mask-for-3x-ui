@@ -76,9 +76,9 @@
     },
     {
       "check": "express_random_pipeline",
-      "status": "DEFECT_REPRODUCED",
-      "exit_code": 2,
-      "reached_next_statement": false
+      "status": "NOT_REPRODUCED",
+      "exit_code": 0,
+      "reached_next_statement": true
     },
     {
       "check": "noninteractive_missing_defaults",
@@ -99,8 +99,8 @@
     },
     {
       "check": "spinner_function_masks_internal_failure",
-      "status": "DEFECT_REPRODUCED",
-      "exit_code": 0
+      "status": "NOT_REPRODUCED",
+      "exit_code": 10
     },
     {
       "check": "configurator_legacy_fixture",
@@ -129,14 +129,13 @@
     },
     {
       "check": "sqlite_live_file_copy_loses_wal",
-      "status": "DEFECT_REPRODUCED",
-      "copied_rows": 0,
+      "status": "NOT_REPRODUCED",
+      "copied_rows": 1,
       "original_rows": 1
     },
     {
       "check": "configurator_unknown_clients_schema",
-      "status": "DEFECT_REPRODUCED",
-      "error": "no such column: uuid"
+      "status": "NOT_REPRODUCED"
     },
     {
       "check": "dryrun_warp_registration_side_effect",
@@ -396,8 +395,8 @@
   ],
   "manifest": {
     "configure_3xui.sh": {
-      "lines": 2237,
-      "sha256": "5465a2e272571f3e95bc7e59fb7fc340a0cc1cadf58af225df38e621fbfe1903"
+      "lines": 2305,
+      "sha256": "dc2fc5e48d87def41b5efb94886dd0db25218558f1dbdbb04caeac67950ba476"
     },
     "install.sh": {
       "lines": 823,
@@ -416,12 +415,12 @@
       "sha256": "b29ca31677b6a8ad0ecfd889fa40f13ffa6362ee489e70c09b17e87afce42e74"
     },
     "setup_mask.sh": {
-      "lines": 6038,
-      "sha256": "a8fdb1924f988e13717e6fd04460bb0c4b00b37d9e9d3265e90670df75b9f219"
+      "lines": 6042,
+      "sha256": "acaa7eb238c14677106bf92318b28b441d0c6c3e1451e2933aae82b0fb14ac70"
     },
     "update_repair.sh": {
-      "lines": 1103,
-      "sha256": "e22589e96699936acb3ea9106bcb9718e9dc331be16cbf7b0ba565c353e12dc3"
+      "lines": 1147,
+      "sha256": "129200a2bd03af3b4efb5a3a4e452b72a1fd78de61b7e70b006ed294fd19230e"
     }
   }
 }

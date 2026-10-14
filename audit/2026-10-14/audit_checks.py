@@ -106,12 +106,13 @@ def main():
         record("cli_config_generation", "PASS" if r.returncode == 0 and cfg.exists() else "FAIL", exit_code=r.returncode)
 
         # Random-generation pipeline used by interactive Express, with set -e.
-        r = bash("set -euo pipefail\nunset ADMIN_PASSWORD\n" + source("setup_mask.sh", 2283, 2283) + "echo REACHED_AFTER_GENERATION\n")
+        mask_lines = source("setup_mask.sh").splitlines()
+        pass_line = next(l for l in mask_lines if 'ADMIN_PASSWORD:-$(head' in l)
+        r = bash("set -euo pipefail\nunset ADMIN_PASSWORD\n" + pass_line + "\necho REACHED_AFTER_GENERATION\n")
         record("express_random_pipeline", "DEFECT_REPRODUCED" if r.returncode != 0 else "NOT_REPRODUCED",
                exit_code=r.returncode, reached_next_statement="REACHED_AFTER_GENERATION" in r.stdout)
 
         # Only in-memory initialization and selected noninteractive branch.
-        mask_lines = source("setup_mask.sh").splitlines()
         is_true_start = next(i for i, l in enumerate(mask_lines) if l.startswith("is_true()"))
         is_true_end = next(i for i in range(is_true_start, len(mask_lines)) if mask_lines[i] == "}")
         is_true_src = "\n".join(mask_lines[is_true_start:is_true_end+1]) + "\n"
@@ -132,7 +133,10 @@ def main():
                  "PRIMARY_DOMAIN=audit.example; ENABLE_HY2=y; HY2_DOMAIN=hy.audit.example; ENABLE_AGH=y; AGH_MODE=2; AGH_DOMAIN=dns.audit.example; PANEL_PATH=ptest; SUB_PATH=stest; XHTTP_STREAM_PATH=xtest;\nreconstruct_arrays_from_vars\nprintf '%s\\n' \"${ALL_DOMAINS[@]}\"\n")
         record("noninteractive_certificate_domains", "DEFECT_REPRODUCED" if "hy.audit.example" not in r.stdout and "dns.audit.example" not in r.stdout else "NOT_REPRODUCED", domains=r.stdout.splitlines())
 
-        r = bash("set -euo pipefail\nDEBUG_MODE=1; NON_INTERACTIVE=1; CYAN=; WHITE=; NC=; DIM=; GREEN=; CHECK=; RED=; CROSS=; BOLD=; YELLOW=; ARROW=;\n" + source("setup_mask.sh", 232, 334) +
+        spin_start = next(i for i, l in enumerate(mask_lines) if l.startswith("run_with_spinner()"))
+        spin_end = next(i for i in range(spin_start, len(mask_lines)) if mask_lines[i] == "}")
+        spin_src = "\n".join(mask_lines[spin_start:spin_end+1]) + "\n"
+        r = bash("set -euo pipefail\nDEBUG_MODE=1; NON_INTERACTIVE=1; CYAN=; WHITE=; NC=; DIM=; GREEN=; CHECK=; RED=; CROSS=; BOLD=; YELLOW=; ARROW=;\n" + spin_src +
                  "failing_step(){ false; echo CONTINUED_AFTER_FAILURE; };\nrun_with_spinner fixture failing_step || exit 10\n")
         record("spinner_function_masks_internal_failure", "DEFECT_REPRODUCED" if r.returncode==0 and 'CONTINUED_AFTER_FAILURE' in r.stdout else "NOT_REPRODUCED", exit_code=r.returncode)
 
@@ -167,15 +171,22 @@ def main():
         record("xhttp_encryption_not_preserved", "DEFECT_REPRODUCED" if json.loads(ib[1]).get("decryption") != "old-decryption" else "NOT_REPRODUCED", resulting_decryption=json.loads(ib[1]).get("decryption"))
         c.close()
 
-        # WAL copy failure: main file alone misses committed changes in WAL.
+        # WAL copy failure: main file alone misses committed changes in WAL; backup_sqlite_db must preserve it.
         wal=tmp/'wal.db'; c=sqlite3.connect(wal)
         c.execute('PRAGMA journal_mode=WAL'); c.execute('PRAGMA wal_autocheckpoint=0')
         c.execute('CREATE TABLE sample(value TEXT)'); c.commit(); c.execute('PRAGMA wal_checkpoint(TRUNCATE)')
         c.execute("INSERT INTO sample VALUES('committed-in-wal')"); c.commit()
-        shutil.copyfile(wal,tmp/'copied.db'); copied=sqlite3.connect(tmp/'copied.db')
-        count=copied.execute('SELECT count(*) FROM sample').fetchone()[0]
+        cfg_lines = source("configure_3xui.sh").splitlines()
+        bk_start = next(i for i, l in enumerate(cfg_lines) if l.startswith("backup_sqlite_db()"))
+        bk_end = next(i for i in range(bk_start, len(cfg_lines)) if cfg_lines[i] == "}")
+        bk_src = "\n".join(cfg_lines[bk_start:bk_end+1]) + "\n"
+        copied_db = tmp / 'copied.db'
+        bash(bk_src + f"backup_sqlite_db '{wal.as_posix()}' '{copied_db.as_posix()}'\n")
+        copied = sqlite3.connect(copied_db) if copied_db.exists() else None
+        count = copied.execute('SELECT count(*) FROM sample').fetchone()[0] if copied else 0
         record("sqlite_live_file_copy_loses_wal", "DEFECT_REPRODUCED" if count==0 else "NOT_REPRODUCED", copied_rows=count, original_rows=1)
-        copied.close(); c.close()
+        if copied: copied.close()
+        c.close()
 
         db = tmp/'schema.db'; c=fixture_db(db)
         c.execute('CREATE TABLE clients(id INTEGER PRIMARY KEY,email TEXT)'); c.commit(); c.close()

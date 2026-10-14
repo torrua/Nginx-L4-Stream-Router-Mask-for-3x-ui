@@ -28,6 +28,51 @@ ok()   { echo -e "${GREEN}[OK]${NC} $*"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 die()  { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 
+backup_sqlite_db() {
+    local src="$1"
+    local dst="$2"
+    if [ ! -f "$src" ]; then
+        return 1
+    fi
+    local py_cmd="${PYTHON_CMD:-python3}"
+    if ! command -v "$py_cmd" >/dev/null 2>&1; then
+        if command -v python3 >/dev/null 2>&1; then
+            py_cmd="python3"
+        elif command -v python >/dev/null 2>&1; then
+            py_cmd="python"
+        fi
+    fi
+
+    if command -v "$py_cmd" >/dev/null 2>&1; then
+        if "$py_cmd" -c "
+import sqlite3, sys
+src_p, dst_p = sys.argv[1], sys.argv[2]
+try:
+    src_conn = sqlite3.connect(f'file:{src_p}?mode=ro', uri=True)
+    dst_conn = sqlite3.connect(dst_p)
+    with dst_conn:
+        src_conn.backup(dst_conn)
+    dst_conn.close()
+    src_conn.close()
+    sys.exit(0)
+except Exception:
+    sys.exit(1)
+" "$src" "$dst" 2>/dev/null; then
+            chmod 600 "$dst" 2>/dev/null || true
+            return 0
+        fi
+    fi
+
+    if command -v sqlite3 >/dev/null 2>&1; then
+        if sqlite3 "$src" ".backup '$dst'" 2>/dev/null; then
+            chmod 600 "$dst" 2>/dev/null || true
+            return 0
+        fi
+    fi
+
+    cp -a "$src" "$dst" 2>/dev/null && chmod 600 "$dst" 2>/dev/null || return 1
+}
+
 run_with_spinner() {
     local task_name="$1"
     shift
@@ -401,7 +446,7 @@ log "Используется база данных 3X-UI: $DB_PATH"
 if [ "$DRY_RUN" -eq 0 ]; then
     BACKUP_TS="$(date +%Y%m%d_%H%M%S)"
     BACKUP_DB="${DB_PATH}.bak.${BACKUP_TS}"
-    cp -a "$DB_PATH" "$BACKUP_DB"
+    backup_sqlite_db "$DB_PATH" "$BACKUP_DB" || warn "Не удалось выполнить онлайн-бэкап базы данных через Backup API."
     chmod 600 "$BACKUP_DB" 2>/dev/null || true
     ok "Создана резервная копия базы данных: $BACKUP_DB"
 fi
@@ -676,7 +721,7 @@ def sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_s
             continue
             
         # A. Таблица client_traffics (статистика, статус и отображение в панели 3X-UI)
-        if "client_traffics" in all_tables:
+        if "client_traffics" in all_tables and "email" in client_traffics_cols:
             cur.execute("SELECT id FROM client_traffics WHERE email = ?", (email,))
             ct_row = cur.fetchone()
             if not ct_row:
@@ -689,23 +734,27 @@ def sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_s
                 for opt_col in ["uuid", "sub_id", "subId"]:
                     if opt_col in client_traffics_cols:
                         ct_data[opt_col] = client_uuid if opt_col == "uuid" else sub_id
-                cols = ", ".join(ct_data.keys())
-                placeholders = ", ".join(["?"] * len(ct_data))
-                cur.execute(f"INSERT INTO client_traffics ({cols}) VALUES ({placeholders})", list(ct_data.values()))
+                valid_ct = {k: v for k, v in ct_data.items() if k in client_traffics_cols}
+                if valid_ct:
+                    cols = ", ".join(valid_ct.keys())
+                    placeholders = ", ".join(["?"] * len(valid_ct))
+                    cur.execute(f"INSERT INTO client_traffics ({cols}) VALUES ({placeholders})", list(valid_ct.values()))
             else:
                 ct_updates = {}
-                if "enable" in client:
+                if "enable" in client and "enable" in client_traffics_cols:
                     ct_updates["enable"] = 1 if client["enable"] else 0
                 for opt_col in ["uuid", "sub_id", "subId"]:
                     if opt_col in client_traffics_cols:
                         val = client_uuid if opt_col == "uuid" else sub_id
                         if val: ct_updates[opt_col] = val
-                set_ct = ", ".join(f"{k} = ?" for k in ct_updates.keys())
-                cur.execute(f"UPDATE client_traffics SET {set_ct} WHERE email = ?", list(ct_updates.values()) + [email])
+                valid_ct_up = {k: v for k, v in ct_updates.items() if k in client_traffics_cols}
+                if valid_ct_up:
+                    set_ct = ", ".join(f"{k} = ?" for k in valid_ct_up.keys())
+                    cur.execute(f"UPDATE client_traffics SET {set_ct} WHERE email = ?", list(valid_ct_up.values()) + [email])
                 
         # B. Таблица clients (единый реестр клиентов в 3X-UI v2.5+)
         client_db_id = None
-        if "clients" in all_tables:
+        if "clients" in all_tables and "email" in clients_cols:
             cur.execute("SELECT id FROM clients WHERE email = ?", (email,))
             c_row = cur.fetchone()
             if not c_row:
@@ -729,14 +778,18 @@ def sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_s
                     if "wg_allowed_ips" in clients_cols and client.get("allowedIPs"):
                         ips = client.get("allowedIPs")
                         c_data["wg_allowed_ips"] = ", ".join(ips) if isinstance(ips, list) else str(ips).strip("[]'\"")
-                cols = ", ".join(c_data.keys())
-                placeholders = ", ".join(["?"] * len(c_data))
-                cur.execute(f"INSERT INTO clients ({cols}) VALUES ({placeholders})", list(c_data.values()))
-                client_db_id = cur.lastrowid
+                valid_c = {k: v for k, v in c_data.items() if k in clients_cols}
+                if valid_c:
+                    cols = ", ".join(valid_c.keys())
+                    placeholders = ", ".join(["?"] * len(valid_c))
+                    cur.execute(f"INSERT INTO clients ({cols}) VALUES ({placeholders})", list(valid_c.values()))
+                    client_db_id = cur.lastrowid
             else:
                 client_db_id = c_row[0]
-                c_updates = {"updated_at": now_ms}
-                if "enable" in client:
+                c_updates = {}
+                if "updated_at" in clients_cols:
+                    c_updates["updated_at"] = now_ms
+                if "enable" in client and "enable" in clients_cols:
                     c_updates["enable"] = 1 if client["enable"] else 0
                 if "sub_id" in clients_cols and sub_id: c_updates["sub_id"] = sub_id
                 if "uuid" in clients_cols and client_uuid: c_updates["uuid"] = client_uuid
@@ -757,8 +810,10 @@ def sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_s
                         curr_wg_ip = curr_wg_ip_row[0] if curr_wg_ip_row and curr_wg_ip_row[0] else ""
                         if not is_legacy_v2 or not curr_wg_ip or curr_wg_ip.startswith("["):
                             c_updates["wg_allowed_ips"] = clean_ip
-                set_clause = ", ".join(f"{k} = ?" for k in c_updates.keys())
-                cur.execute(f"UPDATE clients SET {set_clause} WHERE id = ?", list(c_updates.values()) + [client_db_id])
+                valid_c_up = {k: v for k, v in c_updates.items() if k in clients_cols}
+                if valid_c_up:
+                    set_clause = ", ".join(f"{k} = ?" for k in valid_c_up.keys())
+                    cur.execute(f"UPDATE clients SET {set_clause} WHERE id = ?", list(valid_c_up.values()) + [client_db_id])
                 
         # C. Таблица client_inbounds (связь клиент <-> инбаунд в 3X-UI v2.5+)
         if "client_inbounds" in all_tables and client_db_id is not None:
@@ -1410,15 +1465,20 @@ harvested_wg_c_priv = None
 harvested_wg_c_pub = None
 harvested_wg_hpk = None
 
-if "clients" in all_tables:
-    cur.execute("SELECT uuid, sub_id, password, wg_private_key, wg_public_key FROM clients WHERE email = ?", (unified_email,))
-    row_c = cur.fetchone()
-    if row_c:
-        if row_c[0]: harvested_uuid = row_c[0]
-        if row_c[1]: harvested_sub_id = row_c[1]
-        if row_c[2]: harvested_hy2_pass = row_c[2]
-        if row_c[3]: harvested_wg_c_priv = row_c[3]
-        if row_c[4]: harvested_wg_c_pub = row_c[4]
+if "clients" in all_tables and "email" in clients_cols:
+    cand_cols = ["uuid", "sub_id", "password", "wg_private_key", "wg_public_key"]
+    avail_cols = [c for c in cand_cols if c in clients_cols]
+    if avail_cols:
+        col_list = ", ".join(avail_cols)
+        cur.execute(f"SELECT {col_list} FROM clients WHERE email = ?", (unified_email,))
+        row_c = cur.fetchone()
+        if row_c:
+            c_map = dict(zip(avail_cols, row_c))
+            if c_map.get("uuid"): harvested_uuid = c_map["uuid"]
+            if c_map.get("sub_id"): harvested_sub_id = c_map["sub_id"]
+            if c_map.get("password"): harvested_hy2_pass = c_map["password"]
+            if c_map.get("wg_private_key"): harvested_wg_c_priv = c_map["wg_private_key"]
+            if c_map.get("wg_public_key"): harvested_wg_c_pub = c_map["wg_public_key"]
 
 harvested_reality_priv = None
 harvested_reality_pub = None
@@ -2099,7 +2159,7 @@ EOF_NODE_ENV
 
         LATEST_TAG=""
         if command -v curl >/dev/null 2>&1; then
-            gh_resp=$(curl -fsSL --connect-timeout 5 "https://api.github.com/repos/XTLS/Xray-core/releases?per_page=1" 2>/dev/null || true)
+            gh_resp=$(curl -fsSL --connect-timeout 5 "https://api.github.com/repos/XTLS/Xray-core/releases/latest" 2>/dev/null || true)
             if [ -n "$gh_resp" ]; then
                 LATEST_TAG=$(echo "$gh_resp" | { grep -m1 '"tag_name":' || true; } | { cut -d '"' -f 4 || true; }) || LATEST_TAG=""
             fi
@@ -2120,14 +2180,22 @@ EOF_NODE_ENV
                     chmod +x "$TMP_XRAY_DIR/xray"
                     if "$TMP_XRAY_DIR/xray" -version >/dev/null 2>&1; then
                         mkdir -p "$XRAY_BIN_DIR"
-                        cp -f "$TMP_XRAY_DIR/xray" "$TARGET_BIN"
-                        chmod 755 "$TARGET_BIN"
+                        [ -f "$TARGET_BIN" ] && cp -f "$TARGET_BIN" "$TARGET_BIN.bak"
+                        install -m 755 "$TMP_XRAY_DIR/xray" "$TARGET_BIN.tmp.$$"
+                        mv -f "$TARGET_BIN.tmp.$$" "$TARGET_BIN"
                         
-                        [ -f "$TMP_XRAY_DIR/geosite.dat" ] && cp -f "$TMP_XRAY_DIR/geosite.dat" "$XRAY_BIN_DIR/geosite.dat"
-                        [ -f "$TMP_XRAY_DIR/geoip.dat" ] && cp -f "$TMP_XRAY_DIR/geoip.dat" "$XRAY_BIN_DIR/geoip.dat"
-                        
-                        INSTALLED_XRAY_VER="$LATEST_TAG"
-                        ok "Ядро Xray успешно обновлено до последней версии $LATEST_TAG (было: ${CURRENT_VER:-неизвестно})!"
+                        if "$TARGET_BIN" -version >/dev/null 2>&1; then
+                            [ -f "$TARGET_BIN.bak" ] && rm -f "$TARGET_BIN.bak"
+                            [ -f "$TMP_XRAY_DIR/geosite.dat" ] && cp -f "$TMP_XRAY_DIR/geosite.dat" "$XRAY_BIN_DIR/geosite.dat"
+                            [ -f "$TMP_XRAY_DIR/geoip.dat" ] && cp -f "$TMP_XRAY_DIR/geoip.dat" "$XRAY_BIN_DIR/geoip.dat"
+                            
+                            INSTALLED_XRAY_VER="$LATEST_TAG"
+                            ok "Ядро Xray успешно обновлено до последней версии $LATEST_TAG (было: ${CURRENT_VER:-неизвестно})!"
+                        else
+                            warn "Установленный бинарник Xray не запустился, выполняется откат."
+                            [ -f "$TARGET_BIN.bak" ] && mv -f "$TARGET_BIN.bak" "$TARGET_BIN"
+                            INSTALLED_XRAY_VER="${CURRENT_VER:-v26.7.28}"
+                        fi
                     else
                         warn "Скачанный бинарник Xray $LATEST_TAG не прошел валидацию, сохранен текущий $CURRENT_VER."
                         INSTALLED_XRAY_VER="${CURRENT_VER:-v26.7.28}"

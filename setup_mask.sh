@@ -242,9 +242,10 @@ run_with_spinner() {
             echo -e "\n  ${CYAN}[DEBUG]${NC} ${WHITE}▶ $task_name${NC}"
             echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
             if declare -f "$1" >/dev/null 2>&1; then
-                "$@" || exit_code=$?
+                export -f "$1" 2>/dev/null || true
+                bash -euo pipefail -c '"$@"' -- "$@" || exit_code=$?
             else
-                eval "$*" || exit_code=$?
+                bash -euo pipefail -c "$*" || exit_code=$?
             fi
             if [ $exit_code -eq 0 ]; then
                 echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
@@ -2296,23 +2297,23 @@ if [ "$EXPRESS_MODE" -eq 1 ]; then
     CLASSIC_SNI_LIST=("gateway.icloud.com")
     PANEL_PORT="${PANEL_PORT:-10443}"
     ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
-    ADMIN_PASSWORD="${ADMIN_PASSWORD:-$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 12)}"
+    ADMIN_PASSWORD="${ADMIN_PASSWORD:-$(head -c 128 /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 12 || echo "Admin1234567")}"
     SERVER_PREFIX="${SERVER_PREFIX:-Server}"
     if [ -n "${PANEL_PATH:-}" ]; then
         RAW_PATH="${PANEL_PATH#/}"
         RAW_PATH="${RAW_PATH%/}"
         PANEL_PATH="/${RAW_PATH}/"
     else
-        RAW_PATH="panel-$(head /dev/urandom | tr -dc a-z0-9 | head -c 6)"
+        RAW_PATH="panel-$(head -c 64 /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 6 || echo "${RANDOM}")"
         PANEL_PATH="/${RAW_PATH}/"
     fi
     SUB_PORT="55443"
-    RAW_SUB_PATH="sub-$(head /dev/urandom | tr -dc a-z0-9 | head -c 6)"
+    RAW_SUB_PATH="sub-$(head -c 64 /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 6 || echo "${RANDOM}")"
     SUB_PATH="/${RAW_SUB_PATH}/"
     SUB_JSON_PATH="${SUB_PATH}json/"
     SUB_CLASH_PATH="${SUB_PATH}clash/"
     XHTTP_STREAM_PORT="50443"
-    RAW_XHTTP_STREAM_PATH="$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "xh${RANDOM}")"
+    RAW_XHTTP_STREAM_PATH="$(head -c 64 /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "xh${RANDOM}")"
     XHTTP_STREAM_PATH="/${RAW_XHTTP_STREAM_PATH}/"
     ENABLE_HY2="1"
     HY2_PORT="443"
@@ -5511,17 +5512,20 @@ else
         run_with_spinner "Установка официального ядра 3X-UI (mhsanaei)" install_3xui_core_task || die "Ошибка установки ядра 3X-UI."
     fi
 
-    # 2. Загружаем всегда самую актуальную версию configure_3xui.sh
+    # 2. Использование локальной версии configure_3xui.sh с сетевым fallback
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo "/root")"
-    raw_url="https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/configure_3xui.sh?v=$(date +%s)"
-    if command -v curl >/dev/null 2>&1; then
-        curl -fsSL "$raw_url" -o /tmp/configure_3xui.sh 2>/dev/null && chmod +x /tmp/configure_3xui.sh 2>/dev/null || true
-    elif command -v wget >/dev/null 2>&1; then
-        wget -qO /tmp/configure_3xui.sh "$raw_url" 2>/dev/null && chmod +x /tmp/configure_3xui.sh 2>/dev/null || true
+    CONFIG_EXEC="$script_dir/configure_3xui.sh"
+    if [ ! -f "$CONFIG_EXEC" ]; then
+        raw_url="https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/configure_3xui.sh?v=$(date +%s)"
+        if command -v curl >/dev/null 2>&1; then
+            curl -fsSL "$raw_url" -o /tmp/configure_3xui.sh 2>/dev/null && chmod +x /tmp/configure_3xui.sh 2>/dev/null || true
+        elif command -v wget >/dev/null 2>&1; then
+            wget -qO /tmp/configure_3xui.sh "$raw_url" 2>/dev/null && chmod +x /tmp/configure_3xui.sh 2>/dev/null || true
+        fi
+        CONFIG_EXEC="/tmp/configure_3xui.sh"
+    else
+        chmod +x "$CONFIG_EXEC" 2>/dev/null || true
     fi
-
-    CONFIG_EXEC="/tmp/configure_3xui.sh"
-    [ -f "$CONFIG_EXEC" ] || CONFIG_EXEC="$script_dir/configure_3xui.sh"
 
     if [ -f "$CONFIG_EXEC" ]; then
         run_configure_3xui_task() {

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # ==============================================================================
-# Production AutoSetup: Hardened Engine v7.4.0 Universal (Public Edition)
+# Production AutoSetup: Hardened Engine v7.5.0 Universal (Public Edition)
 # Nginx L4 Stream + 3X-UI + Unix Sockets + Native proxy_http_version 2 + 3 Decoys
 # ==============================================================================
 # Архитектура:
@@ -27,7 +27,7 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="v7.4.0"
+SCRIPT_VERSION="v7.5.0"
 
 
 # @include "common/checkpoint.sh"

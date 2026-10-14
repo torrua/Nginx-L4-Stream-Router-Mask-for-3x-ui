@@ -848,6 +848,7 @@ reconstruct_arrays_from_vars() {
     _v="${AGH_XRAY_DNS:-n}"; if is_true "$_v"; then AGH_XRAY_DNS="y"; else AGH_XRAY_DNS="n"; fi
     HY2_PORT_HOPPING="${HY2_PORT_HOPPING:-n}"
     AUTO_SETUP_3XUI="${AUTO_SETUP_3XUI:-y}"
+    PORT_AGH_WEB="${PORT_AGH_WEB:-3000}"
     CF_AUTH_METHOD="${CF_AUTH_METHOD:-1}"
 }
 
@@ -990,6 +991,7 @@ AGH_DOMAIN="${AGH_DOMAIN:-}"
 AGH_USER="${AGH_USER:-admin}"
 AGH_PASS="${AGH_PASS:-}"
 AGH_CLIENT_ID="${AGH_CLIENT_ID:-home-router}"
+PORT_AGH_WEB="${PORT_AGH_WEB:-3000}"
 AGH_XRAY_DNS="$agh_xray_save"
 SHOW_TIPS="${SHOW_TIPS:-y}"
 
@@ -1372,6 +1374,132 @@ backup_nginx_configs() {
             ok "Создана резервная копия конфигурации Nginx: $bkp_file (ротация: 5)"
         fi
     fi
+}
+
+determine_nginx_http2_mode() {
+    local ver_raw=""
+    if command -v nginx >/dev/null 2>&1; then
+        ver_raw=$(nginx -v 2>&1 | grep -oP 'nginx/\K[0-9.]+' || true)
+    fi
+    [ -n "$ver_raw" ] || ver_raw="1.25.1"
+
+    local is_modern=0
+    local major minor patch
+    major=$(echo "$ver_raw" | cut -d. -f1)
+    minor=$(echo "$ver_raw" | cut -d. -f2)
+    patch=$(echo "$ver_raw" | cut -d. -f3)
+    major=${major:-0}; minor=${minor:-0}; patch=${patch:-0}
+
+    if [ "$major" -gt 1 ] 2>/dev/null; then
+        is_modern=1
+    elif [ "$major" -eq 1 ] 2>/dev/null && [ "$minor" -gt 25 ] 2>/dev/null; then
+        is_modern=1
+    elif [ "$major" -eq 1 ] 2>/dev/null && [ "$minor" -eq 25 ] 2>/dev/null && [ "$patch" -ge 1 ] 2>/dev/null; then
+        is_modern=1
+    fi
+
+    if [ "$is_modern" -eq 1 ]; then
+        HTTP2_LISTEN_PARAM=""
+        HTTP2_DIRECTIVE="http2 on;"
+        HTTP2_HTTP_PARAMS=$'    http2_recv_buffer_size 16m;\n    http2_max_concurrent_streams 512;'
+    else
+        HTTP2_LISTEN_PARAM="http2 "
+        HTTP2_DIRECTIVE="# http2 on; (legacy listen param)"
+        HTTP2_HTTP_PARAMS=$'    # http2 buffers managed by legacy core'
+    fi
+}
+
+get_port_listener_info() {
+    local proto="$1"
+    local port="$2"
+    local info=""
+    if command -v ss >/dev/null 2>&1; then
+        local flag="-t"
+        [ "$proto" = "udp" ] && flag="-u"
+        info=$(ss -l -n -p "$flag" 2>/dev/null | grep -E ":${port}\b" | awk '{print $NF}' | head -n1 || true)
+    elif command -v netstat >/dev/null 2>&1; then
+        local flag="-t"
+        [ "$proto" = "udp" ] && flag="-u"
+        info=$(netstat -l -n -p "$flag" 2>/dev/null | grep -E ":${port}\b" | awk '{print $NF}' | head -n1 || true)
+    fi
+    echo "$info"
+}
+
+is_port_in_use() {
+    local proto="$1"
+    local port="$2"
+    if command -v ss >/dev/null 2>&1; then
+        local flag="-t"
+        [ "$proto" = "udp" ] && flag="-u"
+        ss -l -n "$flag" 2>/dev/null | grep -qE ":${port}\b" && return 0
+    elif command -v netstat >/dev/null 2>&1; then
+        local flag="-t"
+        [ "$proto" = "udp" ] && flag="-u"
+        netstat -l -n "$flag" 2>/dev/null | grep -qE ":${port}\b" && return 0
+    elif timeout 1 bash -c "</dev/$proto/127.0.0.1/$port" 2>/dev/null; then
+        return 0
+    fi
+    return 1
+}
+
+inspect_port_conflicts() {
+    echo ""
+    echo -e "  ${CYAN}${BOLD}🔎  ПРЕДВАРИТЕЛЬНЫЙ ИНСПЕКТОР СЕРВИСОВ И ПОРТОВ (PREFLIGHT)${NC}"
+    echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}"
+
+    PORT_AGH_WEB="${PORT_AGH_WEB:-3000}"
+
+    # 1. Проверка порта 3000 (AdGuard Home / Dokploy)
+    if [[ "${ENABLE_AGH:-0}" == "1" || "${ENABLE_AGH,,}" == "y" ]]; then
+        if is_port_in_use "tcp" "$PORT_AGH_WEB"; then
+            local listener
+            listener=$(get_port_listener_info "tcp" "$PORT_AGH_WEB")
+            warn "Порт $PORT_AGH_WEB занят существующей службой (${listener:-Dokploy / Docker})."
+            local candidate=3001
+            while [ "$candidate" -le 3053 ]; do
+                if ! is_port_in_use "tcp" "$candidate"; then
+                    break
+                fi
+                candidate=$(( candidate + 1 ))
+            done
+            PORT_AGH_WEB="$candidate"
+            ok "Гибкое переключение: веб-интерфейс AdGuard Home назначен на свободный порт ${WHITE}$PORT_AGH_WEB${NC} (без конфликта с Dokploy)."
+        else
+            ok "Порт $PORT_AGH_WEB (AdGuard Home Web) свободен."
+        fi
+    fi
+
+    # 2. Проверка порта 53 (DNS / systemd-resolved)
+    if [[ "${ENABLE_AGH:-0}" == "1" || "${ENABLE_AGH,,}" == "y" ]]; then
+        if is_port_in_use "udp" 53 || is_port_in_use "tcp" 53; then
+            local dns_owner
+            dns_owner=$(get_port_listener_info "udp" 53)
+            if echo "$dns_owner" | grep -qi "systemd-resolve"; then
+                ok "Обнаружен стандартный systemd-resolved на порту 53 — будет мягко отключен стаб без сброса DNS хоста."
+            else
+                warn "Порт 53 занят процессом: ${dns_owner:-сторонний DNS-сервер}. AdGuard Home может потребовать освобождения порта 53."
+            fi
+        else
+            ok "Порт 53 (DNS) свободен."
+        fi
+    fi
+
+    # 3. Проверка портов 80 и 443 (HTTP/HTTPS)
+    for p in 80 443; do
+        if is_port_in_use "tcp" "$p"; then
+            local w_owner
+            w_owner=$(get_port_listener_info "tcp" "$p")
+            if echo "$w_owner" | grep -qi "nginx"; then
+                ok "Порт $p слушает Nginx (будет переконфигурирован под Stream L4)."
+            else
+                warn "Порт $p занят сторонним процессом: ${w_owner:-не Nginx}. Для работы маскирования требуется порт $p."
+            fi
+        else
+            ok "Порт $p (Веб / Маскирование) свободен."
+        fi
+    done
+
+    echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}\n"
 }
 
 post_install_sanity_check() {
@@ -3549,6 +3677,9 @@ fi
 # Ожидание фоновой пред-установки (если была запущена параллельно с опросом)
 sync_background_preinstall
 
+# Предварительная инспекция портов и гибкое предотвращение конфликтов (Dokploy, systemd-resolved)
+inspect_port_conflicts
+
 # --- Шаг 1: Системные зависимости и утилиты ---
 if ! should_skip_step 1; then
     step_begin 1
@@ -3619,7 +3750,7 @@ if [ "$SSL_ENGINE_CHOICE" = "1" ] && [ "${RESUME_STEP:-1}" -le 4 ]; then
     systemctl disable apache2 2>/dev/null || true
 
     # Удаляем дефолтные конфигурации сайтов с [::]:80, которые приводят к сбою запуска при выключенном IPv6
-    rm -f /etc/nginx/sites-enabled/* /etc/nginx/sites-available/default /etc/nginx/conf.d/default.conf 2>/dev/null || true
+    rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-available/default /etc/nginx/conf.d/default.conf 2>/dev/null || true
     mkdir -p /etc/nginx/sites-enabled /etc/nginx/conf.d /etc/nginx/modules-enabled "$WEBROOT/.well-known/acme-challenge" 2>/dev/null || true
     chown -R "$NGINX_USER:$NGINX_USER" "$WEBROOT" 2>/dev/null || true
 
@@ -4543,16 +4674,25 @@ if ! should_skip_step 6; then
     # Резервное копирование существующих конфигураций Nginx перед перезаписью
     backup_nginx_configs
 
-    rm -rf /etc/nginx/sites-enabled/* \
-           /etc/nginx/sites-available/* \
-           /etc/nginx/conf.d/* \
-           /etc/nginx/stream.d/*
+    # Точечная очистка: удаляем только дефолтные заглушки и предыдущие конфиги маскирования
+    rm -f /etc/nginx/sites-enabled/default \
+          /etc/nginx/sites-available/default \
+          /etc/nginx/conf.d/default.conf \
+          /etc/nginx/conf.d/01-main.conf \
+          /etc/nginx/conf.d/02-external-*.conf \
+          /etc/nginx/conf.d/03-adguard.conf \
+          /etc/nginx/conf.d/vpn_mask.conf \
+          /etc/nginx/stream.d/00-stream.conf \
+          /etc/nginx/stream.d/vpn_mask_stream.conf 2>/dev/null || true
 
     mkdir -p /etc/nginx/modules-enabled 2>/dev/null || true
     modules_load_block=""
     if compgen -G "/etc/nginx/modules-enabled/*.conf" >/dev/null 2>&1; then
         modules_load_block="include /etc/nginx/modules-enabled/*.conf;"
     fi
+
+    # Определение поддержки директив HTTP/2 в установленной версии Nginx
+    determine_nginx_http2_mode
 
     # 1. Глобальный файл конфигурации /etc/nginx/nginx.conf
     cat << EOF > /etc/nginx/nginx.conf
@@ -4584,8 +4724,7 @@ http {
     resolver_timeout 5s;
 
     # Оптимизация окна и стриминга HTTP/2 для устранения просадок больших потоков
-    http2_recv_buffer_size 16m;
-    http2_max_concurrent_streams 512;
+${HTTP2_HTTP_PARAMS}
 
     map \$proxy_protocol_addr \$ak_real_ip {
         ""      \$remote_addr;
@@ -4708,6 +4847,7 @@ http {
     proxy_hide_header X-Cache-Status;
 
     include /etc/nginx/conf.d/*.conf;
+    include /etc/nginx/sites-enabled/*;
 }
 
 stream {
@@ -4784,7 +4924,7 @@ if [[ "${ENABLE_AGH:-0}" == "1" || "${ENABLE_AGH,,}" == "y" ]] && [ "${AGH_MODE:
 
     location = /dns-query/${AGH_CLIENT_ID} {
         limit_req zone=doh burst=500 nodelay;
-        proxy_pass http://127.0.0.1:3000;
+        proxy_pass http://127.0.0.1:${PORT_AGH_WEB:-3000};
         proxy_http_version 1.1;
         proxy_set_header Connection \"\";
         proxy_set_header Host \$http_host;
@@ -4941,9 +5081,9 @@ server {
 
 # HTTPS Основной рабочий сервер (Главный домен)
 server {
-    listen unix:/dev/shm/nginx-http.sock ssl proxy_protocol;
-    listen 127.0.0.1:$REALITY_FALLBACK_PORT ssl proxy_protocol;
-    http2 on;
+    listen unix:/dev/shm/nginx-http.sock ssl ${HTTP2_LISTEN_PARAM}proxy_protocol;
+    listen 127.0.0.1:$REALITY_FALLBACK_PORT ssl ${HTTP2_LISTEN_PARAM}proxy_protocol;
+    ${HTTP2_DIRECTIVE}
     server_name $PRIMARY_DOMAIN;
 
     ssl_certificate ${SSL_BASE_DIR}/$PRIMARY_DOMAIN/fullchain.pem;
@@ -5140,9 +5280,9 @@ for ((i=1; i<${#ALL_DOMAINS[@]}; i++)); do
     if [ "$ext_dom" != "$PRIMARY_DOMAIN" ] && [ "$ext_dom" != "${AGH_DOMAIN:-}" ] && [ -f "${SSL_BASE_DIR}/$ext_dom/fullchain.pem" ]; then
         cat << EOF > "/etc/nginx/conf.d/02-${ext_dom}.conf"
 server {
-    listen unix:/dev/shm/nginx-http.sock ssl proxy_protocol;
-    listen 127.0.0.1:$REALITY_FALLBACK_PORT ssl proxy_protocol;
-    http2 on;
+    listen unix:/dev/shm/nginx-http.sock ssl ${HTTP2_LISTEN_PARAM}proxy_protocol;
+    listen 127.0.0.1:$REALITY_FALLBACK_PORT ssl ${HTTP2_LISTEN_PARAM}proxy_protocol;
+    ${HTTP2_DIRECTIVE}
     server_name $ext_dom;
 
     ssl_certificate ${SSL_BASE_DIR}/$ext_dom/fullchain.pem;
@@ -5291,12 +5431,12 @@ done
     # 6. Виртуальный хост для AdGuard Home (Режим 2: отдельный поддомен)
     if [[ "${ENABLE_AGH:-0}" == "1" || "${ENABLE_AGH,,}" == "y" ]] && [ "${AGH_MODE:-1}" = "2" ] && [ -n "${AGH_DOMAIN:-}" ] && [ -f "${SSL_BASE_DIR}/$AGH_DOMAIN/fullchain.pem" ]; then
         cat << EOF > "/etc/nginx/conf.d/03-adguard.conf"
-upstream adguard_backend { server 127.0.0.1:3000; keepalive 32; }
+upstream adguard_backend { server 127.0.0.1:${PORT_AGH_WEB:-3000}; keepalive 32; }
 
 server {
-    listen unix:/dev/shm/nginx-http.sock ssl proxy_protocol;
-    listen 127.0.0.1:$REALITY_FALLBACK_PORT ssl proxy_protocol;
-    http2 on;
+    listen unix:/dev/shm/nginx-http.sock ssl ${HTTP2_LISTEN_PARAM}proxy_protocol;
+    listen 127.0.0.1:$REALITY_FALLBACK_PORT ssl ${HTTP2_LISTEN_PARAM}proxy_protocol;
+    ${HTTP2_DIRECTIVE}
     server_name $AGH_DOMAIN;
 
     ssl_certificate ${SSL_BASE_DIR}/$AGH_DOMAIN/fullchain.pem;
@@ -5676,7 +5816,7 @@ except Exception:
         mkdir -p /opt/AdGuardHome
         cat << EOF_AGH > /opt/AdGuardHome/AdGuardHome.yaml
 http:
-  address: 127.0.0.1:3000
+  address: 127.0.0.1:${PORT_AGH_WEB:-3000}
   doh:
     insecure_enabled: true
 users:
@@ -5811,7 +5951,7 @@ if [[ "${ENABLE_AGH,,}" == "y" || "${ENABLE_AGH:-}" == "1" ]]; then
         echo -e "  Панель AdGuard Home:         ${CYAN}https://${AGH_DOMAIN}/${NC}"
         echo -e "  Приватный DoH для роутера:   ${GREEN}https://${AGH_DOMAIN}/dns-query/${AGH_CLIENT_ID}${NC}"
     else
-        echo -e "  Панель AdGuard Home:         ${CYAN}http://127.0.0.1:3000${NC} ${DIM}(SSH туннель)${NC}"
+        echo -e "  Панель AdGuard Home:         ${CYAN}http://127.0.0.1:${PORT_AGH_WEB:-3000}${NC} ${DIM}(SSH туннель)${NC}"
         echo -e "  Приватный DoH для роутера:   ${GREEN}https://${PRIMARY_DOMAIN}/dns-query/${AGH_CLIENT_ID}${NC}"
     fi
 fi
@@ -5961,7 +6101,7 @@ if [[ "${ENABLE_AGH,,}" == "y" || "${ENABLE_AGH:-}" == "1" ]]; then
         local_agh_panel_url="https://${AGH_DOMAIN}/"
         local_agh_doh_url="https://${AGH_DOMAIN}/dns-query/${AGH_CLIENT_ID}"
     else
-        local_agh_panel_url="http://127.0.0.1:3000 (доступ через SSH-туннель: ssh -L 3000:127.0.0.1:3000 user@${local_server_ip})"
+        local_agh_panel_url="http://127.0.0.1:${PORT_AGH_WEB:-3000} (доступ через SSH-туннель: ssh -L ${PORT_AGH_WEB:-3000}:127.0.0.1:${PORT_AGH_WEB:-3000} user@${local_server_ip})"
         local_agh_doh_url="https://${PRIMARY_DOMAIN}/dns-query/${AGH_CLIENT_ID}"
     fi
 

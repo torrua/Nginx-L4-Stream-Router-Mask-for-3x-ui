@@ -145,10 +145,10 @@
     },
     {
       "check": "existing_warp_rule_precedes_youtube_exception",
-      "status": "DEFECT_REPRODUCED",
-      "warp_index": 3,
-      "youtube_index": 4,
-      "ru_rule_combines_domain_and_ip": true
+      "status": "NOT_REPRODUCED",
+      "warp_index": 5,
+      "youtube_index": 2,
+      "ru_rule_combines_domain_and_ip": false
     },
     {
       "check": "doctor_drop_status_concatenation",
@@ -395,12 +395,12 @@
   ],
   "manifest": {
     "configure_3xui.sh": {
-      "lines": 2305,
-      "sha256": "dc2fc5e48d87def41b5efb94886dd0db25218558f1dbdbb04caeac67950ba476"
+      "lines": 2341,
+      "sha256": "7c56014daf3b4a4c5aaaadd9cda2da730e3efd92b490f41c987e06f34dfb8c50"
     },
     "install.sh": {
       "lines": 823,
-      "sha256": "087bc57b0e59e262eb12d094f642e92eb87e3d03a04733600c9665adbbf1e743"
+      "sha256": "dcd63730c7fd14428a206dc508174b06dc2fb54e9d9e6131bb3f91234758fc34"
     },
     "manage_amneziawg.py": {
       "lines": 615,
@@ -415,8 +415,8 @@
       "sha256": "b29ca31677b6a8ad0ecfd889fa40f13ffa6362ee489e70c09b17e87afce42e74"
     },
     "setup_mask.sh": {
-      "lines": 6042,
-      "sha256": "acaa7eb238c14677106bf92318b28b441d0c6c3e1451e2933aae82b0fb14ac70"
+      "lines": 6182,
+      "sha256": "d6b8c0aca935bacc669f86b9576fbdc5c646ebb3a34cd2f4ab4161ee0611d733"
     },
     "update_repair.sh": {
       "lines": 1147,

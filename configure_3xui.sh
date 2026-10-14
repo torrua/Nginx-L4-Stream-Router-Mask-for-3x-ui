@@ -1346,71 +1346,107 @@ if enable_warp:
         "domain:challenges.cloudflare.com"
     ]
 
-    has_yt_direct = any(r.get("outboundTag") == "direct" and any("youtube" in str(d).lower() for d in r.get("domain", [])) for r in rules if isinstance(r, dict))
-    has_ru_direct = any(r.get("outboundTag") == "direct" and ("domain:ru" in r.get("domain", []) or "geoip:ru" in r.get("ip", [])) for r in rules if isinstance(r, dict))
-    has_warp_rule = False
-
+    # 1. Из правил WARP исключаем любые YouTube домены
     for r in rules:
         if isinstance(r, dict) and r.get("outboundTag") == "warp":
-            has_warp_rule = True
-            cur_domains = set(r.get("domain", [])) - bad_geosites
-            cur_domains.update(warp_domains)
-            r["domain"] = list(cur_domains)
-            break
+            if "domain" in r and isinstance(r["domain"], list):
+                r["domain"] = [d for d in r["domain"] if not any(y in str(d).lower() for y in ["youtube", "googlevideo", "ytimg", "youtu.be"])]
 
-    # Обновление существующих правил direct (RU и YouTube)
+    # 2. Обработка и нормализация существующих правил
+    yt_rule = None
+    ru_domain_rule = None
+    ru_ip_rule = None
+
+    cleaned_existing_rules = []
     for r in rules:
-        if isinstance(r, dict) and r.get("outboundTag") == "direct":
-            if any("youtube" in str(d).lower() for d in r.get("domain", [])):
-                cur_domains = set(r.get("domain", [])) - bad_geosites
-                cur_domains.update(yt_domains)
-                r["domain"] = list(cur_domains)
-            if "geoip:ru" in r.get("ip", []) or any("ru" in str(d).lower() for d in r.get("domain", [])):
-                cur_domains = set(r.get("domain", [])) - bad_geosites
-                cur_domains.update(ru_domains)
-                r["domain"] = list(cur_domains)
-                if "ip" not in r:
-                    r["ip"] = ["geoip:ru"]
-                elif "geoip:ru" not in r["ip"]:
-                    r["ip"].append("geoip:ru")
+        if not isinstance(r, dict):
+            continue
+        tag = r.get("outboundTag")
+        # Direct-правило для YouTube
+        if tag == "direct" and any("youtube" in str(d).lower() or "googlevideo" in str(d).lower() for d in r.get("domain", [])):
+            cur_domains = set(r.get("domain", [])) - bad_geosites
+            cur_domains.update(yt_domains)
+            r["domain"] = list(cur_domains)
+            yt_rule = r
+            continue
+        # Direct-правило для RU: разделяем domain и ip
+        if tag == "direct" and ("geoip:ru" in r.get("ip", []) or any("domain:ru" in str(d).lower() for d in r.get("domain", []))):
+            cur_d = [d for d in r.get("domain", []) if d not in bad_geosites]
+            cur_ip = list(r.get("ip", []))
+            if cur_d:
+                cur_d_set = set(cur_d)
+                cur_d_set.update(ru_domains)
+                ru_domain_rule = {
+                    "type": "field",
+                    "outboundTag": "direct",
+                    "domain": list(cur_d_set)
+                }
+            if cur_ip or "geoip:ru" not in cur_ip:
+                ru_ip_rule = {
+                    "type": "field",
+                    "outboundTag": "direct",
+                    "ip": ["geoip:ru"]
+                }
+            continue
+        cleaned_existing_rules.append(r)
 
     new_rules = []
-    # Сначала системные правила (api, blocked)
-    for r in rules:
-        if isinstance(r, dict) and r.get("outboundTag") in ("api", "blocked"):
+    # 1. Системные правила (api, blocked)
+    for r in cleaned_existing_rules:
+        if r.get("outboundTag") in ("api", "blocked"):
             new_rules.append(r)
 
-    # Добавляем YouTube -> Direct (защита 4K потока)
-    if not has_yt_direct:
-        new_rules.append({
+    # 2. YouTube -> Direct (СТРОГО ВЫШЕ WARP)
+    if not yt_rule:
+        yt_rule = {
             "type": "field",
             "outboundTag": "direct",
             "domain": yt_domains
-        })
+        }
         print("  [СОЗДАНО] Маршрут YouTube -> DIRECT (без задержек и буферизации).")
+    new_rules.append(yt_rule)
 
-    # Добавляем RU -> Direct (защита от блокировок банками РФ)
-    if not has_ru_direct:
-        new_rules.append({
+    # 3. RU -> Direct (раздельные независимые правила)
+    if not ru_domain_rule:
+        ru_domain_rule = {
             "type": "field",
             "outboundTag": "direct",
-            "domain": ru_domains,
-            "ip": ["geoip:ru"]
-        })
-        print("  [СОЗДАНО] Маршрут RU-ресурсов -> DIRECT (защита от гео-блокировок РФ).")
+            "domain": ru_domains
+        }
+    new_rules.append(ru_domain_rule)
 
-    # Добавляем Google, Gemini, OpenAI, Claude -> WARP
-    if not has_warp_rule:
-        new_rules.append({
+    if not ru_ip_rule:
+        ru_ip_rule = {
+            "type": "field",
+            "outboundTag": "direct",
+            "ip": ["geoip:ru"]
+        }
+    new_rules.append(ru_ip_rule)
+    print("  [СОЗДАНО/ОБНОВЛЕНО] Маршруты RU-доменов и RU-IP -> DIRECT (раздельные независимые правила).")
+
+    # 4. WARP правило (после direct правил YouTube и RU)
+    warp_rule = None
+    for r in cleaned_existing_rules:
+        if r.get("outboundTag") == "warp":
+            cur_d = set(r.get("domain", [])) - bad_geosites
+            cur_d.update(warp_domains)
+            cur_d = {d for d in cur_d if not any(y in str(d).lower() for y in ["youtube", "googlevideo", "ytimg", "youtu.be"])}
+            r["domain"] = list(cur_d)
+            warp_rule = r
+            break
+
+    if not warp_rule:
+        warp_rule = {
             "type": "field",
             "outboundTag": "warp",
-            "domain": warp_domains
-        })
+            "domain": [d for d in warp_domains if not any(y in str(d).lower() for y in ["youtube", "googlevideo", "ytimg", "youtu.be"])]
+        }
         print("  [СОЗДАНО] Маршрут Google, Gemini, OpenAI, Claude -> WARP (обход капч и AI).")
+    new_rules.append(warp_rule)
 
-    # Сохраняем остальные пользовательские правила
-    for r in rules:
-        if r not in new_rules:
+    # 5. Остальные пользовательские правила
+    for r in cleaned_existing_rules:
+        if r not in new_rules and r.get("outboundTag") != "warp":
             new_rules.append(r)
 
     routing["rules"] = new_rules

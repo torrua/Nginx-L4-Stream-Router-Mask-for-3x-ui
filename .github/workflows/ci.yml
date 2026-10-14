@@ -5,6 +5,8 @@ on:
     branches: [ main ]
     paths:
       - '**.sh'
+      - '**.py'
+      - 'audit/**'
       - '.github/workflows/**'
       - 'VERSION'
       - 'setup_mask.env.example'
@@ -12,6 +14,8 @@ on:
     branches: [ main ]
     paths:
       - '**.sh'
+      - '**.py'
+      - 'audit/**'
       - '.github/workflows/**'
       - 'VERSION'
       - 'setup_mask.env.example'
@@ -120,3 +124,19 @@ jobs:
           ./setup_mask.sh --gen-config ci_dryrun.env
           bash -n ci_dryrun.env
           echo "Чистый контейнер ${{ matrix.os }} успешно валидирует синтаксис и запуск скрипта!"
+
+  audit-regression-suite:
+    name: Audit Regression Test Suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run audit regression checks
+        run: |
+          python audit/2026-10-14/audit_checks.py

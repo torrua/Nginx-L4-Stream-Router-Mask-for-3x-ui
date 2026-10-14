@@ -229,18 +229,18 @@ post_install_sanity_check() {
 
     if [[ "${ENABLE_STEAL,,}" == "y" || "${ENABLE_STEAL:-}" == "1" ]]; then
         if timeout 2 bash -c "</dev/tcp/127.0.0.1/$steal_p" 2>/dev/null; then
-            ok "Инбаунд Steal-Oneself REALITY (порт $steal_p): отвечает"
+            ok "Подключение REALITY (свой сайт, порт $steal_p): отвечает"
         else
-            warn "Инбаунд Steal-Oneself REALITY (порт $steal_p): НЕ ОТВЕЧАЕТ!"
+            warn "Подключение REALITY (свой сайт, порт $steal_p): НЕ ОТВЕЧАЕТ!"
             all_ok=0
         fi
     fi
 
     if [[ "${ENABLE_CLASSIC,,}" == "y" || "${ENABLE_CLASSIC:-}" == "1" ]]; then
         if timeout 2 bash -c "</dev/tcp/127.0.0.1/$classic_p" 2>/dev/null; then
-            ok "Инбаунд Classic REALITY (порт $classic_p): отвечает"
+            ok "Подключение REALITY (внешние сервисы, порт $classic_p): отвечает"
         else
-            warn "Инбаунд Classic REALITY (порт $classic_p): НЕ ОТВЕЧАЕТ!"
+            warn "Подключение REALITY (внешние сервисы, порт $classic_p): НЕ ОТВЕЧАЕТ!"
             all_ok=0
         fi
     fi
@@ -429,8 +429,8 @@ run_doctor_check() {
     doctor_check_tcp 443 "Nginx Stream Router"
     doctor_check_tcp 80 "HTTP Redirect / ACME"
     doctor_check_tcp 9443 "Anti-Loop Fallback"
-    doctor_check_tcp "${STEAL_PORT:-45443}" "Xray Steal-Oneself"
-    doctor_check_tcp "${CLASSIC_PORT:-46443}" "Xray Classic REALITY"
+    doctor_check_tcp "${STEAL_PORT:-45443}" "Xray REALITY (свой сайт)"
+    doctor_check_tcp "${CLASSIC_PORT:-46443}" "Xray REALITY (внешние сервисы)"
     doctor_check_tcp "${XHTTP_STREAM_PORT:-50443}" "Xray VLESS xHTTP"
     doctor_check_tcp "${PANEL_PORT:-10443}" "3X-UI Web Panel"
     doctor_check_tcp "${SUB_PORT:-55443}" "3X-UI Subscriptions"

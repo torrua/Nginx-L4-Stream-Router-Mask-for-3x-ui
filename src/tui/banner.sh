@@ -98,16 +98,16 @@ CF_Key=""
 FORCE_DNS="0"
 
 # --- 2. СЦЕНАРИИ REALITY ---
-# Сценарий 1: Steal-Oneself REALITY (Кража у самого себя с Anti-Loop) [y/n]
+# Сценарий 1: VLESS REALITY (маскировка под свой сайт с защитой Anti-Loop) [y/n]
 ENABLE_STEAL="y"
 STEAL_PORT="45443"
-# Домены для Steal-Oneself (через пробел, например: "cdn.yourdomain.online")
+# Домены для REALITY (свой сайт, через пробел, например: "cdn.yourdomain.online")
 STEAL_DOMAINS="cdn.yourdomain.online"
 
-# Сценарий 2: Classic External REALITY (Внешний камуфляж) [y/n]
+# Сценарий 2: VLESS REALITY (маскировка под популярные внешние сервисы) [y/n]
 ENABLE_CLASSIC="y"
 CLASSIC_PORT="46443"
-# Внешние доверенные SNI (через пробел, например: "gateway.icloud.com")
+# Внешние доверенные адреса маскировки (через пробел, например: "gateway.icloud.com")
 CLASSIC_SNI="gateway.icloud.com"
 
 # --- 3. ВНУТРЕННИЕ ПОРТЫ И ПУТИ 3X-UI И xHTTP ---

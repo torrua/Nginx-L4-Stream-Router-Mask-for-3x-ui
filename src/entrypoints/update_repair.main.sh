@@ -735,7 +735,7 @@ def_wg_s_priv, def_wg_s_pub = generate_wg_keypair()
 def_wg_c_priv, def_wg_c_pub = generate_wg_keypair()
 def_wg_hpk = awg_hpk_env or base64.b64encode(secrets.token_bytes(32)).decode()
 
-# 1. Steal-Oneself REALITY
+# 1. VLESS REALITY (маскировка под свой сайт)
 if enable_steal:
     s_set = {"clients": [{"id": def_uuid, "flow": "xtls-rprx-vision"}], "decryption": "none"}
     s_str = {
@@ -752,7 +752,7 @@ if enable_steal:
     }
     smart_reconcile_inbound(steal_port, "vless", "in-steal-reality", "VLESS_STEAL", s_set, s_str, listen="127.0.0.1")
 
-# 2. Classic REALITY
+# 2. VLESS REALITY (маскировка под внешние сервисы)
 if enable_classic:
     c_set = {"clients": [{"id": def_uuid, "flow": "xtls-rprx-vision"}], "decryption": "none"}
     c_str = {

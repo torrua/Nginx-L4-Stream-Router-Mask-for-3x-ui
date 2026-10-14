@@ -6,10 +6,10 @@
 # ==============================================================================
 # Архитектура:
 #   1) Nginx Mainline Branch v.1.31.4+ (Официальный репозиторий nginx.org)
-#   2) Steal-Oneself REALITY с защитой от зацикливания (Anti-Loop Fallback 9443)
-#   3) Classic External REALITY (Выделение портов для внешних SNI)
+#   2) VLESS REALITY (маскировка под свой сайт) с защитой от зацикливания (Anti-Loop Fallback 9443)
+#   3) VLESS REALITY (маскировка под популярные внешние сервисы)
 #   4) VLESS xHTTP (Stream-One) + VLESSENC + Native H2 Streaming (без XMUX-блокировок)
-#      (СТРОГО по TCP/HTTP/2 без QUIC — полнодуплексное H2C-проксирование Nginx)
+#      (СТРОГО по TCP/HTTP/2 без QUIC — полнодуплексное HTTP/2-проксирование Nginx)
 #   5) Опциональный скоростной UDP VPN: Hysteria 2 (по умолчанию 443/UDP)
 #   6) Опциональный двухверсионный стек AmneziaWG / WireGuard:
 #      - AmneziaWG v3.1 (WG3, по умолчанию 8443/UDP, Transport Protection)

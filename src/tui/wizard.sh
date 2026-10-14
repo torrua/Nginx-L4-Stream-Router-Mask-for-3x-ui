@@ -105,7 +105,7 @@ else
             echo -e "  ${WHITE}${BOLD}Выберите режим настройки:${NC}\n"
             echo -e "    ${CYAN}${BOLD}[1] Экспресс-установка (Рекомендуется)${NC} — Настройка в 2 вопроса"
             echo -e "        ${DIM}• Ввод только домена и email для Let's Encrypt.${NC}"
-            echo -e "        ${DIM}• Автоматический выбор лучших протоколов (Steal-Oneself, Classic REALITY, xHTTP).${NC}"
+            echo -e "        ${DIM}• Автоматический выбор лучших протоколов (VLESS REALITY, VLESS xHTTP, AmneziaWG).${NC}"
             echo -e "        ${DIM}• Готовый сайт-маскировка DataSphere Analytics + автогенерация безопасных путей.${NC}\n"
             echo -e "    ${YELLOW}${BOLD}[2] Экспертная детальная настройка${NC} — Полный контроль параметров"
             echo -e "        ${DIM}• Пошаговый выбор всех портов, путей подписок, Hysteria 2 и AmneziaWG.${NC}\n"
@@ -223,8 +223,8 @@ if [ "$EXPRESS_MODE" -eq 1 ]; then
     
     echo -e "  ${GREEN}${CHECK} Экспресс-параметры применены:${NC}"
     echo -e "    ${DIM}• Домен:${NC}          ${WHITE}${BOLD}$PRIMARY_DOMAIN${NC}"
-    echo -e "    ${DIM}• Steal-Oneself:${NC}  ${WHITE}cdn.$PRIMARY_DOMAIN -> 127.0.0.1:$STEAL_PORT${NC}"
-    echo -e "    ${DIM}• Classic REALITY:${NC}${WHITE}gateway.icloud.com -> 127.0.0.1:$CLASSIC_PORT${NC}"
+    echo -e "    ${DIM}• REALITY (свой сайт):${NC}  ${WHITE}cdn.$PRIMARY_DOMAIN -> 127.0.0.1:$STEAL_PORT${NC}"
+    echo -e "    ${DIM}• REALITY (внешний):${NC}    ${WHITE}gateway.icloud.com -> 127.0.0.1:$CLASSIC_PORT${NC}"
     echo -e "    ${DIM}• VLESS xHTTP:${NC}    ${WHITE}$XHTTP_STREAM_PATH -> 127.0.0.1:$XHTTP_STREAM_PORT${NC}"
     echo -e "    ${DIM}• UDP Стек:${NC}       ${WHITE}Hysteria 2 (:443), AWG v3 (:8443), AWG v2 (:8444)${NC}"
     echo -e "    ${DIM}• Cloudflare WARP:${NC} ${WHITE}Активирован (Google, Gemini, AI / YouTube direct)${NC}"
@@ -534,15 +534,15 @@ for item in res:
 
     q_step_steal() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 2/13: Настройка VLESS Steal-Oneself REALITY ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 2/13: Настройка VLESS REALITY (маскировка под свой сайт) ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Режим REALITY, маскирующийся под ${BOLD}собственный поддомен${NC} (напр. cdn.$PRIMARY_DOMAIN)."
-            echo -e "     ${GREEN}Преимущество:${NC} Трафик выглядит как обычный HTTPS к вашему сайту. Полный"
-            echo -e "     иммунитет к блокировкам чужих SNI со стороны систем DPI / ТСПУ."
+            echo -e "     ${GREEN}Преимущество:${NC} Трафик выглядит как обычный просмотр вашего сайта."
+            echo -e "     Защищает от блокировок сторонних адресов маскировки со стороны систем фильтрации."
             echo
         fi
 
-        prompt_yes_no "Включить Steal-Oneself REALITY?" "${ENABLE_STEAL:-y}" ENABLE_STEAL || return $?
+        prompt_yes_no "Включить VLESS REALITY (маскировка под свой сайт)?" "${ENABLE_STEAL:-y}" ENABLE_STEAL || return $?
 
         if is_true "${ENABLE_STEAL:-y}"; then
             STEAL_ENABLED=1
@@ -552,7 +552,7 @@ for item in res:
             STEAL_DOMAINS=()
 
             local port_input=""
-            prompt_default "  Локальный порт Xray для Steal-Oneself" "$old_steal_port" port_input || return $?
+            prompt_default "  Локальный порт Xray для REALITY (свой сайт)" "$old_steal_port" port_input || return $?
             STEAL_PORT="$port_input"
             if [[ ! "$STEAL_PORT" =~ ^[0-9]+$ ]] || [ "$STEAL_PORT" -le 0 ] || [ "$STEAL_PORT" -gt 65535 ]; then
                 warn "  Некорректный номер порта. Установлен порт по умолчанию: 45443."
@@ -561,7 +561,7 @@ for item in res:
             STEAL_PORTS_LIST+=("$STEAL_PORT")
 
             local s_dom_in=""
-            prompt_default "  Домен/поддомен для Steal-Oneself на порту $STEAL_PORT" "$old_steal_dom" s_dom_in || return $?
+            prompt_default "  Домен/поддомен для маскировки REALITY на порту $STEAL_PORT" "$old_steal_dom" s_dom_in || return $?
             s_dom_in=$(echo "${s_dom_in:-$old_steal_dom}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
 
             if [[ ! "$s_dom_in" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; then
@@ -572,7 +572,7 @@ for item in res:
             if [ "$s_dom_in" = "$PRIMARY_DOMAIN" ]; then
                 warn "  Коллизия: '$s_dom_in' совпадает с главным доменом (PRIMARY_DOMAIN)!"
                 warn "  Главный домен зарезервирован за Nginx L7 (панель, веб-маска, подписки, xHTTP)."
-                warn "  Для Steal-REALITY укажите поддомен (например, cdn.$PRIMARY_DOMAIN)."
+                warn "  Для REALITY со своим сайтом укажите поддомен (например, cdn.$PRIMARY_DOMAIN)."
                 s_dom_in="$old_steal_dom"
             fi
 
@@ -581,12 +581,12 @@ for item in res:
             ok "  Домен $s_dom_in привязан к инбаунд-порту $STEAL_PORT"
 
             echo ""
-            [ "${SHOW_TIPS:-y}" = "y" ] && echo -e "  ${CYAN}[i]${NC} ${DIM}Одного инбаунда Steal-Oneself достаточно для всех ваших устройств.${NC}"
+            [ "${SHOW_TIPS:-y}" = "y" ] && echo -e "  ${CYAN}[i]${NC} ${DIM}Одного подключения REALITY (свой сайт) достаточно для всех ваших устройств.${NC}"
             local add_more=""
             prompt_yes_no "  Создать еще одно изолированное подключение (на другом порту)?" "n" add_more || return $?
             if [[ "${add_more,,}" == "y" ]]; then
                 local extra_port="" extra_dom=""
-                prompt_default "    Второй порт Steal-Oneself" "45444" extra_port || return $?
+                prompt_default "    Второй порт REALITY (свой сайт)" "45444" extra_port || return $?
                 prompt_default "    Второй поддомен (напр. xr.$PRIMARY_DOMAIN)" "xr.$PRIMARY_DOMAIN" extra_dom || return $?
                 extra_dom=$(echo "${extra_dom:-}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
                 if [[ "$extra_dom" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; then
@@ -600,7 +600,7 @@ for item in res:
             STEAL_ENABLED=0
             STEAL_PORTS_LIST=()
             STEAL_DOMAINS=()
-            log "Сценарий Steal-Oneself REALITY отключен."
+            log "Сценарий VLESS REALITY (свой сайт) отключен."
         fi
 
         rebuild_all_domains
@@ -610,15 +610,15 @@ for item in res:
 
     q_step_classic() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 3/13: Настройка VLESS Classic External REALITY ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 3/13: Настройка VLESS REALITY (маскировка под популярные сервисы) ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
-            echo -e "  ${CYAN}💡 Что это:${NC} Режим REALITY, маскирующийся под ${BOLD}известные зарубежные сервисы${NC}."
-            echo -e "     ${GREEN}Преимущество:${NC} Даже если ваш домен попадет под подозрение, этот инбаунд продолжит"
-            echo -e "     работать, используя валидный TLS 1.3 с серверов Apple, Microsoft, Google или Samsung."
+            echo -e "  ${CYAN}💡 Что это:${NC} Режим REALITY, маскирующийся под ${BOLD}известные сервисы${NC} (Apple, Microsoft, Samsung)."
+            echo -e "     ${GREEN}Преимущество:${NC} Даже если ваш собственный домен окажется недоступен, это подключение продолжит"
+            echo -e "     работать, используя валидные TLS 1.3 сертификаты внешних ресурсов."
             echo
         fi
 
-        prompt_yes_no "Включить Classic External REALITY?" "${ENABLE_CLASSIC:-y}" ENABLE_CLASSIC || return $?
+        prompt_yes_no "Включить VLESS REALITY (маскировка под популярные сервисы)?" "${ENABLE_CLASSIC:-y}" ENABLE_CLASSIC || return $?
 
         if [[ "${ENABLE_CLASSIC,,}" == "y" || "${ENABLE_CLASSIC:-}" == "1" ]]; then
             CLASSIC_ENABLED=1
@@ -626,7 +626,7 @@ for item in res:
             EXT_SNI_LIST=()
 
             local port_input=""
-            prompt_default "  Локальный порт Xray для Classic REALITY" "${CLASSIC_PORT:-46443}" port_input || return $?
+            prompt_default "  Локальный порт Xray для REALITY (внешние сервисы)" "${CLASSIC_PORT:-46443}" port_input || return $?
             CLASSIC_PORT="$port_input"
             if [[ ! "$CLASSIC_PORT" =~ ^[0-9]+$ ]] || [ "$CLASSIC_PORT" -le 0 ] || [ "$CLASSIC_PORT" -gt 65535 ]; then
                 warn "  Некорректный номер порта. Установлен порт по умолчанию: 46443."
@@ -705,7 +705,7 @@ for item in res:
             CLASSIC_PORTS_LIST=()
             EXT_SNI_LIST=()
             ALL_EXT_SNIS=()
-            log "Сценарий Classic External REALITY отключен."
+            log "Сценарий VLESS REALITY (внешние сервисы) отключен."
         fi
 
         sync_reality_ports
@@ -1049,9 +1049,9 @@ for item in res:
         echo
         echo -e "${YELLOW}━━━ Шаг 12/13: Автоматическая настройка базы данных панели 3X-UI ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
-            echo -e "  ${CYAN}💡 Что это:${NC} Автоматическое создание всех инбаундов (Steal-Oneself, Classic REALITY, xHTTP)"
+            echo -e "  ${CYAN}💡 Что это:${NC} Автоматическое создание подключений (REALITY со своим сайтом, внешними сервисами, xHTTP)"
             echo -e "     в базе данных панели 3X-UI, а также настройка секретных путей и подписок."
-            echo -e "     Вам не придется добавлять инбаунды вручную через браузер."
+            echo -e "     Вам не придется добавлять подключения вручную через браузер."
             echo
         fi
 
@@ -1129,13 +1129,13 @@ for item in res:
         if is_true "${STEAL_ENABLED:-0}"; then
             steal_status="${GREEN}Включен${NC} (${WHITE}${STEAL_DOMAINS[*]}${NC} -> 127.0.0.1:${STEAL_PORTS_LIST[*]})"
         fi
-        echo -e "  ${CYAN}[2]${NC} ${BOLD}Steal-Oneself:${NC}        $steal_status"
+        echo -e "  ${CYAN}[2]${NC} ${BOLD}REALITY (свой сайт):${NC}  $steal_status"
 
         local classic_status="${RED}Отключен${NC}"
         if is_true "${CLASSIC_ENABLED:-0}"; then
             classic_status="${GREEN}Включен${NC} (SNI: ${WHITE}${EXT_SNI_LIST[*]}${NC} -> 127.0.0.1:${CLASSIC_PORTS_LIST[*]})"
         fi
-        echo -e "  ${CYAN}[3]${NC} ${BOLD}Classic REALITY:${NC}      $classic_status"
+        echo -e "  ${CYAN}[3]${NC} ${BOLD}REALITY (внешний):${NC}    $classic_status"
 
         echo -e "  ${CYAN}[4]${NC} ${BOLD}Внутренние порты:${NC}     Панель :${WHITE}$PANEL_PORT${NC} (${DIM}$PANEL_PATH${NC}), Подписки :${WHITE}$SUB_PORT${NC} (${DIM}$SUB_PATH, Clash: $SUB_CLASH_PATH${NC}), xHTTP :${WHITE}$XHTTP_STREAM_PORT${NC}"
         echo -e "      ${DIM}Доступ в 3X-UI:${NC}       Логин: ${WHITE}$ADMIN_USERNAME${NC}, Пароль: ${YELLOW}$ADMIN_PASSWORD${NC}"

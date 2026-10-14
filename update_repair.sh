@@ -990,7 +990,7 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             target_stream["realitySettings"]["dest"] = old_dest or target_stream["realitySettings"]["dest"]
             preserved.append(f"SNI ({','.join(old_snis)})")
 
-        # Строгая гарантия параметров Steal-Oneself (Nginx Fallback + Xver=1 + target)
+        # Строгая гарантия параметров VLESS REALITY (маскировка под свой сайт: Nginx Fallback + Xver=1 + target)
         if port == steal_port or tag == "in-steal-reality" or cur_tag == "in-steal-reality":
             fallback_dest = f"127.0.0.1:{reality_fallback_port}"
             if not target_stream["realitySettings"].get("dest") or target_stream["realitySettings"]["dest"] != fallback_dest:
@@ -1003,7 +1003,7 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
                 target_stream["realitySettings"]["xver"] = 1
                 repairs.append("установлен xver: 1 (Proxy Protocol для Nginx Anti-Loop)")
 
-        # Строгая гарантия параметров Classic External REALITY (xver=0, dest: 443, target: 443)
+        # Строгая гарантия параметров VLESS REALITY (маскировка под внешние сервисы: xver=0, dest: 443, target: 443)
         if port == classic_port or tag == "in-classic-reality" or cur_tag == "in-classic-reality":
             if not target_stream["realitySettings"].get("dest"):
                 target_stream["realitySettings"]["dest"] = f"{classic_sni}:443"
@@ -1168,7 +1168,7 @@ def_wg_s_priv, def_wg_s_pub = generate_wg_keypair()
 def_wg_c_priv, def_wg_c_pub = generate_wg_keypair()
 def_wg_hpk = awg_hpk_env or base64.b64encode(secrets.token_bytes(32)).decode()
 
-# 1. Steal-Oneself REALITY
+# 1. VLESS REALITY (маскировка под свой сайт)
 if enable_steal:
     s_set = {"clients": [{"id": def_uuid, "flow": "xtls-rprx-vision"}], "decryption": "none"}
     s_str = {
@@ -1185,7 +1185,7 @@ if enable_steal:
     }
     smart_reconcile_inbound(steal_port, "vless", "in-steal-reality", "VLESS_STEAL", s_set, s_str, listen="127.0.0.1")
 
-# 2. Classic REALITY
+# 2. VLESS REALITY (маскировка под внешние сервисы)
 if enable_classic:
     c_set = {"clients": [{"id": def_uuid, "flow": "xtls-rprx-vision"}], "decryption": "none"}
     c_str = {

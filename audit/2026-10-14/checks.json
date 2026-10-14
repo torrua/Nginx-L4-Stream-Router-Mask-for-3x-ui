@@ -415,8 +415,8 @@
       "sha256": "b29ca31677b6a8ad0ecfd889fa40f13ffa6362ee489e70c09b17e87afce42e74"
     },
     "setup_mask.sh": {
-      "lines": 6215,
-      "sha256": "8947a328acf4103cbf39bac3645eeb04f48bc534aa6fb32c5dc7563c90da916c"
+      "lines": 6234,
+      "sha256": "0da088f40bd9873401748017cadb9c8deb6acf7f3da6f6077b61cd76fd9c6b52"
     },
     "update_repair.sh": {
       "lines": 1351,

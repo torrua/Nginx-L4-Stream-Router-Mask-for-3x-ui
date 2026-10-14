@@ -9,7 +9,7 @@
 [Инструкция для новичков](docs/BEGINNER_GUIDE.md) • [Техническая архитектура](docs/ARCHITECTURE.md) • [Быстрый старт](#-быстрый-старт-установка-в-1-команду)
 
 [![CI](https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/actions/workflows/ci.yml/badge.svg)](https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/actions/workflows/ci.yml)
-[![Версия](https://img.shields.io/badge/версия-v7.4.0-blue?style=flat-square)](https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui)
+[![Версия](https://img.shields.io/badge/версия-v7.5.0-blue?style=flat-square)](https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui)
 [![ОС](https://img.shields.io/badge/ОС-Ubuntu%20%7C%20Debian-informational?style=flat-square)](docs/BEGINNER_GUIDE.md#1-сервер-vps)
 [![Лицензия](https://img.shields.io/badge/лицензия-MIT-success?style=flat-square)](LICENSE)
 
@@ -174,5 +174,26 @@ sudo ./setup_mask.sh -c setup_mask.env -y --force
 
 ---
 
+## 🛠️ Разработка и модульная архитектура (`src/`)
+
+Начиная с версии v7.5.0, все скрипты проекта декомпозированы на независимые модули в каталоге `src/` (подсистемы `common/`, `tui/`, `system/`, `nginx/`, `ssl/`, `adguard/`, `xray/`, `installer/`, `entrypoints/`).
+
+Для сохранения удобства установки в 1 команду (`curl -sSL ... | sudo bash`) дистрибутивные файлы в корне собираются автоматически через `scripts/build.py`:
+
+```bash
+# Сборка всех дистрибутивных скриптов из исходников src/
+python scripts/build.py
+
+# Проверка синхронизации (контроль дрифта) и синтаксиса bash/python
+python scripts/build.py --check --lint
+
+# Запуск тестов сборщика
+python tests/test_builder.py
+```
+
+В GitHub Actions CI настроен строгий контроль дрифта: попытка изменить только собранные файлы в корне или только модули в `src/` без сборки автоматически блокируется.
+
+---
+
 ## 📄 Лицензия
-Проект распространяется под свободной лицензией **MIT**.\n
+Проект распространяется под свободной лицензией **MIT**.

@@ -6,6 +6,9 @@ on:
     paths:
       - '**.sh'
       - '**.py'
+      - 'src/**'
+      - 'scripts/**'
+      - 'tests/**'
       - 'audit/**'
       - '.github/workflows/**'
       - 'VERSION'
@@ -15,6 +18,9 @@ on:
     paths:
       - '**.sh'
       - '**.py'
+      - 'src/**'
+      - 'scripts/**'
+      - 'tests/**'
       - 'audit/**'
       - '.github/workflows/**'
       - 'VERSION'
@@ -26,9 +32,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  build-and-drift-check:
+    name: Modular Build & Drift Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run Builder Unit Tests
+        run: python tests/test_builder.py
+
+      - name: Verify Build Synchronization & Linting (Drift Check)
+        run: python scripts/build.py --check --lint
+
   syntax-and-lint:
     name: Bash Syntax & Version Check
     runs-on: ubuntu-latest
+    needs: build-and-drift-check
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -36,7 +61,7 @@ jobs:
       - name: Validate Bash syntax with bash -n
         run: |
           echo "=== Проверка синтаксиса bash для всех shell-скриптов ==="
-          find . -maxdepth 2 -name "*.sh" -type f | while read -r script; do
+          find . -maxdepth 4 -name "*.sh" -type f | while read -r script; do
             echo "Checking syntax: $script"
             bash -n "$script" || exit 1
           done

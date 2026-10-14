@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # ==============================================================================
-# Production AutoSetup: Hardened Engine v7.4.0 Universal (Public Edition)
+# Production AutoSetup: Hardened Engine v7.5.0 Universal (Public Edition)
 # Nginx L4 Stream + 3X-UI + Unix Sockets + Native proxy_http_version 2 + 3 Decoys
 # ==============================================================================
 # Архитектура:
@@ -27,7 +27,7 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="v7.4.0"
+SCRIPT_VERSION="v7.5.0"
 
 
 # --------------------------- Замеры времени и телеметрия ---------------------------
@@ -436,7 +436,7 @@ generate_config_template() {
     local target_file="${1:-setup_mask.env.example}"
     cat << 'EOF_CONF' > "$target_file"
 # ==============================================================================
-# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v7.4.0 Universal)
+# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v7.5.0 Universal)
 # ==============================================================================
 # Данный файл позволяет выполнять полностью автоматическую установку:
 # ./setup_mask.sh --config setup_mask.env --non-interactive --force

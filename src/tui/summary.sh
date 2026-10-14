@@ -38,7 +38,7 @@ done
 
 REALITY_INBOUNDS_REPORT=""
 if is_true "${STEAL_ENABLED:-0}"; then
-    REALITY_INBOUNDS_REPORT+="\n  ${BOLD}[Сценарий 1: Steal-Oneself (Кража у самого себя с защитой Anti-Loop)]${NC}\n"
+    REALITY_INBOUNDS_REPORT+="\n  ${BOLD}[Сценарий 1: VLESS REALITY (маскировка под свой сайт с защитой Anti-Loop)]${NC}\n"
     for port in "${STEAL_PORTS_LIST[@]}"; do
         p_doms=()
         for s_dom in "${STEAL_DOMAINS[@]}"; do
@@ -61,7 +61,7 @@ if is_true "${STEAL_ENABLED:-0}"; then
 fi
 
 if is_true "${CLASSIC_ENABLED:-0}"; then
-    REALITY_INBOUNDS_REPORT+="\n  ${BOLD}[Сценарий 2: Classic External REALITY]${NC}\n"
+    REALITY_INBOUNDS_REPORT+="\n  ${BOLD}[Сценарий 2: VLESS REALITY (маскировка под популярные внешние сервисы)]${NC}\n"
     for port in "${CLASSIC_PORTS_LIST[@]}"; do
         p_snis=()
         for ext_sni in "${!EXT_SNI_TO_PORT[@]}"; do

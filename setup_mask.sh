@@ -823,15 +823,31 @@ reconstruct_arrays_from_vars() {
         ENABLE_HY2=1
         HY2_PORT="${HY2_PORT:-443}"
         HY2_DOMAIN="${HY2_DOMAIN:-$PRIMARY_DOMAIN}"
+        if [[ ! " ${ALL_DOMAINS[*]} " == *" ${HY2_DOMAIN} "* ]]; then
+            ALL_DOMAINS+=("$HY2_DOMAIN")
+        fi
     else
         ENABLE_HY2=0
     fi
     _v="${ENABLE_AWG_V3:-n}"; if is_true "$_v"; then ENABLE_AWG_V3=1; else ENABLE_AWG_V3=0; fi
     _v="${ENABLE_AWG_V2:-n}"; if is_true "$_v"; then ENABLE_AWG_V2=1; else ENABLE_AWG_V2=0; fi
-    _v="${ENABLE_AGH:-n}"; if is_true "$_v"; then ENABLE_AGH=1; else ENABLE_AGH=0; fi
+    _v="${ENABLE_AGH:-n}"
+    if is_true "$_v"; then
+        ENABLE_AGH=1
+        if [ "${AGH_MODE:-1}" = "2" ] && [ -n "${AGH_DOMAIN:-}" ]; then
+            if [[ ! " ${ALL_DOMAINS[*]} " == *" ${AGH_DOMAIN} "* ]]; then
+                ALL_DOMAINS+=("$AGH_DOMAIN")
+            fi
+        fi
+    else
+        ENABLE_AGH=0
+    fi
     _v="${ENABLE_WARP:-n}"; if is_true "$_v"; then ENABLE_WARP="y"; else ENABLE_WARP="n"; fi
     _v="${ENABLE_NODE_TOKEN:-n}"; if is_true "$_v"; then ENABLE_NODE_TOKEN="y"; else ENABLE_NODE_TOKEN="n"; fi
     _v="${AGH_XRAY_DNS:-n}"; if is_true "$_v"; then AGH_XRAY_DNS="y"; else AGH_XRAY_DNS="n"; fi
+    HY2_PORT_HOPPING="${HY2_PORT_HOPPING:-n}"
+    AUTO_SETUP_3XUI="${AUTO_SETUP_3XUI:-y}"
+    CF_AUTH_METHOD="${CF_AUTH_METHOD:-1}"
 }
 
 load_env_file() {
@@ -4765,7 +4781,7 @@ if [[ "${ENABLE_AGH:-0}" == "1" || "${ENABLE_AGH,,}" == "y" ]] && [ "${AGH_MODE:
         return 404;
     }
 
-    location /dns-query/ {
+    location = /dns-query/${AGH_CLIENT_ID} {
         limit_req zone=doh burst=500 nodelay;
         proxy_pass http://127.0.0.1:3000;
         proxy_http_version 1.1;
@@ -4775,6 +4791,10 @@ if [[ "${ENABLE_AGH:-0}" == "1" || "${ENABLE_AGH,,}" == "y" ]] && [ "${AGH_MODE:
         proxy_set_header X-Forwarded-For \$ak_real_ip;
         proxy_set_header X-Forwarded-Proto https;
         proxy_buffering off;
+    }
+
+    location /dns-query/ {
+        return 403;
     }
 "
 fi
@@ -5680,6 +5700,10 @@ dns:
     - "quic://dns.surfsharkdns.com"
     - "h3://cloudflare-dns.com/dns-query"
   blocked_hosts: []
+  allowed_clients:
+    - ${AGH_CLIENT_ID}
+    - 127.0.0.1
+  disallowed_clients: []
 clients:
   runtime_sources:
     whois: false
@@ -5689,12 +5713,6 @@ clients:
       ids:
         - ${AGH_CLIENT_ID}
       use_global_settings: true
-access:
-  allowed_clients:
-    - ${AGH_CLIENT_ID}
-    - 127.0.0.1
-  disallowed_clients: []
-  blocked_hosts: []
 filters:
   - enabled: true
     url: "https://small.oisd.nl/domainswild"

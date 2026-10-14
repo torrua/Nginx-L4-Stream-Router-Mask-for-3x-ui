@@ -693,7 +693,9 @@ def sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_s
                 placeholders = ", ".join(["?"] * len(ct_data))
                 cur.execute(f"INSERT INTO client_traffics ({cols}) VALUES ({placeholders})", list(ct_data.values()))
             else:
-                ct_updates = {"enable": 1}
+                ct_updates = {}
+                if "enable" in client:
+                    ct_updates["enable"] = 1 if client["enable"] else 0
                 for opt_col in ["uuid", "sub_id", "subId"]:
                     if opt_col in client_traffics_cols:
                         val = client_uuid if opt_col == "uuid" else sub_id
@@ -733,9 +735,10 @@ def sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_s
                 client_db_id = cur.lastrowid
             else:
                 client_db_id = c_row[0]
-                c_updates = {"enable": 1, "updated_at": now_ms}
+                c_updates = {"updated_at": now_ms}
+                if "enable" in client:
+                    c_updates["enable"] = 1 if client["enable"] else 0
                 if "sub_id" in clients_cols and sub_id: c_updates["sub_id"] = sub_id
-                if "subId" in clients_cols and sub_id: c_updates["subId"] = sub_id
                 if "uuid" in clients_cols and client_uuid: c_updates["uuid"] = client_uuid
                 if "password" in clients_cols and client_pass: c_updates["password"] = client_pass
                 if "auth" in clients_cols and client_pass: c_updates["auth"] = client_pass
@@ -1093,6 +1096,10 @@ if enable_warp:
 
     if priv_b64 and device_id:
         print(f"  [СОХРАНЕНО] Действующий аккаунт WARP (Device ID: {device_id})")
+    elif dry_run:
+        print("  [DRY-RUN] Регистрация WARP пропущена (холостой прогон)")
+        priv_b64, pub_b64 = "dryrun-privkey", "dryrun-pubkey"
+        device_id, token, client_id = "dryrun-device", "dryrun-token", ""
     else:
         # Регистрация нового аккаунта через официальный API Cloudflare
         priv_b64, pub_b64 = generate_wg_keypair()
@@ -1483,7 +1490,7 @@ obsolete_emails = []
 print(f"  [ЕДИНЫЙ КЛИЕНТ] Профиль: '{unified_email}' (привязка ко всем 6 инбаундам, subId: {unified_sub_id[:6]}...)")
 
 def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, default_stream, listen="127.0.0.1"):
-    cur.execute("SELECT id, settings, stream_settings, protocol, tag, remark, listen FROM inbounds WHERE port = ? OR tag = ?", (port, tag))
+    cur.execute("SELECT id, settings, stream_settings, protocol, tag, remark, listen, enable FROM inbounds WHERE port = ? OR tag = ?", (port, tag))
     row = cur.fetchone()
     
     if not row:
@@ -1506,7 +1513,7 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
         print(f"  [СОЗДАНО] Отсутствующий инбаунд: {remark} ({protocol.upper()} на порту {port}) добавлен и зарегистрирован в реестре клиентов.")
         return
 
-    inbound_id, raw_s, raw_st, proto, cur_tag, cur_remark, cur_listen = row
+    inbound_id, raw_s, raw_st, proto, cur_tag, cur_remark, cur_listen, cur_enable = row
     try:
         cur_settings = json.loads(raw_s) if raw_s else {}
     except Exception:
@@ -1539,7 +1546,7 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
         if ec_email == unified_email:
             if not has_unified and default_client:
                 merged_c = json.loads(json.dumps(default_client))
-                for limit_field in ["totalGB", "expiryTime", "limitIp", "tgId", "reset", "resetDay", "resetMax"]:
+                for limit_field in ["totalGB", "expiryTime", "limitIp", "tgId", "reset", "resetDay", "resetMax", "enable"]:
                     if limit_field in ec:
                         merged_c[limit_field] = ec[limit_field]
                 consolidated_clients.append(merged_c)
@@ -1626,6 +1633,12 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             target_stream["xhttpSettings"]["path"] = cur_xh["path"]
             preserved.append(f"path ({cur_xh['path']})")
         target_stream["xhttpSettings"]["mode"] = "stream-one"
+        if cur_settings.get("decryption"):
+            target_settings["decryption"] = cur_settings["decryption"]
+            preserved.append("decryption xHTTP")
+        if cur_settings.get("encryption"):
+            target_settings["encryption"] = cur_settings["encryption"]
+            preserved.append("encryption xHTTP")
 
     # Г. Проверка и ремонт Hysteria 2
     if protocol == "hysteria":
@@ -1748,9 +1761,9 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
     if not dry_run:
         cur.execute("""
             UPDATE inbounds
-            SET protocol = ?, tag = ?, remark = ?, settings = ?, stream_settings = ?, listen = ?, sniffing = ?, enable = 1
+            SET protocol = ?, tag = ?, remark = ?, settings = ?, stream_settings = ?, listen = ?, sniffing = ?, enable = ?
             WHERE id = ?
-        """, (protocol, tag, final_remark, settings_json, stream_json, listen, sniffing_json, inbound_id))
+        """, (protocol, tag, final_remark, settings_json, stream_json, listen, sniffing_json, cur_enable, inbound_id))
 
     status_str = f"  [ОБНОВЛЕН] {final_remark} (порт {port}):"
     if repairs:

@@ -75,12 +75,12 @@
 - [x] **0.3 Права доступа к SSL (`setup_mask.sh:2017`):** Заменить `chmod 644` в хуке acme.sh на права `0750` на каталог и `0600` на `privkey.pem` с группой `www-data`.
 - [x] **0.4 Изоляция `scratch/`:** Добавлен `scratch/README.md` с правилами безопасности и рекомендацией исключения из синхронизации облачных хранилищ.
 
-### Этап 1: Исправление блокеров целостности данных и запуска (P1) — 4–6 дней
-- [ ] **1.1 Неинтерактивная установка (A01, `setup_mask.sh:2453`):** Вынести функцию `run_non_interactive_setup` и дефолты из мертвого блока `else` на верхний уровень файла до проверки `SKIP_INTERVIEW`. Инициализировать `ALL_DOMAINS`.
-- [ ] **1.2 Сохранение статуса клиентов и ключей xHTTP (A03, A04, `configure_3xui.sh:696, 1810`):** Сохранять флаг `enable` клиентов и ключи шифрования `decryption`/`encryption` xHTTP.
-- [ ] **1.3 Чистота `--dry-run` (A14, `configure_3xui.sh:1094`):** Обернуть обращение к Cloudflare API в проверку `if not dry_run:`.
-- [ ] **1.4 Trap аварийного перезапуска в `update_repair.sh` (A09, `update_repair.sh:16, 297`):** Добавить обработчик `trap cleanup_xui EXIT INT TERM` для гарантированного перезапуска службы `x-ui` при ошибках.
-- [ ] **1.5 Защита DoH AdGuard Home (A08, `setup_mask.sh:4763, 5691`):** Перенести `allowed_clients` в секцию `dns:`. Ограничить проксирование DoH в Nginx строгим совпадением сгенерированного ClientID (`/dns-query/$AGH_SECRET_CLIENT_ID`).
+### Этап 1: Исправление блокеров целостности данных и запуска (P1) — Завершен
+- [x] **1.1 Неинтерактивная установка (A01, `setup_mask.sh:2453`):** Инициализированы дефолтные переменные `HY2_PORT_HOPPING`, `AUTO_SETUP_3XUI`, `CF_AUTH_METHOD` и наполнение `ALL_DOMAINS` доменами `HY2_DOMAIN` и `AGH_DOMAIN` в `reconstruct_arrays_from_vars`.
+- [x] **1.2 Сохранение статуса клиентов и ключей xHTTP (A03, A04, `configure_3xui.sh:696, 1636, 1759`):** Сохраняется флаг `enable` для клиентов и инбаундов; сохраняются действующие ключи `decryption` и `encryption` для xHTTP.
+- [x] **1.3 Чистота `--dry-run` (A14, `configure_3xui.sh:1097`):** Сетевые запросы регистрации WARP изолированы условием `elif dry_run:`.
+- [x] **1.4 Trap аварийного перезапуска в `update_repair.sh` (A09, `update_repair.sh:295, 1061`):** Добавлен обработчик `trap cleanup_xui EXIT INT TERM`, гарантирующий перезапуск `x-ui` при любой ошибке.
+- [x] **1.5 Защита DoH AdGuard Home (A08, `setup_mask.sh:4781, 5700`):** `allowed_clients` перенесен в секцию `dns:`, проксирование DoH в Nginx ограничено точным путем `/dns-query/${AGH_CLIENT_ID}` с запретом (403) для всех остальных.
 
 ### Этап 2: Транзакционность, WAL-бэкап и воспроизводимость (P1/P2) — 5–7 дней
 - [ ] **2.1 Атомарный бэкап SQLite (A10, `setup_mask.sh:3794`, `update_repair.sh:91`):** Заменить `cp` на вызов Python `sqlite3.connect().backup()`.

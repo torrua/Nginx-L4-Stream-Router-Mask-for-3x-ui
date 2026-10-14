@@ -76,23 +76,25 @@
     },
     {
       "check": "express_random_pipeline",
-      "status": "NOT_REPRODUCED",
-      "exit_code": 0,
-      "reached_next_statement": true
+      "status": "DEFECT_REPRODUCED",
+      "exit_code": 2,
+      "reached_next_statement": false
     },
     {
       "check": "noninteractive_missing_defaults",
-      "status": "DEFECT_REPRODUCED",
-      "exit_code": 2,
-      "output": "HY2_PORT_HOPPING=UNDEFINED\nAUTO_SETUP_3XUI=UNDEFINED\nCF_AUTH_METHOD=UNDEFINED\nAWG=0 AGH=0 WARP=n",
-      "error": "/usr/bin/bash: line 147: syntax error near unexpected token `fi'"
+      "status": "NOT_REPRODUCED",
+      "exit_code": 0,
+      "output": "HY2_PORT_HOPPING=defined\nAUTO_SETUP_3XUI=defined\nCF_AUTH_METHOD=defined\nAWG=0 AGH=0 WARP=n",
+      "error": ""
     },
     {
       "check": "noninteractive_certificate_domains",
-      "status": "DEFECT_REPRODUCED",
+      "status": "NOT_REPRODUCED",
       "domains": [
         "audit.example",
-        "cdn.audit.example"
+        "cdn.audit.example",
+        "hy.audit.example",
+        "dns.audit.example"
       ]
     },
     {
@@ -112,18 +114,18 @@
     },
     {
       "check": "disabled_client_and_inbound_reenabled",
-      "status": "DEFECT_REPRODUCED",
+      "status": "NOT_REPRODUCED",
       "flags": [
-        1,
-        1,
-        1
+        0,
+        0,
+        0
       ],
-      "json_client_enable": true
+      "json_client_enable": false
     },
     {
       "check": "xhttp_encryption_not_preserved",
-      "status": "DEFECT_REPRODUCED",
-      "resulting_decryption": "none"
+      "status": "NOT_REPRODUCED",
+      "resulting_decryption": "old-decryption"
     },
     {
       "check": "sqlite_live_file_copy_loses_wal",
@@ -138,8 +140,8 @@
     },
     {
       "check": "dryrun_warp_registration_side_effect",
-      "status": "DEFECT_REPRODUCED",
-      "external_post_attempts": 1,
+      "status": "NOT_REPRODUCED",
+      "external_post_attempts": 0,
       "database_unchanged": true
     },
     {
@@ -151,8 +153,8 @@
     },
     {
       "check": "doctor_drop_status_concatenation",
-      "status": "DEFECT_REPRODUCED",
-      "actual_output": "000DROP"
+      "status": "NOT_REPRODUCED",
+      "actual_output": ""
     },
     {
       "check": "awg_client_name_path_traversal",
@@ -394,8 +396,8 @@
   ],
   "manifest": {
     "configure_3xui.sh": {
-      "lines": 2224,
-      "sha256": "b71ec1dca63b4220f11417205a30edff6d1341a203b7d974a6ef514a9c0fbfea"
+      "lines": 2237,
+      "sha256": "5465a2e272571f3e95bc7e59fb7fc340a0cc1cadf58af225df38e621fbfe1903"
     },
     "install.sh": {
       "lines": 823,
@@ -414,12 +416,12 @@
       "sha256": "b29ca31677b6a8ad0ecfd889fa40f13ffa6362ee489e70c09b17e87afce42e74"
     },
     "setup_mask.sh": {
-      "lines": 6020,
-      "sha256": "e3532a7470596db8192bd89f0a118eb16bf188cd0c8d507651e953a904a4c796"
+      "lines": 6038,
+      "sha256": "a8fdb1924f988e13717e6fd04460bb0c4b00b37d9e9d3265e90670df75b9f219"
     },
     "update_repair.sh": {
-      "lines": 1088,
-      "sha256": "d4136b841b871861234e2adc2a6622d2c188232c9e52d00506bb525d384c16a6"
+      "lines": 1103,
+      "sha256": "e22589e96699936acb3ea9106bcb9718e9dc331be16cbf7b0ba565c353e12dc3"
     }
   }
 }

@@ -676,11 +676,23 @@ if tpl and isinstance(tpl, dict):
             tpl_modified = True
             print("  [СОЗДАНО] Outbound 'blocked' (blackhole) добавлен в шаблон.")
 
-    # 4. Роутинг: Блокировка SMTP (порт 25) и SSRF-защита приватных IP
+    # 4. Роутинг: Блокировка SMTP (порт 25), SSRF-защита, разделение RU и YouTube -> Direct
     routing = tpl.get("routing", {})
     if isinstance(routing, dict):
         rules = routing.get("rules", [])
         if isinstance(rules, list):
+            bad_geosites = {
+                "geosite:ru", "geosite:yandex", "geosite:vk", "geosite:youtube",
+                "geosite:openai", "geosite:google-gemini", "geosite:anthropic", "geosite:cloudflare"
+            }
+            # Очистка от отсутствующих geosite меток
+            for r in rules:
+                if isinstance(r, dict) and "domain" in r and isinstance(r["domain"], list):
+                    clean_d = [d for d in r["domain"] if d not in bad_geosites]
+                    if len(clean_d) != len(r["domain"]):
+                        r["domain"] = clean_d
+                        tpl_modified = True
+
             if block_smtp:
                 has_smtp = any(isinstance(r, dict) and r.get("outboundTag") == "blocked" and "25" in str(r.get("port", "")).split(",") for r in rules)
                 if not has_smtp:
@@ -699,7 +711,141 @@ if tpl and isinstance(tpl, dict):
                     print("  [СОЗДАНО] SSRF-защита: доступ к приватным IP хоста заблокирован.")
                 else:
                     print("  [В ПОРЯДКЕ] SSRF-защита: локальные сети изолированы.")
-            routing["rules"] = rules
+
+            yt_domains = [
+                "domain:youtube.com", "domain:googlevideo.com", "domain:ytimg.com",
+                "domain:youtu.be", "domain:youtubei.googleapis.com", "domain:yt.be"
+            ]
+            ru_domains = [
+                "domain:ru", "domain:su", "domain:рф", "domain:xn--p1ai",
+                "domain:yandex.ru", "domain:yandex.net", "domain:ya.ru",
+                "domain:vk.com", "domain:vk.ru", "domain:vkvideo.ru", "domain:gosuslugi.ru",
+                "domain:sberbank.ru", "domain:tbank.ru", "domain:tinkoff.ru", "domain:dzen.ru",
+                "domain:mail.ru", "domain:rutube.ru", "domain:ozon.ru", "domain:wildberries.ru", "domain:avito.ru"
+            ]
+            warp_domains = [
+                "domain:openai.com", "domain:chatgpt.com", "domain:oaistatic.com",
+                "domain:oaiusercontent.com", "domain:anthropic.com", "domain:claude.ai",
+                "domain:gemini.google.com", "domain:aistudio.google.com", "domain:deepmind.google",
+                "domain:makersuite.google.com", "domain:generativelanguage.googleapis.com",
+                "domain:ai.google.dev", "domain:google.com", "domain:cloudflare.com", "domain:challenges.cloudflare.com"
+            ]
+
+            # Исключаем YouTube домены из WARP правил
+            for r in rules:
+                if isinstance(r, dict) and r.get("outboundTag") == "warp":
+                    if "domain" in r and isinstance(r["domain"], list):
+                        clean_warp_d = [d for d in r["domain"] if not any(y in str(d).lower() for y in ["youtube", "googlevideo", "ytimg", "youtu.be"])]
+                        if len(clean_warp_d) != len(r["domain"]):
+                            r["domain"] = clean_warp_d
+                            tpl_modified = True
+
+            yt_rule = None
+            ru_domain_rule = None
+            ru_ip_rule = None
+            cleaned_existing_rules = []
+
+            for r in rules:
+                if not isinstance(r, dict):
+                    continue
+                tag = r.get("outboundTag")
+                # Direct-правило для YouTube
+                if tag == "direct" and any("youtube" in str(d).lower() or "googlevideo" in str(d).lower() for d in r.get("domain", [])):
+                    cur_domains = set(r.get("domain", [])) - bad_geosites
+                    cur_domains.update(yt_domains)
+                    r["domain"] = list(cur_domains)
+                    yt_rule = r
+                    continue
+                # Direct-правило для RU: разделяем domain и ip (устранение AND бага Xray)
+                if tag == "direct" and ("geoip:ru" in r.get("ip", []) or any("domain:ru" in str(d).lower() for d in r.get("domain", []))):
+                    cur_d = [d for d in r.get("domain", []) if d not in bad_geosites]
+                    cur_ip = list(r.get("ip", []))
+                    if cur_d:
+                        cur_d_set = set(cur_d)
+                        cur_d_set.update(ru_domains)
+                        ru_domain_rule = {
+                            "type": "field",
+                            "outboundTag": "direct",
+                            "domain": list(cur_d_set)
+                        }
+                    if cur_ip or "geoip:ru" not in cur_ip:
+                        ru_ip_rule = {
+                            "type": "field",
+                            "outboundTag": "direct",
+                            "ip": ["geoip:ru"]
+                        }
+                    tpl_modified = True
+                    continue
+                cleaned_existing_rules.append(r)
+
+            has_warp_outbound = any(isinstance(ob, dict) and ob.get("tag") == "warp" for ob in tpl.get("outbounds", []))
+
+            new_rules = []
+            for r in cleaned_existing_rules:
+                if r.get("outboundTag") in ("api", "blocked"):
+                    new_rules.append(r)
+
+            if not yt_rule:
+                yt_rule = {
+                    "type": "field",
+                    "outboundTag": "direct",
+                    "domain": yt_domains
+                }
+                tpl_modified = True
+                print("  [СОЗДАНО] Маршрут YouTube -> DIRECT (без задержек и буферизации).")
+            new_rules.append(yt_rule)
+
+            if not ru_domain_rule:
+                ru_domain_rule = {
+                    "type": "field",
+                    "outboundTag": "direct",
+                    "domain": ru_domains
+                }
+                tpl_modified = True
+            new_rules.append(ru_domain_rule)
+
+            if not ru_ip_rule:
+                ru_ip_rule = {
+                    "type": "field",
+                    "outboundTag": "direct",
+                    "ip": ["geoip:ru"]
+                }
+                tpl_modified = True
+            new_rules.append(ru_ip_rule)
+
+            if has_warp_outbound:
+                warp_rule = None
+                for r in cleaned_existing_rules:
+                    if r.get("outboundTag") == "warp":
+                        cur_d = set(r.get("domain", [])) - bad_geosites
+                        cur_d.update(warp_domains)
+                        cur_d = {d for d in cur_d if not any(y in str(d).lower() for y in ["youtube", "googlevideo", "ytimg", "youtu.be"])}
+                        r["domain"] = list(cur_d)
+                        warp_rule = r
+                        break
+                if not warp_rule:
+                    warp_rule = {
+                        "type": "field",
+                        "outboundTag": "warp",
+                        "domain": [d for d in warp_domains if not any(y in str(d).lower() for y in ["youtube", "googlevideo", "ytimg", "youtu.be"])]
+                    }
+                    tpl_modified = True
+                    print("  [СОЗДАНО] Маршрут Google, Gemini, OpenAI, Claude -> WARP (обход капч и AI).")
+                new_rules.append(warp_rule)
+
+            for r in cleaned_existing_rules:
+                if r not in new_rules and r.get("outboundTag") != "warp":
+                    new_rules.append(r)
+
+            final_rules = []
+            for r in new_rules:
+                if "domain" in r and isinstance(r["domain"], list):
+                    r["domain"] = [d for d in r["domain"] if d not in bad_geosites]
+                    if not r["domain"] and not r.get("ip") and not r.get("port"):
+                        continue
+                final_rules.append(r)
+
+            routing["rules"] = final_rules
             tpl["routing"] = routing
 
     if tpl_modified and not dry_run:
@@ -711,7 +857,7 @@ if tpl and isinstance(tpl, dict):
 print("\n[+] Аудит и согласование инбаундов (Inbounds Smart Reconcile)...")
 
 def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, default_stream, listen="127.0.0.1"):
-    cur.execute("SELECT id, settings, stream_settings, protocol, tag, remark, listen, sniffing FROM inbounds WHERE port = ? OR tag = ?", (port, tag))
+    cur.execute("SELECT id, settings, stream_settings, protocol, tag, remark, listen, enable FROM inbounds WHERE port = ? OR tag = ?", (port, tag))
     row = cur.fetchone()
     
     if not row:
@@ -730,7 +876,8 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
         print(f"  [СОЗДАНО] Отсутствующий инбаунд: {remark} ({protocol.upper()} на порту {port}) добавлен.")
         return
 
-    inbound_id, raw_s, raw_st, proto, cur_tag, cur_remark, cur_listen, raw_sniff = row
+    inbound_id, raw_s, raw_st, proto, cur_tag, cur_remark, cur_listen, cur_enable = row
+    cur_enable = 1 if cur_enable is None else cur_enable
     try:
         cur_settings = json.loads(raw_s) if raw_s else {}
     except Exception:
@@ -825,6 +972,12 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             target_stream["xhttpSettings"]["path"] = cur_xh["path"]
             preserved.append(f"path ({cur_xh['path']})")
         target_stream["xhttpSettings"]["mode"] = "stream-one"
+        if cur_settings.get("decryption"):
+            target_settings["decryption"] = cur_settings["decryption"]
+            preserved.append("decryption xHTTP")
+        if cur_settings.get("encryption"):
+            target_settings["encryption"] = cur_settings["encryption"]
+            preserved.append("encryption xHTTP")
 
     # Г. Проверка и ремонт Hysteria 2
     if protocol == "hysteria":
@@ -943,9 +1096,9 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
     if not dry_run:
         cur.execute("""
             UPDATE inbounds
-            SET protocol = ?, tag = ?, remark = ?, settings = ?, stream_settings = ?, listen = ?, sniffing = ?, enable = 1
+            SET protocol = ?, tag = ?, remark = ?, settings = ?, stream_settings = ?, listen = ?, sniffing = ?, enable = ?
             WHERE id = ?
-        """, (protocol, tag, remark, settings_json, stream_json, listen, sniffing_json, inbound_id))
+        """, (protocol, tag, remark, settings_json, stream_json, listen, sniffing_json, cur_enable, inbound_id))
 
     status_str = f"  [ОБНОВЛЕН] {remark} (порт {port}):"
     if repairs:

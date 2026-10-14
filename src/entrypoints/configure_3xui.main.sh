@@ -1301,3 +1301,474 @@ print(f"  [ЕДИНЫЙ КЛИЕНТ] Профиль: '{unified_email}' (при�
 # @include "xray/inbounds.py"
 
 
+# --- Применение эталонных конфигураций инбаундов с единым клиентом ---
+
+# 1. Steal-Oneself REALITY (45443)
+if enable_steal:
+    s_set = {"clients": [{"id": unified_uuid, "flow": "xtls-rprx-vision", "email": unified_email, "subId": unified_sub_id, "enable": True}], "decryption": "none"}
+    s_str = {
+        "network": "tcp",
+        "tcpSettings": {"acceptProxyProtocol": True, "header": {"type": "none"}},
+        "security": "reality",
+        "realitySettings": {
+            "show": False, "xver": 1, "dest": f"127.0.0.1:{reality_fallback_port}", "target": f"127.0.0.1:{reality_fallback_port}",
+            "serverNames": [steal_dom], "privateKey": def_reality_priv,
+            "shortIds": def_reality_sids,
+            "settings": {"publicKey": def_reality_pub, "fingerprint": "chrome", "spiderX": "/"}
+        },
+        "externalProxy": [{"dest": domain, "port": 443, "forceTls": "same", "remark": make_remark("VLESS Steal")}]
+    }
+    steal_remark = make_remark("VLESS Steal")
+    smart_reconcile_inbound(steal_port, "vless", "in-steal-reality", steal_remark, s_set, s_str, listen="127.0.0.1")
+
+# 2. Classic REALITY (46443)
+if enable_classic:
+    c_set = {"clients": [{"id": unified_uuid, "flow": "xtls-rprx-vision", "email": unified_email, "subId": unified_sub_id, "enable": True}], "decryption": "none"}
+    c_str = {
+        "network": "tcp",
+        "tcpSettings": {"acceptProxyProtocol": True, "header": {"type": "none"}},
+        "security": "reality",
+        "realitySettings": {
+            "show": False, "xver": 0, "dest": f"{classic_sni}:443", "target": f"{classic_sni}:443",
+            "serverNames": [classic_sni], "privateKey": def_reality_priv,
+            "shortIds": def_reality_sids,
+            "settings": {"publicKey": def_reality_pub, "fingerprint": "chrome", "spiderX": "/"}
+        },
+        "externalProxy": [{"dest": domain, "port": 443, "forceTls": "same", "remark": make_remark("VLESS Classic")}]
+    }
+    classic_remark = make_remark("VLESS Classic")
+    smart_reconcile_inbound(classic_port, "vless", "in-classic-reality", classic_remark, c_set, c_str, listen="127.0.0.1")
+
+# 3. VLESS xHTTP (50443)
+vless_dekey, vless_enkey = generate_vlessenc_keypair()
+if vless_dekey and vless_enkey:
+    x_set = {"clients": [{"id": unified_uuid, "flow": "xtls-rprx-vision", "email": unified_email, "subId": unified_sub_id, "enable": True}], "decryption": vless_dekey, "encryption": vless_enkey}
+else:
+    x_set = {"clients": [{"id": unified_uuid, "flow": "xtls-rprx-vision", "email": unified_email, "subId": unified_sub_id, "enable": True}], "decryption": "none"}
+x_str = {
+    "network": "xhttp",
+    "xhttpSettings": {
+        "path": f"/{xhttp_path.strip('/')}/", "host": domain, "mode": "stream-one",
+        "noSSEHeader": True,
+        "xPaddingBytes": "", "xPaddingObfsMode": False, "xPaddingKey": "",
+        "xmux": {
+            "maxConcurrency": "0",
+            "maxConnections": "1-3",
+            "cMaxReuseTimes": "300-600",
+            "hKeepAlivePeriod": 600,
+            "hMaxRequestTimes": "1000-2000",
+            "hMaxReusableSecs": "1200-2400"
+        }
+    },
+    "security": "none",
+    "externalProxy": [{"dest": domain, "port": 443, "forceTls": "tls", "sni": domain, "fingerprint": "chrome", "remark": make_remark("VLESS xHTTP")}]
+}
+xhttp_remark = make_remark("VLESS xHTTP")
+smart_reconcile_inbound(xhttp_port, "vless", "in-xhttp-stream", xhttp_remark, x_set, x_str, listen="127.0.0.1")
+
+# 4. Hysteria 2 (443)
+if enable_hy2:
+    h_set = {"clients": [{"id": unified_hy2_pass, "auth": unified_hy2_pass, "password": unified_hy2_pass, "email": unified_email, "subId": unified_sub_id, "enable": True}], "version": 2}
+    h_str = {
+        "network": "hysteria",
+        "hysteriaSettings": {"version": 2, "udpIdleTimeout": 60, "masquerade": {"type": "proxy", "url": "http://127.0.0.1:80"}},
+        "security": "tls",
+        "tlsSettings": {
+            "serverName": hy2_domain, "minVersion": "1.3", "maxVersion": "1.3",
+            "certificates": [{"certificateFile": hy2_cert, "keyFile": hy2_key}], "alpn": ["h3"]
+        },
+        "externalProxy": [{"dest": hy2_domain, "port": hy2_port, "forceTls": "tls", "remark": make_remark("Hysteria 2")}]
+    }
+    hy2_remark = make_remark("Hysteria 2")
+    smart_reconcile_inbound(hy2_port, "hysteria", "in-hysteria2", hy2_remark, h_set, h_str, listen="0.0.0.0")
+
+# 5. AmneziaWG v3.1 (8443)
+if enable_awg_v3:
+    a3_set = {
+        "clients": [{
+            "privateKey": def_wg_c_priv, "publicKey": def_wg_c_pub,
+            "allowedIPs": ["10.8.1.2/32"], "email": unified_email, "subId": unified_sub_id, "enable": True
+        }],
+        "server": {
+            "h1": "", "h2": "", "h3": "", "h4": "",
+            "jc": 2, "jmin": 20, "jmax": 50,
+            "s1": 16, "s2": 20, "s3": 24, "s4": 16,
+            "mtu": 1280,
+            "primaryDns": awg_primary_dns, "secondaryDns": awg_secondary_dns,
+            "privateKey": def_wg_s_priv, "publicKey": def_wg_s_pub,
+            "headerProtectionKey": unified_awg_hpk,
+            "randomTrailers": unified_awg_random_trailers,
+            "disableCookies": True,
+            "keepaliveTimeout": "15-20",
+            "rekeyAfterTime": "120-180",
+            "rekeyTimeout": "3-4",
+            "rejectAfterTime": "180-210",
+            "maxHandshakeAttempts": "20-25",
+            "subnetCidr": awg_subnet_cidr, "subnetIp": awg_subnet_ip
+        }
+    }
+    a3_str = {"externalProxy": [{"dest": domain, "port": awg_v3_port, "remark": make_remark("AmneziaWG v3")}]}
+    awg_v3_remark = make_remark("AmneziaWG v3")
+    smart_reconcile_inbound(awg_v3_port, "amneziawg", "in-8443-udp", awg_v3_remark, a3_set, a3_str, listen="0.0.0.0")
+
+# 6. AmneziaWG v2.0 Legacy (8444)
+if enable_awg_v2:
+    a2_set = {
+        "clients": [{
+            "privateKey": def_wg_c_priv, "publicKey": def_wg_c_pub,
+            "allowedIPs": ["10.8.2.2/32"], "email": unified_email, "subId": unified_sub_id, "enable": True
+        }],
+        "server": {
+            "h1": "149419586", "h2": "878791997", "h3": "1251051976", "h4": "1657628296",
+            "jc": 2, "jmin": 20, "jmax": 50, "mtu": 1280,
+            "primaryDns": awg_primary_dns, "secondaryDns": awg_secondary_dns,
+            "privateKey": def_wg_s_priv, "publicKey": def_wg_s_pub,
+            "s1": 16, "s2": 20, "s3": 24, "s4": 16,
+            "subnetCidr": 24, "subnetIp": "10.8.2.0"
+        }
+    }
+    a2_str = {"externalProxy": [{"dest": domain, "port": awg_v2_port, "remark": make_remark("AmneziaWG v2")}]}
+    awg_v2_remark = make_remark("AmneziaWG v2")
+    smart_reconcile_inbound(awg_v2_port, "amneziawg", "in-awg-v2-legacy", awg_v2_remark, a2_set, a2_str, listen="0.0.0.0")
+
+if not dry_run:
+    try:
+        cur.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    except Exception:
+        pass
+    conn.commit()
+
+    # Сохранение параметров единого клиента во временный файл в /run (tmpfs) с безопасными правами
+    try:
+        run_file = "/run/3xui_unified_client.env" if os.path.isdir("/run") else "/tmp/3xui_unified_client.env"
+        old_umask = os.umask(0o077)
+        with open(run_file, "w") as f:
+            f.write(f"UNIFIED_CLIENT_TAG='{unified_email}'\n")
+            f.write(f"UNIFIED_SUB_ID='{unified_sub_id}'\n")
+            f.write(f"UNIFIED_UUID='{unified_uuid}'\n")
+            f.write(f"UNIFIED_AWG_HPK='{unified_awg_hpk}'\n")
+            f.write(f"UNIFIED_AWG_PORT='{awg_v3_port}'\n")
+        os.umask(old_umask)
+        os.chmod(run_file, 0o600)
+    except Exception:
+        pass
+
+conn.close()
+EOF_PYTHON_CONFIG
+
+# Нормализация прав доступа и перезапуск служб (Hardened: chmod 600 для защиты от локальной утечки)
+if [ "$DRY_RUN" -eq 0 ]; then
+    chmod 600 "$DB_PATH" 2>/dev/null || true
+
+    # Обнаружение исполняемого файла CLI 3X-UI
+    XUI_BIN=""
+    for candidate in "/usr/local/x-ui/x-ui" "/usr/bin/x-ui" "/usr/local/bin/x-ui"; do
+        if [ -x "$candidate" ]; then
+            XUI_BIN="$candidate"
+            break
+        fi
+    done
+    if [ -z "$XUI_BIN" ] && command -v x-ui >/dev/null 2>&1; then
+        XUI_BIN="$(command -v x-ui)"
+    fi
+
+    # Синхронизация учетных данных администратора через нативный CLI 3X-UI (bcrypt + сброс login_epoch)
+    if [ -n "${ADMIN_USERNAME:-}" ] || [ -n "${ADMIN_PASSWORD:-}" ]; then
+        if [ -n "$XUI_BIN" ]; then
+            xui_user_args=()
+            [ -n "${ADMIN_USERNAME:-}" ] && xui_user_args+=("-username" "$ADMIN_USERNAME")
+            [ -n "${ADMIN_PASSWORD:-}" ] && xui_user_args+=("-password" "$ADMIN_PASSWORD")
+            log "Синхронизация учетных данных администратора через '$XUI_BIN setting' (bcrypt)..."
+            if "$XUI_BIN" setting "${xui_user_args[@]}" >/tmp/xui_setting.log 2>&1; then
+                ok "Учетные данные администратора успешно синхронизированы в 3X-UI (bcrypt)!"
+            else
+                warn "Предупреждение при вызове '$XUI_BIN setting': $(cat /tmp/xui_setting.log 2>/dev/null)"
+            fi
+        fi
+    fi
+
+    # Генерация API-токена ноды (3X-UI Node)
+    if [[ "${ENABLE_NODE_TOKEN,,}" == "y" || "${ENABLE_NODE_TOKEN:-}" == "1" ]]; then
+        log "Генерация API-токена для подключения сервера как узла ('$NODE_TOKEN_NAME')..."
+        NODE_TOKEN=""
+        if [ -n "$XUI_BIN" ]; then
+            # 1. Попытка с флагами -tokenName и -tokenScope admin (3X-UI v3.9.0+ / PR #6700)
+            token_out=$("$XUI_BIN" setting -getApiToken -tokenName "$NODE_TOKEN_NAME" -tokenScope admin 2>&1 || true)
+            NODE_TOKEN=$(echo "$token_out" | grep -Eo 'apiToken: [^ ]+' | awk '{print $2}' || true)
+
+            # 2. Попытка только с флагом -tokenName (PR #6405)
+            if [ -z "$NODE_TOKEN" ]; then
+                token_out=$("$XUI_BIN" setting -getApiToken -tokenName "$NODE_TOKEN_NAME" 2>&1 || true)
+                NODE_TOKEN=$(echo "$token_out" | grep -Eo 'apiToken: [^ ]+' | awk '{print $2}' || true)
+            fi
+
+            # 3. Если флаги не поддерживаются, вызываем без них и обновляем имя в SQLite
+            if [ -z "$NODE_TOKEN" ]; then
+                token_out=$("$XUI_BIN" setting -getApiToken 2>&1 || true)
+                NODE_TOKEN=$(echo "$token_out" | grep -Eo 'apiToken: [^ ]+' | awk '{print $2}' || true)
+                if [ -n "$NODE_TOKEN" ] && [ -f "$DB_PATH" ]; then
+                    "$PYTHON_CMD" -c "
+import sqlite3
+try:
+    conn = sqlite3.connect('$DB_PATH')
+    cur = conn.cursor()
+    cur.execute(\"UPDATE api_tokens SET name = ? WHERE name IN ('install', 'cli-fallback')\", ('$NODE_TOKEN_NAME',))
+    conn.commit()
+    conn.close()
+except Exception:
+    pass
+" 2>/dev/null || true
+                fi
+            fi
+        fi
+
+        # 4. Резервный Python-метод, если CLI не вернул токен
+        if [ -z "$NODE_TOKEN" ] && [ -f "$DB_PATH" ]; then
+            NODE_TOKEN=$("$PYTHON_CMD" -c "
+import sqlite3, secrets, hashlib, time
+try:
+    conn = sqlite3.connect('$DB_PATH')
+    cur = conn.cursor()
+    cur.execute(\"SELECT name FROM sqlite_master WHERE type='table' AND name='api_tokens'\")
+    if cur.fetchone():
+        cur.execute(\"PRAGMA table_info(api_tokens)\")
+        cols = set(r[1] for r in cur.fetchall())
+        plain_token = secrets.token_hex(32)
+        token_hash = hashlib.sha256(plain_token.encode('utf-8')).hexdigest()
+        cur.execute(\"SELECT id FROM api_tokens WHERE name = ?\", ('$NODE_TOKEN_NAME',))
+        row = cur.fetchone()
+        now_ts = int(time.time())
+        if row:
+            cur.execute(\"UPDATE api_tokens SET token = ?, enabled = 1 WHERE id = ?\", (token_hash, row[0]))
+        else:
+            ins_cols = ['name', 'token', 'enabled']
+            ins_vals = ['$NODE_TOKEN_NAME', token_hash, 1]
+            if 'scope' in cols:
+                ins_cols.append('scope')
+                ins_vals.append('admin')
+            if 'created_at' in cols:
+                ins_cols.append('created_at')
+                ins_vals.append(now_ts)
+            placeholders = ', '.join(['?'] * len(ins_cols))
+            cur.execute(f\"INSERT INTO api_tokens ({', '.join(ins_cols)}) VALUES ({placeholders})\", ins_vals)
+        conn.commit()
+        conn.close()
+        print(plain_token)
+    else:
+        conn.close()
+except Exception:
+    pass
+" 2>/dev/null || true)
+        fi
+
+        if [ -n "$NODE_TOKEN" ]; then
+            ok "API-токен ноды '$NODE_TOKEN_NAME' успешно сгенерирован!"
+            # Экспорт для setup_mask.sh (в /run или /tmp)
+            NODE_ENV_FILE="/run/3xui_node_token.env"
+            [ -d "/run" ] || NODE_ENV_FILE="/tmp/3xui_node_token.env"
+            cat << EOF_NODE_ENV > "$NODE_ENV_FILE"
+ENABLE_NODE_TOKEN="y"
+NODE_TOKEN_NAME="$NODE_TOKEN_NAME"
+NODE_TOKEN="$NODE_TOKEN"
+EOF_NODE_ENV
+            chmod 600 "$NODE_ENV_FILE" 2>/dev/null || true
+
+            # Сохранение в .env файл, если он указан
+            if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
+                if grep -q "^ENABLE_NODE_TOKEN=" "$CONFIG_FILE"; then
+                    sed -i "s/^ENABLE_NODE_TOKEN=.*/ENABLE_NODE_TOKEN=\"y\"/" "$CONFIG_FILE"
+                else
+                    echo 'ENABLE_NODE_TOKEN="y"' >> "$CONFIG_FILE"
+                fi
+                if grep -q "^NODE_TOKEN_NAME=" "$CONFIG_FILE"; then
+                    sed -i "s/^NODE_TOKEN_NAME=.*/NODE_TOKEN_NAME=\"$NODE_TOKEN_NAME\"/" "$CONFIG_FILE"
+                else
+                    echo "NODE_TOKEN_NAME=\"$NODE_TOKEN_NAME\"" >> "$CONFIG_FILE"
+                fi
+                if grep -q "^NODE_TOKEN=" "$CONFIG_FILE"; then
+                    sed -i "s/^NODE_TOKEN=.*/NODE_TOKEN=\"$NODE_TOKEN\"/" "$CONFIG_FILE"
+                else
+                    echo "NODE_TOKEN=\"$NODE_TOKEN\"" >> "$CONFIG_FILE"
+                fi
+            fi
+        else
+            warn "Не удалось автоматически создать API-токен ноды в 3X-UI."
+        fi
+    fi
+
+    # Очистка устаревших/невалидных geosite меток в bin/config.json во избежание сбоя парсинга ядра Xray
+    for cfg_candidate in "/usr/local/x-ui/bin/config.json" "/etc/x-ui/bin/config.json"; do
+        if [ -f "$cfg_candidate" ]; then
+            sed -i 's/"geosite:ru",*//g; s/"geosite:yandex",*//g; s/"geosite:vk",*//g; s/"geosite:youtube",*//g; s/"geosite:openai",*//g; s/"geosite:google-gemini",*//g; s/"geosite:anthropic",*//g; s/"geosite:cloudflare",*//g' "$cfg_candidate" 2>/dev/null || true
+            sed -i 's/,\s*]/]/g; s/,\s*}/}/g' "$cfg_candidate" 2>/dev/null || true
+        fi
+    done
+
+    # Обновление ядра Xray-core до последней актуальной версии (v26.9.30+)
+    INSTALLED_XRAY_VER=""
+    if [[ "${UPDATE_XRAY_CORE:-y}" =~ ^[Yy1] ]]; then
+        XRAY_BIN_DIR="/usr/local/x-ui/bin"
+        [ -d "$XRAY_BIN_DIR" ] || XRAY_BIN_DIR="/etc/x-ui/bin"
+        
+        ARCH=$(uname -m 2>/dev/null || echo "x86_64")
+        case "$ARCH" in
+            x86_64|amd64)   XRAY_ARCH="64"; BIN_NAME="xray-linux-amd64" ;;
+            aarch64|arm64)  XRAY_ARCH="arm64-v8a"; BIN_NAME="xray-linux-arm64-v8a" ;;
+            armv7*|armhf)   XRAY_ARCH="arm32-v7a"; BIN_NAME="xray-linux-arm32-v7a" ;;
+            *)              XRAY_ARCH="64"; BIN_NAME="xray-linux-amd64" ;;
+        esac
+        
+        TARGET_BIN="$XRAY_BIN_DIR/$BIN_NAME"
+        [ -f "$TARGET_BIN" ] || TARGET_BIN="$XRAY_BIN_DIR/xray"
+        
+        CURRENT_VER=""
+        if [ -x "$TARGET_BIN" ]; then
+            CURRENT_VER=$("$TARGET_BIN" -version 2>/dev/null | { head -n 1 || true; } | { awk '{print $2}' || true; }) || CURRENT_VER=""
+        fi
+
+        LATEST_TAG=""
+        if command -v curl >/dev/null 2>&1; then
+            gh_resp=$(curl -fsSL --connect-timeout 5 "https://api.github.com/repos/XTLS/Xray-core/releases/latest" 2>/dev/null || true)
+            if [ -n "$gh_resp" ]; then
+                LATEST_TAG=$(echo "$gh_resp" | { grep -m1 '"tag_name":' || true; } | { cut -d '"' -f 4 || true; }) || LATEST_TAG=""
+            fi
+        fi
+        [ -n "$LATEST_TAG" ] || LATEST_TAG="v26.9.30"
+        CLEAN_LATEST="${LATEST_TAG#v}"
+
+        if [ -z "$CURRENT_VER" ] || [ "$CURRENT_VER" != "$CLEAN_LATEST" ]; then
+            log "Обновление ядра Xray до последней версии ($CURRENT_VER -> $LATEST_TAG)..."
+            TMP_XRAY_DIR="/tmp/xray_update_$$"
+            mkdir -p "$TMP_XRAY_DIR"
+            XRAY_ZIP="$TMP_XRAY_DIR/xray.zip"
+            
+            DL_URL="https://github.com/XTLS/Xray-core/releases/download/${LATEST_TAG}/Xray-linux-${XRAY_ARCH}.zip"
+            if curl -fsSL --connect-timeout 15 "$DL_URL" -o "$XRAY_ZIP" 2>/dev/null; then
+                python3 -c "import zipfile; zipfile.ZipFile('$XRAY_ZIP').extractall('$TMP_XRAY_DIR')" 2>/dev/null || true
+                if [ -f "$TMP_XRAY_DIR/xray" ]; then
+                    chmod +x "$TMP_XRAY_DIR/xray"
+                    if "$TMP_XRAY_DIR/xray" -version >/dev/null 2>&1; then
+                        mkdir -p "$XRAY_BIN_DIR"
+                        [ -f "$TARGET_BIN" ] && cp -f "$TARGET_BIN" "$TARGET_BIN.bak"
+                        install -m 755 "$TMP_XRAY_DIR/xray" "$TARGET_BIN.tmp.$$"
+                        mv -f "$TARGET_BIN.tmp.$$" "$TARGET_BIN"
+                        
+                        if "$TARGET_BIN" -version >/dev/null 2>&1; then
+                            [ -f "$TARGET_BIN.bak" ] && rm -f "$TARGET_BIN.bak"
+                            [ -f "$TMP_XRAY_DIR/geosite.dat" ] && cp -f "$TMP_XRAY_DIR/geosite.dat" "$XRAY_BIN_DIR/geosite.dat"
+                            [ -f "$TMP_XRAY_DIR/geoip.dat" ] && cp -f "$TMP_XRAY_DIR/geoip.dat" "$XRAY_BIN_DIR/geoip.dat"
+                            
+                            INSTALLED_XRAY_VER="$LATEST_TAG"
+                            ok "Ядро Xray успешно обновлено до последней версии $LATEST_TAG (было: ${CURRENT_VER:-неизвестно})!"
+                        else
+                            warn "Установленный бинарник Xray не запустился, выполняется откат."
+                            [ -f "$TARGET_BIN.bak" ] && mv -f "$TARGET_BIN.bak" "$TARGET_BIN"
+                            INSTALLED_XRAY_VER="${CURRENT_VER:-v26.7.28}"
+                        fi
+                    else
+                        warn "Скачанный бинарник Xray $LATEST_TAG не прошел валидацию, сохранен текущий $CURRENT_VER."
+                        INSTALLED_XRAY_VER="${CURRENT_VER:-v26.7.28}"
+                    fi
+                fi
+            else
+                warn "Не удалось скачать обновление Xray $LATEST_TAG с GitHub, используется $CURRENT_VER."
+                INSTALLED_XRAY_VER="${CURRENT_VER:-v26.7.28}"
+            fi
+            rm -rf "$TMP_XRAY_DIR"
+        else
+            INSTALLED_XRAY_VER="$LATEST_TAG"
+            ok "Ядро Xray уже актуальной версии ($LATEST_TAG)."
+        fi
+    fi
+
+    # Возобновление/перезапуск службы 3X-UI
+    if [ "${WAS_ACTIVE:-0}" -eq 1 ] || (command -v systemctl >/dev/null 2>&1 && systemctl is-enabled --quiet x-ui 2>/dev/null); then
+        log "Перезапуск службы 3X-UI..."
+        systemctl restart x-ui && ok "Служба 3X-UI успешно перезапущена." || warn "Не удалось перезапустить службу x-ui."
+    fi
+
+    # Проверка Nginx на наличие мертвого SNI и мягкий reload
+    if command -v nginx >/dev/null 2>&1; then
+        if [ -d /etc/nginx ] && grep -rq "swdist\.microsoft\.com" /etc/nginx/ 2>/dev/null; then
+            log "Обновление устаревшего SNI в конфигурационных файлах Nginx..."
+            find /etc/nginx/ -type f -name "*.conf" -exec sed -i 's/swdist\.microsoft\.com/gateway\.icloud\.com/g' {} + 2>/dev/null || true
+            ok "Nginx: SNI swdist.microsoft.com заменен на gateway.icloud.com."
+        fi
+
+        if nginx -t >/dev/null 2>&1; then
+            systemctl reload nginx 2>/dev/null && ok "Nginx успешно применил конфигурацию (Zero Downtime reload)." || true
+        fi
+    fi
+fi
+
+# Чтение параметров единого клиента, экспортированных из Python
+UNIFIED_CLIENT_TAG=""
+UNIFIED_SUB_ID=""
+for c_env in "/run/3xui_unified_client.env" "/tmp/3xui_unified_client.env"; do
+    if [ -f "$c_env" ]; then
+        source "$c_env"
+        rm -f "$c_env"
+    fi
+done
+
+echo
+echo -e "${GREEN}=====================================================================${NC}"
+if [ "$DRY_RUN" -eq 1 ]; then
+    echo -e "${YELLOW}               АУДИТ УСПЕШНО ЗАВЕРШЕН (DRY-RUN)                      ${NC}"
+    echo -e "${CYAN}  Для применения изменений выполните:                                ${NC}"
+    echo -e "  ${BOLD}./configure_3xui.sh --config \"${CONFIG_FILE:-./setup_mask.env}\" -y${NC}"
+else
+    echo -e "${GREEN}      БАЗА ДАННЫХ 3X-UI УСПЕШНО СКОНФИГУРИРОВАНА И ИСЦЕЛЕНА!         ${NC}"
+    echo -e "  - ${BOLD}Единый клиент:${NC}         ${GREEN}${UNIFIED_CLIENT_TAG:-Client}${NC} (объединяет 6 протоколов в 1 профиль)"
+    if [ -n "$INSTALLED_XRAY_VER" ]; then
+        echo -e "  - ${BOLD}Ядро Xray-core:${NC}        ${GREEN}${INSTALLED_XRAY_VER}${NC} (Latest Official Release)"
+    fi
+    echo -e "  - ${BOLD}Панель управления:${NC}      ${CYAN}https://${PRIMARY_DOMAIN}/${PANEL_PATH}/${NC}"
+    echo -e "  - ${BOLD}Логин панели:${NC}           ${WHITE}${ADMIN_USERNAME:-admin}${NC}"
+    if [ -n "${ADMIN_PASSWORD:-}" ]; then
+        echo -e "  - ${BOLD}Пароль панели:${NC}          ${WHITE}${ADMIN_PASSWORD}${NC}"
+    fi
+    echo -e "  - ${BOLD}Канал подписок:${NC}        ${CYAN}https://${PRIMARY_DOMAIN}/${SUB_PATH#/}/${NC}"
+    echo -e "  - ${BOLD}Канал подписок (Clash):${NC}  ${CYAN}https://${PRIMARY_DOMAIN}/${SUB_CLASH_PATH#/}/${NC}"
+    if [ -n "${UNIFIED_SUB_ID:-}" ]; then
+        echo -e "  - ${BOLD}Прямая подписка:${NC}       ${GREEN}https://${PRIMARY_DOMAIN}/${SUB_PATH#/}/${UNIFIED_SUB_ID}${NC}"
+        echo -e "  - ${BOLD}Прямая подписка (Clash):${NC} ${GREEN}https://${PRIMARY_DOMAIN}/${SUB_CLASH_PATH#/}/${UNIFIED_SUB_ID}${NC}"
+    fi
+    if [ -n "${UNIFIED_AWG_HPK:-}" ]; then
+        echo -e "  - ${BOLD}AmneziaWG v3.1 HPK:${NC}     ${YELLOW}${UNIFIED_AWG_HPK}${NC} (UDP :${UNIFIED_AWG_PORT:-8443})"
+    fi
+    if [[ "${ENABLE_NODE_TOKEN,,}" == "y" || "${ENABLE_NODE_TOKEN:-}" == "1" ]] && [ -n "${NODE_TOKEN:-}" ]; then
+        echo -e "  - ${BOLD}3X-UI Node API:${NC}         ${GREEN}${NODE_TOKEN_NAME}${NC} (Host: ${CYAN}${PRIMARY_DOMAIN}:443${NC}, Path: ${CYAN}/${PANEL_PATH#/}/${NC})"
+        echo -e "  - ${BOLD}API Bearer Token:${NC}       ${YELLOW}${NODE_TOKEN}${NC}"
+    fi
+fi
+
+# Сохранение учетных данных в защищенный файл
+if [ "$DRY_RUN" -eq 0 ] && [ -n "${ADMIN_PASSWORD:-}" ]; then
+    CRED_FILE="/root/vpn_credentials.txt"
+    cat << EOF_CRED > "$CRED_FILE"
+=====================================================================
+УЧЕТНЫЕ ДАННЫЕ ПАНЕЛИ И СЕРВИСОВ 3X-UI
+Файл обновлен: $(date '+%Y-%m-%d %H:%M:%S')
+=====================================================================
+Панель управления:     https://${PRIMARY_DOMAIN}/${PANEL_PATH}/
+Логин администратора:   ${ADMIN_USERNAME:-admin}
+Пароль администратора:  ${ADMIN_PASSWORD}
+$([ -n "$INSTALLED_XRAY_VER" ] && echo "Ядро Xray-core:        ${INSTALLED_XRAY_VER}")
+
+Единый клиент:          ${UNIFIED_CLIENT_TAG:-Client}
+Канал подписок:        https://${PRIMARY_DOMAIN}/${SUB_PATH#/}/
+Канал подписок (Clash): https://${PRIMARY_DOMAIN}/${SUB_CLASH_PATH#/}/
+Прямая ссылка подписки: https://${PRIMARY_DOMAIN}/${SUB_PATH#/}/${UNIFIED_SUB_ID}
+Прямая ссылка (Clash):  https://${PRIMARY_DOMAIN}/${SUB_CLASH_PATH#/}/${UNIFIED_SUB_ID}
+$([ -n "${UNIFIED_AWG_HPK:-}" ] && echo "AmneziaWG v3.1 HPK:    ${UNIFIED_AWG_HPK} (UDP :${UNIFIED_AWG_PORT:-8443})")
+$([ -n "${NODE_TOKEN:-}" ] && printf "3X-UI Node Token:      %s\nИмя ноды (Node Name):  %s (Host: %s:443, Path: /%s/)\n" "${NODE_TOKEN}" "${NODE_TOKEN_NAME}" "${PRIMARY_DOMAIN}" "${PANEL_PATH#/}")
+(Объединяет все конфигурации: Steal REALITY, Classic REALITY, xHTTP, Hysteria 2, AWG v3, AWG v2)
+=====================================================================
+EOF_CRED
+    chmod 600 "$CRED_FILE" 2>/dev/null || true
+    echo -e "  - ${BOLD}Файл с паролями:${NC}        ${CYAN}$CRED_FILE${NC} (chmod 600)"
+fi
+echo -e "${GREEN}=====================================================================${NC}"
+echo
+exit 0

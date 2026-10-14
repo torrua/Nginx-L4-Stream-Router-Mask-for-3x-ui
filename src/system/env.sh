@@ -224,3 +224,94 @@ save_session_state() {
     fi
 
     cat << EOF_SAVE > "$save_path"
+
+# ==============================================================================
+# АВТОМАТИЧЕСКИ СОХРАНЕННАЯ КОНФИГУРАЦИЯ СЕССИИ
+# Для перезапуска без вопросов: ./setup_mask.sh --config $save_path --non-interactive
+# ==============================================================================
+PRIMARY_DOMAIN="${PRIMARY_DOMAIN:-}"
+ADD_WWW="${ADD_WWW:-y}"
+EXTRA_SSL_DOMAINS="${EXTRA_SSL_DOMAINS:-}"
+SSL_ENGINE_CHOICE="${SSL_ENGINE_CHOICE:-1}"
+LE_EMAIL="${LE_EMAIL:-}"
+CF_AUTH_METHOD="${CF_AUTH_METHOD:-1}"
+CF_Token="${CF_Token:-}"
+CF_Account_ID="${CF_Account_ID:-}"
+CF_Email="${CF_Email:-}"
+CF_Key="${CF_Key:-}"
+FORCE_DNS="${FORCE_DNS:-0}"
+
+ENABLE_STEAL="$steal_save"
+STEAL_PORT="${STEAL_PORTS_LIST[0]:-45443}"
+STEAL_DOMAINS="${STEAL_DOMAINS[*]:-}"
+
+ENABLE_CLASSIC="$classic_save"
+CLASSIC_PORT="${CLASSIC_PORTS_LIST[0]:-46443}"
+CLASSIC_SNI="${EXT_SNI_LIST[*]:-}"
+
+PANEL_PORT="${PANEL_PORT:-10443}"
+PANEL_PATH="${_save_panel_path}"
+ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
+SERVER_PREFIX="${SERVER_PREFIX:-Server}"
+SUB_PORT="${SUB_PORT:-55443}"
+SUB_PATH="${_save_sub_path}"
+SUB_CLASH_PATH="${_save_sub_clash_path}"
+SUB_TITLE="${SUB_TITLE:-}"
+XHTTP_STREAM_PORT="${XHTTP_STREAM_PORT:-50443}"
+XHTTP_STREAM_PATH="${_save_xhttp_path}"
+
+ENABLE_HY2="$hy2_save"
+HY2_PORT="${HY2_PORT:-443}"
+HY2_DOMAIN="${HY2_DOMAIN:-$PRIMARY_DOMAIN}"
+HY2_PORT_HOPPING="${HY2_PORT_HOPPING:-y}"
+HY2_PORT_HOPPING_RANGE="${HY2_PORT_HOPPING_RANGE:-20000:50000}"
+
+ENABLE_AWG_V3="$awg_v3_save"
+AWG_V3_PORT="${AWG_V3_PORT:-8443}"
+AWG_HEADER_PROTECTION_KEY="${AWG_HEADER_PROTECTION_KEY:-}"
+AWG_RANDOM_TRAILERS="${AWG_RANDOM_TRAILERS:-false}"
+
+ENABLE_AWG_V2="$awg_v2_save"
+AWG_V2_PORT="${AWG_V2_PORT:-8444}"
+
+AWG_PRIMARY_DNS="${AWG_PRIMARY_DNS:-9.9.9.9}"
+AWG_SECONDARY_DNS="${AWG_SECONDARY_DNS:-76.76.2.0}"
+AWG_SUBNET_IP="${AWG_SUBNET_IP:-10.8.0.0}"
+AWG_SUBNET_CIDR="${AWG_SUBNET_CIDR:-22}"
+
+DECOY_MODE="${DECOY_MODE:-1}"
+AUTO_SETUP_3XUI="$auto_setup_3xui_save"
+ENABLE_NODE_TOKEN="$node_token_save"
+NODE_TOKEN_NAME="${NODE_TOKEN_NAME:-}"
+NODE_TOKEN="${NODE_TOKEN:-}"
+
+ENABLE_WARP="$warp_save"
+WARP_LICENSE_KEY="${WARP_LICENSE_KEY:-}"
+ENABLE_AGH="$agh_save"
+AGH_MODE="${AGH_MODE:-1}"
+AGH_DOMAIN="${AGH_DOMAIN:-}"
+AGH_USER="${AGH_USER:-admin}"
+AGH_PASS="${AGH_PASS:-}"
+AGH_CLIENT_ID="${AGH_CLIENT_ID:-home-router}"
+PORT_AGH_WEB="${PORT_AGH_WEB:-3000}"
+AGH_XRAY_DNS="$agh_xray_save"
+SHOW_TIPS="${SHOW_TIPS:-y}"
+
+TIME_LOCATION="${TIME_LOCATION:-}"
+SUB_UPDATES="${SUB_UPDATES:-1}"
+SUB_ENCRYPT="${SUB_ENCRYPT:-true}"
+BLOCK_SMTP="${BLOCK_SMTP:-true}"
+BLOCK_LAN="${BLOCK_LAN:-true}"
+WEB_LISTEN="${WEB_LISTEN:-127.0.0.1}"
+SUB_LISTEN="${SUB_LISTEN:-127.0.0.1}"
+LAST_COMPLETED_STEP="${LAST_COMPLETED_STEP:-0}"
+EOF_SAVE
+    chmod 600 "$save_path" 2>/dev/null || true
+    if [ "$save_path" != "/etc/setup_mask.env" ]; then
+        cp -f "$save_path" /etc/setup_mask.env 2>/dev/null || true
+        chmod 600 /etc/setup_mask.env 2>/dev/null || true
+    fi
+    umask "$old_umask"
+    ok "Конфигурация текущей сессии сохранена в '$save_path' (chmod 600)."
+}

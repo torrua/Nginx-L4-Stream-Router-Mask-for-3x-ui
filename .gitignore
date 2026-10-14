@@ -10,3 +10,5 @@ setup_mask.env
 # Scratch & Temporary files
 scratch/
 .tmp/
+__pycache__/
+*.pyc

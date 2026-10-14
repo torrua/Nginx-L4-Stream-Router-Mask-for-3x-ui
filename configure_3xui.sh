@@ -1413,46 +1413,61 @@ if "clients" in all_tables:
         if row_c[3]: harvested_wg_c_priv = row_c[3]
         if row_c[4]: harvested_wg_c_pub = row_c[4]
 
-    if not (harvested_uuid and harvested_sub_id and harvested_hy2_pass and harvested_wg_c_priv):
-        cur.execute("SELECT email, uuid, sub_id, password, wg_private_key, wg_public_key FROM clients")
-        for r_em, r_uuid, r_sid, r_pwd, r_priv, r_pub in cur.fetchall():
-            if not harvested_uuid and r_uuid: harvested_uuid = r_uuid
-            if not harvested_sub_id and r_sid: harvested_sub_id = r_sid
-            if not harvested_hy2_pass and r_pwd: harvested_hy2_pass = r_pwd
-            if not harvested_wg_c_priv and r_priv:
-                harvested_wg_c_priv = r_priv
-                harvested_wg_c_pub = r_pub
+harvested_reality_priv = None
+harvested_reality_pub = None
+harvested_reality_sids = None
 
-cur.execute("SELECT port, protocol, settings FROM inbounds")
-for p, proto, raw_s in cur.fetchall():
+cur.execute("SELECT port, protocol, settings, stream_settings FROM inbounds")
+for p, proto, raw_s, raw_st in cur.fetchall():
     try:
         s_obj = json.loads(raw_s) if raw_s else {}
     except Exception:
         continue
     c_list = s_obj.get("clients", [])
     if c_list and isinstance(c_list, list) and len(c_list) > 0:
-        c0 = c_list[0]
-        if proto == "vless":
-            if not harvested_uuid and c0.get("id"): harvested_uuid = c0.get("id")
-            if not harvested_sub_id and c0.get("subId"): harvested_sub_id = c0.get("subId")
-        elif proto == "hysteria":
-            if not harvested_hy2_pass and (c0.get("id") or c0.get("password") or c0.get("auth")):
-                harvested_hy2_pass = c0.get("id") or c0.get("password") or c0.get("auth")
-        elif proto == "amneziawg":
-            if not harvested_wg_c_priv and c0.get("privateKey"):
-                harvested_wg_c_priv = c0.get("privateKey")
-                harvested_wg_c_pub = c0.get("publicKey")
-            srv_conf = s_obj.get("server", {})
-            if srv_conf.get("headerProtectionKey") and not harvested_wg_hpk:
-                harvested_wg_hpk = srv_conf["headerProtectionKey"]
+        for c_cand in c_list:
+            c_cand_email = c_cand.get("email") or c_cand.get("Email")
+            if c_cand_email == unified_email:
+                if proto == "vless":
+                    if not harvested_uuid and c_cand.get("id"): harvested_uuid = c_cand.get("id")
+                    if not harvested_sub_id and c_cand.get("subId"): harvested_sub_id = c_cand.get("subId")
+                elif proto == "hysteria":
+                    if not harvested_hy2_pass and (c_cand.get("id") or c_cand.get("password") or c_cand.get("auth")):
+                        harvested_hy2_pass = c_cand.get("id") or c_cand.get("password") or c_cand.get("auth")
+                elif proto == "amneziawg":
+                    if not harvested_wg_c_priv and c_cand.get("privateKey"):
+                        harvested_wg_c_priv = c_cand.get("privateKey")
+                        harvested_wg_c_pub = c_cand.get("publicKey")
+                    srv_conf = s_obj.get("server", {})
+                    if srv_conf.get("headerProtectionKey") and not harvested_wg_hpk:
+                        harvested_wg_hpk = srv_conf["headerProtectionKey"]
+    if raw_st and not harvested_reality_priv:
+        try:
+            st_obj = json.loads(raw_st)
+            r_set = st_obj.get("realitySettings", {})
+            if r_set.get("privateKey"):
+                harvested_reality_priv = r_set.get("privateKey")
+                harvested_reality_pub = r_set.get("settings", {}).get("publicKey") or r_set.get("publicKey") or curve25519_reality_pubkey(harvested_reality_priv)
+                if r_set.get("shortIds"):
+                    harvested_reality_sids = r_set.get("shortIds")
+        except Exception:
+            pass
 
 # Итоговые эталонные согласованные реквизиты единого клиента
 unified_uuid = harvested_uuid or str(uuid.uuid4())
 unified_sub_id = harvested_sub_id or secrets.token_hex(8)
 unified_hy2_pass = harvested_hy2_pass or secrets.token_hex(12)
-def_reality_priv, def_reality_pub = generate_reality_keypair()
-def_reality_sid = unified_sub_id
-def_reality_sids = [def_reality_sid] + [secrets.token_hex(n) for n in (1, 2, 3, 6)]
+
+if harvested_reality_priv:
+    def_reality_priv = harvested_reality_priv
+    def_reality_pub = harvested_reality_pub or curve25519_reality_pubkey(def_reality_priv)
+    def_reality_sids = harvested_reality_sids or ([unified_sub_id] + [secrets.token_hex(n) for n in (1, 2, 3, 6)])
+    print(f"  [СОХРАНЕНО] Серверные ключи VLESS-REALITY сохранены из базы SQLite")
+else:
+    def_reality_priv, def_reality_pub = generate_reality_keypair()
+    def_reality_sid = unified_sub_id
+    def_reality_sids = [def_reality_sid] + [secrets.token_hex(n) for n in (1, 2, 3, 6)]
+
 def_wg_s_priv, def_wg_s_pub = generate_wg_keypair()
 if harvested_wg_c_priv and harvested_wg_c_pub:
     def_wg_c_priv, def_wg_c_pub = harvested_wg_c_priv, harvested_wg_c_pub
@@ -1463,25 +1478,8 @@ else:
 unified_awg_hpk = awg_hpk_env or harvested_wg_hpk or base64.b64encode(secrets.token_bytes(32)).decode()
 unified_awg_random_trailers = awg_random_trailers_env
 
-# Очистка устаревших раздельных клиентов из базы (консолидация в единого клиента)
+# Защита от потери данных: деструктивное удаление клиентов (DELETE FROM clients) заблокировано
 obsolete_emails = []
-if "clients" in all_tables:
-    cur.execute("SELECT id, email FROM clients")
-    for cid, em in cur.fetchall():
-        if em and em != unified_email and (obsolete_pattern.search(em) or em.lower().startswith("client-vless-") or em.lower().startswith("client-hysteria-") or em.lower().startswith("client-amneziawg-")):
-            obsolete_emails.append(em)
-            if not dry_run:
-                if "client_inbounds" in all_tables:
-                    cur.execute("DELETE FROM client_inbounds WHERE client_id = ?", (cid,))
-                cur.execute("DELETE FROM clients WHERE id = ?", (cid,))
-
-if "client_traffics" in all_tables and obsolete_emails:
-    for em in obsolete_emails:
-        if not dry_run:
-            cur.execute("DELETE FROM client_traffics WHERE email = ?", (em,))
-
-if obsolete_emails:
-    print(f"  [КОНСОЛИДАЦИЯ] Удалены устаревшие раздельные клиенты ({len(obsolete_emails)} шт.): {', '.join(obsolete_emails)}")
 print(f"  [ЕДИНЫЙ КЛИЕНТ] Профиль: '{unified_email}' (привязка ко всем 6 инбаундам, subId: {unified_sub_id[:6]}...)")
 
 def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, default_stream, listen="127.0.0.1"):
@@ -1538,11 +1536,7 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
     
     for ec in existing_clients:
         ec_email = ec.get("email") or ec.get("Email") or ""
-        is_obsolete = bool(obsolete_pattern.search(ec_email) or 
-                           ec_email.lower().startswith("client-vless-") or 
-                           ec_email.lower().startswith("client-hysteria-") or 
-                           ec_email.lower().startswith("client-amneziawg-"))
-        if ec_email == unified_email or is_obsolete:
+        if ec_email == unified_email:
             if not has_unified and default_client:
                 merged_c = json.loads(json.dumps(default_client))
                 for limit_field in ["totalGB", "expiryTime", "limitIp", "tgId", "reset", "resetDay", "resetMax"]:
@@ -1550,13 +1544,10 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
                         merged_c[limit_field] = ec[limit_field]
                 consolidated_clients.append(merged_c)
                 has_unified = True
-                if is_obsolete:
-                    repairs.append(f"клиент '{ec_email}' консолидирован в '{unified_email}'")
-                else:
-                    preserved.append(f"единый клиент '{unified_email}'")
+                preserved.append(f"единый клиент '{unified_email}'")
         else:
             consolidated_clients.append(ec)
-            preserved.append(f"кастомный клиент '{ec_email}'")
+            preserved.append(f"клиент '{ec_email}'")
             
     if not has_unified and default_client:
         consolidated_clients.insert(0, json.loads(json.dumps(default_client)))

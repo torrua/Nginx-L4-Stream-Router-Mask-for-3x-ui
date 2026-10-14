@@ -399,8 +399,8 @@
       "sha256": "5ede934d6db3850c9a41236cdc08389d6bf9f81f1f0c0ecee18ab31bbb29fc92"
     },
     "install.sh": {
-      "lines": 823,
-      "sha256": "147e59d78d0e482828143f6f0bb5b6fffbb125ea58f3f91b5fa14bd17b03a280"
+      "lines": 827,
+      "sha256": "02c3d7cfa66ce998d2d8c1101108ff713d2eca89532a175fb07059afe4ab303e"
     },
     "manage_amneziawg.py": {
       "lines": 672,

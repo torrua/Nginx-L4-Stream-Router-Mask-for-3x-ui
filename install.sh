@@ -202,6 +202,7 @@ check_prerequisites() {
 }
 
 # Mode Selection Screen
+
 prompt_mode() {
     echo -e "  ${WHITE}${BOLD}Выберите режим развертывания:${RESET}\n"
     echo -e "    ${CYAN}${BOLD}[1] Express Режим (Рекомендуется)${RESET} — Запуск в 1 клик для новичков"
@@ -404,6 +405,7 @@ EOF
         systemctl restart "${ssh_svc}.service" || true
     fi
 }
+
 
 # --- Installation Steps ---
 
@@ -652,6 +654,7 @@ step_configure_inbounds() {
 }
 
 # Save credentials and connection summary
+
 save_and_display_summary() {
     # Считываем актуальные примененные данные из конфигурационного файла (источник правды)
     local cfg_source=""
@@ -769,6 +772,7 @@ print_dashboard() {
     echo -e "  ${GREEN}${BOLD}════════════════════════════════════════════════════════════════════════════${RESET}"
     echo ""
 }
+
 
 # --- Main Flow ---
 main() {

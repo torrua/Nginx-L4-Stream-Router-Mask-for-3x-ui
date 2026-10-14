@@ -400,7 +400,7 @@
     },
     "install.sh": {
       "lines": 823,
-      "sha256": "dcd63730c7fd14428a206dc508174b06dc2fb54e9d9e6131bb3f91234758fc34"
+      "sha256": "65b0f7759cab68b4aa137baa3d48373a419728f27116fd74a058b483e0997f9c"
     },
     "manage_amneziawg.py": {
       "lines": 672,
@@ -415,8 +415,8 @@
       "sha256": "b29ca31677b6a8ad0ecfd889fa40f13ffa6362ee489e70c09b17e87afce42e74"
     },
     "setup_mask.sh": {
-      "lines": 6182,
-      "sha256": "d6b8c0aca935bacc669f86b9576fbdc5c646ebb3a34cd2f4ab4161ee0611d733"
+      "lines": 6215,
+      "sha256": "ee44ccf4a4ace60620c38428d06b4be8e6e35d303f1b41d10b0a0ac9d9dc1664"
     },
     "update_repair.sh": {
       "lines": 1147,

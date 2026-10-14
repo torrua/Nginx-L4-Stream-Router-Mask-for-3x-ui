@@ -519,8 +519,8 @@ EOF
     systemctl enable fail2ban >/dev/null 2>&1 || true
     systemctl restart fail2ban >/dev/null 2>&1 || true
 
-    # 3. UFW Firewall Setup & Disable IPv6 in UFW (Non-destructive for Docker/Dokploy)
-    # Сохраняем существующие правила и цепочки Docker (отказ от деструктивного ufw --force reset)
+    # 3. UFW Firewall Setup & Disable IPv6 in UFW (Non-destructive)
+    # Сохраняем существующие правила брандмауэра и контейнерные цепочки (отказ от деструктивного ufw --force reset)
     if [ -f /etc/default/ufw ]; then
         sed -i 's/^DEFAULT_FORWARD_POLICY=.*/DEFAULT_FORWARD_POLICY="ACCEPT"/' /etc/default/ufw
         if grep -q "^IPV6=" /etc/default/ufw; then

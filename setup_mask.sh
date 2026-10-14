@@ -1412,17 +1412,28 @@ determine_nginx_http2_mode() {
 get_port_listener_info() {
     local proto="$1"
     local port="$2"
-    local info=""
+    local raw=""
+    local flag="-t"
+    [ "$proto" = "udp" ] && flag="-u"
+
     if command -v ss >/dev/null 2>&1; then
-        local flag="-t"
-        [ "$proto" = "udp" ] && flag="-u"
-        info=$(ss -l -n -p "$flag" 2>/dev/null | grep -E ":${port}\b" | awk '{print $NF}' | head -n1 || true)
+        raw=$(ss -l -n -p "$flag" 2>/dev/null | grep -E ":${port}\b" || true)
     elif command -v netstat >/dev/null 2>&1; then
-        local flag="-t"
-        [ "$proto" = "udp" ] && flag="-u"
-        info=$(netstat -l -n -p "$flag" 2>/dev/null | grep -E ":${port}\b" | awk '{print $NF}' | head -n1 || true)
+        raw=$(netstat -l -n -p "$flag" 2>/dev/null | grep -E ":${port}\b" || true)
+    elif command -v lsof >/dev/null 2>&1; then
+        raw=$(lsof -i "${proto}:${port}" -sTCP:LISTEN 2>/dev/null || lsof -i "${proto}:${port}" 2>/dev/null || true)
     fi
-    echo "$info"
+
+    local proc_info=""
+    if [ -n "$raw" ]; then
+        if echo "$raw" | grep -q 'users:('; then
+            proc_info=$(echo "$raw" | grep -oP 'users:\(\(\K[^)]+' | head -n1 | tr -d '"' || true)
+        elif echo "$raw" | grep -qE '[0-9]+/[-_a-zA-Z0-9]+'; then
+            proc_info=$(echo "$raw" | grep -oE '[0-9]+/[-_a-zA-Z0-9]+' | head -n1 || true)
+        fi
+        [ -z "$proc_info" ] && proc_info=$(echo "$raw" | awk '{print $NF}' | head -n1 || true)
+    fi
+    echo "$proc_info"
 }
 
 is_port_in_use() {
@@ -1444,17 +1455,17 @@ is_port_in_use() {
 
 inspect_port_conflicts() {
     echo ""
-    echo -e "  ${CYAN}${BOLD}🔎  ПРЕДВАРИТЕЛЬНЫЙ ИНСПЕКТОР СЕРВИСОВ И ПОРТОВ (PREFLIGHT)${NC}"
+    echo -e "  ${CYAN}${BOLD}🔎  УНИВЕРСАЛЬНЫЙ ИНСПЕКТОР СЕТЕВЫХ ПОРТОВ И СЛУЖБ (PREFLIGHT)${NC}"
     echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}"
 
     PORT_AGH_WEB="${PORT_AGH_WEB:-3000}"
 
-    # 1. Проверка порта 3000 (AdGuard Home / Dokploy)
+    # 1. Проверка настраиваемого веб-порта AdGuard Home (по умолчанию 3000)
     if [[ "${ENABLE_AGH:-0}" == "1" || "${ENABLE_AGH,,}" == "y" ]]; then
         if is_port_in_use "tcp" "$PORT_AGH_WEB"; then
             local listener
             listener=$(get_port_listener_info "tcp" "$PORT_AGH_WEB")
-            warn "Порт $PORT_AGH_WEB занят существующей службой (${listener:-Dokploy / Docker})."
+            warn "Порт $PORT_AGH_WEB занят активным процессом: ${listener:-сторонней службой}."
             local candidate=3001
             while [ "$candidate" -le 3053 ]; do
                 if ! is_port_in_use "tcp" "$candidate"; then
@@ -1463,39 +1474,61 @@ inspect_port_conflicts() {
                 candidate=$(( candidate + 1 ))
             done
             PORT_AGH_WEB="$candidate"
-            ok "Гибкое переключение: веб-интерфейс AdGuard Home назначен на свободный порт ${WHITE}$PORT_AGH_WEB${NC} (без конфликта с Dokploy)."
+            ok "Автоматическое переназначение: веб-панель AdGuard Home перенесена на свободный порт ${WHITE}$PORT_AGH_WEB${NC} (конфликт устранен)."
         else
             ok "Порт $PORT_AGH_WEB (AdGuard Home Web) свободен."
         fi
     fi
 
-    # 2. Проверка порта 53 (DNS / systemd-resolved)
+    # 2. Проверка системного DNS-порта 53 (TCP/UDP)
     if [[ "${ENABLE_AGH:-0}" == "1" || "${ENABLE_AGH,,}" == "y" ]]; then
         if is_port_in_use "udp" 53 || is_port_in_use "tcp" 53; then
             local dns_owner
             dns_owner=$(get_port_listener_info "udp" 53)
+            [ -z "$dns_owner" ] && dns_owner=$(get_port_listener_info "tcp" 53)
             if echo "$dns_owner" | grep -qi "systemd-resolve"; then
-                ok "Обнаружен стандартный systemd-resolved на порту 53 — будет мягко отключен стаб без сброса DNS хоста."
+                ok "Обнаружен локальный systemd-resolved на порту 53 — будет безопасно отключен стаб-слушатель (DNSStubListener=no) с сохранением системного DNS хоста."
             else
-                warn "Порт 53 занят процессом: ${dns_owner:-сторонний DNS-сервер}. AdGuard Home может потребовать освобождения порта 53."
+                warn "Порт 53 занят процессом: ${dns_owner:-сторонним DNS-сервером}. AdGuard Home требует свободного порта 53."
             fi
         else
             ok "Порт 53 (DNS) свободен."
         fi
     fi
 
-    # 3. Проверка портов 80 и 443 (HTTP/HTTPS)
+    # 3. Проверка внешних портов маршрутизации и маскирования (80 и 443 TCP)
     for p in 80 443; do
         if is_port_in_use "tcp" "$p"; then
             local w_owner
             w_owner=$(get_port_listener_info "tcp" "$p")
             if echo "$w_owner" | grep -qi "nginx"; then
-                ok "Порт $p слушает Nginx (будет переконфигурирован под Stream L4)."
+                ok "Порт $p слушает Nginx (будет переконфигурирован в единый L4/L7 роутер маскирования)."
             else
-                warn "Порт $p занят сторонним процессом: ${w_owner:-не Nginx}. Для работы маскирования требуется порт $p."
+                warn "Порт $p занят сторонним процессом: ${w_owner:-не Nginx}. Для сквозного TLS/HTTP маскирования требуется порт $p."
             fi
         else
             ok "Порт $p (Веб / Маскирование) свободен."
+        fi
+    done
+
+    # 4. Проверка внутренних служебных портов стека
+    local internal_ports=()
+    [ -n "${PANEL_PORT:-}" ] && internal_ports+=("Панель 3X-UI:$PANEL_PORT")
+    [ -n "${SUB_PORT:-}" ] && internal_ports+=("Канал подписок:$SUB_PORT")
+    [ -n "${XHTTP_STREAM_PORT:-}" ] && internal_ports+=("xHTTP стрим:$XHTTP_STREAM_PORT")
+    [ -n "${REALITY_FALLBACK_PORT:-}" ] && internal_ports+=("REALITY Fallback:$REALITY_FALLBACK_PORT")
+
+    for item in "${internal_ports[@]}"; do
+        local s_name="${item%%:*}"
+        local s_port="${item##*:}"
+        if is_port_in_use "tcp" "$s_port"; then
+            local p_owner
+            p_owner=$(get_port_listener_info "tcp" "$s_port")
+            if echo "$p_owner" | grep -qiE "x-ui|xray|nginx"; then
+                ok "Внутренний порт $s_port ($s_name) занят собственным сервисом ($p_owner) — готов к реконфигурации."
+            else
+                warn "Внутренний порт $s_port ($s_name) занят сторонним процессом: ${p_owner:-неизвестно}. Возможен конфликт."
+            fi
         fi
     done
 
@@ -3677,7 +3710,7 @@ fi
 # Ожидание фоновой пред-установки (если была запущена параллельно с опросом)
 sync_background_preinstall
 
-# Предварительная инспекция портов и гибкое предотвращение конфликтов (Dokploy, systemd-resolved)
+# Универсальная предварительная инспекция портов и предотвращение конфликтов со сторонними службами
 inspect_port_conflicts
 
 # --- Шаг 1: Системные зависимости и утилиты ---

@@ -2010,11 +2010,11 @@ obtain_cf_cert() {
     local dom="$1"
     "$_ACME" --issue --dns dns_cf -d "$dom" --server letsencrypt --force && \
     mkdir -p "/etc/ssl/acme/$dom" && \
-    chmod 755 "/etc/ssl/acme/$dom" && \
+    chmod 750 "/etc/ssl/acme/$dom" && \
     "$_ACME" --install-cert -d "$dom" \
         --key-file       "/etc/ssl/acme/$dom/privkey.pem" \
         --fullchain-file "/etc/ssl/acme/$dom/fullchain.pem" \
-        --reloadcmd     "chmod 755 /etc/ssl /etc/ssl/acme /etc/ssl/acme/$dom 2>/dev/null || true; chmod 644 /etc/ssl/acme/$dom/* 2>/dev/null || true; systemctl reload nginx"
+        --reloadcmd     "chmod 750 /etc/ssl/acme /etc/ssl/acme/$dom 2>/dev/null || true; chmod 640 /etc/ssl/acme/$dom/*.pem 2>/dev/null || true; chmod 600 /etc/ssl/acme/$dom/privkey*.pem 2>/dev/null || true; chown -R root:www-data /etc/ssl/acme 2>/dev/null || true; systemctl reload nginx"
 }
 
 nginx_reload_task() {
@@ -3740,11 +3740,12 @@ EOF
             fi
         done
     else
-        chmod 755 /etc/ssl /etc/ssl/acme 2>/dev/null || true
+        chmod 750 /etc/ssl/acme 2>/dev/null || true
+        chown -R root:www-data /etc/ssl/acme 2>/dev/null || true
         for dom in "${ALL_DOMAINS[@]}"; do
             if [ -d "/etc/ssl/acme/$dom" ]; then
-                chmod 755 "/etc/ssl/acme/$dom" 2>/dev/null || true
-                chmod 644 /etc/ssl/acme/"$dom"/*.pem 2>/dev/null || true
+                chmod 750 "/etc/ssl/acme/$dom" 2>/dev/null || true
+                chmod 640 /etc/ssl/acme/"$dom"/*.pem 2>/dev/null || true
                 chmod 600 /etc/ssl/acme/"$dom"/privkey*.pem 2>/dev/null || true
             fi
         done

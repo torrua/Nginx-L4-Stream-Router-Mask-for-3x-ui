@@ -127,6 +127,7 @@ def lint_output(target_name: str, content: str) -> list[str]:
             [str(bash_path), "-n", "-s"],
             input=content,
             text=True,
+            encoding="utf-8",
             capture_output=True,
         )
         if proc.returncode != 0:

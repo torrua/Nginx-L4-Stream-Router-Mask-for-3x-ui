@@ -12,6 +12,7 @@ import struct
 import base64
 import secrets
 import subprocess
+import ipaddress
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -54,22 +55,26 @@ def read_container_file(path_str):
 
 def write_container_file(path_str, content):
     p = Path(path_str)
+    stdout, stderr, rc = run_cmd(f"docker exec -i {CONTAINER} tee {path_str} >/dev/null", input_data=content)
+    if rc == 0:
+        return
     if p.parent.exists():
         try:
             p.write_text(content, encoding="utf-8")
         except Exception:
             pass
-    run_cmd(f"docker exec -i {CONTAINER} tee {path_str} >/dev/null", input_data=content, check=True)
 
 def append_container_file(path_str, content):
     p = Path(path_str)
+    stdout, stderr, rc = run_cmd(f"docker exec -i {CONTAINER} tee -a {path_str} >/dev/null", input_data=content)
+    if rc == 0:
+        return
     if p.exists():
         try:
             with open(p, "a", encoding="utf-8") as f:
                 f.write(content)
         except Exception:
             pass
-    run_cmd(f"docker exec -i {CONTAINER} tee -a {path_str} >/dev/null", input_data=content, check=True)
 
 # --- Configuration & Obfuscation Parameters ---
 def get_conf_params():
@@ -355,44 +360,63 @@ def get_stats():
     }
 
 def find_next_ip():
+    import ipaddress
     conf_content = read_container_file("/opt/amnezia/awg/awg0.conf")
     table = load_clients_table()
 
+    # Determine subnet from awg0.conf [Interface] Address or env
+    network = None
+    server_ip = None
+    m = re.search(r'^\s*Address\s*=\s*([0-9a-fA-F\.:]+(?:/\d+)?)(?:,.*)?$', conf_content, re.MULTILINE)
+    if m:
+        addr_str = m.group(1).strip()
+        try:
+            if "/" in addr_str:
+                iface = ipaddress.ip_interface(addr_str)
+                network = iface.network
+                server_ip = iface.ip
+            else:
+                ip = ipaddress.ip_address(addr_str)
+                network = ipaddress.ip_network(f"{ip}/24", strict=False)
+                server_ip = ip
+        except Exception:
+            pass
+
+    if not network:
+        subnet_ip = os.environ.get("AWG_SUBNET_IP", "10.8.0.0")
+        subnet_cidr = os.environ.get("AWG_SUBNET_CIDR", "22")
+        try:
+            network = ipaddress.ip_network(f"{subnet_ip}/{subnet_cidr}", strict=False)
+            server_ip = network.network_address + 1
+        except Exception:
+            network = ipaddress.ip_network("10.8.0.0/22")
+            server_ip = ipaddress.ip_address("10.8.0.1")
+
     # Collect all currently assigned IPs
     used = set()
-    for m in re.finditer(r'10\.8\.(\d+)\.(\d+)', conf_content):
-        used.add(f"10.8.{m.group(1)}.{m.group(2)}")
+    used.add(str(network.network_address))
+    used.add(str(network.broadcast_address))
+    if server_ip:
+        used.add(str(server_ip))
+
+    for m in re.finditer(r'AllowedIPs\s*=\s*([0-9a-fA-F\.:]+)(?:/\d+)?', conf_content):
+        used.add(m.group(1).strip())
     for item in table:
         a_ip = item.get("userData", {}).get("allowed_ips", "")
-        m = re.search(r'10\.8\.(\d+)\.(\d+)', a_ip)
+        m = re.search(r'([0-9a-fA-F\.:]+)(?:/\d+)?', a_ip)
         if m:
-            used.add(f"10.8.{m.group(1)}.{m.group(2)}")
+            used.add(m.group(1).strip())
 
-    # Reserve special / network IPs
-    used.add("10.8.0.0")    # network address
-    used.add("10.8.0.1")    # gateway
-    used.add("10.8.1.0")    # server interface address
-    used.add("10.8.3.255")  # broadcast
+    for host in network.hosts():
+        ip_str = str(host)
+        if ip_str not in used:
+            return ip_str
 
-    # Priority 1: Fill out current 10.8.1.x subnet (.3 to .254)
-    for oct4 in range(3, 255):
-        candidate = f"10.8.1.{oct4}"
-        if candidate not in used:
-            return candidate
-
-    # Priority 2: Next subnets in /22 pool (10.8.2.x, 10.8.3.x, 10.8.0.x)
-    for oct3 in (2, 3, 0):
-        start_oct4 = 2 if oct3 == 0 else 1
-        for oct4 in range(start_oct4, 255):
-            candidate = f"10.8.{oct3}.{oct4}"
-            if candidate not in used:
-                return candidate
-
-    raise RuntimeError("No free IPs in 10.8.0.0/22 subnet pool (1000+ peers reached)")
+    raise RuntimeError(f"No free IPs in {network} subnet pool")
 
 def add_client(client_name):
-    if not client_name:
-        return {"ok": False, "error": "client_name_required"}
+    if not client_name or not re.match(r'^[a-zA-Z0-9_-]{1,64}$', client_name):
+        return {"ok": False, "error": "Invalid client name. Use 1-64 alphanumeric characters, underscores, or dashes."}
 
     ensure_container_networking()
 
@@ -539,38 +563,71 @@ def remove_client(client_name):
 
 def block_client(client_name):
     table = load_clients_table()
+    client_entry = None
     pubkey = None
     for item in table:
-        if item.get("userData", {}).get("clientName") == client_name:
+        if item.get("userData", {}).get("clientName") == client_name or item.get("clientId") == client_name:
+            client_entry = item
             pubkey = item.get("clientId")
             break
+
     conf_text = read_container_file("/opt/amnezia/awg/awg0.conf")
     if not pubkey and conf_text:
         m = re.search(r'# client:\s*' + re.escape(client_name) + r'\s*\n\[Peer\]\s*\nPublicKey\s*=\s*([^\s\n]+)', conf_text)
         if m:
             pubkey = m.group(1).strip()
-    if pubkey:
-        run_cmd(f"docker exec {CONTAINER} awg set awg0 peer {pubkey} remove 2>/dev/null || true")
+        elif len(client_name) == 44 and "=" in client_name:
+            pubkey = client_name
+
+    if not pubkey:
+        return {"ok": False, "error": f"Client '{client_name}' not found"}
+
+    run_cmd(f"docker exec {CONTAINER} awg set awg0 peer {pubkey} remove 2>/dev/null || true")
+
+    if client_entry:
+        client_entry.setdefault("userData", {})["blocked"] = True
+    else:
+        table.append({
+            "clientId": pubkey,
+            "userData": {
+                "clientName": client_name,
+                "blocked": True
+            }
+        })
+    save_clients_table(table)
     return {"ok": True, "status": "suspended", "client": client_name}
 
 def unblock_client(client_name):
     table = load_clients_table()
+    client_entry = None
     pubkey = None
     ip = None
     for item in table:
-        if item.get("userData", {}).get("clientName") == client_name:
+        if item.get("userData", {}).get("clientName") == client_name or item.get("clientId") == client_name:
+            client_entry = item
             pubkey = item.get("clientId")
             ip = item.get("userData", {}).get("allowed_ips")
             break
+
     conf_text = read_container_file("/opt/amnezia/awg/awg0.conf")
     if not pubkey and conf_text:
         m = re.search(r'# client:\s*' + re.escape(client_name) + r'\s*\n\[Peer\]\s*\nPublicKey\s*=\s*([^\s\n]+)[\s\S]*?AllowedIPs\s*=\s*([^\s\n]+)', conf_text)
         if m:
             pubkey = m.group(1).strip()
-            ip = m.group(2).strip()
+            if not ip:
+                ip = m.group(2).strip()
 
-    if pubkey and ip:
-        run_cmd(f"docker exec {CONTAINER} awg set awg0 peer {pubkey} preshared-key /opt/amnezia/awg/wireguard_psk.key allowed-ips {ip}", check=True)
+    if not pubkey:
+        return {"ok": False, "error": f"Client '{client_name}' not found"}
+    if not ip:
+        return {"ok": False, "error": f"IP address for client '{client_name}' not found"}
+
+    run_cmd(f"docker exec {CONTAINER} awg set awg0 peer {pubkey} preshared-key /opt/amnezia/awg/wireguard_psk.key allowed-ips {ip}", check=True)
+
+    if client_entry:
+        client_entry.setdefault("userData", {})["blocked"] = False
+        save_clients_table(table)
+
     return {"ok": True, "status": "unsuspended", "client": client_name}
 
 def main():

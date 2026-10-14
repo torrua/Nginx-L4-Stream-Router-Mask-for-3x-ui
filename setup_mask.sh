@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # ==============================================================================
-# Production AutoSetup: Hardened Engine v7.5.0 Universal (Public Edition)
+# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v7.5.0 Universal
 # Nginx L4 Stream + 3X-UI + Unix Sockets + Native proxy_http_version 2 + 3 Decoys
 # ==============================================================================
 # Архитектура:
@@ -1919,7 +1919,7 @@ net.ipv4.conf.default.rp_filter = 2
 net.ipv4.ip_nonlocal_bind = 1
 vm.swappiness = 10
 
-# Disable IPv6 (Zero-leak policy)
+# Отключение IPv6 (защита от утечек трафика)
 net.ipv6.conf.all.disable_ipv6 = 1
 net.ipv6.conf.default.disable_ipv6 = 1
 net.ipv6.conf.lo.disable_ipv6 = 1
@@ -1962,7 +1962,7 @@ EOF
 
     sysctl --system >/dev/null 2>&1 || true
 
-    # Zero-Log Policy для journald (хранение логов в RAM, защита от дисковой форензики)
+    # Хранение системных логов journald в RAM (Storage=volatile, без записи на диск)
     mkdir -p /etc/systemd/journald.conf.d/
     cat << 'EOF' > /etc/systemd/journald.conf.d/00-volatile.conf
 [Journal]
@@ -2214,7 +2214,7 @@ nginx_reload_task() {
 
 
 # =============================================================
-#  ФОНОВАЯ ПРЕД-УСТАНОВКА (Zero-Wait Provisioning)
+#  ФОНОВАЯ ПРЕД-УСТАНОВКА (Параллельная подготовка пакетов)
 # =============================================================
 BG_PREINSTALL_PID=""
 PREINSTALL_COMPLETED=0
@@ -3252,7 +3252,7 @@ for item in res:
             echo -e "    ${GREEN}[1] DataSphere Analytics (Рекомендуется)${NC}"
             echo -e "        ${DIM}• Корпоративный портал распределенной аналитики данных${NC}"
             echo -e "        ${DIM}• Интерактивная 3D-сфера узлов, Anycast-телеметрия потока и Web CLI${NC}"
-            echo -e "        ${DIM}• Документация API, статус сервисов и строгий Zero-Inline CSP${NC}"
+            echo -e "        ${DIM}• Документация API, статус сервисов и строгая политика CSP (без unsafe-inline)${NC}"
             echo
             echo -e "    ${GREEN}[2] CosmosCloud NextGen${NC}"
             echo -e "        ${DIM}• Корпоративное облачное хранилище файлов (аналог Nextcloud / OwnCloud)${NC}"
@@ -3921,7 +3921,7 @@ EOF
         done
     fi
 
-    # Настройка строгих прав доступа на каталоги SSL для чтения Nginx (Zero-Leak)
+    # Настройка строгих прав доступа на каталоги SSL для чтения Nginx (изоляция приватных ключей)
     if [ "$SSL_ENGINE_CHOICE" = "1" ]; then
         chmod 755 /etc/letsencrypt /etc/letsencrypt/live 2>/dev/null || true
         chmod 700 /etc/letsencrypt/archive 2>/dev/null || true
@@ -4355,7 +4355,7 @@ document.addEventListener("DOMContentLoaded", () => {
             } else if (val === "nodes") {
                 addLog("Активно узлов: 148 PoP (EU: 62, US: 54, APAC: 32) | Балансировка: FQ/BBR");
             } else if (val === "crypto") {
-                addLog("Шифрование сессий: ML-KEM-768 + X25519 (RFC 8446) | Zero-Knowledge");
+                addLog("Шифрование сессий: TLS 1.3 (RFC 8446) / ChaCha20-Poly1305 / AES-256-GCM");
             } else if (val === "clear") {
                 termLogs.innerHTML = "";
             } else {
@@ -4459,7 +4459,7 @@ cat << 'EOF' > $WEBROOT/index.html
             <div class="hero-text">
                 <div class="badge"><span class="badge-dot"></span><span>DataSphere Core v4.0 — Доступность 99.998%</span></div>
                 <h1>Распределенная сеть обработки и защиты корпоративных данных</h1>
-                <p>Высоконагруженная инфраструктура с аппаратной изоляцией памяти Zero-Copy, постквантовым обменом ключами ML-KEM-768 и магистральной Anycast-маршрутизацией.</p>
+                <p>Высоконагруженная инфраструктура с аппаратной изоляцией памяти, поддержкой современных стандартов шифрования TLS 1.3 и магистральной Anycast-маршрутизацией.</p>
                 <div style="display:flex; gap:14px; flex-wrap:wrap;">
                     <button type="button" id="connectNodeBtn" class="btn btn-primary">Подключить вычислительный узел</button>
                     <button type="button" id="netStatusBtn" class="btn">Статус Anycast-магистрали</button>

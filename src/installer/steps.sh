@@ -56,7 +56,7 @@ net.ipv6.conf.lo.disable_ipv6=1
 EOF
     sysctl --system >/dev/null 2>&1 || true
 
-    # Zero-Log Policy для journald (хранение логов в RAM)
+    # Хранение системных логов journald в RAM (Storage=volatile, без записи на диск)
     mkdir -p /etc/systemd/journald.conf.d/
     cat << 'EOF' > /etc/systemd/journald.conf.d/00-volatile.conf
 [Journal]
@@ -97,7 +97,7 @@ EOF
         fi
     fi
 
-    # 2. SSH Configuration & Fail2ban (Zero-Lockout)
+    # 2. SSH Configuration & Fail2ban (защита от потери доступа)
     apply_ssh_configuration "$SSH_PORT" "$SSH_ACTIVE_PORT"
 
     cat << EOF > /etc/fail2ban/jail.local
@@ -128,7 +128,7 @@ EOF
     # КРИТИЧЕСКАЯ ЗАЩИТА: Всегда разрешаем ТЕКУЩИЙ активный порт SSH
     ufw allow "${SSH_ACTIVE_PORT}/tcp" comment 'Current SSH Port' >/dev/null 2>&1 || true
 
-    # Если задан новый целевой порт — разрешаем и его параллельно (Zero-Lockout)
+    # Если задан новый целевой порт — разрешаем и его параллельно (защита от потери доступа)
     if [ "$SSH_PORT" -ne "$SSH_ACTIVE_PORT" ]; then
         ufw allow "${SSH_PORT}/tcp" comment 'Target SSH Port' >/dev/null 2>&1 || true
     fi

@@ -396,11 +396,11 @@
   "manifest": {
     "configure_3xui.sh": {
       "lines": 1885,
-      "sha256": "7bf0cd4be55d2f535af2ebd9a4b768c6f9c6cba37058a6e71fd34c0e24779c93"
+      "sha256": "e4a537b6d56dd62f999b0f756435b5ac2e3b7b9a037aaabecba0add66f7a999f"
     },
     "install.sh": {
       "lines": 827,
-      "sha256": "0ce1c13ab2a8ecac8ba61d3ab27689f9808f6b27c6f60d0ed53c6595eabbf58b"
+      "sha256": "7ecac13677445626931de90313461fd325c6bcd7402d8ae841974d6304a0e756"
     },
     "manage_amneziawg.py": {
       "lines": 672,
@@ -416,11 +416,11 @@
     },
     "setup_mask.sh": {
       "lines": 6234,
-      "sha256": "ac9a844f7b92ebe8dbec4c7a1ffc807b2d2f728de7d26a4f1d84723456955452"
+      "sha256": "2dad0bf7055b065869c2d48bd36af11b001f7ada534f4d89a202c5049109de88"
     },
     "update_repair.sh": {
       "lines": 1351,
-      "sha256": "5c41db1c3ab0956187a506a62341cc47ee81fe8e5c1c327c11c373f8c30c5f58"
+      "sha256": "638c479f122e98ba23db091d06028bbb0c291efb450a62012bb06ea919bd8c47"
     }
   }
 }

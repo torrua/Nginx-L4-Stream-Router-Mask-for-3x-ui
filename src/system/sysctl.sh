@@ -13,7 +13,7 @@ net.ipv4.conf.default.rp_filter = 2
 net.ipv4.ip_nonlocal_bind = 1
 vm.swappiness = 10
 
-# Disable IPv6 (Zero-leak policy)
+# Отключение IPv6 (защита от утечек трафика)
 net.ipv6.conf.all.disable_ipv6 = 1
 net.ipv6.conf.default.disable_ipv6 = 1
 net.ipv6.conf.lo.disable_ipv6 = 1
@@ -56,7 +56,7 @@ EOF
 
     sysctl --system >/dev/null 2>&1 || true
 
-    # Zero-Log Policy для journald (хранение логов в RAM, защита от дисковой форензики)
+    # Хранение системных логов journald в RAM (Storage=volatile, без записи на диск)
     mkdir -p /etc/systemd/journald.conf.d/
     cat << 'EOF' > /etc/systemd/journald.conf.d/00-volatile.conf
 [Journal]

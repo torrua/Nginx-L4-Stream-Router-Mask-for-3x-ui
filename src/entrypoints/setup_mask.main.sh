@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # ==============================================================================
-# Production AutoSetup: Hardened Engine v7.5.0 Universal (Public Edition)
+# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v7.5.0 Universal
 # Nginx L4 Stream + 3X-UI + Unix Sockets + Native proxy_http_version 2 + 3 Decoys
 # ==============================================================================
 # Архитектура:
@@ -264,7 +264,7 @@ EOF
         done
     fi
 
-    # Настройка строгих прав доступа на каталоги SSL для чтения Nginx (Zero-Leak)
+    # Настройка строгих прав доступа на каталоги SSL для чтения Nginx (изоляция приватных ключей)
     if [ "$SSL_ENGINE_CHOICE" = "1" ]; then
         chmod 755 /etc/letsencrypt /etc/letsencrypt/live 2>/dev/null || true
         chmod 700 /etc/letsencrypt/archive 2>/dev/null || true

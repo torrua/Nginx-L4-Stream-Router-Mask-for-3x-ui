@@ -4,8 +4,8 @@
 # ==============================================================================
 #  Скрипт автоматического конфигурирования и самовосстановления базы 3X-UI.
 #  Безопасен для повторного запуска:
-#    1. 100% сохранность существующих клиентов (UUID, пароли Hy2, ключи AWG, лимиты);
-#    2. 100% сохранность действующих серверных ключей REALITY и AmneziaWG;
+#    1. Сохранение существующих клиентов (UUID, пароли Hy2, ключи AWG, лимиты);
+#    2. Сохранение действующих серверных ключей REALITY и AmneziaWG;
 #    3. Самоисправление скрытых ошибок (reality settings.publicKey, мертвый SNI swdist);
 #    4. Автоматическая настройка externalProxy :443 для корректных ссылок подписок;
 #    5. Защита существующей кастомной подписки (не затирает кастомный домен/путь);
@@ -1719,7 +1719,7 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             fallback_dest = f"127.0.0.1:{reality_fallback_port}"
             if not target_stream["realitySettings"].get("dest") or target_stream["realitySettings"]["dest"] != fallback_dest:
                 target_stream["realitySettings"]["dest"] = fallback_dest
-                repairs.append(f"установлен dest: {fallback_dest} (Nginx SSL Fallback, Zero-RST)")
+                repairs.append(f"установлен dest: {fallback_dest} (Nginx SSL Fallback, защита от сброса)")
             else:
                 preserved.append(f"anti-loop dest {reality_fallback_port}")
             target_stream["realitySettings"]["target"] = fallback_dest

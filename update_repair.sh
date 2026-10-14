@@ -3,8 +3,8 @@
 #  SMART UPDATE & REPAIR TOOL: NGINX L4 ROUTER + 3X-UI
 # ==============================================================================
 #  Безопасное обновление и самовосстановление без потери подключений пользователей:
-#    1. 100% сохранность существующих клиентов (UUID, пароли Hy2, ключи AWG, трафик);
-#    2. 100% сохранность действующих серверных ключей шифрования REALITY и AWG;
+#    1. Сохранение существующих клиентов (UUID, пароли Hy2, ключи AWG, трафик);
+#    2. Сохранение действующих серверных ключей шифрования REALITY и AWG;
 #    3. Ремонт скрытых багов (realitySettings.settings.publicKey, мертвый SNI swdist);
 #    4. Проверка и исправление externalProxy: 443 для всех ссылок подписок;
 #    5. Проверка криптографии Curve25519 в AmneziaWG (валидация K_pub = K_priv * G);
@@ -995,7 +995,7 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             fallback_dest = f"127.0.0.1:{reality_fallback_port}"
             if not target_stream["realitySettings"].get("dest") or target_stream["realitySettings"]["dest"] != fallback_dest:
                 target_stream["realitySettings"]["dest"] = fallback_dest
-                repairs.append(f"установлен dest: {fallback_dest} (Nginx SSL Fallback, Zero-RST)")
+                repairs.append(f"установлен dest: {fallback_dest} (Nginx SSL Fallback, защита от сброса)")
             else:
                 preserved.append(f"anti-loop dest {reality_fallback_port}")
             target_stream["realitySettings"]["target"] = fallback_dest
@@ -1342,7 +1342,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
     echo -e "  ${BOLD}sudo ./update_repair.sh -y${NC}"
 else
     echo -e "${GREEN}      ОБНОВЛЕНИЕ И ВОССТАНОВЛЕНИЕ СИСТЕМЫ УСПЕШНО ЗАВЕРШЕНО!         ${NC}"
-    echo -e "  - ${BOLD}Подключения клиентов:${NC}   ${GREEN}100% сохранены без разрыва и сброса ключей${NC}"
+    echo -e "  - ${BOLD}Подключения клиентов:${NC}   ${GREEN}Сохранены без разрыва и сброса ключей${NC}"
     echo -e "  - ${BOLD}Вход в панель 3X-UI:${NC}    ${CYAN}https://${PRIMARY_DOMAIN:-домен}/${PANEL_PATH:-my-3x-panel}/${NC}"
     echo -e "  - ${BOLD}Ссылка на подписку:${NC}     ${CYAN}https://${PRIMARY_DOMAIN:-домен}/${SUB_PATH:-my-post-key}/${NC}"
     echo -e "  - ${BOLD}Ссылка (Clash):${NC}         ${CYAN}https://${PRIMARY_DOMAIN:-домен}/${SUB_CLASH_PATH:-${SUB_PATH:-my-post-key}clash}/${NC}"

@@ -1,0 +1,86 @@
+# Curve25519 helper (RFC 7748) для генерации, валидации и починки ключей
+P = 2**255 - 19
+A24 = 121665
+
+def clamp(k_bytes):
+    b = bytearray(k_bytes)
+    b[0] &= 248
+    b[31] &= 127
+    b[31] |= 64
+    return int.from_bytes(b, "little")
+
+def x25519(k, u=9):
+    x1 = u
+    x2, z2 = 1, 0
+    x3, z3 = u, 1
+    for i in range(254, -1, -1):
+        bit = (k >> i) & 1
+        if bit:
+            x2, x3 = x3, x2
+            z2, z3 = z3, z2
+        A = (x2 + z2) % P
+        AA = (A * A) % P
+        B = (x2 - z2) % P
+        BB = (B * B) % P
+        E = (AA - BB) % P
+        C = (x3 + z3) % P
+        D = (x3 - z3) % P
+        DA = (D * A) % P
+        CB = (C * B) % P
+        x3 = pow(DA + CB, 2, P)
+        z3 = (x1 * pow(DA - CB, 2, P)) % P
+        x2 = (AA * BB) % P
+        z2 = (E * (AA + A24 * E)) % P
+        if bit:
+            x2, x3 = x3, x2
+            z2, z3 = z3, z2
+    return (x2 * pow(z2, P - 2, P)) % P
+
+def curve25519_pubkey(priv_b64):
+    try:
+        raw_priv = base64.b64decode(priv_b64)
+        k = clamp(raw_priv)
+        pub_raw = x25519(k, 9).to_bytes(32, "little")
+        return base64.b64encode(pub_raw).decode()
+    except Exception:
+        return None
+
+def curve25519_reality_pubkey(priv_b64url):
+    try:
+        padding = "=" * ((4 - len(priv_b64url) % 4) % 4)
+        raw_priv = base64.urlsafe_b64decode(priv_b64url + padding)
+        k = clamp(raw_priv)
+        pub_raw = x25519(k, 9).to_bytes(32, "little")
+        return base64.urlsafe_b64encode(pub_raw).decode().rstrip("=")
+    except Exception:
+        return None
+
+def generate_reality_keypair():
+    priv_raw = os.urandom(32)
+    k = clamp(priv_raw)
+    pub_raw = x25519(k, 9).to_bytes(32, "little")
+    priv_b64 = base64.urlsafe_b64encode(priv_raw).decode().rstrip("=")
+    pub_b64 = base64.urlsafe_b64encode(pub_raw).decode().rstrip("=")
+    return priv_b64, pub_b64
+
+def generate_wg_keypair():
+    priv_raw = os.urandom(32)
+    k = clamp(priv_raw)
+    pub_raw = x25519(k, 9).to_bytes(32, "little")
+    priv_b64 = base64.b64encode(priv_raw).decode()
+    pub_b64 = base64.b64encode(pub_raw).decode()
+    return priv_b64, pub_b64
+
+def generate_vlessenc_keypair():
+    for candidate in ["/usr/local/x-ui/bin/xray-linux-amd64", "/usr/local/x-ui/bin/xray-linux-arm64", "/usr/local/x-ui/bin/xray", "xray"]:
+        try:
+            res = subprocess.run([candidate, "vlessenc"], capture_output=True, text=True, timeout=5)
+            if res.returncode == 0:
+                out = res.stdout
+                de_m = re.search(r'"decryption":\s*"([^"]+)"', out)
+                en_m = re.search(r'"encryption":\s*"([^"]+)"', out)
+                if de_m and en_m:
+                    return de_m.group(1), en_m.group(1)
+        except Exception:
+            pass
+    return None, None

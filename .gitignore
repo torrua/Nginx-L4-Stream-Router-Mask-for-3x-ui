@@ -14,6 +14,12 @@ __pycache__/
 *.pyc
 
 # Local standalone AWG bot files (not part of main repo)
-manage_amneziawg.py
-manage_amneziawg.sh
+/manage_amneziawg.py
+/manage_amneziawg.sh
 .local_awg_backup/
+test_profiles/
+
+# Upstream tracking tools & notes (local only)
+docs/UPSTREAM_TRACKING.md
+docs/upstream_sync_state.json
+scripts/check_upstream_sync.py

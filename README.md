@@ -9,7 +9,7 @@
 [Инструкция для новичков](docs/BEGINNER_GUIDE.md) • [Техническая архитектура](docs/ARCHITECTURE.md) • [Быстрый старт](#-быстрый-старт-установка-в-1-команду)
 
 [![CI](https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/actions/workflows/ci.yml/badge.svg)](https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/actions/workflows/ci.yml)
-[![Версия](https://img.shields.io/badge/версия-v7.6.0-blue?style=flat-square)](https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui)
+[![Версия](https://img.shields.io/badge/версия-v7.7.0-blue?style=flat-square)](https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui)
 [![ОС](https://img.shields.io/badge/ОС-Ubuntu%20%7C%20Debian-informational?style=flat-square)](docs/BEGINNER_GUIDE.md#1-сервер-vps)
 [![Лицензия](https://img.shields.io/badge/лицензия-MIT-success?style=flat-square)](LICENSE)
 
@@ -29,8 +29,9 @@
    * Открыли сайт в браузере или пришёл бот-сканер → Nginx показывает веб-сайт.
    * Подключилось приложение с вашим VPN-ключом → Nginx сразу передаёт трафик ядру Xray, и у вас работает интернет.
    * Открыли секретный адрес панели управления → загружается веб-интерфейс 3X-UI.
-4. **Защита для мобильных сетей (AmneziaWG):**
-   * В пакеты добавляются случайные заголовки и шум (Junk), что затрудняет обнаружение WireGuard фильтрами ТСПУ (технические средства противодействия угрозам сотовых операторов).
+4. **Защита для мобильных сетей (AmneziaWG 3.1):**
+   * Поддержка AmneziaWG 3.1 с обфускацией заголовков (`HeaderProtectionKey`, `RandomTrailers`, DNS CPS-эмуляция `I1`).
+   * Встроенные сценарии выдачи в `awg-cli` (`--preset=stealth`, `--preset=fast`, `--preset=base`). Подробнее: [Руководство по клиентам AmneziaWG](docs/AWG_CLIENT_CONFIGURATION_GUIDE.md).
 5. **Умный исходящий трафик (Cloudflare WARP Smart Routing):**
    * Запросы к Google, AI-сервисам (ChatGPT, Claude, Gemini) и сайтам с капчей Cloudflare идут через чистый IP Cloudflare WARP (MTU 1280).
    * Видео YouTube и российские сервисы (банки, Госуслуги) идут напрямую с VPS для максимальной скорости и отсутствия блокировок.

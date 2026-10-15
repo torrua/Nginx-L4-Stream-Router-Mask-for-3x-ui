@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  CONFIGURE 3X-UI INBOUNDS & SETTINGS (v7.6.0 Universal Companion & Smart Reconcile)
+#  CONFIGURE 3X-UI INBOUNDS & SETTINGS (v7.7.0 Universal Companion & Smart Reconcile)
 # ==============================================================================
 #  Скрипт автоматического конфигурирования и самовосстановления базы 3X-UI.
 #  Безопасен для повторного запуска:
@@ -1427,27 +1427,31 @@ if enable_hy2:
 
 # 5. AmneziaWG v3.1 (8443)
 if enable_awg_v3:
+    awg_i1_env = os.environ.get("AWG_I1", "").strip()
+    if awg_i1_env.lower() == "dns":
+        awg_i1_env = "<r 2><b 0x858000010001000000000669636c6f756403636f6d0000010001c00c000100010000105a00044d583737>"
     a3_set = {
         "clients": [{
             "privateKey": def_wg_c_priv, "publicKey": def_wg_c_pub,
             "allowedIPs": ["10.8.1.2/32"], "email": unified_email, "subId": unified_sub_id, "enable": True
         }],
         "server": {
-            "h1": "", "h2": "", "h3": "", "h4": "",
-            "jc": 2, "jmin": 20, "jmax": 50,
-            "s1": 16, "s2": 20, "s3": 24, "s4": 16,
+            "h1": "1", "h2": "2", "h3": "3", "h4": "4",
+            "jc": 4, "jmin": 40, "jmax": 70,
+            "s1": 16, "s2": 16, "s3": 16, "s4": 16,
             "mtu": 1280,
             "primaryDns": awg_primary_dns, "secondaryDns": awg_secondary_dns,
             "privateKey": def_wg_s_priv, "publicKey": def_wg_s_pub,
             "headerProtectionKey": unified_awg_hpk,
-            "randomTrailers": unified_awg_random_trailers,
-            "disableCookies": True,
+            "randomTrailers": True,
+            "disableCookies": False,
             "keepaliveTimeout": "15-20",
             "rekeyAfterTime": "120-170",
             "rekeyTimeout": "3-4",
             "rejectAfterTime": "180-210",
             "maxHandshakeAttempts": "20-25",
-            "subnetCidr": awg_subnet_cidr, "subnetIp": awg_subnet_ip
+            "subnetCidr": awg_subnet_cidr, "subnetIp": awg_subnet_ip,
+            "i1": awg_i1_env
         }
     }
     a3_str = {"externalProxy": [{"dest": domain, "port": awg_v3_port, "remark": make_remark("AmneziaWG v3")}]}

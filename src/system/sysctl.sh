@@ -117,16 +117,31 @@ nginx soft nofile 524288
 nginx hard nofile 524288
 EOF
 
-    # TCP MSS Clamping — предотвращение PMTU Blackhole при блокировке ICMP
-    # Срабатывает только на SYN-пакетах (1 раз за соединение, нулевой overhead)
-    # Решает проблему зависания TCP на мобильных ISP и при прохождении через ТСПУ
+    # TCP MSS Clamping — предотвращение PMTU Blackhole при блокировке ICMP (для ядро/TUN/FORWARD трафика)
+    # Примечание: действует на маршрутизируемый трафик ядра Linux; не влияет на userspace gVisor в 3X-UI.
     if ! iptables -t mangle -C FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null; then
         iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
     fi
+    if command -v ip6tables >/dev/null 2>&1; then
+        if ! ip6tables -t mangle -C FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null; then
+            ip6tables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+        fi
+    fi
 
-    # Персистентность MSS Clamping через /etc/ufw/before.rules
-    if [ -f /etc/ufw/before.rules ] && ! grep -q '^\*mangle' /etc/ufw/before.rules 2>/dev/null; then
-        sed -i '/^\*filter/i\# TCP MSS Clamping - prevents PMTU blackhole (added by setup_mask.sh)\n*mangle\n:FORWARD ACCEPT [0:0]\n-A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu\nCOMMIT\n' /etc/ufw/before.rules
+    # Персистентность MSS Clamping через /etc/ufw/before.rules и before6.rules
+    if [ -f /etc/ufw/before.rules ] && ! grep -q 'TCPMSS --clamp-mss-to-pmtu' /etc/ufw/before.rules 2>/dev/null; then
+        if ! grep -q '^\*mangle' /etc/ufw/before.rules 2>/dev/null; then
+            sed -i '/^\*filter/i\# TCP MSS Clamping - prevents PMTU blackhole (added by setup_mask.sh)\n*mangle\n:FORWARD ACCEPT [0:0]\n-A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu\nCOMMIT\n' /etc/ufw/before.rules
+        else
+            sed -i '/^\*mangle/a\-A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu' /etc/ufw/before.rules
+        fi
+    fi
+    if [ -f /etc/ufw/before6.rules ] && ! grep -q 'TCPMSS --clamp-mss-to-pmtu' /etc/ufw/before6.rules 2>/dev/null; then
+        if ! grep -q '^\*mangle' /etc/ufw/before6.rules 2>/dev/null; then
+            sed -i '/^\*filter/i\# TCP MSS Clamping IPv6 - prevents PMTU blackhole (added by setup_mask.sh)\n*mangle\n:FORWARD ACCEPT [0:0]\n-A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu\nCOMMIT\n' /etc/ufw/before6.rules
+        else
+            sed -i '/^\*mangle/a\-A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu' /etc/ufw/before6.rules
+        fi
     fi
 }
 

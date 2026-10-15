@@ -858,22 +858,26 @@ if enable_hy2:
 
 # 5. AmneziaWG v3.1
 if enable_awg_v3:
+    awg_i1_env = os.environ.get("AWG_I1", "").strip()
+    if awg_i1_env.lower() == "dns":
+        awg_i1_env = "<r 2><b 0x858000010001000000000669636c6f756403636f6d0000010001c00c000100010000105a00044d583737>"
     a3_set = {
         "clients": [{
             "privateKey": def_wg_c_priv, "publicKey": def_wg_c_pub,
             "allowedIPs": ["10.8.1.2/32"], "email": "Client-1", "enable": True
         }],
         "server": {
-            "disableCookies": True,
-            "h1": "", "h2": "", "h3": "", "h4": "", "jc": 2, "jmax": 50, "jmin": 20,
+            "disableCookies": False,
+            "h1": "1", "h2": "2", "h3": "3", "h4": "4", "jc": 4, "jmax": 70, "jmin": 40,
             "keepaliveTimeout": "15-20", "maxHandshakeAttempts": "20-25", "mtu": 1280,
             "primaryDns": awg_primary_dns, "secondaryDns": awg_secondary_dns,
             "privateKey": def_wg_s_priv, "publicKey": def_wg_s_pub,
             "headerProtectionKey": def_wg_hpk,
-            "randomTrailers": awg_random_trailers_env,
+            "randomTrailers": True,
             "rejectAfterTime": "180-210", "rekeyAfterTime": "120-170",
-            "rekeyTimeout": "3-4", "s1": 16, "s2": 20, "s3": 24, "s4": 16,
-            "subnetCidr": 22, "subnetIp": "10.8.0.0"
+            "rekeyTimeout": "3-4", "s1": 16, "s2": 16, "s3": 16, "s4": 16,
+            "subnetCidr": 22, "subnetIp": "10.8.0.0",
+            "i1": awg_i1_env
         }
     }
     a3_str = {"externalProxy": [{"dest": domain, "port": awg_v3_port, "remark": "AmneziaWG v3.1"}]}

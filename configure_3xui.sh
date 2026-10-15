@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  CONFIGURE 3X-UI INBOUNDS & SETTINGS (v7.6.0 Universal Companion & Smart Reconcile)
+#  CONFIGURE 3X-UI INBOUNDS & SETTINGS (v7.7.0 Universal Companion & Smart Reconcile)
 # ==============================================================================
 #  Скрипт автоматического конфигурирования и самовосстановления базы 3X-UI.
 #  Безопасен для повторного запуска:
@@ -1878,25 +1878,40 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             "jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "h1", "h2", "h3", "h4",
             "headerProtectionKey", "randomTrailers", "disableCookies", "mtu", "subnetIp", "subnetCidr",
             "keepaliveTimeout", "rekeyAfterTime", "rekeyTimeout", "rejectAfterTime", "maxHandshakeAttempts",
-            "i1", "i2", "i3", "i4", "i5"
+            "i1", "i2", "i3", "i4", "i5", "contentPaddingAddition", "cpa"
         ]:
             if param in cur_srv:
                 target_settings["server"][param] = cur_srv[param]
         if cur_srv.get("headerProtectionKey"):
             preserved.append("HeaderProtectionKey AWG")
-        # Аудит и скоростная оптимизация AmneziaWG (v3.1 и v2.0):
-        # 1. Ликвидация бага 100-кратного падения скорости от RandomTrailers
-        force_rt = os.environ.get("AWG_FORCE_RANDOM_TRAILERS", "").strip().lower() in ("1", "y", "true")
-        if target_settings["server"].get("randomTrailers") and not force_rt and not awg_random_trailers_env:
+        if cur_srv.get("contentPaddingAddition") or cur_srv.get("cpa"):
+            preserved.append("ContentPaddingAddition (CPA)")
+
+        # Аудит и оптимизация AmneziaWG (v3.1 и v2.0):
+        # 1. RandomTrailers:
+        # Для новых профилей по умолчанию отключен (off/False).
+        # На существующем инбаунде сохраняем действующее значение сервера, чтобы не нарушать wire-формат клиентов.
+        # Принудительно отключается только при явном указании AWG_DISABLE_RANDOM_TRAILERS=1.
+        disable_rt = os.environ.get("AWG_DISABLE_RANDOM_TRAILERS", "").strip().lower() in ("1", "y", "true")
+        if disable_rt and target_settings["server"].get("randomTrailers"):
             target_settings["server"]["randomTrailers"] = False
-            repairs.append("отключен randomTrailers (устранение критической 100-кратной просадки скорости)")
+            repairs.append("отключен randomTrailers по флагу AWG_DISABLE_RANDOM_TRAILERS")
 
-        # 1.1 Коррекция граничного условия таймингов в 3X-UI: max(rekey) < min(reject)
-        if target_settings["server"].get("rekeyAfterTime") == "120-180" and target_settings["server"].get("rejectAfterTime") == "180-210":
-            target_settings["server"]["rekeyAfterTime"] = "120-170"
-            repairs.append("исправлен rekeyAfterTime='120-170' (устранение пересечения с rejectAfterTime в 3X-UI)")
+        # 1.1 Коррекция граничного условия таймингов в 3X-UI: строго max(rekey) < min(reject)
+        rekey_val = str(target_settings["server"].get("rekeyAfterTime", ""))
+        reject_val = str(target_settings["server"].get("rejectAfterTime", ""))
+        if "-" in rekey_val and "-" in reject_val:
+            try:
+                r_parts = [int(x.strip()) for x in rekey_val.split("-", 1)]
+                rej_parts = [int(x.strip()) for x in reject_val.split("-", 1)]
+                if r_parts[1] >= rej_parts[0]:
+                    new_r_max = max(r_parts[0], rej_parts[0] - 10)
+                    target_settings["server"]["rekeyAfterTime"] = f"{r_parts[0]}-{new_r_max}"
+                    repairs.append(f"исправлен rekeyAfterTime='{r_parts[0]}-{new_r_max}' (обеспечение max(rekey) < min(reject) для валидатора 3X-UI)")
+            except (ValueError, IndexError):
+                pass
 
-        # 2. Фиксация безопасного MTU 1280 (устранение PMTU blackhole и сотовой фрагментации)
+        # 2. Фиксация базового MTU 1280 (уменьшение риска фрагментации)
         cur_mtu = target_settings["server"].get("mtu")
         try:
             cur_mtu_int = int(cur_mtu) if cur_mtu is not None else 1280
@@ -1904,12 +1919,12 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             cur_mtu_int = 1280
         if cur_mtu_int > 1280:
             target_settings["server"]["mtu"] = 1280
-            repairs.append(f"исправлен MTU={cur_mtu_int} -> 1280 (защита от сотовой фрагментации)")
+            repairs.append(f"исправлен MTU={cur_mtu_int} -> 1280 (базовый MTU)")
 
         # 3. Аудит смещений S1-S4: должны быть >= 12 при активном HeaderProtectionKey
         has_hpk = bool(target_settings["server"].get("headerProtectionKey"))
         if has_hpk:
-            s_defaults = {"s1": 16, "s2": 20, "s3": 24, "s4": 16}
+            s_defaults = {"s1": 16, "s2": 16, "s3": 16, "s4": 16}
             for s_param, min_val in [("s1", 12), ("s2", 12), ("s3", 12), ("s4", 12)]:
                 val = target_settings["server"].get(s_param)
                 try:
@@ -1918,26 +1933,34 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
                     val_int = 0
                 if val_int < min_val:
                     target_settings["server"][s_param] = s_defaults[s_param]
-                    repairs.append(f"исправлен {s_param}={val} -> {s_defaults[s_param]} (защита AWG 3.0+ от зависания handshake)")
+                    repairs.append(f"исправлен {s_param}={val} -> {s_defaults[s_param]} (требование HPK: S >= 12)")
 
-        # 4. Оптимизация мусорных пакетов Jc / Jmin / Jmax (ускорение инициализации сессии)
+        # 4. Валидация мусорных пакетов Jc / Jmin / Jmax (допустимый диапазон Jc: 0-128, J: 0-1280)
         cur_jc = target_settings["server"].get("jc")
         if cur_jc is not None:
             try:
-                if int(cur_jc) > 2:
-                    target_settings["server"]["jc"] = 2
-                    repairs.append(f"оптимизирован Jc={cur_jc} -> 2 (ускорение handshake)")
+                jc_int = int(cur_jc)
+                if jc_int < 0 or jc_int > 128:
+                    target_settings["server"]["jc"] = 4
+                    repairs.append(f"исправлен Jc={cur_jc} -> 4 (выход за пределы протокола 0-128)")
             except (TypeError, ValueError):
-                target_settings["server"]["jc"] = 2
+                target_settings["server"]["jc"] = 4
+                repairs.append(f"исправлен Jc={cur_jc} -> 4 (некорректное значение)")
+
+        cur_jmin = target_settings["server"].get("jmin")
         cur_jmax = target_settings["server"].get("jmax")
-        if cur_jmax is not None:
+        if cur_jmin is not None and cur_jmax is not None:
             try:
-                if int(cur_jmax) > 50:
-                    target_settings["server"]["jmin"] = 20
-                    target_settings["server"]["jmax"] = 50
-                    repairs.append("оптимизированы Jmin=20, Jmax=50 (снижение лишней нагрузки на канал)")
+                jmin_int = int(cur_jmin)
+                jmax_int = int(cur_jmax)
+                if jmin_int < 0 or jmax_int < 0 or jmin_int > jmax_int or jmax_int > 1280:
+                    target_settings["server"]["jmin"] = 40
+                    target_settings["server"]["jmax"] = 70
+                    repairs.append("исправлены некорректные Jmin/Jmax -> Jmin=40, Jmax=70")
             except (TypeError, ValueError):
-                pass
+                target_settings["server"]["jmin"] = 40
+                target_settings["server"]["jmax"] = 70
+                repairs.append("исправлены нечисловые Jmin/Jmax -> Jmin=40, Jmax=70")
 
     # Е. Проверка и сохранение externalProxy (:443 и кастомных хостов узлов)
     cur_ext = cur_stream.get("externalProxy", [])
@@ -2072,27 +2095,31 @@ if enable_hy2:
 
 # 5. AmneziaWG v3.1 (8443)
 if enable_awg_v3:
+    awg_i1_env = os.environ.get("AWG_I1", "").strip()
+    if awg_i1_env.lower() == "dns":
+        awg_i1_env = "<r 2><b 0x858000010001000000000669636c6f756403636f6d0000010001c00c000100010000105a00044d583737>"
     a3_set = {
         "clients": [{
             "privateKey": def_wg_c_priv, "publicKey": def_wg_c_pub,
             "allowedIPs": ["10.8.1.2/32"], "email": unified_email, "subId": unified_sub_id, "enable": True
         }],
         "server": {
-            "h1": "", "h2": "", "h3": "", "h4": "",
-            "jc": 2, "jmin": 20, "jmax": 50,
-            "s1": 16, "s2": 20, "s3": 24, "s4": 16,
+            "h1": "1", "h2": "2", "h3": "3", "h4": "4",
+            "jc": 4, "jmin": 40, "jmax": 70,
+            "s1": 16, "s2": 16, "s3": 16, "s4": 16,
             "mtu": 1280,
             "primaryDns": awg_primary_dns, "secondaryDns": awg_secondary_dns,
             "privateKey": def_wg_s_priv, "publicKey": def_wg_s_pub,
             "headerProtectionKey": unified_awg_hpk,
-            "randomTrailers": unified_awg_random_trailers,
-            "disableCookies": True,
+            "randomTrailers": True,
+            "disableCookies": False,
             "keepaliveTimeout": "15-20",
             "rekeyAfterTime": "120-170",
             "rekeyTimeout": "3-4",
             "rejectAfterTime": "180-210",
             "maxHandshakeAttempts": "20-25",
-            "subnetCidr": awg_subnet_cidr, "subnetIp": awg_subnet_ip
+            "subnetCidr": awg_subnet_cidr, "subnetIp": awg_subnet_ip,
+            "i1": awg_i1_env
         }
     }
     a3_str = {"externalProxy": [{"dest": domain, "port": awg_v3_port, "remark": make_remark("AmneziaWG v3")}]}

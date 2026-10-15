@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # ==============================================================================
-# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v7.6.0 Universal
+# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v7.7.0 Universal
 # Nginx L4 Stream + 3X-UI + Unix Sockets + Native proxy_http_version 2 + 3 Decoys
 # ==============================================================================
 # Архитектура:
@@ -27,7 +27,7 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="v7.6.0"
+SCRIPT_VERSION="v7.7.0"
 
 
 # @include "common/checkpoint.sh"
@@ -302,6 +302,15 @@ fi
 
 # @include "adguard/setup.sh"
 
+# @include "awg/setup.sh"
+
+if [[ "${ENABLE_AWG_V3:-}" == "1" || "${ENABLE_AWG_V3,,}" == "y" ]] || \
+   [[ "${ENABLE_AWG_V2:-}" == "1" || "${ENABLE_AWG_V2,,}" == "y" ]] || \
+   [[ "${ENABLE_AWG_STANDALONE:-}" == "1" || "${ENABLE_AWG_STANDALONE,,}" == "y" ]]; then
+    setup_amneziawg_controller
+    deploy_amneziawg_backend
+fi
+
 if [[ "${ENABLE_AWG_V2:-}" == "1" || "${ENABLE_AWG_V2,,}" == "y" ]] && [ -n "${AWG_V2_PORT:-}" ]; then
 echo -e "${YELLOW}ШАГ 6: Инбаунд AmneziaWG v2.0 / Legacy (UDP $AWG_V2_PORT):${NC}"
 echo -e "  - ${YELLOW}Вкладка «Основное»:${NC} Протокол: ${GREEN}amneziawg / wireguard${NC} | Адрес: ${GREEN}0.0.0.0${NC} | Порт: ${GREEN}$AWG_V2_PORT${NC} (UDP)"
@@ -310,6 +319,22 @@ echo -e "    * ${CYAN}H1-H4 (Строки):${NC} ${GREEN}\"149419586\", \"878791
 echo -e "    * ${CYAN}HeaderProtectionKey:${NC} ${RED}ПУСТО (Выключено)${NC}"
 echo -e "    * ${CYAN}Смещения (>= 12):${NC} ${GREEN}S1 = 16, S2 = 20, S3 = 24, S4 = 16${NC}"
 echo -e "    * ${CYAN}Junk packets:${NC} ${GREEN}Jc = 2, Jmin = 20, Jmax = 50${NC} | ${CYAN}MTU:${NC} ${GREEN}1280${NC}"
+echo
+fi
+
+if [[ "${ENABLE_AWG_V3:-}" == "1" || "${ENABLE_AWG_V3,,}" == "y" ]] || \
+   [[ "${ENABLE_AWG_V2:-}" == "1" || "${ENABLE_AWG_V2,,}" == "y" ]] || \
+   [[ "${ENABLE_AWG_STANDALONE:-}" == "1" || "${ENABLE_AWG_STANDALONE,,}" == "y" ]]; then
+echo -e "${YELLOW}СЕРВЕРНЫЙ КОНТРОЛЛЕР AMNEZIAWG (awg-mgr):${NC}"
+echo -e "  - ${YELLOW}Утилита управления:${NC}      ${GREEN}awg-mgr${NC} (или ${GREEN}awg-cli${NC})"
+echo -e "  - ${YELLOW}Первичный конфиг админа:${NC} ${CYAN}/root/awg/client-1.conf${NC}"
+echo -e "  - ${YELLOW}Основные команды CLI:${NC}"
+echo -e "    * Создать клиента:   ${CYAN}awg-mgr add <имя> [--expires=30d] [--dns=quad9|cloudflare|adguard|local]${NC}"
+echo -e "    * Показать список:   ${CYAN}awg-mgr list${NC}"
+echo -e "    * QR-код в терминал: ${CYAN}awg-mgr qr <имя>${NC}"
+echo -e "    * Удалить клиента:   ${CYAN}awg-mgr remove <имя>${NC}"
+echo -e "    * Резервная копия:   ${CYAN}awg-mgr backup${NC} / ${CYAN}awg-mgr restore <файл>${NC}"
+echo -e "    * Очистка истекших:  ${CYAN}awg-mgr purge-expired${NC} (также настроен в cron)"
 echo
 fi
 

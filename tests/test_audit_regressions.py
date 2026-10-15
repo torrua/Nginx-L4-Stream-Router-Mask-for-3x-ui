@@ -51,6 +51,118 @@ class TestAmneziaWG3XUISettings(unittest.TestCase):
         min_reject = int(m_reject.group(1))
         self.assertLess(max_rekey, min_reject, f"max(rekeyAfterTime) [{max_rekey}] must be strictly less than min(rejectAfterTime) [{min_reject}]")
 
+    def test_awg_cpa_in_reconcile_whitelist(self):
+        """Verify that contentPaddingAddition and cpa are preserved during smart_reconcile_inbound."""
+        inbounds_py = (ROOT / "src/xray/inbounds.py").read_text(encoding="utf-8")
+        self.assertIn('"contentPaddingAddition"', inbounds_py, "contentPaddingAddition must be preserved in smart_reconcile_inbound")
+        self.assertIn('"cpa"', inbounds_py, "cpa must be preserved in smart_reconcile_inbound")
+
+    def test_manage_amneziawg_no_random_hpk_fallback(self):
+        """Verify that manage_amneziawg.py does not invent random HPK for clients when server lacks HPK."""
+        mgr_py = (ROOT / "src/awg/manage_amneziawg.py").read_text(encoding="utf-8")
+        self.assertNotIn("HEADER_PROTECTION_KEY = base64.b64encode(secrets.token_bytes(32))", mgr_py,
+                         "manage_amneziawg.py must not generate random fallback HPK when server lacks HPK")
+
+    def test_awg_v3_template_parameters_consistency(self):
+        """Verify configure_3xui.sh and update_repair.sh have consistent AWG v3 parameters."""
+        conf_sh = (ROOT / "configure_3xui.sh").read_text(encoding="utf-8")
+        upd_sh = (ROOT / "update_repair.sh").read_text(encoding="utf-8")
+        for text, name in [(conf_sh, "configure_3xui.sh"), (upd_sh, "update_repair.sh")]:
+            self.assertIn('"jc": 4', text, f"AWG v3 in {name} must have jc=4")
+            self.assertIn('"jmin": 40', text, f"AWG v3 in {name} must have jmin=40")
+            self.assertIn('"jmax": 70', text, f"AWG v3 in {name} must have jmax=70")
+            self.assertIn('"s1": 16', text, f"AWG v3 in {name} must have s1=16")
+            self.assertIn('"s4": 16', text, f"AWG v3 in {name} must have s4=16")
+            self.assertIn('"h1": "1"', text, f"AWG v3 in {name} must have h1='1'")
+            self.assertIn('"h4": "4"', text, f"AWG v3 in {name} must have h4='4'")
+            self.assertIn('"disableCookies": False', text, f"AWG v3 in {name} must have disableCookies=False")
+
+    def test_awg_reconcile_does_not_clamp_jc(self):
+        """Verify smart_reconcile_inbound preserves valid jc and does not clamp down to 2."""
+        inbounds_py = (ROOT / "src/xray/inbounds.py").read_text(encoding="utf-8")
+        self.assertNotIn('if int(cur_jc) > 2:', inbounds_py,
+                         "smart_reconcile_inbound must not clamp jc to 2")
+        self.assertNotIn('if int(cur_jmax) > 50:', inbounds_py,
+                         "smart_reconcile_inbound must not clamp jmax to 50")
+
+    def test_awg_setup_template_parameters(self):
+        """Verify src/awg/setup.sh creates awg0.conf with matching AWG 3.1 blueprint."""
+        setup_sh = (ROOT / "src/awg/setup.sh").read_text(encoding="utf-8")
+        self.assertIn("Jc = 4", setup_sh, "awg0.conf blueprint must contain Jc = 4")
+        self.assertIn("Jmin = 40", setup_sh, "awg0.conf blueprint must contain Jmin = 40")
+        self.assertIn("Jmax = 70", setup_sh, "awg0.conf blueprint must contain Jmax = 70")
+        self.assertIn("S1 = 16", setup_sh, "awg0.conf blueprint must contain S1 = 16")
+        self.assertIn("S4 = 16", setup_sh, "awg0.conf blueprint must contain S4 = 16")
+        self.assertIn("H1 = 1", setup_sh, "awg0.conf blueprint must contain H1 = 1")
+        self.assertIn("H4 = 4", setup_sh, "awg0.conf blueprint must contain H4 = 4")
+        self.assertIn("RandomTrailers = on", setup_sh, "awg0.conf blueprint must contain RandomTrailers = on")
+        self.assertIn("DisableCookies = off", setup_sh, "awg0.conf blueprint must contain DisableCookies = off")
+
+    def test_awg_i1_dns_template_support(self):
+        """Verify that DNS_I1_TEMPLATE is defined and matches the icloud.com 44-byte DNS response."""
+        mgr_py = (ROOT / "src/awg/manage_amneziawg.py").read_text(encoding="utf-8")
+        self.assertIn("DNS_I1_TEMPLATE = ", mgr_py)
+        expected_template = "<r 2><b 0x858000010001000000000669636c6f756403636f6d0000010001c00c000100010000105a00044d583737>"
+        self.assertIn(expected_template, mgr_py)
+        self.assertIn('--i1=dns', mgr_py)
+
+    def test_awg_client_presets_and_vpnuri_consistency(self):
+        """Verify that client presets and per-client parameters (MTU, Jc, I1, Keepalive) propagate to vpn:// URI."""
+        import base64
+        import struct
+        import sys
+        import zlib
+        sys.path.insert(0, str((ROOT / "src/awg").resolve()))
+        import manage_amneziawg as mgr
+
+        # 1. Verify CLI argument support in source code
+        mgr_src = (ROOT / "src/awg/manage_amneziawg.py").read_text(encoding="utf-8")
+        for flag in ["--preset=", "--mtu=", "--jc=", "--jmin=", "--jmax=", "--keepalive=", "--allowed-ips="]:
+            self.assertIn(flag, mgr_src, f"CLI flag {flag} must be supported in manage_amneziawg.py")
+
+        # 2. Verify encode_amnezia_vpnuri_31 preserves asymmetric client parameters
+        conf_sample = """[Interface]
+Address = 10.8.1.99/32
+DNS = 1.1.1.1, 8.8.8.8
+PrivateKey = aGVsbG93b3JsZGhlbGxvd29ybGRoZWxsb3dvcmxkaGVsbG8=
+MTU = 1240
+Jc = 0
+Jmin = 0
+Jmax = 0
+S1 = 16
+S2 = 16
+S3 = 16
+S4 = 16
+H1 = 1
+H2 = 2
+H3 = 3
+H4 = 4
+I1 = <r 2><b 0x8580>
+
+[Peer]
+PublicKey = aGVsbG93b3JsZGhlbGxvd29ybGRoZWxsb3dvcmxkaGVsbG8=
+PresharedKey = aGVsbG93b3JsZGhlbGxvd29ybGRoZWxsb3dvcmxkaGVsbG8=
+AllowedIPs = 10.0.0.0/8
+Endpoint = 193.180.208.5:32626
+PersistentKeepalive = 15
+"""
+        vpnuri = mgr.encode_amnezia_vpnuri_31(conf_sample, "10.8.1.99", "priv", "pub")
+        self.assertTrue(vpnuri.startswith("vpn://"))
+        raw = base64.urlsafe_b64decode(vpnuri[6:] + "===")
+        orig_len = struct.unpack(">I", raw[:4])[0]
+        decomp = zlib.decompress(raw[4:])
+        self.assertEqual(len(decomp), orig_len)
+        data = json.loads(decomp)
+        awg = data["containers"][0]["awg"]
+        last = json.loads(awg["last_config"])
+
+        self.assertEqual(awg["Jc"], "0")
+        self.assertEqual(last["mtu"], "1240")
+        self.assertEqual(last["persistent_keep_alive"], "15")
+        self.assertEqual(last["I1"], "<r 2><b 0x8580>")
+        self.assertEqual(last["allowed_ips"], ["10.0.0.0/8"])
+        self.assertEqual(data["hostName"], "193.180.208.5")
+
 
 class TestDatabaseBackupSafety(unittest.TestCase):
     def setUp(self):

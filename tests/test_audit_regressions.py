@@ -21,6 +21,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 BASH = Path(r"C:\Program Files\Git\bin\bash.exe") if os.name == "nt" else Path(shutil.which("bash") or "bash")
+os.environ.setdefault("AWG_DIR", str(Path(tempfile.gettempdir()) / "awg_test_default"))
 
 
 def run_shell(code: str, env: dict | None = None) -> subprocess.CompletedProcess:
@@ -51,9 +52,12 @@ class TestAmneziaWGSecurityAndPersistence(unittest.TestCase):
         import importlib
         self.tmp_dir = tempfile.TemporaryDirectory()
         self.tmp = Path(self.tmp_dir.name)
+        os.environ["AWG_DIR"] = str(self.tmp)
         self.awg = importlib.reload(load_awg_module())
+        self.awg.AWG_DIR = self.tmp
 
     def tearDown(self):
+        os.environ.pop("AWG_DIR", None)
         self.tmp_dir.cleanup()
 
     def test_awg_remove_path_traversal(self):

@@ -56,8 +56,6 @@
 | [setup_mask.sh](<C:/Users/User/Dropbox/Python/PRIZI/gemini-discussions/how-to-setup-awg-on-dokploy/setup_mask.sh>) | 6019 | Мастер, Nginx, сертификаты, decoy, DNS | Большой монолит, неполная автоматическая ветка, destructive apply |
 | [configure_3xui.sh](<C:/Users/User/Dropbox/Python/PRIZI/gemini-discussions/how-to-setup-awg-on-dokploy/configure_3xui.sh>) | 2233 | Reconcile SQLite, клиенты, WARP, core update | Миграции идентичностей, сохранность состояния, версии схем |
 | [update_repair.sh](<C:/Users/User/Dropbox/Python/PRIZI/gemini-discussions/how-to-setup-awg-on-dokploy/update_repair.sh>) | 1088 | Второй reconcile engine и rollback | Расхождение с configurator, отсутствие аварийного cleanup |
-| [manage_amneziawg.py](<C:/Users/User/Dropbox/Python/PRIZI/gemini-discussions/how-to-setup-awg-on-dokploy/manage_amneziawg.py>) | 615 | Контроллер AWG в Docker для awg_bot | Пути, конкуренция, блокировка, состояние host/container |
-| [manage_amneziawg.sh](<C:/Users/User/Dropbox/Python/PRIZI/gemini-discussions/how-to-setup-awg-on-dokploy/manage_amneziawg.sh>) | 3 | Launcher Python-контроллера | Жесткий путь `/root/awg`, не включен в поставку |
 
 Итого: **11 409 строк исполняемых исходников**. Значительная часть `setup_mask.sh` — HTML/CSS/JS двух decoy-сайтов; это увеличивает размер поставки и связность без соответствующего усложнения самой маршрутизации.
 

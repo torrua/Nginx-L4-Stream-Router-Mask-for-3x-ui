@@ -12,3 +12,8 @@ scratch/
 .tmp/
 __pycache__/
 *.pyc
+
+# Local standalone AWG bot files (not part of main repo)
+manage_amneziawg.py
+manage_amneziawg.sh
+.local_awg_backup/

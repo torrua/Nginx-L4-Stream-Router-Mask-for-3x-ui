@@ -21,7 +21,6 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 BASH = Path(r"C:\Program Files\Git\bin\bash.exe") if os.name == "nt" else Path(shutil.which("bash") or "bash")
-os.environ.setdefault("AWG_DIR", str(Path(tempfile.gettempdir()) / "awg_test_default"))
 
 
 def run_shell(code: str, env: dict | None = None) -> subprocess.CompletedProcess:
@@ -40,140 +39,7 @@ def run_shell(code: str, env: dict | None = None) -> subprocess.CompletedProcess
     )
 
 
-def load_awg_module():
-    import sys
-    sys.path.insert(0, str(ROOT))
-    import manage_amneziawg as m
-    return m
-
-
-class TestAmneziaWGSecurityAndPersistence(unittest.TestCase):
-    def setUp(self):
-        import importlib
-        self.tmp_dir = tempfile.TemporaryDirectory()
-        self.tmp = Path(self.tmp_dir.name)
-        os.environ["AWG_DIR"] = str(self.tmp)
-        self.awg = importlib.reload(load_awg_module())
-        self.awg.AWG_DIR = self.tmp
-
-    def tearDown(self):
-        os.environ.pop("AWG_DIR", None)
-        self.tmp_dir.cleanup()
-
-    def test_awg_remove_path_traversal(self):
-        """R02: remove_client rejects traversal and does not delete files outside AWG_DIR."""
-        exports = self.tmp / "exports"
-        exports.mkdir()
-        victim = self.tmp / "victim.conf"
-        victim.write_text("critical-system-data", encoding="utf-8")
-
-        self.awg.AWG_DIR = exports
-        self.awg.CONTAINER = "fixture"
-        self.awg.load_clients_table = lambda: []
-        self.awg.save_clients_table = lambda _: None
-        self.awg.read_container_file = lambda _: ""
-
-        res = self.awg.remove_client("../victim")
-        self.assertFalse(res["ok"], "remove_client must return ok=False on traversal attempt")
-        self.assertTrue(victim.exists(), "Victim file outside export dir must never be unlinked")
-
-        # Absolute path attack
-        res_abs = self.awg.remove_client(str(victim))
-        self.assertFalse(res_abs["ok"], "remove_client must reject absolute paths")
-        self.assertTrue(victim.exists(), "Victim file must still exist after absolute path attack")
-
-    def test_awg_block_restart_configuration(self):
-        """R03: block_client removes peer from awg0.conf; unblock_client restores it."""
-        config = (
-            "[Interface]\n"
-            "Address = 10.8.0.1/24\n\n"
-            "# client: alice\n"
-            "[Peer]\n"
-            "PublicKey = fixture-key-alice\n"
-            "PresharedKey = fixture-psk\n"
-            "AllowedIPs = 10.8.0.2/32\n"
-        )
-        table = [{
-            "clientId": "fixture-key-alice",
-            "userData": {
-                "clientName": "alice",
-                "allowed_ips": "10.8.0.2/32",
-                "blocked": False
-            }
-        }]
-
-        current_config = config
-        def mock_write(path, content):
-            nonlocal current_config
-            if "awg0.conf" in str(path):
-                current_config = content
-
-        def mock_append(path, content):
-            nonlocal current_config
-            if "awg0.conf" in str(path):
-                current_config += content
-
-        self.awg.CONTAINER = "fixture"
-        self.awg.load_clients_table = lambda: table
-        self.awg.save_clients_table = lambda t: None
-        self.awg.read_container_file = lambda p: current_config
-        self.awg.write_container_file = mock_write
-        self.awg.append_container_file = mock_append
-        self.awg.run_cmd = lambda *a, **kw: ("", "", 0)
-        self.awg.get_server_psk = lambda: "fixture-psk"
-
-        # 1. Block client
-        res_block = self.awg.block_client("alice")
-        self.assertTrue(res_block["ok"])
-        self.assertTrue(table[0]["userData"]["blocked"])
-        self.assertNotIn("PublicKey = fixture-key-alice", current_config,
-                         "Blocked peer must be removed from awg0.conf to prevent re-enabling upon container reboot")
-
-        # 2. Unblock client
-        res_unblock = self.awg.unblock_client("alice")
-        self.assertTrue(res_unblock["ok"])
-        self.assertFalse(table[0]["userData"]["blocked"])
-        self.assertIn("PublicKey = fixture-key-alice", current_config,
-                      "Unblocked peer must be restored to awg0.conf")
-
-    def test_awg_persistent_write_failure_raises(self):
-        """R05: persistent write failure raises IOError and is not swallowed."""
-        self.awg.CONTAINER = "fixture"
-        self.awg.run_cmd = lambda *a, **kw: ("", "mocked docker error", 1)
-
-        with self.assertRaises(IOError):
-            self.awg.write_container_file(str(self.tmp / "nonexistent_sub" / "clientsTable"), "test")
-
-    def test_awg_config_defaults_and_dns_formatting(self):
-        """Verify AWG 3.1 safe defaults: RandomTrailers='off', DNS formatted, S1..S4 safe, no literal variables."""
-        self.assertEqual(self.awg.RANDOM_TRAILERS, "off", "RandomTrailers must default to 'off' to avoid 100x slowdown")
-        self.assertEqual(self.awg.DISABLE_COOKIES, "on", "DisableCookies must default to 'on'")
-        self.assertEqual(self.awg.PRIMARY_DNS, "9.9.9.9")
-        self.assertEqual(self.awg.SECONDARY_DNS, "76.76.2.0")
-        self.assertGreaterEqual(int(self.awg.S1), 12, "S1 must be >= 12 for HeaderProtectionKey")
-        self.assertNotEqual(int(self.awg.S1) + 56, int(self.awg.S2), "S1 + 56 must not equal S2")
-
-        # Test URI generation doesn't contain literal '$PRIMARY_DNS'
-        self.awg.get_server_pubkey = lambda: "pubkey"
-        self.awg.get_server_psk = lambda: "psk"
-        uri = self.awg.encode_amnezia_vpnuri_31("dummy", "10.8.0.2", "priv", "pub")
-        self.assertTrue(uri.startswith("vpn://"))
-
-        # Test add_client generated conf
-        self.awg.AWG_DIR = self.tmp
-        self.awg.find_next_ip = lambda: "10.8.0.2"
-        self.awg.run_cmd = lambda cmd, *a, **kw: ("key_out" if "genkey" in cmd or "pubkey" in cmd else "", "", 0)
-        self.awg.append_container_file = lambda *a, **kw: None
-        self.awg.save_clients_table = lambda *a, **kw: None
-        res = self.awg.add_client("alice")
-        self.assertTrue(res["ok"])
-        conf_path = self.tmp / "alice.conf"
-        self.assertTrue(conf_path.exists())
-        conf_text = conf_path.read_text(encoding="utf-8")
-        self.assertNotIn("$PRIMARY_DNS", conf_text, "Conf must not contain literal bash variable string")
-        self.assertIn("DNS = 9.9.9.9, 76.76.2.0", conf_text)
-        self.assertIn("RandomTrailers = off", conf_text)
-
+class TestAmneziaWG3XUISettings(unittest.TestCase):
     def test_awg_rekey_reject_no_overlap(self):
         """Verify that max(rekeyAfterTime) < min(rejectAfterTime) in 3X-UI template."""
         conf_sh = (ROOT / "configure_3xui.sh").read_text(encoding="utf-8")

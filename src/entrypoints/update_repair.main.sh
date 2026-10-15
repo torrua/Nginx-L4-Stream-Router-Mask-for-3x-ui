@@ -351,7 +351,7 @@ sub_path = sub_path.strip("/")
 sub_clash_env = os.environ.get("SUB_CLASH_PATH", "").strip().strip("/")
 if sub_clash_env:
     sub_clash_path = sub_clash_env
-elif existing_settings.get("subClashPath"):
+elif existing_settings.get("subClashPath") and existing_settings.get("subClashPath").strip("/") != f"{sub_path}clash":
     sub_clash_path = existing_settings.get("subClashPath").strip("/")
 else:
     sub_clash_path = f"{sub_path}/clash"
@@ -438,7 +438,11 @@ if is_custom_sub and not force_sub:
     target_sub_json_path = existing_settings.get("subJsonPath") or f"/{sub_path.strip('/')}/json/"
     target_sub_json_uri = existing_settings.get("subJsonURI") or f"https://{domain}{target_sub_json_path}"
     target_sub_clash_path = existing_settings.get("subClashPath") or f"/{sub_clash_path.strip('/')}/"
+    if target_sub_clash_path.strip("/") == f"{sub_path}clash":
+        target_sub_clash_path = f"/{sub_clash_path.strip('/')}/"
     target_sub_clash_uri = existing_settings.get("subClashURI") or f"https://{domain}{target_sub_clash_path}"
+    if target_sub_clash_uri.endswith(f"{sub_path}clash/"):
+        target_sub_clash_uri = f"https://{domain}{target_sub_clash_path}"
 else:
     target_sub_uri = f"https://{domain}/{sub_path}/"
     target_sub_domain = domain
@@ -945,7 +949,7 @@ else
     echo -e "  - ${BOLD}Подключения клиентов:${NC}   ${GREEN}Сохранены без разрыва и сброса ключей${NC}"
     echo -e "  - ${BOLD}Вход в панель 3X-UI:${NC}    ${CYAN}https://${PRIMARY_DOMAIN:-домен}/${PANEL_PATH:-my-3x-panel}/${NC}"
     echo -e "  - ${BOLD}Ссылка на подписку:${NC}     ${CYAN}https://${PRIMARY_DOMAIN:-домен}/${SUB_PATH:-my-post-key}/${NC}"
-    echo -e "  - ${BOLD}Ссылка (Clash):${NC}         ${CYAN}https://${PRIMARY_DOMAIN:-домен}/${SUB_CLASH_PATH:-${SUB_PATH:-my-post-key}clash}/${NC}"
+    echo -e "  - ${BOLD}Ссылка (Clash):${NC}         ${CYAN}https://${PRIMARY_DOMAIN:-домен}/${SUB_CLASH_PATH:-${SUB_PATH:-my-post-key}/clash}/${NC}"
 fi
 echo -e "${GREEN}=====================================================================${NC}"
 echo

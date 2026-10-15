@@ -626,7 +626,15 @@ else:
     else:
         import secrets
         sub_path = "sub-" + secrets.token_hex(4)
-sub_clash_path = (os.environ.get("SUB_CLASH_PATH") or existing_settings.get("subClashPath") or f"{sub_path}clash").strip("/")
+sub_clash_env = (os.environ.get("SUB_CLASH_PATH") or "").strip().strip("/")
+if sub_clash_env:
+    sub_clash_path = sub_clash_env
+else:
+    sub_clash_db = (existing_settings.get("subClashPath") or "").strip().strip("/")
+    if sub_clash_db and sub_clash_db != f"{sub_path}clash":
+        sub_clash_path = sub_clash_db
+    else:
+        sub_clash_path = f"{sub_path}/clash"
 
 xhttp_port = int(os.environ.get("XHTTP_STREAM_PORT") or "50443")
 xhttp_raw_path = (os.environ.get("XHTTP_STREAM_PATH") or "").strip("/")
@@ -994,7 +1002,11 @@ if is_custom_sub and not force_sub:
     target_sub_json_path = existing_settings.get("subJsonPath") or f"/{sub_path.strip('/')}/json/"
     target_sub_json_uri = existing_settings.get("subJsonURI") or f"https://{domain}{target_sub_json_path}"
     target_sub_clash_path = existing_settings.get("subClashPath") or f"/{sub_clash_path.strip('/')}/"
+    if target_sub_clash_path.strip("/") == f"{sub_path}clash":
+        target_sub_clash_path = f"/{sub_clash_path.strip('/')}/"
     target_sub_clash_uri = existing_settings.get("subClashURI") or f"https://{domain}{target_sub_clash_path}"
+    if target_sub_clash_uri.endswith(f"{sub_path}clash/"):
+        target_sub_clash_uri = f"https://{domain}{target_sub_clash_path}"
 else:
     target_sub_uri = f"https://{domain}/{sub_path}/"
     target_sub_domain = domain

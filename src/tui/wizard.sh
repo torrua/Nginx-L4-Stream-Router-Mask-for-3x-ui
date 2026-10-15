@@ -174,8 +174,8 @@ if [ "$EXPRESS_MODE" -eq 1 ]; then
     SUB_PORT="55443"
     RAW_SUB_PATH="sub-$(head -c 64 /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 6 || echo "${RANDOM}")"
     SUB_PATH="/${RAW_SUB_PATH}/"
-    SUB_JSON_PATH="${SUB_PATH}json/"
-    SUB_CLASH_PATH="${SUB_PATH}clash/"
+    SUB_JSON_PATH="${SUB_PATH%/}/json/"
+    SUB_CLASH_PATH="${SUB_PATH%/}/clash/"
     XHTTP_STREAM_PORT="50443"
     RAW_XHTTP_STREAM_PATH="$(head -c 64 /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "xh${RANDOM}")"
     XHTTP_STREAM_PATH="/${RAW_XHTTP_STREAM_PATH}/"
@@ -395,8 +395,8 @@ for item in res:
         RAW_SUB_PATH="${RAW_SUB_PATH#/}"; RAW_SUB_PATH="${RAW_SUB_PATH%/}"
         validate_path_segment "$RAW_SUB_PATH" "URI подписок"
         SUB_PATH="/${RAW_SUB_PATH#/}"; SUB_PATH="${SUB_PATH%/}/"
-        SUB_JSON_PATH="${SUB_PATH}json/"
-        SUB_CLASH_PATH="${SUB_PATH}clash/"
+        SUB_JSON_PATH="${SUB_PATH%/}/json/"
+        SUB_CLASH_PATH="${SUB_PATH%/}/clash/"
 
         XHTTP_STREAM_PORT="${XHTTP_STREAM_PORT:-50443}"
         RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH:-${XHTTP_STREAM_PATH:-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "xh${RANDOM}")}}"
@@ -752,8 +752,8 @@ for item in res:
             prompt_default "  Секретный URI-путь подписок (без слэшей)" "$r_sub" RAW_SUB_PATH || return $?
             validate_path_segment "$RAW_SUB_PATH" "URI подписок"
             SUB_PATH="/${RAW_SUB_PATH#/}"; SUB_PATH="${SUB_PATH%/}/"
-            SUB_JSON_PATH="${SUB_PATH}json/"
-            SUB_CLASH_PATH="${SUB_PATH}clash/"
+            SUB_JSON_PATH="${SUB_PATH%/}/json/"
+            SUB_CLASH_PATH="${SUB_PATH%/}/clash/"
             prompt_default "  Заголовок подписки для клиентов (Enter - без заголовка)" "${SUB_TITLE:-}" SUB_TITLE || return $?
 
             prompt_default "  Внутренний порт инбаунда VLESS xHTTP" "${XHTTP_STREAM_PORT:-50443}" XHTTP_STREAM_PORT || return $?
@@ -780,8 +780,8 @@ for item in res:
             [ -n "${RAW_SUB_PATH:-}" ] || RAW_SUB_PATH="sub-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "sub${RANDOM}")"
             RAW_SUB_PATH="${RAW_SUB_PATH#/}"; RAW_SUB_PATH="${RAW_SUB_PATH%/}"
             SUB_PATH="/${RAW_SUB_PATH#/}"; SUB_PATH="${SUB_PATH%/}/"
-            SUB_JSON_PATH="${SUB_PATH}json/"
-            SUB_CLASH_PATH="${SUB_PATH}clash/"
+            SUB_JSON_PATH="${SUB_PATH%/}/json/"
+            SUB_CLASH_PATH="${SUB_PATH%/}/clash/"
 
             XHTTP_STREAM_PORT="${XHTTP_STREAM_PORT:-50443}"
             [ -n "${RAW_XHTTP_STREAM_PATH:-}" ] || RAW_XHTTP_STREAM_PATH="$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "xh${RANDOM}")"

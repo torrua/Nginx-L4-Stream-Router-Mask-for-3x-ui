@@ -94,7 +94,7 @@ reconstruct_arrays_from_vars() {
     RAW_SUB_PATH="${RAW_SUB_PATH%/}"
     SUB_PATH="/${RAW_SUB_PATH}/"
     SUB_JSON_PATH="${SUB_PATH}json/"
-    local _c_path="${SUB_CLASH_PATH:-${RAW_SUB_CLASH_PATH:-${SUB_PATH}clash/}}"
+    local _c_path="${SUB_CLASH_PATH:-${RAW_SUB_CLASH_PATH:-${SUB_PATH%/}/clash/}}"
     _c_path="${_c_path#/}"; _c_path="${_c_path%/}"
     SUB_CLASH_PATH="/${_c_path}/"
 

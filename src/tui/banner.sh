@@ -121,7 +121,7 @@ SERVER_PREFIX="Server"
 
 SUB_PORT="55443"
 SUB_PATH=""
-# Секретный путь для Clash/Mihomo подписок (по умолчанию: <SUB_PATH>clash)
+# Секретный путь для Clash/Mihomo подписок (по умолчанию: <SUB_PATH>/clash)
 SUB_CLASH_PATH=""
 SUB_TITLE=""
 

@@ -203,6 +203,8 @@ class TestRoutingCustomConstraints(unittest.TestCase):
 
         conn = sqlite3.connect(db)
         current = json.loads(conn.execute("SELECT value FROM settings WHERE key='xrayTemplateConfig'").fetchone()[0])
+        clash_path = conn.execute("SELECT value FROM settings WHERE key='subClashPath'").fetchone()[0]
+        clash_uri = conn.execute("SELECT value FROM settings WHERE key='subClashURI'").fetchone()[0]
         conn.close()
 
         rules = current["routing"]["rules"]
@@ -211,6 +213,10 @@ class TestRoutingCustomConstraints(unittest.TestCase):
 
         self.assertTrue(user_constraint, "Custom constraint 'user: [alice]' must be preserved")
         self.assertTrue(custom_net, "Custom network '203.0.113.0/24' must be preserved")
+        self.assertTrue(clash_path.endswith("/clash/"), f"subClashPath [{clash_path}] must end with /clash/")
+        self.assertRegex(clash_path, r"^/sub-[^/]+/clash/$", f"subClashPath [{clash_path}] must have slash before clash")
+        self.assertTrue(clash_uri.endswith("/clash/"), f"subClashURI [{clash_uri}] must end with /clash/")
+        self.assertRegex(clash_uri, r"^https://audit\.example/sub-[^/]+/clash/$", f"subClashURI [{clash_uri}] must be slash-separated")
 
 
 class TestPreflightAndNetworkConflicts(unittest.TestCase):

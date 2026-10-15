@@ -35,12 +35,17 @@ run_with_spinner() {
         if [ "${DEBUG_MODE:-0}" -eq 1 ]; then
             echo -e "\n  ${CYAN}[DEBUG]${NC} ${WHITE}▶ $task_name${NC}"
             echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
+            local _prev_e=0
+            [[ "$-" =~ e ]] && _prev_e=1
+            set +e
             if declare -f "$1" >/dev/null 2>&1; then
-                export -f "$1" 2>/dev/null || true
-                bash -euo pipefail -c '"$@"' -- "$@" || exit_code=$?
+                ( shopt -s inherit_errexit 2>/dev/null || true; set -euo pipefail; "$@" )
+                exit_code=$?
             else
-                bash -euo pipefail -c "$*" || exit_code=$?
+                ( shopt -s inherit_errexit 2>/dev/null || true; set -euo pipefail; eval "$*" )
+                exit_code=$?
             fi
+            [ "$_prev_e" -eq 1 ] && set -e
             if [ $exit_code -eq 0 ]; then
                 echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
                 echo -e "  ${GREEN}${CHECK}${NC}  ${WHITE}$task_name${NC} ${GREEN}[ГОТОВО]${NC}\n"

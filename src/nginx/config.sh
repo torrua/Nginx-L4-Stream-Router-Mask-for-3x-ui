@@ -226,6 +226,30 @@ else
     DEFAULT_FALLBACK="nginx_http_backend"
 fi
 
+# 2.1. Адаптация сторонних HTTPS-сайтов для бесконфликтной работы со Stream L4 роутером
+for vf in /etc/nginx/sites-enabled/* /etc/nginx/conf.d/*.conf; do
+    [ -f "$vf" ] || continue
+    b_name=$(basename "$vf")
+    case "$b_name" in
+        default|default.conf|01-main.conf|02-*.conf|03-adguard.conf|vpn_mask.conf)
+            continue
+            ;;
+    esac
+    if grep -Eq 'listen[[:space:]]+([^;]*:)?443' "$vf" 2>/dev/null; then
+        if ! grep -q 'listen[[:space:]]+unix:' "$vf" 2>/dev/null; then
+            log "Адаптация vhost $b_name: перенос listen 443 на сокет unix:/dev/shm/nginx-http.sock..."
+            sed -i -E 's/listen[[:space:]]+([^;]*:)?443[[:space:]]*ssl[[:space:]]*([^;]*);/listen unix:\/dev\/shm\/nginx-http.sock ssl \2 proxy_protocol;/g' "$vf" 2>/dev/null || true
+            sed -i -E 's/listen[[:space:]]+([^;]*:)?443[[:space:]]*([^;]*);/listen unix:\/dev\/shm\/nginx-http.sock ssl \2 proxy_protocol;/g' "$vf" 2>/dev/null || true
+            sn_list=$(grep -E '^[[:space:]]*server_name[[:space:]]+' "$vf" 2>/dev/null | sed -E 's/^[[:space:]]*server_name[[:space:]]+([^;]+);/\1/' || true)
+            for s_dom in $sn_list; do
+                if [ "$s_dom" != "_" ] && [[ ! "$STREAM_MAP_RULES" =~ "$s_dom" ]]; then
+                    STREAM_MAP_RULES+="        ${s_dom}     nginx_http_backend;"$'\n'
+                fi
+            done
+        fi
+    fi
+done
+
 cat << EOF > "/etc/nginx/stream.d/00-stream.conf"
 map \$ssl_preread_server_name \$backend_gate {
     hostnames;
@@ -823,7 +847,10 @@ EOF
         rm -f "/etc/nginx/conf.d/03-adguard.conf" 2>/dev/null || true
     fi
 
-    run_with_spinner "Тестирование конфигурации и перезапуск Nginx Mainline" nginx_reload_task || die "Ошибка запуска Nginx."
+    run_with_spinner "Тестирование конфигурации и перезапуск Nginx Mainline" nginx_reload_task || {
+        restore_nginx_configs
+        die "Ошибка запуска Nginx. Конфигурация автоматически возвращена в исходное состояние."
+    }
     step_finish 6
 fi
 

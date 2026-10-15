@@ -29,28 +29,71 @@ ok()   { echo -e "${GREEN}[OK]${NC} $*"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 die()  { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 
-# SQLite WAL-safe live database backup
+# SQLite WAL-safe live database backup and verification
+get_sqlite_backup_python() {
+    if [ -n "${PYTHON_CMD:-}" ] && "$PYTHON_CMD" -c "import sqlite3" 2>/dev/null; then
+        echo "$PYTHON_CMD"
+        return 0
+    fi
+    if python3 -c "import sqlite3" 2>/dev/null; then
+        echo "python3"
+        return 0
+    fi
+    if python -c "import sqlite3" 2>/dev/null; then
+        echo "python"
+        return 0
+    fi
+    return 1
+}
+
+verify_sqlite_backup() {
+    local bkp="$1"
+    local py_cmd="$2"
+    if [ ! -s "$bkp" ]; then
+        return 1
+    fi
+    if [ -n "$py_cmd" ]; then
+        "$py_cmd" -c "
+import sqlite3, sys
+try:
+    conn = sqlite3.connect(sys.argv[1])
+    res = conn.execute('PRAGMA integrity_check;').fetchall()
+    conn.close()
+    if res and res[0][0] == 'ok':
+        sys.exit(0)
+    sys.exit(1)
+except Exception:
+    sys.exit(1)
+" "$bkp" 2>/dev/null && return 0
+    elif command -v sqlite3 >/dev/null 2>&1; then
+        local check
+        check=$(sqlite3 "$bkp" "PRAGMA integrity_check;" 2>/dev/null || true)
+        [ "$check" = "ok" ] && return 0
+    fi
+    return 1
+}
+
 backup_sqlite_db() {
     local src="$1"
     local dst="$2"
     if [ ! -f "$src" ]; then
         return 1
     fi
-    local py_cmd="${PYTHON_CMD:-python3}"
-    if ! command -v "$py_cmd" >/dev/null 2>&1; then
-        if command -v python3 >/dev/null 2>&1; then
-            py_cmd="python3"
-        elif command -v python >/dev/null 2>&1; then
-            py_cmd="python"
-        fi
-    fi
+    local py_cmd
+    py_cmd=$(get_sqlite_backup_python || true)
 
-    if command -v "$py_cmd" >/dev/null 2>&1; then
+    local backup_ok=0
+
+    # 1. Primary: Python SQLite Online Backup API (atomic, WAL-safe)
+    if [ -n "$py_cmd" ]; then
         if "$py_cmd" -c "
 import sqlite3, sys
 src_p, dst_p = sys.argv[1], sys.argv[2]
 try:
-    src_conn = sqlite3.connect(f'file:{src_p}?mode=ro', uri=True)
+    try:
+        src_conn = sqlite3.connect(f'file:{src_p}?mode=ro', uri=True)
+    except Exception:
+        src_conn = sqlite3.connect(src_p)
     dst_conn = sqlite3.connect(dst_p)
     with dst_conn:
         src_conn.backup(dst_conn)
@@ -60,19 +103,29 @@ try:
 except Exception:
     sys.exit(1)
 " "$src" "$dst" 2>/dev/null; then
-            chmod 600 "$dst" 2>/dev/null || true
-            return 0
+            if verify_sqlite_backup "$dst" "$py_cmd"; then
+                backup_ok=1
+            fi
         fi
     fi
 
-    if command -v sqlite3 >/dev/null 2>&1; then
+    # 2. Secondary: sqlite3 CLI .backup command (atomic, WAL-safe)
+    if [ "$backup_ok" -eq 0 ] && command -v sqlite3 >/dev/null 2>&1; then
         if sqlite3 "$src" ".backup '$dst'" 2>/dev/null; then
-            chmod 600 "$dst" 2>/dev/null || true
-            return 0
+            if verify_sqlite_backup "$dst" "$py_cmd"; then
+                backup_ok=1
+            fi
         fi
     fi
 
-    cp -a "$src" "$dst" 2>/dev/null && chmod 600 "$dst" 2>/dev/null || return 1
+    if [ "$backup_ok" -eq 1 ]; then
+        chmod 600 "$dst" 2>/dev/null || true
+        return 0
+    fi
+
+    # Never silently downgrade to raw cp of a live WAL database; fail safe and clean up
+    rm -f "$dst" 2>/dev/null || true
+    return 1
 }
 
 
@@ -445,13 +498,14 @@ fi
 
 log "Используется база данных 3X-UI: $DB_PATH"
 
-# Резервное копирование базы данных перед внесением изменений
 if [ "$DRY_RUN" -eq 0 ]; then
     BACKUP_TS="$(date +%Y%m%d_%H%M%S)"
     BACKUP_DB="${DB_PATH}.bak.${BACKUP_TS}"
-    backup_sqlite_db "$DB_PATH" "$BACKUP_DB" || warn "Не удалось выполнить онлайн-бэкап базы данных через Backup API."
+    if ! backup_sqlite_db "$DB_PATH" "$BACKUP_DB"; then
+        die "Критическая ошибка: невозможно создать проверенную резервную копию базы данных $DB_PATH. Внесение изменений отменено во избежание повреждения данных."
+    fi
     chmod 600 "$BACKUP_DB" 2>/dev/null || true
-    ok "Создана резервная копия базы данных: $BACKUP_DB"
+    ok "Создана проверенная резервная копия базы данных: $BACKUP_DB"
 fi
 
 # Экспорт переменных окружения для Python
@@ -1372,10 +1426,32 @@ if enable_warp:
             r["domain"] = list(cur_domains)
             yt_rule = r
             continue
-        # Direct-правило для RU: разделяем domain и ip
+        # Direct-правило для RU: разделяем domain и ip с сохранением пользовательских ограничений
         if tag == "direct" and ("geoip:ru" in r.get("ip", []) or any("domain:ru" in str(d).lower() for d in r.get("domain", []))):
             cur_d = [d for d in r.get("domain", []) if d not in bad_geosites]
             cur_ip = list(r.get("ip", []))
+            has_custom_constraints = bool(
+                r.get("user") or r.get("inboundTag") or r.get("network") or r.get("port") or r.get("protocol") or
+                any(ip != "geoip:ru" for ip in cur_ip)
+            )
+            if has_custom_constraints:
+                # Пользовательское правило с ограничениями или кастомными сетями:
+                # сохраняем все ограничения и исходные IP, аккуратно разделяя domain и ip
+                if cur_d and cur_ip:
+                    r_d = dict(r)
+                    r_d["domain"] = cur_d
+                    r_d.pop("ip", None)
+                    cleaned_existing_rules.append(r_d)
+
+                    r_ip = dict(r)
+                    r_ip["ip"] = cur_ip
+                    r_ip.pop("domain", None)
+                    cleaned_existing_rules.append(r_ip)
+                else:
+                    cleaned_existing_rules.append(r)
+                continue
+
+            # Системное общее правило RU без ограничений:
             if cur_d:
                 cur_d_set = set(cur_d)
                 cur_d_set.update(ru_domains)
@@ -1384,7 +1460,15 @@ if enable_warp:
                     "outboundTag": "direct",
                     "domain": list(cur_d_set)
                 }
-            if cur_ip or "geoip:ru" not in cur_ip:
+            if cur_ip:
+                cur_ip_set = set(cur_ip)
+                cur_ip_set.add("geoip:ru")
+                ru_ip_rule = {
+                    "type": "field",
+                    "outboundTag": "direct",
+                    "ip": list(cur_ip_set)
+                }
+            else:
                 ru_ip_rule = {
                     "type": "field",
                     "outboundTag": "direct",

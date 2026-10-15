@@ -389,13 +389,14 @@ fi
 
 log "Используется база данных 3X-UI: $DB_PATH"
 
-# Резервное копирование базы данных перед внесением изменений
 if [ "$DRY_RUN" -eq 0 ]; then
     BACKUP_TS="$(date +%Y%m%d_%H%M%S)"
     BACKUP_DB="${DB_PATH}.bak.${BACKUP_TS}"
-    backup_sqlite_db "$DB_PATH" "$BACKUP_DB" || warn "Не удалось выполнить онлайн-бэкап базы данных через Backup API."
+    if ! backup_sqlite_db "$DB_PATH" "$BACKUP_DB"; then
+        die "Критическая ошибка: невозможно создать проверенную резервную копию базы данных $DB_PATH. Внесение изменений отменено во избежание повреждения данных."
+    fi
     chmod 600 "$BACKUP_DB" 2>/dev/null || true
-    ok "Создана резервная копия базы данных: $BACKUP_DB"
+    ok "Создана проверенная резервная копия базы данных: $BACKUP_DB"
 fi
 
 # Экспорт переменных окружения для Python
@@ -1082,10 +1083,32 @@ if enable_warp:
             r["domain"] = list(cur_domains)
             yt_rule = r
             continue
-        # Direct-правило для RU: разделяем domain и ip
+        # Direct-правило для RU: разделяем domain и ip с сохранением пользовательских ограничений
         if tag == "direct" and ("geoip:ru" in r.get("ip", []) or any("domain:ru" in str(d).lower() for d in r.get("domain", []))):
             cur_d = [d for d in r.get("domain", []) if d not in bad_geosites]
             cur_ip = list(r.get("ip", []))
+            has_custom_constraints = bool(
+                r.get("user") or r.get("inboundTag") or r.get("network") or r.get("port") or r.get("protocol") or
+                any(ip != "geoip:ru" for ip in cur_ip)
+            )
+            if has_custom_constraints:
+                # Пользовательское правило с ограничениями или кастомными сетями:
+                # сохраняем все ограничения и исходные IP, аккуратно разделяя domain и ip
+                if cur_d and cur_ip:
+                    r_d = dict(r)
+                    r_d["domain"] = cur_d
+                    r_d.pop("ip", None)
+                    cleaned_existing_rules.append(r_d)
+
+                    r_ip = dict(r)
+                    r_ip["ip"] = cur_ip
+                    r_ip.pop("domain", None)
+                    cleaned_existing_rules.append(r_ip)
+                else:
+                    cleaned_existing_rules.append(r)
+                continue
+
+            # Системное общее правило RU без ограничений:
             if cur_d:
                 cur_d_set = set(cur_d)
                 cur_d_set.update(ru_domains)
@@ -1094,7 +1117,15 @@ if enable_warp:
                     "outboundTag": "direct",
                     "domain": list(cur_d_set)
                 }
-            if cur_ip or "geoip:ru" not in cur_ip:
+            if cur_ip:
+                cur_ip_set = set(cur_ip)
+                cur_ip_set.add("geoip:ru")
+                ru_ip_rule = {
+                    "type": "field",
+                    "outboundTag": "direct",
+                    "ip": list(cur_ip_set)
+                }
+            else:
                 ru_ip_rule = {
                     "type": "field",
                     "outboundTag": "direct",

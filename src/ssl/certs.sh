@@ -87,9 +87,9 @@ obtain_cf_cert() {
 }
 
 nginx_reload_task() {
-    nginx -t && \
-    systemctl unmask nginx 2>/dev/null || true && \
-    systemctl enable nginx 2>/dev/null || true && \
+    nginx -t || return 1
+    systemctl unmask nginx 2>/dev/null || true
+    systemctl enable nginx 2>/dev/null || true
     systemctl restart nginx
 }
 

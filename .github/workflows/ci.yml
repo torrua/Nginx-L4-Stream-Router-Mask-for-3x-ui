@@ -164,4 +164,5 @@ jobs:
 
       - name: Run audit regression checks
         run: |
-          python audit/2026-10-14/audit_checks.py
+          python -m unittest discover -s tests -p "test_*.py" -v
+

@@ -9,20 +9,29 @@ backup_nginx_configs() {
     ts=$(date +%Y%m%d_%H%M%S)
     local bkp_file="$bkp_dir/nginx_conf_${ts}.tar.gz"
 
-    local has_files=0
-    if compgen -G "/etc/nginx/conf.d/*.conf" >/dev/null 2>&1 || compgen -G "/etc/nginx/stream.d/*.conf" >/dev/null 2>&1; then
-        has_files=1
-    fi
-
-    if [ "$has_files" -eq 1 ]; then
-        if tar -czf "$bkp_file" -C /etc/nginx conf.d stream.d 2>/dev/null; then
+    if [ -d /etc/nginx ]; then
+        if tar -czf "$bkp_file" -C /etc nginx 2>/dev/null; then
+            export LAST_NGINX_BACKUP="$bkp_file"
             local old_backups
             old_backups=$(ls -1t "$bkp_dir"/nginx_conf_*.tar.gz 2>/dev/null | tail -n +6 || true)
             if [ -n "$old_backups" ]; then
                 echo "$old_backups" | xargs -r rm -f 2>/dev/null || true
             fi
-            ok "Создана резервная копия конфигурации Nginx: $bkp_file (ротация: 5)"
+            ok "Создана полная резервная копия конфигурации Nginx: $bkp_file (ротация: 5)"
         fi
+    fi
+}
+
+restore_nginx_configs() {
+    local bkp="${LAST_NGINX_BACKUP:-}"
+    if [ -z "$bkp" ] || [ ! -f "$bkp" ]; then
+        bkp=$(ls -1t /var/backups/nginx_mask/nginx_conf_*.tar.gz 2>/dev/null | head -n 1 || true)
+    fi
+    if [ -n "$bkp" ] && [ -f "$bkp" ]; then
+        log "Откат конфигурации Nginx из резервной копии $bkp..."
+        tar -xzf "$bkp" -C /etc 2>/dev/null || true
+        nginx -t >/dev/null 2>&1 && systemctl reload nginx 2>/dev/null || true
+        ok "Конфигурация Nginx возвращена в исходное состояние."
     fi
 }
 
@@ -115,16 +124,29 @@ inspect_port_conflicts() {
         if is_port_in_use "tcp" "$PORT_AGH_WEB"; then
             local listener
             listener=$(get_port_listener_info "tcp" "$PORT_AGH_WEB")
-            warn "Порт $PORT_AGH_WEB занят активным процессом: ${listener:-сторонней службой}."
-            local candidate=3001
-            while [ "$candidate" -le 3053 ]; do
-                if ! is_port_in_use "tcp" "$candidate"; then
-                    break
+            if echo "$listener" | grep -qi "AdGuardHome"; then
+                ok "Порт $PORT_AGH_WEB занят собственным сервисом AdGuard Home — порт сохранен."
+            else
+                warn "Порт $PORT_AGH_WEB занят активным процессом: ${listener:-сторонней службой}."
+                local candidate=3001
+                local candidate_found=0
+                while [ "$candidate" -le 3053 ]; do
+                    if ! is_port_in_use "tcp" "$candidate"; then
+                        candidate_found=1
+                        break
+                    fi
+                    candidate=$(( candidate + 1 ))
+                done
+                if [ "$candidate_found" -eq 1 ]; then
+                    PORT_AGH_WEB="$candidate"
+                    ok "Автоматическое переназначение: веб-панель AdGuard Home перенесена на свободный порт ${WHITE}$PORT_AGH_WEB${NC} (конфликт устранен)."
+                    if declare -f invalidate_checkpoint >/dev/null 2>&1; then
+                        invalidate_checkpoint 6 2>/dev/null || true
+                    fi
+                else
+                    die "Все порты в диапазоне 3001–3053 заняты. AdGuard Home не может быть размещен автоматически. Освободите порт или задайте PORT_AGH_WEB вручную."
                 fi
-                candidate=$(( candidate + 1 ))
-            done
-            PORT_AGH_WEB="$candidate"
-            ok "Автоматическое переназначение: веб-панель AdGuard Home перенесена на свободный порт ${WHITE}$PORT_AGH_WEB${NC} (конфликт устранен)."
+            fi
         else
             ok "Порт $PORT_AGH_WEB (AdGuard Home Web) свободен."
         fi
@@ -154,12 +176,34 @@ inspect_port_conflicts() {
             if echo "$w_owner" | grep -qi "nginx"; then
                 ok "Порт $p слушает Nginx (будет переконфигурирован в единый L4/L7 роутер маскирования)."
             else
-                warn "Порт $p занят сторонним процессом: ${w_owner:-не Nginx}. Для сквозного TLS/HTTP маскирования требуется порт $p."
+                die "Порт $p занят сторонним процессом: ${w_owner:-не Nginx}. Для сквозного TLS/HTTP маскирования требуется порт $p."
             fi
         else
             ok "Порт $p (Веб / Маскирование) свободен."
         fi
     done
+
+    # 3.1. Проверка существующих сторонних сайтов на прямой listen 443
+    local conflicting_vhosts=()
+    for vf in /etc/nginx/sites-enabled/* /etc/nginx/conf.d/*.conf; do
+        [ -f "$vf" ] || continue
+        local b_name
+        b_name=$(basename "$vf")
+        case "$b_name" in
+            default|default.conf|01-main.conf|02-*.conf|03-adguard.conf|vpn_mask.conf)
+                continue
+                ;;
+        esac
+        if grep -Eq 'listen[[:space:]]+([^;]*:)?443' "$vf" 2>/dev/null; then
+            if ! grep -q 'listen[[:space:]]+unix:' "$vf" 2>/dev/null; then
+                conflicting_vhosts+=("$b_name")
+            fi
+        fi
+    done
+    if [ ${#conflicting_vhosts[@]} -gt 0 ]; then
+        warn "Обнаружены существующие vhost с прямым слушанием порта 443: ${conflicting_vhosts[*]}"
+        warn "Nginx Stream роутер использует порт 443. Такие vhost должны быть адаптированы под сокет unix:/dev/shm/nginx-http.sock."
+    fi
 
     # 4. Проверка внутренних служебных портов стека
     local internal_ports=()

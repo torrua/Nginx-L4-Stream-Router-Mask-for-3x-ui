@@ -140,6 +140,47 @@ class TestAmneziaWGSecurityAndPersistence(unittest.TestCase):
         with self.assertRaises(IOError):
             self.awg.write_container_file(str(self.tmp / "nonexistent_sub" / "clientsTable"), "test")
 
+    def test_awg_config_defaults_and_dns_formatting(self):
+        """Verify AWG 3.1 safe defaults: RandomTrailers='off', DNS formatted, S1..S4 safe, no literal variables."""
+        self.assertEqual(self.awg.RANDOM_TRAILERS, "off", "RandomTrailers must default to 'off' to avoid 100x slowdown")
+        self.assertEqual(self.awg.DISABLE_COOKIES, "on", "DisableCookies must default to 'on'")
+        self.assertEqual(self.awg.PRIMARY_DNS, "9.9.9.9")
+        self.assertEqual(self.awg.SECONDARY_DNS, "76.76.2.0")
+        self.assertGreaterEqual(int(self.awg.S1), 12, "S1 must be >= 12 for HeaderProtectionKey")
+        self.assertNotEqual(int(self.awg.S1) + 56, int(self.awg.S2), "S1 + 56 must not equal S2")
+
+        # Test URI generation doesn't contain literal '$PRIMARY_DNS'
+        self.awg.get_server_pubkey = lambda: "pubkey"
+        self.awg.get_server_psk = lambda: "psk"
+        uri = self.awg.encode_amnezia_vpnuri_31("dummy", "10.8.0.2", "priv", "pub")
+        self.assertTrue(uri.startswith("vpn://"))
+
+        # Test add_client generated conf
+        self.awg.AWG_DIR = self.tmp
+        self.awg.find_next_ip = lambda: "10.8.0.2"
+        self.awg.run_cmd = lambda cmd, *a, **kw: ("key_out" if "genkey" in cmd or "pubkey" in cmd else "", "", 0)
+        self.awg.append_container_file = lambda *a, **kw: None
+        self.awg.save_clients_table = lambda *a, **kw: None
+        res = self.awg.add_client("alice")
+        self.assertTrue(res["ok"])
+        conf_path = self.tmp / "alice.conf"
+        self.assertTrue(conf_path.exists())
+        conf_text = conf_path.read_text(encoding="utf-8")
+        self.assertNotIn("$PRIMARY_DNS", conf_text, "Conf must not contain literal bash variable string")
+        self.assertIn("DNS = 9.9.9.9, 76.76.2.0", conf_text)
+        self.assertIn("RandomTrailers = off", conf_text)
+
+    def test_awg_rekey_reject_no_overlap(self):
+        """Verify that max(rekeyAfterTime) < min(rejectAfterTime) in 3X-UI template."""
+        conf_sh = (ROOT / "configure_3xui.sh").read_text(encoding="utf-8")
+        m_rekey = re.search(r'"rekeyAfterTime":\s*"(\d+)-(\d+)"', conf_sh)
+        m_reject = re.search(r'"rejectAfterTime":\s*"(\d+)-(\d+)"', conf_sh)
+        self.assertIsNotNone(m_rekey, "rekeyAfterTime must be present in configure_3xui.sh")
+        self.assertIsNotNone(m_reject, "rejectAfterTime must be present in configure_3xui.sh")
+        max_rekey = int(m_rekey.group(2))
+        min_reject = int(m_reject.group(1))
+        self.assertLess(max_rekey, min_reject, f"max(rekeyAfterTime) [{max_rekey}] must be strictly less than min(rejectAfterTime) [{min_reject}]")
+
 
 class TestDatabaseBackupSafety(unittest.TestCase):
     def setUp(self):

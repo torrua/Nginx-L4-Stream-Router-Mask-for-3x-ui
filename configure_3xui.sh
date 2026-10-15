@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  CONFIGURE 3X-UI INBOUNDS & SETTINGS (v7.5.0 Universal Companion & Smart Reconcile)
+#  CONFIGURE 3X-UI INBOUNDS & SETTINGS (v7.6.0 Universal Companion & Smart Reconcile)
 # ==============================================================================
 #  Скрипт автоматического конфигурирования и самовосстановления базы 3X-UI.
 #  Безопасен для повторного запуска:
@@ -1862,7 +1862,12 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
                 repairs.append("исправлен поврежденный publicKey сервера Curve25519")
         
         # Сохранение параметров обфускации
-        for param in ["jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "h1", "h2", "h3", "h4", "headerProtectionKey", "randomTrailers", "disableCookies", "mtu", "subnetIp", "subnetCidr"]:
+        for param in [
+            "jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "h1", "h2", "h3", "h4",
+            "headerProtectionKey", "randomTrailers", "disableCookies", "mtu", "subnetIp", "subnetCidr",
+            "keepaliveTimeout", "rekeyAfterTime", "rekeyTimeout", "rejectAfterTime", "maxHandshakeAttempts",
+            "i1", "i2", "i3", "i4", "i5"
+        ]:
             if param in cur_srv:
                 target_settings["server"][param] = cur_srv[param]
         if cur_srv.get("headerProtectionKey"):
@@ -1873,6 +1878,11 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
         if target_settings["server"].get("randomTrailers") and not force_rt and not awg_random_trailers_env:
             target_settings["server"]["randomTrailers"] = False
             repairs.append("отключен randomTrailers (устранение критической 100-кратной просадки скорости)")
+
+        # 1.1 Коррекция граничного условия таймингов в 3X-UI: max(rekey) < min(reject)
+        if target_settings["server"].get("rekeyAfterTime") == "120-180" and target_settings["server"].get("rejectAfterTime") == "180-210":
+            target_settings["server"]["rekeyAfterTime"] = "120-170"
+            repairs.append("исправлен rekeyAfterTime='120-170' (устранение пересечения с rejectAfterTime в 3X-UI)")
 
         # 2. Фиксация безопасного MTU 1280 (устранение PMTU blackhole и сотовой фрагментации)
         cur_mtu = target_settings["server"].get("mtu")
@@ -2066,7 +2076,7 @@ if enable_awg_v3:
             "randomTrailers": unified_awg_random_trailers,
             "disableCookies": True,
             "keepaliveTimeout": "15-20",
-            "rekeyAfterTime": "120-180",
+            "rekeyAfterTime": "120-170",
             "rekeyTimeout": "3-4",
             "rejectAfterTime": "180-210",
             "maxHandshakeAttempts": "20-25",

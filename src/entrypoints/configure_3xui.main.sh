@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  CONFIGURE 3X-UI INBOUNDS & SETTINGS (v7.5.0 Universal Companion & Smart Reconcile)
+#  CONFIGURE 3X-UI INBOUNDS & SETTINGS (v7.6.0 Universal Companion & Smart Reconcile)
 # ==============================================================================
 #  Скрипт автоматического конфигурирования и самовосстановления базы 3X-UI.
 #  Безопасен для повторного запуска:
@@ -1431,7 +1431,7 @@ if enable_awg_v3:
             "randomTrailers": unified_awg_random_trailers,
             "disableCookies": True,
             "keepaliveTimeout": "15-20",
-            "rekeyAfterTime": "120-180",
+            "rekeyAfterTime": "120-170",
             "rekeyTimeout": "3-4",
             "rejectAfterTime": "180-210",
             "maxHandshakeAttempts": "20-25",

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # ==============================================================================
-# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v7.5.0 Universal
+# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v7.6.0 Universal
 # Nginx L4 Stream + 3X-UI + Unix Sockets + Native proxy_http_version 2 + 3 Decoys
 # ==============================================================================
 # Архитектура:
@@ -27,7 +27,7 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="v7.5.0"
+SCRIPT_VERSION="v7.6.0"
 
 
 # --------------------------- Замеры времени и телеметрия ---------------------------
@@ -441,7 +441,7 @@ generate_config_template() {
     local target_file="${1:-setup_mask.env.example}"
     cat << 'EOF_CONF' > "$target_file"
 # ==============================================================================
-# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v7.5.0 Universal)
+# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v7.6.0 Universal)
 # ==============================================================================
 # Данный файл позволяет выполнять полностью автоматическую установку:
 # ./setup_mask.sh --config setup_mask.env --non-interactive --force
@@ -6190,7 +6190,7 @@ echo -e "    * Заголовки ${CYAN}H1 - H4${NC}: ${GREEN}Оставить 
 echo -e "    * Сигнатурные пакеты ${CYAN}I1 - I5${NC}: ${GREEN}Оставить ПУСТЫМИ${NC}"
 echo -e "    * Защита заголовков (${CYAN}HeaderProtectionKey${NC}): ${GREEN}Авто (32 байта base64)${NC} (шифрование handshake против ТСПУ)"
 echo -e "    * Паддинг содержимого (${CYAN}ContentPaddingAddition${NC}): ${GREEN}ПУСТО (Выключено)${NC}"
-echo -e "    * Тайминги ключей: ${CYAN}RekeyAfterTime = 120-180${NC}, ${CYAN}RekeyTimeout = 3-4${NC}, ${CYAN}RejectAfterTime = 180-210${NC}"
+echo -e "    * Тайминги ключей: ${CYAN}RekeyAfterTime = 120-170${NC}, ${CYAN}RekeyTimeout = 3-4${NC}, ${CYAN}RejectAfterTime = 180-210${NC}"
 echo -e "    * Тайминги соединения: ${CYAN}KeepaliveTimeout = 15-20${NC}, ${CYAN}MaxHandshakeAttempts = 20-25${NC}"
 echo -e "    * Переключатели: ${CYAN}RandomTrailers:${NC} ${RED}Выключить (OFF, критично для скорости!)${NC} | ${CYAN}DisableCookies:${NC} ${GREEN}Включить${NC}"
 echo

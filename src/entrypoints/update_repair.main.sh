@@ -867,7 +867,7 @@ if enable_awg_v3:
             "privateKey": def_wg_s_priv, "publicKey": def_wg_s_pub,
             "headerProtectionKey": def_wg_hpk,
             "randomTrailers": awg_random_trailers_env,
-            "rejectAfterTime": "180-210", "rekeyAfterTime": "120-180",
+            "rejectAfterTime": "180-210", "rekeyAfterTime": "120-170",
             "rekeyTimeout": "3-4", "s1": 16, "s2": 20, "s3": 24, "s4": 16,
             "subnetCidr": 22, "subnetIp": "10.8.0.0"
         }

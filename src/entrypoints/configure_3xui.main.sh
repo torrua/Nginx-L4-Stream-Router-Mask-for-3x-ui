@@ -1385,9 +1385,9 @@ if enable_classic:
 # 3. VLESS xHTTP (50443)
 vless_dekey, vless_enkey = generate_vlessenc_keypair()
 if vless_dekey and vless_enkey:
-    x_set = {"clients": [{"id": unified_uuid, "flow": "xtls-rprx-vision", "email": unified_email, "subId": unified_sub_id, "enable": True}], "decryption": vless_dekey, "encryption": vless_enkey}
+    x_set = {"clients": [{"id": unified_uuid, "flow": "", "email": unified_email, "subId": unified_sub_id, "enable": True}], "decryption": vless_dekey, "encryption": vless_enkey}
 else:
-    x_set = {"clients": [{"id": unified_uuid, "flow": "xtls-rprx-vision", "email": unified_email, "subId": unified_sub_id, "enable": True}], "decryption": "none"}
+    x_set = {"clients": [{"id": unified_uuid, "flow": "", "email": unified_email, "subId": unified_sub_id, "enable": True}], "decryption": "none"}
 x_str = {
     "network": "xhttp",
     "xhttpSettings": {
@@ -1404,7 +1404,7 @@ x_str = {
         }
     },
     "security": "none",
-    "externalProxy": [{"dest": domain, "port": 443, "forceTls": "tls", "sni": domain, "fingerprint": "chrome", "remark": make_remark("VLESS xHTTP")}]
+    "externalProxy": [{"dest": domain, "port": 443, "forceTls": "tls", "sni": domain, "fingerprint": "chrome", "alpn": "h2", "remark": make_remark("VLESS xHTTP")}]
 }
 xhttp_remark = make_remark("VLESS xHTTP")
 smart_reconcile_inbound(xhttp_port, "vless", "in-xhttp-stream", xhttp_remark, x_set, x_str, listen="127.0.0.1")

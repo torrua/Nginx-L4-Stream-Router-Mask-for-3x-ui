@@ -7144,37 +7144,20 @@ server {
         proxy_set_header Connection \$connection_upgrade;
     }
 
-    # --- ЛОКАЦИЯ 3: VLESS xHTTP (Native HTTP/2 Stream-One + VLESSENC + Безотказный сокет) ---
+    # --- ЛОКАЦИЯ 3: VLESS xHTTP (Native gRPC / H2 Stream-One) ---
     location ^~ ${XHTTP_STREAM_PATH} {
-        if (\$request_method !~ ^(GET|POST)\$) {
-            return 404;
-        }
-
-        proxy_http_version 1.1;
-        proxy_set_header Host \$http_host;
-        proxy_set_header X-Real-IP \$ak_real_ip;
-        proxy_set_header X-Forwarded-For \$ak_real_ip;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-
-        # Полное отключение задержек и буферизации для сквозного H2C-потока
-        proxy_request_buffering off;
-        proxy_buffering off;
-        chunked_transfer_encoding on;
-        tcp_nodelay on;
-        proxy_socket_keepalive on;
-
-        proxy_read_timeout 1h;
-        proxy_send_timeout 1h;
-        client_body_timeout 1h;
-        send_timeout 1h;
-
         client_max_body_size 0;
+        client_body_timeout 1h;
+        grpc_read_timeout 1h;
+        grpc_send_timeout 1h;
+        grpc_socket_keepalive on;
 
-        access_log off;
-        error_log off;
-        gzip off;
+        grpc_set_header Host \$http_host;
+        grpc_set_header X-Real-IP \$ak_real_ip;
+        grpc_set_header X-Forwarded-For \$ak_real_ip;
+        grpc_set_header X-Forwarded-Proto \$scheme;
 
-        proxy_pass http://xray_xhttp_stream;
+        grpc_pass grpc://xray_xhttp_stream;
     }
 
     $AGH_MAIN_LOCATION_BLOCKS

@@ -3040,7 +3040,7 @@ PersistentKeepalive = {PERSISTENT_KEEPALIVE}
     if CPA:
         last_config_dict["ContentPaddingAddition"] = CPA
 
-    container_id = CONTAINER or "amnezia-awg"
+    container_id = CONTAINER or "amnezia-awg2"
     awg_dict = {
         "DisableCookies": DISABLE_COOKIES,
         "H1": H1, "H2": H2, "H3": H3, "H4": H4,

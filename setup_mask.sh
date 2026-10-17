@@ -972,7 +972,7 @@ XHTTP_STREAM_PATH="${_save_xhttp_path}"
 ENABLE_HY2="$hy2_save"
 HY2_PORT="${HY2_PORT:-443}"
 HY2_DOMAIN="${HY2_DOMAIN:-$PRIMARY_DOMAIN}"
-HY2_PORT_HOPPING="${HY2_PORT_HOPPING:-y}"
+HY2_PORT_HOPPING="${HY2_PORT_HOPPING:-n}"
 HY2_PORT_HOPPING_RANGE="${HY2_PORT_HOPPING_RANGE:-20000:50000}"
 
 ENABLE_AWG_V3="$awg_v3_save"
@@ -7462,6 +7462,30 @@ if [[ "${ENABLE_HY2:-0}" == "1" || "${ENABLE_HY2,,}" == "y" ]] && \
         else
             sed -i '/^\*filter/i\# Port Hopping for Hysteria 2 - IPv6 (added by setup_mask.sh)\n*nat\n:PREROUTING ACCEPT [0:0]\n# Hy2 Port Hopping\n-A PREROUTING -p udp --dport '"${PH_RANGE}"' -j REDIRECT --to-ports '"${HY2_PORT}"'\nCOMMIT\n' /etc/ufw/before6.rules
         fi
+    fi
+else
+    # Очистка Port Hopping, если отключен (чистый стелс-режим)
+    if [ -n "${HY2_PORT_HOPPING_RANGE:-}" ] && [ -n "${HY2_PORT:-}" ]; then
+        PH_RANGE="${HY2_PORT_HOPPING_RANGE}"
+        while iptables -t nat -C PREROUTING -p udp --dport "$PH_RANGE" -j REDIRECT --to-ports "$HY2_PORT" 2>/dev/null; do
+            iptables -t nat -D PREROUTING -p udp --dport "$PH_RANGE" -j REDIRECT --to-ports "$HY2_PORT" 2>/dev/null || break
+        done
+        if [ -d /proc/sys/net/ipv6 ] && command -v ip6tables >/dev/null 2>&1; then
+            while ip6tables -t nat -C PREROUTING -p udp --dport "$PH_RANGE" -j REDIRECT --to-ports "$HY2_PORT" 2>/dev/null; do
+                ip6tables -t nat -D PREROUTING -p udp --dport "$PH_RANGE" -j REDIRECT --to-ports "$HY2_PORT" 2>/dev/null || break
+            done
+        fi
+        if [ -f /etc/ufw/before.rules ] && grep -q "Hy2 Port Hopping" /etc/ufw/before.rules 2>/dev/null; then
+            sed -i '/# Port Hopping for Hysteria 2/,/COMMIT/d' /etc/ufw/before.rules 2>/dev/null || true
+            sed -i '/# Hy2 Port Hopping/d' /etc/ufw/before.rules 2>/dev/null || true
+            sed -i '/-A PREROUTING -p udp --dport '"${PH_RANGE}"' -j REDIRECT/d' /etc/ufw/before.rules 2>/dev/null || true
+        fi
+        if [ -f /etc/ufw/before6.rules ] && grep -q "Hy2 Port Hopping" /etc/ufw/before6.rules 2>/dev/null; then
+            sed -i '/# Port Hopping for Hysteria 2/,/COMMIT/d' /etc/ufw/before6.rules 2>/dev/null || true
+            sed -i '/# Hy2 Port Hopping/d' /etc/ufw/before6.rules 2>/dev/null || true
+            sed -i '/-A PREROUTING -p udp --dport '"${PH_RANGE}"' -j REDIRECT/d' /etc/ufw/before6.rules 2>/dev/null || true
+        fi
+        ufw delete allow "${PH_RANGE//:/ }/udp" >/dev/null 2>&1 || true
     fi
 fi
 

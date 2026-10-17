@@ -546,8 +546,9 @@ EOF
     ufw allow 443/udp comment 'QUIC / H3 / Hysteria 2' >/dev/null 2>&1 || true
     ufw allow 8443/udp comment 'AmneziaWG v3 / Hysteria 2' >/dev/null 2>&1 || true
     ufw allow 8444/udp comment 'AmneziaWG v2' >/dev/null 2>&1 || true
-    ufw allow 51820/udp comment 'Native AmneziaWG' >/dev/null 2>&1 || true
-    ufw allow 20000:50000/udp comment 'Hysteria 2 Port Hopping' >/dev/null 2>&1 || true
+    if [[ "${HY2_PORT_HOPPING,,}" == "y" || "${HY2_PORT_HOPPING:-}" == "1" ]] && [ -n "${HY2_PORT_HOPPING_RANGE:-}" ]; then
+        ufw allow "${HY2_PORT_HOPPING_RANGE//:/ }/udp" comment 'Hysteria 2 Port Hopping' >/dev/null 2>&1 || true
+    fi
     
     # Deny direct access to internal 3X-UI inbound ports
     ufw deny 10443/tcp comment 'VLESS Reality Internal' >/dev/null 2>&1 || true

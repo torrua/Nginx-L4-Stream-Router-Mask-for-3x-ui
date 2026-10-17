@@ -1,6 +1,124 @@
 # --- Модуль AmneziaWG: Универсальный контроллер и сервис управления (v3.1 / v2.0) ---
 # На базе концепций проекта: https://github.com/bivlked/amneziawg-installer (@bivlked)
 
+AMNEZIA_PPA_GPG_B64="xsFNBGV0UhsBEAC33rMndHSN/k+u7gcZbh9/FjgYfGltQAtVe2QDxzn7UV+k/ChXOrYRw6Izw/DrhaapkNCThK2jwJE64e0NjboLH7UrrmSJLXMfOlDFbyGJVRA+1sTBlo7kKHY0xiZ1CHDzjKNV3czbesu80A9nuTZYyWHEn9ax6wsqKG3N8SvzQkUrIOVD2wZjh0p273CCEGkBnax1ghAV3MF8OrsPU6FRJ+ZakzKbu54g68xoV+2813YECme0JKsWfUUe/1uEJOXCvuACURSxnYr0sihJd8QI/jHSGlfeq72e5MflFEOrnu5xaDSJr2W5lvUetG7EGSxtNKd7Jm/KhUV04g7arA0qydRjRToW3QqyzG7VB2nXKz3AOBYNearWAuBcTkfPvRVchxbjiYonKZA5tIlVrpawMZsdxKvYwl6LVnpBcccFWPhpudfy4TpCqCxRoAanOCvSirI3/y7TcZMBw643SaxXi1ifGeg6eyMzrLtP3CeonKBHGzrt1eeKGtEw/PFN4RmwpBePxi+uj0CoTD6zjCQa3c8EeB4Qz7tt6PnpibxdtZE8sBdd51wSA/fPGi2tFph8IVAsws7oxcQxZYl8CyncKDLcoR4dxVHYdFEDDf1GjRjoQ3AinD7fxD5qYzExe50DBVpuUbWcAiGICNxfvzQtUSRRtMoSHDcvzsy03KC6VwARAQABzR5MYXVuY2hwYWQgUFBBIGZvciBJdXJpaSBFZ29yb3bCwY4EEwEKADgWIQR1yd1yx5mHDjEFQuJBZvLCVykIKAUCZXRSGwIbAwULCQgHAgYVCgkICwIEFgIDAQIeAQIXgAAKCRBBZvLCVykIKBu5D/9akmHCHlUqm2RTTBeTMbLNGc0l6YugpPaCM6vz0O9kBFP5PfRaNSRzyF7wHFHNY3JUHcor28my1fD8AE4+C3PwXz8tVYLh57UUsp4wjqHY+MTl/1ngDViPGD3PRjB8ZlO+19yerfplZv1Jaw7FZZv2BZOAXb+ddqUG4EmlzOnCEhcSDdFrzEBB3RGthjIb3QkKWKGbELDiMfogmsO9BE139Raiw23blagDrbnWsG4jReZeu3atjG6AW8eL7m+i7bKKshD2CYVMznI5cYGLMKo9w7sb33uylPj1Vx9O7joP2GFf2rTpCY8wgzk7i1RqsipJ80u1/DY91Xdizv3f2BBe6UY7qHKoK00O11J0y8yUis2Asycy33Wy51pf6rCFUBLQu+c1fEypHF6jqANmQwaH7pPBliy4gGWvrVggzV4mxv7SnRiMi4PFyVwjKWm8dmuMxi/B9s++VG/ed+5aYgJYL58MohG3MUI/L58eitSCDDcQ1iAnBmawnGMKPqzMgRFB3OU3wDwfh7LNVvQqWpQ4q7pr4Cq1CvZvGoggXWDo1/vylPsRmiiuNetfsoVYmrkgtj1om07m5Xp1v4SyXJH11c3dc/xfMmn/4RlMWIpq86IsOjpr3avsw3FVUNCgD5Wf5+rHG+7gNmM6Cm/F8MDfAnnRmsw4h6hgvcJNQT5Dig=="
+
+AWG_PREINSTALL_BG_PID=""
+AWG_PREINSTALL_LOG="/tmp/setup_mask_awg_preinstall.log"
+
+install_amneziawg_packages_task() {
+    export DEBIAN_FRONTEND=noninteractive
+    local os_id=""
+    local os_codename=""
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        os_id="$ID"
+        os_codename="${VERSION_CODENAME:-$VERSION_ID}"
+    fi
+
+    # 1. Если бинарник awg уже доступен в системе — ничего делать не нужно
+    if command -v awg >/dev/null 2>&1; then
+        return 0
+    fi
+
+    # Ожидание освобождения фоновой системной пред-установки и блокировок apt
+    if [ -n "${BG_PREINSTALL_PID:-}" ] && kill -0 "$BG_PREINSTALL_PID" 2>/dev/null; then
+        wait "$BG_PREINSTALL_PID" 2>/dev/null || true
+    fi
+    local wait_count=0
+    while { command -v fuser >/dev/null 2>&1 && { fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1; }; }; do
+        sleep 1
+        wait_count=$((wait_count + 1))
+        [ "$wait_count" -ge 60 ] && break
+    done
+
+    # 2. Подключение репозитория Amnezia PPA напрямую через GPG ключ (без зависающего add-apt-repository при disable_ipv6)
+    if [[ "$os_id" == "ubuntu" ]]; then
+        mkdir -p /etc/apt/keyrings /etc/apt/sources.list.d
+        echo "$AMNEZIA_PPA_GPG_B64" | base64 -d > /etc/apt/keyrings/amnezia-ppa.gpg 2>/dev/null || true
+        chmod 644 /etc/apt/keyrings/amnezia-ppa.gpg 2>/dev/null || true
+
+        cat << EOF_PPA > /etc/apt/sources.list.d/amnezia-ppa.sources
+Types: deb
+URIs: https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu
+Suites: ${os_codename}
+Components: main
+Signed-By: /etc/apt/keyrings/amnezia-ppa.gpg
+EOF_PPA
+        chmod 644 /etc/apt/sources.list.d/amnezia-ppa.sources 2>/dev/null || true
+    fi
+
+    local apt_flags=("-o" "Acquire::Retries=3" "-o" "Acquire::http::Timeout=15")
+    apt-get update -q "${apt_flags[@]}" 2>/dev/null || apt-get update -q || true
+
+    # 3. Установка ядра, заголовков и пакетов AmneziaWG
+    local kheaders="linux-headers-$(uname -r)"
+    apt-get install -y --no-install-recommends "${apt_flags[@]}" \
+        "$kheaders" build-essential dkms wireguard-tools amneziawg-tools amneziawg-dkms -q 2>/dev/null || \
+    apt-get install -y --no-install-recommends "${apt_flags[@]}" \
+        wireguard-tools amneziawg-tools amneziawg-dkms -q 2>/dev/null || true
+
+    # 4. Проверка и загрузка модуля ядра
+    modprobe amneziawg 2>/dev/null || true
+}
+
+start_amneziawg_preinstall_bg() {
+    # Запускаем фоновую сборку ТОЛЬКО если пользователь включил AWG и awg еще не установлен на хосте
+    if command -v awg >/dev/null 2>&1; then
+        return 0
+    fi
+    if [ -n "${AWG_PREINSTALL_BG_PID:-}" ] && kill -0 "$AWG_PREINSTALL_BG_PID" 2>/dev/null; then
+        return 0
+    fi
+    : > "$AWG_PREINSTALL_LOG"
+    install_amneziawg_packages_task >> "$AWG_PREINSTALL_LOG" 2>&1 &
+    AWG_PREINSTALL_BG_PID=$!
+}
+
+sync_amneziawg_preinstall() {
+    if [ -n "${AWG_PREINSTALL_BG_PID:-}" ]; then
+        if kill -0 "$AWG_PREINSTALL_BG_PID" 2>/dev/null; then
+            wait "$AWG_PREINSTALL_BG_PID" 2>/dev/null || true
+        fi
+        AWG_PREINSTALL_BG_PID=""
+    fi
+}
+
+ensure_amneziawg_installed() {
+    # Пропускаем, если бэкенд развернут в Docker-контейнере
+    if command -v docker >/dev/null 2>&1; then
+        for c_cand in "amnezia-awg2" "amnezia-awg" "awg-server"; do
+            if docker inspect -f '{{.State.Running}}' "$c_cand" 2>/dev/null | grep -q "true"; then
+                return 0
+            fi
+        done
+    fi
+
+    # 1. Если уже установлен в системе — отлично
+    if command -v awg >/dev/null 2>&1; then
+        modprobe amneziawg 2>/dev/null || true
+        return 0
+    fi
+
+    # 2. Если была запущена фоновая сборка — дожидаемся её
+    if [ -n "${AWG_PREINSTALL_BG_PID:-}" ] && kill -0 "$AWG_PREINSTALL_BG_PID" 2>/dev/null; then
+        run_with_spinner "Ожидание завершения сборки модуля ядра AmneziaWG (DKMS)" sync_amneziawg_preinstall
+    fi
+
+    # 3. Если awg всё ещё нет (например, неинтерактивный режим) — компилируем со спиннером
+    if ! command -v awg >/dev/null 2>&1; then
+        run_with_spinner "Установка и компиляция модуля ядра AmneziaWG (DKMS)" install_amneziawg_packages_task
+    fi
+
+    # 4. Проверяем результат
+    if command -v awg >/dev/null 2>&1; then
+        modprobe amneziawg 2>/dev/null || true
+        ok "Модуль ядра и утилита AmneziaWG успешно подготовлены: $(which awg)"
+    else
+        warn "Не удалось установить утилиту awg в ядро ОС. manage_amneziawg переключится в резервный режим."
+    fi
+}
+
 setup_amneziawg_controller() {
     local awg_dir="/root/awg"
     mkdir -p "$awg_dir/keys"
@@ -71,7 +189,10 @@ deploy_amneziawg_backend() {
     fi
     local awg_dir="/root/awg"
 
-    # 1. Проверяем, работает ли уже какой-либо бэкенд AmneziaWG
+    # 1. Проверяем наличие пакетов и модуля ядра на хосте (при необходимости устанавливаем)
+    ensure_amneziawg_installed
+
+    # 2. Проверяем, работает ли уже какой-либо бэкенд AmneziaWG
     local active_backend=0
     if command -v docker >/dev/null 2>&1; then
         for c_cand in "amnezia-awg2" "amnezia-awg" "awg-server"; do
@@ -83,12 +204,16 @@ deploy_amneziawg_backend() {
         done
     fi
 
-    if [ "$active_backend" -eq 0 ] && [ -f /etc/amnezia/amneziawg/awg0.conf ]; then
+    if [ "$active_backend" -eq 0 ] && systemctl is-active --quiet awg-quick@awg0 2>/dev/null; then
         active_backend=1
-        ok "Обнаружена существующая конфигурация AmneziaWG (/etc/amnezia/amneziawg/awg0.conf) — сохраняем без изменений."
+        ok "Обнаружена активная служба awg-quick@awg0 — сохраняем без изменений."
     fi
 
-    # 2. Если активного бэкенда нет, подготавливаем конфигурационный шаблон
+    local def_iface
+    def_iface=$(ip route show default 2>/dev/null | awk '{print $5}' | head -n1 || echo "")
+    [ -z "$def_iface" ] && def_iface="eth0"
+
+    # 3. Если активного бэкенда нет, подготавливаем конфигурационный шаблон
     if [ "$active_backend" -eq 0 ]; then
         log "Генерация базовой конфигурации AmneziaWG (профиль 3.1)..."
         local srv_priv=""
@@ -154,6 +279,8 @@ Address = 10.8.0.1/22
 ListenPort = ${awg_port}
 PrivateKey = ${srv_priv}
 MTU = 1280
+PostUp = iptables -I FORWARD -i %i -j ACCEPT; iptables -t nat -A POSTROUTING -o ${def_iface} -j MASQUERADE; iptables -t mangle -A FORWARD -o %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1240; iptables -t mangle -A FORWARD -i %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1240
+PostDown = iptables -D FORWARD -i %i -j ACCEPT; iptables -t nat -D POSTROUTING -o ${def_iface} -j MASQUERADE; iptables -t mangle -D FORWARD -o %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1240; iptables -t mangle -D FORWARD -i %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1240
 Jc = 4
 Jmin = 40
 Jmax = 70
@@ -170,17 +297,33 @@ RandomTrailers = on
 DisableCookies = off
 EOF_AWG0
             chmod 600 /etc/amnezia/amneziawg/awg0.conf
+        else
+            # Если конфиг уже был, проверяем наличие правил PostUp
+            if ! grep -q "PostUp" /etc/amnezia/amneziawg/awg0.conf 2>/dev/null; then
+                sed -i "/PrivateKey =/a PostUp = iptables -I FORWARD -i %i -j ACCEPT; iptables -t nat -A POSTROUTING -o ${def_iface} -j MASQUERADE; iptables -t mangle -A FORWARD -o %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1240; iptables -t mangle -A FORWARD -i %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1240\\nPostDown = iptables -D FORWARD -i %i -j ACCEPT; iptables -t nat -D POSTROUTING -o ${def_iface} -j MASQUERADE; iptables -t mangle -D FORWARD -o %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1240; iptables -t mangle -D FORWARD -i %i -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1240" /etc/amnezia/amneziawg/awg0.conf 2>/dev/null || true
+            fi
+        fi
+
+        # Активация и запуск системной службы WireGuard / AmneziaWG
+        if command -v systemctl >/dev/null 2>&1 && [ -f /lib/systemd/system/awg-quick@.service -o -f /etc/systemd/system/awg-quick@.service -o -f /usr/lib/systemd/system/awg-quick@.service ]; then
+            systemctl daemon-reload >/dev/null 2>&1 || true
+            systemctl enable --now awg-quick@awg0.service >/dev/null 2>&1 || true
+            ok "Системная служба awg-quick@awg0 запущена на порту ${awg_port}/udp"
         fi
     fi
 
-    # 3. Создание первого административного клиента, если таблица клиентов пуста и client-1.conf не существует
+    # 4. Создание первого административного клиента, если таблица клиентов пуста и client-1.conf не существует
     if [ -f "$awg_dir/client-1.conf" ]; then
         ok "Существующий профиль администратора сохранен: $awg_dir/client-1.conf"
     else
         local client_count=$(/root/awg/manage_amneziawg.sh status 2>/dev/null | grep -o '"total": [0-9]*' | awk '{print $2}' || echo "0")
         if [ "$client_count" = "0" ] || [ -z "$client_count" ]; then
             log "Создание первичного профиля администратора (client-1)..."
-            /root/awg/manage_amneziawg.sh add client-1 >/dev/null 2>&1 || true
+            if ! /root/awg/manage_amneziawg.sh add client-1 >/dev/null 2>&1; then
+                warn "Не удалось автоматически сгенерировать первичного клиента client-1. Попробуйте вручную: awg-mgr add <имя>"
+            else
+                ok "Первичный профиль администратора создан: $awg_dir/client-1.conf"
+            fi
         fi
     fi
 }

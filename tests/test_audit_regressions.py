@@ -98,6 +98,31 @@ class TestAmneziaWG3XUISettings(unittest.TestCase):
         self.assertIn("RandomTrailers = on", setup_sh, "awg0.conf blueprint must contain RandomTrailers = on")
         self.assertIn("DisableCookies = off", setup_sh, "awg0.conf blueprint must contain DisableCookies = off")
 
+    def test_awg_event_driven_prewarm_architecture(self):
+        """Verify event-driven AWG pre-warm: definition before wizard, opt-in triggers, and sync."""
+        entrypoint_sh = (ROOT / "src/entrypoints/setup_mask.main.sh").read_text(encoding="utf-8")
+        idx_awg_include = entrypoint_sh.find('# @include "awg/setup.sh"')
+        idx_wizard_include = entrypoint_sh.find('# @include "tui/wizard.sh"')
+        self.assertNotEqual(idx_awg_include, -1, "awg/setup.sh must be included in setup_mask.main.sh")
+        self.assertNotEqual(idx_wizard_include, -1, "tui/wizard.sh must be included in setup_mask.main.sh")
+        self.assertLess(idx_awg_include, idx_wizard_include,
+                        "awg/setup.sh must be included BEFORE tui/wizard.sh for event-driven pre-warm")
+
+        setup_sh = (ROOT / "src/awg/setup.sh").read_text(encoding="utf-8")
+        self.assertIn("start_amneziawg_preinstall_bg()", setup_sh)
+        self.assertIn("sync_amneziawg_preinstall()", setup_sh)
+        self.assertIn("install_amneziawg_packages_task()", setup_sh)
+
+        wizard_sh = (ROOT / "src/tui/wizard.sh").read_text(encoding="utf-8")
+        self.assertIn("start_amneziawg_preinstall_bg", wizard_sh)
+
+        compiled_sh = (ROOT / "setup_mask.sh").read_text(encoding="utf-8")
+        def_pos = compiled_sh.find("start_amneziawg_preinstall_bg()")
+        self.assertNotEqual(def_pos, -1, "setup_mask.sh must contain start_amneziawg_preinstall_bg definition")
+        trigger_count = compiled_sh.count("start_amneziawg_preinstall_bg")
+        self.assertGreaterEqual(trigger_count, 4,
+                                "setup_mask.sh must have multiple event-driven prewarm trigger points")
+
     def test_awg_i1_dns_template_support(self):
         """Verify that DNS_I1_TEMPLATE is defined and matches the icloud.com 44-byte DNS response."""
         mgr_py = (ROOT / "src/awg/manage_amneziawg.py").read_text(encoding="utf-8")

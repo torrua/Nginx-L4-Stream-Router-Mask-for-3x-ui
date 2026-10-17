@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  CONFIGURE 3X-UI INBOUNDS & SETTINGS (v7.7.0 Universal Companion & Smart Reconcile)
+#  CONFIGURE 3X-UI INBOUNDS & SETTINGS (v7.8.0 Universal Companion & Smart Reconcile)
 # ==============================================================================
 #  Скрипт автоматического конфигурирования и самовосстановления базы 3X-UI.
 #  Безопасен для повторного запуска:
@@ -243,7 +243,7 @@ HY2_DOMAIN="${HY2_DOMAIN:-$PRIMARY_DOMAIN}"
 ENABLE_AWG_V3="${ENABLE_AWG_V3:-y}"
 AWG_V3_PORT="${AWG_V3_PORT:-8443}"
 
-ENABLE_AWG_V2="${ENABLE_AWG_V2:-y}"
+ENABLE_AWG_V2="${ENABLE_AWG_V2:-n}"
 AWG_V2_PORT="${AWG_V2_PORT:-8444}"
 
 AWG_PRIMARY_DNS="${AWG_PRIMARY_DNS:-9.9.9.9}"
@@ -568,7 +568,7 @@ hy2_key = os.environ.get("HY2_KEY_PATH") or ssl_key
 enable_awg_v3 = os.environ.get("ENABLE_AWG_V3", "y").lower() in ("1", "y", "true")
 awg_v3_port = int(os.environ.get("AWG_V3_PORT") or "8443")
 
-enable_awg_v2 = os.environ.get("ENABLE_AWG_V2", "y").lower() in ("1", "y", "true")
+enable_awg_v2 = os.environ.get("ENABLE_AWG_V2", "n").lower() in ("1", "y", "true")
 awg_v2_port = int(os.environ.get("AWG_V2_PORT") or "8444")
 awg_primary_dns = os.environ.get("AWG_PRIMARY_DNS") or "9.9.9.9"
 awg_secondary_dns = os.environ.get("AWG_SECONDARY_DNS") or "76.76.2.0"

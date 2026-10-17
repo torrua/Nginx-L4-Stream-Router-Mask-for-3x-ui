@@ -3,6 +3,12 @@
 # =============================================================
 
 apply_sysctl_and_limits() {
+    # Загрузка модуля nf_conntrack и сохранение для автозагрузки при старте ОС
+    modprobe nf_conntrack 2>/dev/null || true
+    if [ -d /etc/modules-load.d ]; then
+        echo "nf_conntrack" > /etc/modules-load.d/99-vless-conntrack.conf 2>/dev/null || true
+    fi
+
     cat << 'EOF' > /etc/sysctl.d/99-vless-tuning.conf
 net.ipv4.ip_forward = 1
 net.core.default_qdisc = fq
@@ -17,6 +23,13 @@ vm.swappiness = 10
 net.ipv6.conf.all.disable_ipv6 = 1
 net.ipv6.conf.default.disable_ipv6 = 1
 net.ipv6.conf.lo.disable_ipv6 = 1
+
+# Защита таблицы conntrack от зависших сессий (разрывы ТСПУ/DPI без FIN/RST)
+net.netfilter.nf_conntrack_max = 262144
+net.netfilter.nf_conntrack_tcp_timeout_established = 1800
+net.netfilter.nf_conntrack_tcp_timeout_close_wait = 30
+net.netfilter.nf_conntrack_tcp_timeout_fin_wait = 30
+net.netfilter.nf_conntrack_tcp_timeout_time_wait = 30
 
 net.ipv4.ip_local_port_range = 1024 65535
 net.core.netdev_max_backlog = 16384

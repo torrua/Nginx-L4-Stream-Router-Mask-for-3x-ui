@@ -63,7 +63,7 @@ generate_config_template() {
     local target_file="${1:-setup_mask.env.example}"
     cat << 'EOF_CONF' > "$target_file"
 # ==============================================================================
-# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v7.7.0 Universal)
+# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v7.8.0 Universal)
 # ==============================================================================
 # Данный файл позволяет выполнять полностью автоматическую установку:
 # ./setup_mask.sh --config setup_mask.env --non-interactive --force
@@ -148,7 +148,7 @@ AWG_HEADER_PROTECTION_KEY=""
 AWG_RANDOM_TRAILERS="false"
 
 # AmneziaWG v2.0 / Legacy (Для роутеров) [y/n]
-ENABLE_AWG_V2="y"
+ENABLE_AWG_V2="n"
 AWG_V2_PORT="8444"
 
 # Настройки сети и DNS для клиентов AmneziaWG:

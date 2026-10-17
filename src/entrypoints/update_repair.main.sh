@@ -821,15 +821,15 @@ if row_xh and row_xh[0]:
         pass
 
 if prev_xh_dec != "none":
-    x_set = {"clients": [{"id": def_uuid, "flow": "xtls-rprx-vision"}], "decryption": prev_xh_dec}
+    x_set = {"clients": [{"id": def_uuid, "flow": ""}], "decryption": prev_xh_dec}
     if prev_xh_enc:
         x_set["encryption"] = prev_xh_enc
 else:
     vless_dekey, vless_enkey = generate_vlessenc_keypair()
     if vless_dekey and vless_enkey:
-        x_set = {"clients": [{"id": def_uuid, "flow": "xtls-rprx-vision"}], "decryption": vless_dekey, "encryption": vless_enkey}
+        x_set = {"clients": [{"id": def_uuid, "flow": ""}], "decryption": vless_dekey, "encryption": vless_enkey}
     else:
-        x_set = {"clients": [{"id": def_uuid, "flow": "xtls-rprx-vision"}], "decryption": "none"}
+        x_set = {"clients": [{"id": def_uuid, "flow": ""}], "decryption": "none"}
 x_str = {
     "network": "xhttp",
     "xhttpSettings": {
@@ -837,7 +837,7 @@ x_str = {
         "xPaddingBytes": "", "xPaddingObfsMode": False, "xPaddingKey": ""
     },
     "security": "none",
-    "externalProxy": [{"dest": domain, "port": 443, "forceTls": "tls", "sni": domain, "fingerprint": "chrome", "remark": "VLESS_XHTTP"}]
+    "externalProxy": [{"dest": domain, "port": 443, "forceTls": "tls", "sni": domain, "fingerprint": "chrome", "alpn": "h2", "remark": "VLESS_XHTTP"}]
 }
 smart_reconcile_inbound(xhttp_port, "vless", "in-xhttp-stream", "VLESS_XHTTP", x_set, x_str, listen="127.0.0.1")
 

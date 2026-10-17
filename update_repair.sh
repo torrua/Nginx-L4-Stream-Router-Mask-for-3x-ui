@@ -363,7 +363,7 @@ export ENABLE_AWG_V3="${ENABLE_AWG_V3:-y}"
 export AWG_V3_PORT="${AWG_V3_PORT:-8443}"
 export AWG_HEADER_PROTECTION_KEY="${AWG_HEADER_PROTECTION_KEY:-}"
 export AWG_RANDOM_TRAILERS="${AWG_RANDOM_TRAILERS:-false}"
-export ENABLE_AWG_V2="${ENABLE_AWG_V2:-y}"
+export ENABLE_AWG_V2="${ENABLE_AWG_V2:-n}"
 export AWG_V2_PORT="${AWG_V2_PORT:-8444}"
 export AWG_PRIMARY_DNS="${AWG_PRIMARY_DNS:-9.9.9.9}"
 export AWG_SECONDARY_DNS="${AWG_SECONDARY_DNS:-76.76.2.0}"
@@ -504,7 +504,7 @@ awg_random_trailers_env = os.environ.get("AWG_RANDOM_TRAILERS", "false").strip()
 awg_primary_dns = os.environ.get("AWG_PRIMARY_DNS") or "9.9.9.9"
 awg_secondary_dns = os.environ.get("AWG_SECONDARY_DNS") or "76.76.2.0"
 
-enable_awg_v2 = os.environ.get("ENABLE_AWG_V2", "y").lower() in ("1", "y", "true")
+enable_awg_v2 = os.environ.get("ENABLE_AWG_V2", "n").lower() in ("1", "y", "true")
 awg_v2_port = int(os.environ.get("AWG_V2_PORT") or "8444")
 
 ssl_engine = os.environ.get("SSL_ENGINE_CHOICE", "1")

@@ -2,7 +2,7 @@
 
 ---
 
-# 🛡️ Техническая архитектура: Hardened VPS & Nginx L4 Stream Router для 3X-UI (v7.7.0)
+# 🛡️ Техническая архитектура: Hardened VPS & Nginx L4 Stream Router для 3X-UI (v7.8.0)
 
 > **Полное техническое руководство для системных администраторов и инженеров:**  
 > Архитектура L4/L7 маршрутизации, защита от зацикливания пакетов (Anti-Loop 9443), универсальный префлайт-инспектор конфликтов портов, отказоустойчивость через сокеты в оперативной памяти, адаптивный HTTP/2 Nginx, тюнинг буферов xHTTP, DNS-подсистема AdGuard Home, безопасность и динамическая адресация AmneziaWG, ручная настройка инбаундов 3X-UI, правила файрвола UFW, диагностика, бэкапы и эталонные JSON-конфигурации.
@@ -63,7 +63,15 @@ net.ipv4.tcp_congestion_control = bbr
 net.ipv6.conf.all.disable_ipv6 = 1
 net.ipv6.conf.default.disable_ipv6 = 1
 net.ipv6.conf.lo.disable_ipv6 = 1
+
+# Защита таблицы conntrack от зависших сессий (разрывы ТСПУ/DPI без FIN/RST)
+net.netfilter.nf_conntrack_max = 262144
+net.netfilter.nf_conntrack_tcp_timeout_established = 1800
+net.netfilter.nf_conntrack_tcp_timeout_close_wait = 30
+net.netfilter.nf_conntrack_tcp_timeout_fin_wait = 30
+net.netfilter.nf_conntrack_tcp_timeout_time_wait = 30
 ```
+* **Очистка conntrack от зомби-сессий:** Сокращение таймаута неактивных TCP-сессий со стандартных 5 суток (`432000` с) до 30 минут (`1800` с) исключает исчерпание слотов соединений при тихих разрывах сессий DPI/ТСПУ и мобильных клиентов AmneziaWG.
 * **Загрузчик GRUB:** Параметр `ipv6.disable=1` внедряется в `GRUB_CMDLINE_LINUX_DEFAULT` для аппаратного отключения стека IPv6 на этапе инициализации ядра.
 * **Защита от сброса параметров облаком:** Добавляется задание Cron (`@reboot sleep 10 && sysctl --system`), повторно накатывающее параметры sysctl через 10 секунд после старта сети виртуализации.
 

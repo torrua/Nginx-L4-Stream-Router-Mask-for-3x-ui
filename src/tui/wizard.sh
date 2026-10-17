@@ -186,8 +186,8 @@ if [ "$EXPRESS_MODE" -eq 1 ]; then
     HY2_PORT_HOPPING_RANGE="${HY2_PORT_HOPPING_RANGE:-20000:50000}"
     ENABLE_AWG_V3="1"
     AWG_V3_PORT="8443"
-    ENABLE_AWG_V2="1"
-    AWG_V2_PORT="8444"
+    ENABLE_AWG_V2="0"
+    AWG_V2_PORT=""
     DECOY_MODE="1"
     SSL_ENGINE_CHOICE="1"
     AUTO_SETUP_3XUI="y"
@@ -226,10 +226,11 @@ if [ "$EXPRESS_MODE" -eq 1 ]; then
     echo -e "    ${DIM}• REALITY (свой сайт):${NC}  ${WHITE}cdn.$PRIMARY_DOMAIN -> 127.0.0.1:$STEAL_PORT${NC}"
     echo -e "    ${DIM}• REALITY (внешний):${NC}    ${WHITE}gateway.icloud.com -> 127.0.0.1:$CLASSIC_PORT${NC}"
     echo -e "    ${DIM}• VLESS xHTTP:${NC}    ${WHITE}$XHTTP_STREAM_PATH -> 127.0.0.1:$XHTTP_STREAM_PORT${NC}"
-    echo -e "    ${DIM}• UDP Стек:${NC}       ${WHITE}Hysteria 2 (:443), AWG v3 (:8443), AWG v2 (:8444)${NC}"
+    echo -e "    ${DIM}• UDP Стек:${NC}       ${WHITE}Hysteria 2 (:443), AWG v3 (:8443)${NC}"
     echo -e "    ${DIM}• Cloudflare WARP:${NC} ${WHITE}Активирован (Google, Gemini, AI / YouTube direct)${NC}"
     echo -e "    ${DIM}• Веб-маска:${NC}      ${WHITE}DataSphere Analytics${NC}"
     echo ""
+    start_amneziawg_preinstall_bg
 else
     # Инициализация глобальных структур и вспомогательных функций мастера настройки
     [[ -v DOMAIN_TO_PORT ]] || declare -g -A DOMAIN_TO_PORT=()
@@ -427,6 +428,10 @@ for item in res:
             AWG_V2_PORT="${AWG_V2_PORT:-8444}"
         else
             ENABLE_AWG_V2=0
+        fi
+
+        if is_true "${ENABLE_AWG_V3:-0}" || is_true "${ENABLE_AWG_V2:-0}" || is_true "${ENABLE_AWG_STANDALONE:-0}"; then
+            start_amneziawg_preinstall_bg
         fi
 
         # AdGuard Home
@@ -852,6 +857,7 @@ for item in res:
         prompt_yes_no "Установить и настроить AmneziaWG v3.1?" "${ENABLE_AWG_V3:-y}" ENABLE_AWG_V3 || return $?
         if [[ "${ENABLE_AWG_V3,,}" == "y" || "${ENABLE_AWG_V3:-}" == "1" ]]; then
             ENABLE_AWG_V3=1
+            start_amneziawg_preinstall_bg
             prompt_default "  Внешний UDP-порт для AmneziaWG v3.1" "${AWG_V3_PORT:-8443}" AWG_V3_PORT || return $?
             ok "AmneziaWG v3.1 активирована на порту ${AWG_V3_PORT}/udp"
         else
@@ -872,9 +878,10 @@ for item in res:
             echo
         fi
 
-        prompt_yes_no "Установить и настроить AmneziaWG v2.0 / Legacy?" "${ENABLE_AWG_V2:-y}" ENABLE_AWG_V2 || return $?
+        prompt_yes_no "Установить и настроить AmneziaWG v2.0 / Legacy?" "${ENABLE_AWG_V2:-n}" ENABLE_AWG_V2 || return $?
         if [[ "${ENABLE_AWG_V2,,}" == "y" || "${ENABLE_AWG_V2:-}" == "1" ]]; then
             ENABLE_AWG_V2=1
+            start_amneziawg_preinstall_bg
             prompt_default "  Внешний UDP-порт для AmneziaWG v2.0" "${AWG_V2_PORT:-8444}" AWG_V2_PORT || return $?
             ok "AmneziaWG v2.0 активирована на порту ${AWG_V2_PORT}/udp"
         else
@@ -1202,6 +1209,9 @@ for item in res:
 
             if [ -z "$choice" ] || [[ "${choice,,}" == "y" ]] || [[ "${choice,,}" == "yes" ]]; then
                 save_session_state "$SAVED_CONFIG_FILE" >/dev/null 2>&1 || true
+                if is_true "${ENABLE_AWG_V3:-0}" || is_true "${ENABLE_AWG_V2:-0}" || is_true "${ENABLE_AWG_STANDALONE:-0}"; then
+                    start_amneziawg_preinstall_bg
+                fi
                 return 0
             fi
 

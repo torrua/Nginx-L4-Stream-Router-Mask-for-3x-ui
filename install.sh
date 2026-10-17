@@ -7,7 +7,7 @@
 # Exit on severe unhandled errors
 set -o pipefail
 
-SCRIPT_VERSION="v7.7.0"
+SCRIPT_VERSION="v7.8.0"
 
 # Защита от аварийного обрыва SSH-сессии при установке
 trap 'echo -e "\n[!] Внимание: получен сигнал SIGHUP, процесс установки продолжается в фоне..." >> "${INSTALL_LOG:-/var/log/nginx_mask_install.log}" 2>&1' SIGHUP

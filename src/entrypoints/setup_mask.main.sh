@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # ==============================================================================
-# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v7.7.0 Universal
+# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v7.8.0 Universal
 # Nginx L4 Stream + 3X-UI + Unix Sockets + Native proxy_http_version 2 + 3 Decoys
 # ==============================================================================
 # Архитектура:
@@ -17,7 +17,7 @@
 #   7) Гибридный SSL-движок с разделением каталогов:
 #      - Certbot (HTTP-01): /etc/letsencrypt/live/
 #      - acme.sh + Cloudflare (DNS-01): /etc/ssl/acme/ (изоляция от /root/ и 755/644)
-#   8) 3 автономных локальных режима маскировки (Decoy Front):
+#      - 3 автономных локальных режима маскировки (Decoy Front):
 #      - 1: DataSphere Analytics (SPA с 3D-сферой и телеметрией)
 #      - 2: Облако CosmosCloud 
 #      - 3: Стандартная заглушка Nginx (Welcome to nginx)
@@ -27,7 +27,7 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="v7.7.0"
+SCRIPT_VERSION="v7.8.0"
 
 
 # @include "common/checkpoint.sh"
@@ -51,6 +51,8 @@ SCRIPT_VERSION="v7.7.0"
 # @include "ssl/certs.sh"
 
 # @include "system/preinstall.sh"
+
+# @include "awg/setup.sh"
 
 # @include "tui/wizard.sh"
 
@@ -301,8 +303,6 @@ fi
 # @include "tui/summary.sh"
 
 # @include "adguard/setup.sh"
-
-# @include "awg/setup.sh"
 
 if [[ "${ENABLE_AWG_V3:-}" == "1" || "${ENABLE_AWG_V3,,}" == "y" ]] || \
    [[ "${ENABLE_AWG_V2:-}" == "1" || "${ENABLE_AWG_V2,,}" == "y" ]] || \

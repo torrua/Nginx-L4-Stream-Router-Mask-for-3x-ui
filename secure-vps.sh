@@ -221,6 +221,12 @@ echo "==========================================================="
 echo "Применение сетевых оптимизаций ядра (Proxy Tuning)..."
 echo "==========================================================="
 
+# Загрузка модуля nf_conntrack для трекинга соединений
+modprobe nf_conntrack 2>/dev/null || true
+if [ -d /etc/modules-load.d ]; then
+    echo "nf_conntrack" > /etc/modules-load.d/99-proxy-conntrack.conf 2>/dev/null || true
+fi
+
 mkdir -p /etc/sysctl.d/
 cat << EOF > /etc/sysctl.d/99-proxy-tuning.conf
 net.core.somaxconn = 16384
@@ -231,6 +237,13 @@ net.core.rmem_default = 1048576
 net.core.wmem_default = 1048576
 net.core.rmem_max = 16777216
 net.core.wmem_max = 16777216
+
+# Защита conntrack от зависших сессий (разрывы ТСПУ/DPI без FIN/RST)
+net.netfilter.nf_conntrack_max = 262144
+net.netfilter.nf_conntrack_tcp_timeout_established = 1800
+net.netfilter.nf_conntrack_tcp_timeout_close_wait = 30
+net.netfilter.nf_conntrack_tcp_timeout_fin_wait = 30
+net.netfilter.nf_conntrack_tcp_timeout_time_wait = 30
 EOF
 sysctl --system >/dev/null 2>&1 || echo "Предупреждение: Не все параметры sysctl применены (нормально для контейнеров LXC/OpenVZ)."
 echo "Оптимизации сети успешно добавлены."

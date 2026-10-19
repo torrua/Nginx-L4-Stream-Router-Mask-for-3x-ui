@@ -624,6 +624,20 @@ ENABLE_ZAPRET="n"
 ZAPRET_QNUM="200"
 ZAPRET_DESYNC="split2"
 ZAPRET_FOOLING="md5sig,badseq"
+
+# --- 10. БЕЗОПАСНОСТЬ ХОСТА (HOST SECURITY & SSH HARDENING) ---
+# Включить настройку безопасности хоста (порт SSH, ключи, защита от брутфорса) [y/n]
+ENABLE_HOST_SECURITY="n"
+# Пользовательский порт SSH (1024-65535 или текущий 22)
+SSH_PORT="22"
+# Установить и настроить Fail2ban для защиты от брутфорса SSH [y/n]
+ENABLE_FAIL2BAN="y"
+# Отключить вход по паролю (PasswordAuthentication no) только при наличии SSH-ключа [y/n]
+DISABLE_PASSWORD_AUTH="n"
+# Публичный ключ SSH для авторизации (например "ssh-ed25519 AAAAC3...").
+SSH_PUBLIC_KEY=""
+# Принудительно закрыть старый порт SSH без подтверждения перехода [y/n]
+FORCE_CLOSE_OLD_SSH="n"
 EOF_CONF
     ok "Шаблон конфигурации успешно сгенерирован: '$target_file'"
 }
@@ -958,6 +972,12 @@ reconstruct_arrays_from_vars() {
         WSTUNNEL_SECRET="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "wst${RANDOM}")"
     fi
     CF_AUTH_METHOD="${CF_AUTH_METHOD:-1}"
+    _v="${ENABLE_HOST_SECURITY:-n}"; if is_true "$_v"; then ENABLE_HOST_SECURITY="y"; else ENABLE_HOST_SECURITY="n"; fi
+    SSH_PORT="${SSH_PORT:-${SSH_ACTIVE_PORT:-22}}"
+    _v="${ENABLE_FAIL2BAN:-n}"; if is_true "$_v"; then ENABLE_FAIL2BAN="y"; else ENABLE_FAIL2BAN="n"; fi
+    _v="${DISABLE_PASSWORD_AUTH:-n}"; if is_true "$_v"; then DISABLE_PASSWORD_AUTH="y"; else DISABLE_PASSWORD_AUTH="n"; fi
+    SSH_PUBLIC_KEY="${SSH_PUBLIC_KEY:-}"
+    _v="${FORCE_CLOSE_OLD_SSH:-n}"; if is_true "$_v"; then FORCE_CLOSE_OLD_SSH="y"; else FORCE_CLOSE_OLD_SSH="n"; fi
 }
 
 load_env_file() {
@@ -1039,6 +1059,10 @@ save_session_state() {
     v="${ENABLE_HOST_SECURITY:-n}"; is_true "$v" && host_security_save="y"
     local fail2ban_save="n"
     v="${ENABLE_FAIL2BAN:-n}"; is_true "$v" && fail2ban_save="y"
+    local disable_pwd_save="n"
+    v="${DISABLE_PASSWORD_AUTH:-n}"; is_true "$v" && disable_pwd_save="y"
+    local force_close_old_save="n"
+    v="${FORCE_CLOSE_OLD_SSH:-n}"; is_true "$v" && force_close_old_save="y"
 
     local _save_panel_path="${RAW_PATH:-${PANEL_PATH:-my-3x-panel}}"
     _save_panel_path="${_save_panel_path#/}"
@@ -1185,6 +1209,9 @@ WSTUNNEL_SECRET="${WSTUNNEL_SECRET:-}"
 ENABLE_HOST_SECURITY="$host_security_save"
 SSH_PORT="${SSH_PORT:-${SSH_ACTIVE_PORT:-22}}"
 ENABLE_FAIL2BAN="$fail2ban_save"
+DISABLE_PASSWORD_AUTH="$disable_pwd_save"
+SSH_PUBLIC_KEY="${SSH_PUBLIC_KEY:-}"
+FORCE_CLOSE_OLD_SSH="$force_close_old_save"
 
 LAST_COMPLETED_STEP="${LAST_COMPLETED_STEP:-0}"
 EOF_SAVE
@@ -3012,16 +3039,147 @@ supports_x86_64_v3() {
 
 
 # ==============================================================================
-#  Подсистема безопасности хоста: SSH Hardening & Fail2ban
+#  Подсистема безопасности хоста: SSH Hardening, SSH Keys, Dual-Port & Fail2ban
 # ==============================================================================
+
+WHITE="${WHITE:-}"
+NC="${NC:-}"
+YELLOW="${YELLOW:-}"
+RED="${RED:-}"
+GREEN="${GREEN:-}"
+CYAN="${CYAN:-}"
+BOLD="${BOLD:-}"
+ARROW="${ARROW:-}"
+DIM="${DIM:-}"
+
+has_authorized_keys() {
+    local target_user="${1:-root}"
+    local user_home
+    if [ "$target_user" = "root" ]; then
+        user_home="/root"
+    else
+        user_home=$(eval echo "~$target_user" 2>/dev/null || echo "/home/$target_user")
+    fi
+    local auth_file="${user_home}/.ssh/authorized_keys"
+    if [ -f "$auth_file" ] && [ -s "$auth_file" ]; then
+        if grep -qE '^[[:space:]]*(ssh-rsa|ssh-ed25519|ecdsa-sha2-[a-z0-9]+|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-[a-z0-9]+@openssh\.com)' "$auth_file" 2>/dev/null; then
+            return 0
+        fi
+    fi
+    return 1
+}
+
+add_authorized_key() {
+    local key_data="$1"
+    local target_user="${2:-root}"
+    [ -n "$key_data" ] || return 1
+
+    local user_home
+    if [ "$target_user" = "root" ]; then
+        user_home="/root"
+    else
+        user_home=$(eval echo "~$target_user" 2>/dev/null || echo "/home/$target_user")
+    fi
+
+    mkdir -p "${user_home}/.ssh"
+    chmod 700 "${user_home}/.ssh" 2>/dev/null || true
+
+    local auth_file="${user_home}/.ssh/authorized_keys"
+    touch "$auth_file"
+    chmod 600 "$auth_file" 2>/dev/null || true
+
+    # Проверка, не добавлен ли уже этот ключ
+    local clean_key
+    clean_key=$(echo "$key_data" | awk '{print $1" "$2}')
+    if [ -n "$clean_key" ] && grep -Fq "$clean_key" "$auth_file" 2>/dev/null; then
+        ok "SSH-ключ уже присутствует в $auth_file."
+        return 0
+    fi
+
+    echo "$key_data" >> "$auth_file"
+    chmod 600 "$auth_file" 2>/dev/null || true
+    if [ "$target_user" != "root" ] && command -v chown >/dev/null 2>&1; then
+        chown -R "${target_user}:${target_user}" "${user_home}/.ssh" 2>/dev/null || true
+    fi
+    ok "SSH-ключ успешно добавлен в ${auth_file}."
+    return 0
+}
+
+generate_ed25519_keypair() {
+    local target_user="${1:-root}"
+    local user_home
+    if [ "$target_user" = "root" ]; then
+        user_home="/root"
+    else
+        user_home=$(eval echo "~$target_user" 2>/dev/null || echo "/home/$target_user")
+    fi
+
+    mkdir -p "${user_home}/.ssh"
+    chmod 700 "${user_home}/.ssh" 2>/dev/null || true
+
+    local key_file="${user_home}/.ssh/id_ed25519_$(date +%Y%m%d_%H%M%S)"
+    if ! ssh-keygen -t ed25519 -f "$key_file" -C "server-${target_user}-$(date +%Y%m%d)" -N "" -q 2>/dev/null; then
+        warn "Не удалось сгенерировать пару ключей ssh-keygen."
+        return 1
+    fi
+
+    local auth_file="${user_home}/.ssh/authorized_keys"
+    cat "${key_file}.pub" >> "$auth_file"
+    chmod 600 "$auth_file" "${key_file}" 2>/dev/null || true
+    if [ "$target_user" != "root" ] && command -v chown >/dev/null 2>&1; then
+        chown -R "${target_user}:${target_user}" "${user_home}/.ssh" 2>/dev/null || true
+    fi
+
+    echo
+    echo -e "${RED}╔════════════════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${RED}║${NC}             ${WHITE}${BOLD}🔑 ВНИМАНИЕ: СОХРАНИТЕ ЭТОТ ПРИВАТНЫЙ КЛЮЧ ПРЯМО СЕЙЧАС!${NC}           ${RED}║${NC}"
+    echo -e "${RED}╚════════════════════════════════════════════════════════════════════════════════╝${NC}"
+    echo -e "  ${YELLOW}Скопируйте всё содержимое между линиями и сохраните в файл на своем ПК${NC}"
+    echo -e "  ${YELLOW}(например, ~/.ssh/server_key или puttygen -> id_ed25519.ppk):${NC}"
+    echo -e "${CYAN}--------------------------------------------------------------------------------${NC}"
+    cat "$key_file"
+    echo -e "${CYAN}--------------------------------------------------------------------------------${NC}"
+    echo
+    if [ -t 0 ]; then
+        local dummy=""
+        read -r -p "  Нажмите [Enter] после того, как сохранили приватный ключ в надежном месте..." dummy </dev/tty 2>/dev/null || read -r -p "  Нажмите [Enter]..." dummy 2>/dev/null || true
+    fi
+    ok "SSH-ключ Ed25519 сгенерирован и добавлен в ${auth_file}."
+    return 0
+}
+
+verify_ssh_local_port() {
+    local port="$1"
+    local timeout_sec="${2:-3}"
+
+    # 1. Попытка чтения баннера SSH-2.0 через Bash /dev/tcp
+    local banner=""
+    banner=$(timeout "$timeout_sec" bash -c "exec 3<>/dev/tcp/127.0.0.1/$port; head -n 1 <&3" 2>/dev/null || true)
+    if [[ "$banner" == *"SSH-2.0"* ]]; then
+        return 0
+    fi
+
+    # 2. Попытка через nc
+    if command -v nc >/dev/null 2>&1; then
+        if nc -z -w "$timeout_sec" 127.0.0.1 "$port" 2>/dev/null; then
+            return 0
+        fi
+    fi
+
+    # 3. Попытка через ss
+    if command -v ss >/dev/null 2>&1; then
+        if ss -tln sport = ":$port" 2>/dev/null | grep -q ":$port"; then
+            return 0
+        fi
+    fi
+
+    return 1
+}
 
 apply_ssh_configuration() {
     local target_port="${1:-22}"
     local active_port="${2:-22}"
-
-    if [ "$target_port" -eq "$active_port" ]; then
-        return 0
-    fi
+    local disable_pwd="${3:-n}"
 
     local ssh_svc
     ssh_svc=$(get_ssh_service_name)
@@ -3034,34 +3192,292 @@ apply_ssh_configuration() {
 
     # 2. Обновляем базовый /etc/ssh/sshd_config с гарантией директивы Include
     if [ -f /etc/ssh/sshd_config ]; then
-        sed -i -E "s/^[#\s]*Port [0-9]+/Port ${target_port}/" /etc/ssh/sshd_config || true
+        sed -i -E "s/^[#\s]*Port [0-9]+/Port ${target_port}/" /etc/ssh/sshd_config 2>/dev/null || true
         if ! grep -q "^Include /etc/ssh/sshd_config.d/\*\.conf" /etc/ssh/sshd_config 2>/dev/null; then
             sed -i '1i Include /etc/ssh/sshd_config.d/*.conf' /etc/ssh/sshd_config 2>/dev/null || true
         fi
     fi
 
-    # 3. Drop-in конфигурация для OpenSSH с явным портом
+    # 3. Drop-in конфигурация: ДВУХПОРТОВЫЙ РЕЖИМ при смене порта
     mkdir -p /etc/ssh/sshd_config.d/
-    cat << EOF > /etc/ssh/sshd_config.d/99-hardening.conf
-Port ${target_port}
+    local dropin_file="/etc/ssh/sshd_config.d/99-hardening.conf"
+
+    # Формируем директивы портов
+    local port_directives="Port ${target_port}"
+    if [ "$target_port" -ne "$active_port" ]; then
+        port_directives="Port ${target_port}
+Port ${active_port}"
+    fi
+
+    # Проверяем, можно ли отключить вход по паролю (ТОЛЬКО если есть валидные ключи)
+    local pwd_directives=""
+    if is_true "$disable_pwd"; then
+        if has_authorized_keys "root"; then
+            pwd_directives="PasswordAuthentication no
+KbdInteractiveAuthentication no
+ChallengeResponseAuthentication no
+UsePAM yes"
+            ok "Вход по паролю будет отключен (авторизованные SSH-ключи подтверждены)."
+        else
+            warn "Внимание: в authorized_keys не найдено SSH-ключей! Вход по паролю оставлен включенным для предотвращения потери доступа."
+        fi
+    fi
+
+    cat << EOF > "$dropin_file"
+# Сгенерировано Nginx Stream Router Security Subsystem
+${port_directives}
+AddressFamily inet
+PubkeyAuthentication yes
+${pwd_directives}
+EOF
+    chmod 600 "$dropin_file" 2>/dev/null || true
+
+    # 4. Проверяем валидность конфигурации sshd перед перезапуском
+    mkdir -p /run/sshd 2>/dev/null || true
+    if /usr/sbin/sshd -t 2>/dev/null; then
+        systemctl daemon-reload 2>/dev/null || true
+        systemctl restart "${ssh_svc}.service" 2>/dev/null || systemctl restart ssh 2>/dev/null || true
+    else
+        # При синтаксической ошибке — безопасный откат
+        warn "Ошибка валидации sshd -t при настройке SSH! Выполнен откат изменений drop-in для предотвращения потери доступа."
+        rm -f "$dropin_file"
+        systemctl restart "${ssh_svc}.service" 2>/dev/null || true
+        return 1
+    fi
+
+    # 5. Локальный тест ответа порта
+    if [ "$target_port" -ne "$active_port" ]; then
+        if verify_ssh_local_port "$target_port" 5; then
+            ok "Служба SSH запущена в переходном режиме: слушает новый порт ${WHITE}${target_port}${NC} и резервный порт ${WHITE}${active_port}${NC}."
+        else
+            warn "Локальный тест порта $target_port не дал ответа! Выполняется откат на активный порт $active_port..."
+            cat << EOF > "$dropin_file"
+Port ${active_port}
 AddressFamily inet
 PubkeyAuthentication yes
 EOF
-    chmod 600 /etc/ssh/sshd_config.d/99-hardening.conf 2>/dev/null || true
-
-    # 4. Проверяем валидность конфигурации sshd перед перезапуском
-    mkdir -p /run/sshd
-    if /usr/sbin/sshd -t 2>/dev/null; then
-        systemctl restart "${ssh_svc}.service" || true
-        ok "Служба SSH успешно переведена на порт ${WHITE}${target_port}${NC}."
+            chmod 600 "$dropin_file" 2>/dev/null || true
+            systemctl restart "${ssh_svc}.service" 2>/dev/null || true
+            return 1
+        fi
     else
-        # При синтаксической ошибке — безопасный откат
-        warn "Ошибка валидации sshd -t при смене порта! Откат изменений для предотвращения потери доступа."
-        rm -f /etc/ssh/sshd_config.d/99-hardening.conf
-        systemctl restart "${ssh_svc}.service" || true
-        return 1
+        ok "Конфигурация SSH успешно применена (порт ${WHITE}${target_port}${NC})."
     fi
+
     return 0
+}
+
+deploy_ssh_transition_watcher() {
+    local target_port="$1"
+    local active_port="$2"
+    local ttl_hours="${3:-24}"
+
+    [ "$target_port" -eq "$active_port" ] && return 0
+
+    local watcher_script="/usr/local/bin/ssh-transition-watcher.sh"
+    local watcher_service="/etc/systemd/system/ssh-transition-watcher.service"
+    local bin_dir="/usr/local/bin"
+    [ -d "$bin_dir" ] || mkdir -p "$bin_dir" 2>/dev/null || true
+
+    cat << 'EOF' > "$watcher_script"
+#!/usr/bin/env bash
+# SSH Port Transition Watcher — безопасное закрытие старого порта при первом успешном входе на новый
+set -u
+TARGET_PORT="${1:-2222}"
+ACTIVE_PORT="${2:-22}"
+TTL_HOURS="${3:-24}"
+
+START_TIME=$(date +%s)
+MAX_RUNTIME=$((TTL_HOURS * 3600))
+
+logger -t ssh-watcher "Запущен безопасный монитор перехода SSH: цель=$TARGET_PORT, старый=$ACTIVE_PORT, TTL=${TTL_HOURS}ч."
+
+while true; do
+    NOW=$(date +%s)
+    ELAPSED=$((NOW - START_TIME))
+    if [ "$ELAPSED" -ge "$MAX_RUNTIME" ]; then
+        logger -t ssh-watcher "Истек лимит времени ожидания (${TTL_HOURS}ч). Старый порт $ACTIVE_PORT оставлен для предотвращения потери доступа."
+        exit 0
+    fi
+
+    # Ищем установленное внешнее соединение на целевой порт
+    EST=$(ss -tn sport = ":${TARGET_PORT}" state established 2>/dev/null | grep -vE '127\.0\.0\.1|::1|Local Address' | wc -l)
+    if [ "$EST" -gt 0 ]; then
+        logger -t ssh-watcher "Обнаружено успешное подключение на порт $TARGET_PORT! Финализация перехода и закрытие порта $ACTIVE_PORT..."
+
+        # 1. Удаляем старый порт из drop-in sshd
+        if [ -f /etc/ssh/sshd_config.d/99-hardening.conf ]; then
+            sed -i "/^Port ${ACTIVE_PORT}$/d" /etc/ssh/sshd_config.d/99-hardening.conf 2>/dev/null || true
+        fi
+        systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null || true
+
+        # 2. Удаляем старый порт из UFW
+        if command -v ufw >/dev/null 2>&1; then
+            ufw delete allow "${ACTIVE_PORT}/tcp" >/dev/null 2>&1 || true
+        fi
+
+        # 3. Обновляем Fail2ban
+        if [ -f /etc/fail2ban/jail.local ]; then
+            sed -i "s/port = .*/port = ${TARGET_PORT}/" /etc/fail2ban/jail.local 2>/dev/null || true
+            systemctl reload fail2ban 2>/dev/null || systemctl restart fail2ban 2>/dev/null || true
+        fi
+
+        logger -t ssh-watcher "Переход SSH успешно завершен. Порт $ACTIVE_PORT закрыт, активен только $TARGET_PORT."
+        systemctl disable --now ssh-transition-watcher.service 2>/dev/null || true
+        rm -f /etc/systemd/system/ssh-transition-watcher.service /usr/local/bin/ssh-transition-watcher.sh 2>/dev/null || true
+        systemctl daemon-reload 2>/dev/null || true
+        exit 0
+    fi
+
+    sleep 5
+done
+EOF
+    chmod +x "$watcher_script" 2>/dev/null || true
+
+    mkdir -p /etc/systemd/system
+    cat << EOF > "$watcher_service"
+[Unit]
+Description=SSH Port Transition Safe Watcher
+After=network.target sshd.service ssh.service
+
+[Service]
+Type=simple
+ExecStart=${watcher_script} ${target_port} ${active_port} ${ttl_hours}
+Restart=no
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload 2>/dev/null || true
+        systemctl enable --now ssh-transition-watcher.service >/dev/null 2>&1 || true
+        ok "Развернут фоновый сторожевой сервис ${WHITE}ssh-transition-watcher.service${NC}."
+    fi
+}
+
+finalize_ssh_transition() {
+    local target_port="$1"
+    local active_port="$2"
+    local ssh_svc
+    ssh_svc=$(get_ssh_service_name)
+
+    [ "$target_port" -eq "$active_port" ] && return 0
+
+    log "Финализация перехода SSH: закрытие резервного порта ${active_port}..."
+
+    # 1. Удаляем старый порт из drop-in конфигурации
+    if [ -f /etc/ssh/sshd_config.d/99-hardening.conf ]; then
+        sed -i "/^Port ${active_port}$/d" /etc/ssh/sshd_config.d/99-hardening.conf 2>/dev/null || true
+    fi
+
+    # 2. Обновляем базовый /etc/ssh/sshd_config
+    if [ -f /etc/ssh/sshd_config ]; then
+        sed -i -E "s/^[#\s]*Port [0-9]+/Port ${target_port}/" /etc/ssh/sshd_config 2>/dev/null || true
+    fi
+
+    # 3. Валидация и перезагрузка sshd
+    mkdir -p /run/sshd 2>/dev/null || true
+    if /usr/sbin/sshd -t 2>/dev/null; then
+        systemctl reload "${ssh_svc}.service" 2>/dev/null || systemctl restart "${ssh_svc}.service" 2>/dev/null || true
+    fi
+
+    # 4. Удаляем старый порт из UFW
+    if command -v ufw >/dev/null 2>&1; then
+        ufw delete allow "${active_port}/tcp" >/dev/null 2>&1 || true
+    fi
+
+    # 5. Обновляем Fail2ban
+    if [ -f /etc/fail2ban/jail.local ]; then
+        sed -i "s/port = .*/port = ${target_port}/" /etc/fail2ban/jail.local 2>/dev/null || true
+        systemctl reload fail2ban 2>/dev/null || systemctl restart fail2ban 2>/dev/null || true
+    fi
+
+    # 6. Останавливаем и удаляем watcher
+    systemctl disable --now ssh-transition-watcher.service >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/ssh-transition-watcher.service /usr/local/bin/ssh-transition-watcher.sh 2>/dev/null || true
+    systemctl daemon-reload 2>/dev/null || true
+
+    ok "Резервный порт SSH ${active_port} закрыт. SSH теперь работает исключительно на порту ${WHITE}${target_port}${NC}."
+}
+
+wait_and_finalize_ssh_transition() {
+    local target_port="$1"
+    local active_port="$2"
+    local timeout_sec="${3:-30}"
+
+    [ "$target_port" -eq "$active_port" ] && return 0
+
+    if is_true "${FORCE_CLOSE_OLD_SSH:-n}"; then
+        ok "Включен режим принудительного закрытия (--force-close-old-ssh / FORCE_CLOSE_OLD_SSH=y)."
+        finalize_ssh_transition "$target_port" "$active_port"
+        return 0
+    fi
+
+    # Если скрипт выполняется не интерактивно (нет tty) — поднимаем watcher и выходим
+    if [ ! -t 0 ] || [ "${NON_INTERACTIVE:-0}" -eq 1 ]; then
+        log "Неинтерактивный запуск: активирован фоновый watcher перехода SSH."
+        deploy_ssh_transition_watcher "$target_port" "$active_port" 24
+        return 0
+    fi
+
+    local host_ip
+    host_ip=$(get_wan_ip)
+
+    echo
+    echo -e "${YELLOW}╔════════════════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${YELLOW}║${NC}             ${WHITE}${BOLD}⚡ БЕЗОПАСНЫЙ ПЕРЕХОД SSH: ПОРТЫ ${target_port} (НОВЫЙ) И ${active_port} (СТАРЫЙ)${NC}            ${YELLOW}║${NC}"
+    echo -e "${YELLOW}╚════════════════════════════════════════════════════════════════════════════════╝${NC}"
+    echo -e "  Служба SSH сейчас слушает ${GREEN}ОБА порта (${target_port} и ${active_port})${NC}. Ваша текущая сессия не прервана."
+    echo -e "  Брандмауэр UFW и Fail2ban защищают оба порта."
+    echo
+    echo -e "  ${CYAN}${BOLD}ПРОВЕРЬТЕ ПОДКЛЮЧЕНИЕ В НОВОЙ ВКЛАДКЕ ТЕРМИНАЛА:${NC}"
+    echo -e "    ${WHITE}ssh -p ${target_port} root@${host_ip}${NC}"
+    echo
+    echo -e "  ${WHITE}[1]${NC} Ожидать вашего подключения (${timeout_sec} сек, автозакрытие при успехе) ${GREEN}[Enter]${NC}"
+    echo -e "  ${WHITE}[2]${NC} Оставить оба порта и передать контроль фоновому watcher (закроет старый порт позже)"
+    echo -e "  ${WHITE}[3]${NC} Закрыть старый порт ${active_port} прямо сейчас"
+    echo
+
+    local choice=""
+    echo -ne "  ${WHITE}${ARROW} Ваш выбор [1/2/3] (по умолчанию 1): ${NC}"
+    read -r -t 10 choice </dev/tty || choice="1"
+    choice="${choice:-1}"
+    choice=$(echo "$choice" | tr -d '[:space:]')
+
+    case "$choice" in
+        2)
+            deploy_ssh_transition_watcher "$target_port" "$active_port" 24
+            ok "Оба порта (${target_port} и ${active_port}) остаются открытыми. Watcher закроет ${active_port} после входа."
+            return 0
+            ;;
+        3)
+            finalize_ssh_transition "$target_port" "$active_port"
+            return 0
+            ;;
+        *)
+            echo -e "  ${CYAN}Ожидание входящего подключения на порт ${target_port} (${timeout_sec} сек)...${NC}"
+            local elapsed=0
+            while [ "$elapsed" -lt "$timeout_sec" ]; do
+                local est_count=0
+                est_count=$(ss -tn sport = ":${target_port}" state established 2>/dev/null | grep -vE '127\.0\.0\.1|::1|Local Address' | wc -l)
+                if [ "$est_count" -gt 0 ]; then
+                    echo
+                    ok "Успешное входящее подключение на порт ${target_port} обнаружено!"
+                    finalize_ssh_transition "$target_port" "$active_port"
+                    return 0
+                fi
+                sleep 1
+                elapsed=$((elapsed + 1))
+                echo -ne "\r  ${DIM}Осталось: $((timeout_sec - elapsed)) сек...${NC} "
+            done
+            echo
+            warn "За ${timeout_sec} сек новых подключений не зафиксировано."
+            ok "Для вашей безопасности старый порт ${active_port} пока оставлен открытым."
+            deploy_ssh_transition_watcher "$target_port" "$active_port" 24
+            return 0
+            ;;
+    esac
 }
 
 apply_fail2ban_configuration() {
@@ -5262,7 +5678,7 @@ step_os_hardening() {
 
 
     # 2. SSH Configuration & Fail2ban (защита от потери доступа)
-    apply_ssh_configuration "$SSH_PORT" "$SSH_ACTIVE_PORT"
+    apply_ssh_configuration "$SSH_PORT" "$SSH_ACTIVE_PORT" "${DISABLE_PASSWORD_AUTH:-n}"
     apply_fail2ban_configuration "$SSH_PORT" "$SSH_ACTIVE_PORT"
 
     # 3. UFW Firewall Setup & Disable IPv6 in UFW (Non-destructive)
@@ -7261,7 +7677,7 @@ for item in res:
 
         local current_configured_port="${SSH_PORT:-$SSH_ACTIVE_PORT}"
 
-        prompt_yes_no "Настроить безопасность сервера (порт SSH и защиту Fail2ban)?" "${ENABLE_HOST_SECURITY:-n}" ENABLE_HOST_SECURITY || return $?
+        prompt_yes_no "Настроить безопасность сервера (SSH-ключи, порт и защиту Fail2ban)?" "${ENABLE_HOST_SECURITY:-n}" ENABLE_HOST_SECURITY || return $?
         if is_true "$ENABLE_HOST_SECURITY"; then
             ENABLE_HOST_SECURITY="y"
 
@@ -7301,7 +7717,65 @@ for item in res:
                 done
             fi
 
-            # Вопрос 2: Fail2ban
+            # Вопрос 2: Настройка SSH-ключей
+            echo
+            local prompt_keys="n"
+            if has_authorized_keys "root"; then
+                echo -e "  ${GREEN}✔ В системе уже настроены авторизованные SSH-ключи (~/.ssh/authorized_keys).${NC}"
+                prompt_yes_no "  Добавить дополнительный публичный ключ SSH?" "n" prompt_keys || return $?
+            else
+                echo -e "  ${YELLOW}ℹ️  В системе не найдено авторизованных SSH-ключей в ~/.ssh/authorized_keys.${NC}"
+                prompt_keys="y"
+            fi
+
+            if is_true "$prompt_keys"; then
+                echo -e "  ${CYAN}Настройка SSH-ключей для root:${NC}"
+                echo -e "    ${WHITE}[1]${NC} Вставить существующий Public Key клиента (напр. ssh-ed25519 ...) ${GREEN}[Рекомендуется]${NC}"
+                echo -e "    ${WHITE}[2]${NC} Сгенерировать новую пару ключей Ed25519 прямо на сервере"
+                echo -e "    ${WHITE}[3]${NC} Пропустить настройку ключей"
+                local k_choice="1"
+                echo -ne "  ${WHITE}${ARROW} Ваш выбор (1-3) [1]: ${NC}"
+                read -r k_choice </dev/tty 2>/dev/null || read -r k_choice 2>/dev/null || k_choice="1"
+                k_choice="${k_choice:-1}"
+                case "$k_choice" in
+                    1)
+                        echo -e "  ${CYAN}Вставьте ваш публичный ключ (начинается с ssh-ed25519, ssh-rsa или ecdsa):${NC}"
+                        local pub_in=""
+                        read -r pub_in </dev/tty 2>/dev/null || read -r pub_in 2>/dev/null || true
+                        pub_in=$(echo "$pub_in" | tr -d '\r\n')
+                        if [ -n "$pub_in" ]; then
+                            add_authorized_key "$pub_in" "root"
+                            SSH_PUBLIC_KEY="$pub_in"
+                        else
+                            warn "Публичный ключ не введен, пропуск."
+                        fi
+                        ;;
+                    2)
+                        generate_ed25519_keypair "root"
+                        ;;
+                    *)
+                        log "Настройка SSH-ключей пропущена."
+                        ;;
+                esac
+            fi
+
+            # Вопрос 3: Отключение входа по паролю (Строго с защитой от потери доступа)
+            echo
+            if has_authorized_keys "root"; then
+                prompt_yes_no "  Отключить вход по паролю (PasswordAuthentication no)? Вход будет ТОЛЬКО по SSH-ключам" "${DISABLE_PASSWORD_AUTH:-n}" DISABLE_PASSWORD_AUTH || return $?
+                if is_true "$DISABLE_PASSWORD_AUTH"; then
+                    DISABLE_PASSWORD_AUTH="y"
+                    ok "Вход по паролю будет отключен. Убедитесь, что у вас сохранен приватный ключ!"
+                else
+                    DISABLE_PASSWORD_AUTH="n"
+                    log "Вход по паролю оставлен включенным."
+                fi
+            else
+                DISABLE_PASSWORD_AUTH="n"
+                echo -e "  ${YELLOW}⚠️  Отключение пароля недоступно: в authorized_keys не обнаружено ключей.${NC}"
+            fi
+
+            # Вопрос 4: Fail2ban
             echo
             prompt_yes_no "  Установить и включить Fail2ban (защита от брутфорса)?" "${ENABLE_FAIL2BAN:-y}" ENABLE_FAIL2BAN || return $?
             if is_true "$ENABLE_FAIL2BAN"; then
@@ -7314,6 +7788,7 @@ for item in res:
         else
             ENABLE_HOST_SECURITY="n"
             SSH_PORT="$SSH_ACTIVE_PORT"
+            DISABLE_PASSWORD_AUTH="n"
             ENABLE_FAIL2BAN="n"
             log "Настройки SSH и Fail2ban оставлены без изменений."
         fi
@@ -7432,10 +7907,14 @@ for item in res:
         if is_true "${ENABLE_HOST_SECURITY:-n}"; then
             local f2b_str="${RED}выкл${NC}"
             is_true "${ENABLE_FAIL2BAN:-n}" && f2b_str="${GREEN}вкл${NC}"
+            local pwd_str="${GREEN}пароль разрешен${NC}"
+            is_true "${DISABLE_PASSWORD_AUTH:-n}" && pwd_str="${YELLOW}только по ключам${NC}"
+            local key_str=""
+            [ -n "${SSH_PUBLIC_KEY:-}" ] && key_str=", ключ добавлен"
             if [ "${SSH_PORT:-$SSH_ACTIVE_PORT}" -ne "${SSH_ACTIVE_PORT:-22}" ]; then
-                sec_status="${GREEN}Настроена${NC} (SSH порт: ${WHITE}${SSH_PORT}${NC} [было ${SSH_ACTIVE_PORT}], Fail2ban: ${f2b_str})"
+                sec_status="${GREEN}Настроена${NC} (SSH порт: ${WHITE}${SSH_PORT}${NC} [было ${SSH_ACTIVE_PORT}], Fail2ban: ${f2b_str}, Доступ: ${pwd_str}${key_str})"
             else
-                sec_status="${GREEN}Настроена${NC} (SSH порт: ${WHITE}${SSH_PORT}${NC}, Fail2ban: ${f2b_str})"
+                sec_status="${GREEN}Настроена${NC} (SSH порт: ${WHITE}${SSH_PORT}${NC}, Fail2ban: ${f2b_str}, Доступ: ${pwd_str}${key_str})"
             fi
         fi
         echo -e "  ${CYAN}[12]${NC} ${BOLD}Безопасность сервера:${NC}    $sec_status"
@@ -7706,9 +8185,12 @@ fi
 # --- Настройка безопасности хоста: SSH & Fail2ban ---
 local_active_ssh="${SSH_ACTIVE_PORT:-22}"
 local_target_ssh="${SSH_PORT:-$local_active_ssh}"
-if is_true "${ENABLE_HOST_SECURITY:-n}" || [ "$local_target_ssh" -ne "$local_active_ssh" ] || is_true "${ENABLE_FAIL2BAN:-n}"; then
-    if [ "$local_target_ssh" -ne "$local_active_ssh" ]; then
-        run_with_spinner "Применение конфигурации OpenSSH (порт $local_target_ssh)" apply_ssh_configuration "$local_target_ssh" "$local_active_ssh" || warn "Не удалось применить конфигурацию SSH."
+if is_true "${ENABLE_HOST_SECURITY:-n}" || [ "$local_target_ssh" -ne "$local_active_ssh" ] || is_true "${ENABLE_FAIL2BAN:-n}" || is_true "${DISABLE_PASSWORD_AUTH:-n}"; then
+    if [ -n "${SSH_PUBLIC_KEY:-}" ]; then
+        add_authorized_key "$SSH_PUBLIC_KEY" "root"
+    fi
+    if [ "$local_target_ssh" -ne "$local_active_ssh" ] || is_true "${DISABLE_PASSWORD_AUTH:-n}"; then
+        run_with_spinner "Применение конфигурации OpenSSH (порт $local_target_ssh)" apply_ssh_configuration "$local_target_ssh" "$local_active_ssh" "${DISABLE_PASSWORD_AUTH:-n}" || warn "Не удалось применить конфигурацию SSH."
         if command -v ufw >/dev/null 2>&1; then
             ufw allow "${local_active_ssh}/tcp" comment 'Current SSH Port' >/dev/null 2>&1 || true
             ufw allow "${local_target_ssh}/tcp" comment 'Target SSH Port' >/dev/null 2>&1 || true
@@ -10403,5 +10885,9 @@ for ((s_idx=1; s_idx<=TOTAL_STEPS; s_idx++)); do
     fi
 done
 echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}\n"
+
+if [ "$local_target_ssh" -ne "$local_active_ssh" ]; then
+    wait_and_finalize_ssh_transition "$local_target_ssh" "$local_active_ssh"
+fi
 
 exit 0

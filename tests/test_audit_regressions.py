@@ -874,6 +874,78 @@ class TestExtraProtocolsInbounds(unittest.TestCase):
         self.assertIn("apply_ssh_configuration", setup_main)
         self.assertIn("apply_fail2ban_configuration", setup_main)
 
+    def test_ssh_dual_port_transition_and_keys(self):
+        """Test dual-port sshd configuration, watcher deployment and key validation in isolated mock root."""
+        res = run_shell("""
+set -euo pipefail
+log(){ echo "LOG:$*"; }; ok(){ echo "OK:$*"; }; warn(){ echo "WARN:$*"; }; die(){ echo "DIE:$*"; exit 1; };
+is_true(){ [[ "${1:-0}" == "1" || "${1,,}" == "y" || "${1,,}" == "true" ]]; }
+source src/common/colors.sh || true
+MOCK_ROOT=$(mktemp -d)
+mkdir -p "$MOCK_ROOT/etc/ssh/sshd_config.d" "$MOCK_ROOT/root/.ssh" "$MOCK_ROOT/etc/systemd/system" "$MOCK_ROOT/usr/local/bin"
+touch "$MOCK_ROOT/etc/ssh/sshd_config"
+
+systemctl(){ echo "MOCK_SYSTEMCTL:$*"; }
+get_ssh_service_name(){ echo "sshd"; }
+
+source src/system/security.sh
+
+# Rewrite paths in functions for mock
+eval "$(declare -f has_authorized_keys | sed "s|/root|$MOCK_ROOT/root|g")"
+eval "$(declare -f add_authorized_key | sed "s|/root|$MOCK_ROOT/root|g")"
+eval "$(declare -f apply_ssh_configuration | sed "s|/etc/ssh|$MOCK_ROOT/etc/ssh|g")"
+eval "$(declare -f deploy_ssh_transition_watcher | sed "s|/usr/local/bin|$MOCK_ROOT/usr/local/bin|g" | sed "s|/etc/systemd/system|$MOCK_ROOT/etc/systemd/system|g")"
+eval "$(declare -f finalize_ssh_transition | sed "s|/etc/ssh|$MOCK_ROOT/etc/ssh|g" | sed "s|/etc/systemd/system|$MOCK_ROOT/etc/systemd/system|g" | sed "s|/usr/local/bin|$MOCK_ROOT/usr/local/bin|g")"
+
+# 1. Initially no keys
+if has_authorized_keys "root"; then
+    echo "ERROR: Should have no keys"
+    exit 1
+fi
+
+# 2. Add public key
+add_authorized_key "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGeneratedTestKeyForSecurityVerification admin@test" "root"
+if ! has_authorized_keys "root"; then
+    echo "ERROR: Should have authorized keys"
+    exit 1
+fi
+
+# Mock local port verification and sshd test
+verify_ssh_local_port(){ return 0; }
+/usr/sbin/sshd(){ return 0; }
+
+# 3. Apply dual port configuration (2222 target, 22 active, disable password auth)
+apply_ssh_configuration 2222 22 "y"
+
+echo "=== DROPIN DUAL PORT ==="
+cat "$MOCK_ROOT/etc/ssh/sshd_config.d/99-hardening.conf"
+
+# 4. Deploy watcher
+deploy_ssh_transition_watcher 2222 22 24
+echo "=== WATCHER SCRIPT ==="
+grep "TARGET_PORT=" "$MOCK_ROOT/usr/local/bin/ssh-transition-watcher.sh"
+echo "=== WATCHER SERVICE ==="
+grep "ExecStart=" "$MOCK_ROOT/etc/systemd/system/ssh-transition-watcher.service"
+
+# 5. Finalize transition
+finalize_ssh_transition 2222 22
+echo "=== DROPIN FINALIZED ==="
+cat "$MOCK_ROOT/etc/ssh/sshd_config.d/99-hardening.conf"
+
+rm -rf "$MOCK_ROOT"
+""")
+        self.assertEqual(res.returncode, 0, f"Script failed: {res.stderr}")
+        out = res.stdout
+        self.assertIn("Port 2222", out)
+        self.assertIn("Port 22", out)
+        self.assertIn("PasswordAuthentication no", out)
+        self.assertIn("TARGET_PORT=", out)
+        self.assertIn("ssh-transition-watcher.sh 2222 22 24", out)
+
+        finalized_block = out[out.find("=== DROPIN FINALIZED ==="):]
+        self.assertIn("Port 2222", finalized_block)
+        self.assertNotIn("Port 22\n", finalized_block)
+
     def test_multiselect_numeric_fallback_and_tui_detection(self):
         """Verify multiselect graceful fallback (Option A) and terminal capability detection."""
         # 1. Terminal capability check

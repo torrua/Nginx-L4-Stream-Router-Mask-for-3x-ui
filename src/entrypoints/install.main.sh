@@ -153,6 +153,10 @@ main() {
     
     save_and_display_summary
     print_dashboard
+
+    if [ "${SSH_PORT:-$SSH_ACTIVE_PORT}" -ne "${SSH_ACTIVE_PORT:-22}" ]; then
+        wait_and_finalize_ssh_transition "${SSH_PORT:-$SSH_ACTIVE_PORT}" "${SSH_ACTIVE_PORT:-22}"
+    fi
 }
 
 main "$@"

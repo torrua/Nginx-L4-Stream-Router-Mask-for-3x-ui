@@ -1476,7 +1476,7 @@ for item in res:
 
         local current_configured_port="${SSH_PORT:-$SSH_ACTIVE_PORT}"
 
-        prompt_yes_no "Настроить безопасность сервера (порт SSH и защиту Fail2ban)?" "${ENABLE_HOST_SECURITY:-n}" ENABLE_HOST_SECURITY || return $?
+        prompt_yes_no "Настроить безопасность сервера (SSH-ключи, порт и защиту Fail2ban)?" "${ENABLE_HOST_SECURITY:-n}" ENABLE_HOST_SECURITY || return $?
         if is_true "$ENABLE_HOST_SECURITY"; then
             ENABLE_HOST_SECURITY="y"
 
@@ -1516,7 +1516,65 @@ for item in res:
                 done
             fi
 
-            # Вопрос 2: Fail2ban
+            # Вопрос 2: Настройка SSH-ключей
+            echo
+            local prompt_keys="n"
+            if has_authorized_keys "root"; then
+                echo -e "  ${GREEN}✔ В системе уже настроены авторизованные SSH-ключи (~/.ssh/authorized_keys).${NC}"
+                prompt_yes_no "  Добавить дополнительный публичный ключ SSH?" "n" prompt_keys || return $?
+            else
+                echo -e "  ${YELLOW}ℹ️  В системе не найдено авторизованных SSH-ключей в ~/.ssh/authorized_keys.${NC}"
+                prompt_keys="y"
+            fi
+
+            if is_true "$prompt_keys"; then
+                echo -e "  ${CYAN}Настройка SSH-ключей для root:${NC}"
+                echo -e "    ${WHITE}[1]${NC} Вставить существующий Public Key клиента (напр. ssh-ed25519 ...) ${GREEN}[Рекомендуется]${NC}"
+                echo -e "    ${WHITE}[2]${NC} Сгенерировать новую пару ключей Ed25519 прямо на сервере"
+                echo -e "    ${WHITE}[3]${NC} Пропустить настройку ключей"
+                local k_choice="1"
+                echo -ne "  ${WHITE}${ARROW} Ваш выбор (1-3) [1]: ${NC}"
+                read -r k_choice </dev/tty 2>/dev/null || read -r k_choice 2>/dev/null || k_choice="1"
+                k_choice="${k_choice:-1}"
+                case "$k_choice" in
+                    1)
+                        echo -e "  ${CYAN}Вставьте ваш публичный ключ (начинается с ssh-ed25519, ssh-rsa или ecdsa):${NC}"
+                        local pub_in=""
+                        read -r pub_in </dev/tty 2>/dev/null || read -r pub_in 2>/dev/null || true
+                        pub_in=$(echo "$pub_in" | tr -d '\r\n')
+                        if [ -n "$pub_in" ]; then
+                            add_authorized_key "$pub_in" "root"
+                            SSH_PUBLIC_KEY="$pub_in"
+                        else
+                            warn "Публичный ключ не введен, пропуск."
+                        fi
+                        ;;
+                    2)
+                        generate_ed25519_keypair "root"
+                        ;;
+                    *)
+                        log "Настройка SSH-ключей пропущена."
+                        ;;
+                esac
+            fi
+
+            # Вопрос 3: Отключение входа по паролю (Строго с защитой от потери доступа)
+            echo
+            if has_authorized_keys "root"; then
+                prompt_yes_no "  Отключить вход по паролю (PasswordAuthentication no)? Вход будет ТОЛЬКО по SSH-ключам" "${DISABLE_PASSWORD_AUTH:-n}" DISABLE_PASSWORD_AUTH || return $?
+                if is_true "$DISABLE_PASSWORD_AUTH"; then
+                    DISABLE_PASSWORD_AUTH="y"
+                    ok "Вход по паролю будет отключен. Убедитесь, что у вас сохранен приватный ключ!"
+                else
+                    DISABLE_PASSWORD_AUTH="n"
+                    log "Вход по паролю оставлен включенным."
+                fi
+            else
+                DISABLE_PASSWORD_AUTH="n"
+                echo -e "  ${YELLOW}⚠️  Отключение пароля недоступно: в authorized_keys не обнаружено ключей.${NC}"
+            fi
+
+            # Вопрос 4: Fail2ban
             echo
             prompt_yes_no "  Установить и включить Fail2ban (защита от брутфорса)?" "${ENABLE_FAIL2BAN:-y}" ENABLE_FAIL2BAN || return $?
             if is_true "$ENABLE_FAIL2BAN"; then
@@ -1529,6 +1587,7 @@ for item in res:
         else
             ENABLE_HOST_SECURITY="n"
             SSH_PORT="$SSH_ACTIVE_PORT"
+            DISABLE_PASSWORD_AUTH="n"
             ENABLE_FAIL2BAN="n"
             log "Настройки SSH и Fail2ban оставлены без изменений."
         fi
@@ -1647,10 +1706,14 @@ for item in res:
         if is_true "${ENABLE_HOST_SECURITY:-n}"; then
             local f2b_str="${RED}выкл${NC}"
             is_true "${ENABLE_FAIL2BAN:-n}" && f2b_str="${GREEN}вкл${NC}"
+            local pwd_str="${GREEN}пароль разрешен${NC}"
+            is_true "${DISABLE_PASSWORD_AUTH:-n}" && pwd_str="${YELLOW}только по ключам${NC}"
+            local key_str=""
+            [ -n "${SSH_PUBLIC_KEY:-}" ] && key_str=", ключ добавлен"
             if [ "${SSH_PORT:-$SSH_ACTIVE_PORT}" -ne "${SSH_ACTIVE_PORT:-22}" ]; then
-                sec_status="${GREEN}Настроена${NC} (SSH порт: ${WHITE}${SSH_PORT}${NC} [было ${SSH_ACTIVE_PORT}], Fail2ban: ${f2b_str})"
+                sec_status="${GREEN}Настроена${NC} (SSH порт: ${WHITE}${SSH_PORT}${NC} [было ${SSH_ACTIVE_PORT}], Fail2ban: ${f2b_str}, Доступ: ${pwd_str}${key_str})"
             else
-                sec_status="${GREEN}Настроена${NC} (SSH порт: ${WHITE}${SSH_PORT}${NC}, Fail2ban: ${f2b_str})"
+                sec_status="${GREEN}Настроена${NC} (SSH порт: ${WHITE}${SSH_PORT}${NC}, Fail2ban: ${f2b_str}, Доступ: ${pwd_str}${key_str})"
             fi
         fi
         echo -e "  ${CYAN}[12]${NC} ${BOLD}Безопасность сервера:${NC}    $sec_status"

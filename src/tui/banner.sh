@@ -233,6 +233,20 @@ ENABLE_ZAPRET="n"
 ZAPRET_QNUM="200"
 ZAPRET_DESYNC="split2"
 ZAPRET_FOOLING="md5sig,badseq"
+
+# --- 10. БЕЗОПАСНОСТЬ ХОСТА (HOST SECURITY & SSH HARDENING) ---
+# Включить настройку безопасности хоста (порт SSH, ключи, защита от брутфорса) [y/n]
+ENABLE_HOST_SECURITY="n"
+# Пользовательский порт SSH (1024-65535 или текущий 22)
+SSH_PORT="22"
+# Установить и настроить Fail2ban для защиты от брутфорса SSH [y/n]
+ENABLE_FAIL2BAN="y"
+# Отключить вход по паролю (PasswordAuthentication no) только при наличии SSH-ключа [y/n]
+DISABLE_PASSWORD_AUTH="n"
+# Публичный ключ SSH для авторизации (например "ssh-ed25519 AAAAC3...").
+SSH_PUBLIC_KEY=""
+# Принудительно закрыть старый порт SSH без подтверждения перехода [y/n]
+FORCE_CLOSE_OLD_SSH="n"
 EOF_CONF
     ok "Шаблон конфигурации успешно сгенерирован: '$target_file'"
 }

@@ -204,6 +204,12 @@ reconstruct_arrays_from_vars() {
         WSTUNNEL_SECRET="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "wst${RANDOM}")"
     fi
     CF_AUTH_METHOD="${CF_AUTH_METHOD:-1}"
+    _v="${ENABLE_HOST_SECURITY:-n}"; if is_true "$_v"; then ENABLE_HOST_SECURITY="y"; else ENABLE_HOST_SECURITY="n"; fi
+    SSH_PORT="${SSH_PORT:-${SSH_ACTIVE_PORT:-22}}"
+    _v="${ENABLE_FAIL2BAN:-n}"; if is_true "$_v"; then ENABLE_FAIL2BAN="y"; else ENABLE_FAIL2BAN="n"; fi
+    _v="${DISABLE_PASSWORD_AUTH:-n}"; if is_true "$_v"; then DISABLE_PASSWORD_AUTH="y"; else DISABLE_PASSWORD_AUTH="n"; fi
+    SSH_PUBLIC_KEY="${SSH_PUBLIC_KEY:-}"
+    _v="${FORCE_CLOSE_OLD_SSH:-n}"; if is_true "$_v"; then FORCE_CLOSE_OLD_SSH="y"; else FORCE_CLOSE_OLD_SSH="n"; fi
 }
 
 load_env_file() {
@@ -285,6 +291,10 @@ save_session_state() {
     v="${ENABLE_HOST_SECURITY:-n}"; is_true "$v" && host_security_save="y"
     local fail2ban_save="n"
     v="${ENABLE_FAIL2BAN:-n}"; is_true "$v" && fail2ban_save="y"
+    local disable_pwd_save="n"
+    v="${DISABLE_PASSWORD_AUTH:-n}"; is_true "$v" && disable_pwd_save="y"
+    local force_close_old_save="n"
+    v="${FORCE_CLOSE_OLD_SSH:-n}"; is_true "$v" && force_close_old_save="y"
 
     local _save_panel_path="${RAW_PATH:-${PANEL_PATH:-my-3x-panel}}"
     _save_panel_path="${_save_panel_path#/}"
@@ -431,6 +441,9 @@ WSTUNNEL_SECRET="${WSTUNNEL_SECRET:-}"
 ENABLE_HOST_SECURITY="$host_security_save"
 SSH_PORT="${SSH_PORT:-${SSH_ACTIVE_PORT:-22}}"
 ENABLE_FAIL2BAN="$fail2ban_save"
+DISABLE_PASSWORD_AUTH="$disable_pwd_save"
+SSH_PUBLIC_KEY="${SSH_PUBLIC_KEY:-}"
+FORCE_CLOSE_OLD_SSH="$force_close_old_save"
 
 LAST_COMPLETED_STEP="${LAST_COMPLETED_STEP:-0}"
 EOF_SAVE

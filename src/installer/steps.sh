@@ -40,7 +40,7 @@ step_os_hardening() {
 
 
     # 2. SSH Configuration & Fail2ban (защита от потери доступа)
-    apply_ssh_configuration "$SSH_PORT" "$SSH_ACTIVE_PORT"
+    apply_ssh_configuration "$SSH_PORT" "$SSH_ACTIVE_PORT" "${DISABLE_PASSWORD_AUTH:-n}"
     apply_fail2ban_configuration "$SSH_PORT" "$SSH_ACTIVE_PORT"
 
     # 3. UFW Firewall Setup & Disable IPv6 in UFW (Non-destructive)

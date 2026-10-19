@@ -1572,6 +1572,8 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
         ss_method = cur_settings.get("method") or target_settings.get("method", "2022-blake3-aes-256-gcm")
         target_settings["method"] = ss_method
         target_settings["network"] = "tcp,udp"
+        target_settings["udpOverTcp"] = True
+        target_settings["udp_over_tcp"] = True
 
         # Валидация / сохранение серверного пароля (PSK)
         cur_srv_pwd = cur_settings.get("password")

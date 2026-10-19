@@ -5336,6 +5336,11 @@ step_os_hardening() {
     fi
     
     echo "y" | ufw enable >/dev/null 2>&1 || true
+
+    # 4. Server-Side Zapret (DPI Desync nfqws)
+    if is_true "${ENABLE_ZAPRET:-0}"; then
+        setup_zapret_service
+    fi
 }
 
 step_install_3xui() {
@@ -5421,23 +5426,38 @@ setup_zapret_service() {
         *) z_arch="x86_64" ;;
     esac
 
-    if [ ! -x /usr/local/bin/nfqws ]; then
+    local bin_dir="${LOCAL_BIN_DIR:-/usr/local/bin}"
+    [ -d "$bin_dir" ] || mkdir -p "$bin_dir" 2>/dev/null || true
+
+    if [ ! -x "${bin_dir}/nfqws" ]; then
         local z_ver="${ZAPRET_VERSION:-v69.2}"
         local z_tmp="/tmp/zapret_${z_ver}"
         mkdir -p "$z_tmp"
-        if curl -fsSL --connect-timeout 15 "https://github.com/bol-van/zapret/releases/download/${z_ver}/zapret-${z_ver}.tar.gz" -o "$z_tmp/zapret.tar.gz" 2>/dev/null; then
+        if curl -fsSL --connect-timeout 15 "https://github.com/bol-van/zapret/releases/download/${z_ver}/zapret-${z_ver}.tar.gz" -o "$z_tmp/zapret.tar.gz" 2>/dev/null || \
+           curl -fsSL --connect-timeout 15 "https://ghfast.top/https://github.com/bol-van/zapret/releases/download/${z_ver}/zapret-${z_ver}.tar.gz" -o "$z_tmp/zapret.tar.gz" 2>/dev/null; then
             tar -zxf "$z_tmp/zapret.tar.gz" -C "$z_tmp" --strip-components=1 2>/dev/null || true
             if [ -f "$z_tmp/binaries/${z_arch}/nfqws" ]; then
-                cp "$z_tmp/binaries/${z_arch}/nfqws" /usr/local/bin/nfqws
-                chmod +x /usr/local/bin/nfqws
+                cp "$z_tmp/binaries/${z_arch}/nfqws" "${bin_dir}/nfqws"
+                chmod +x "${bin_dir}/nfqws"
+            elif [ -n "$(find "$z_tmp" -name nfqws -type f 2>/dev/null)" ]; then
+                cp "$(find "$z_tmp" -name nfqws -type f | grep "${z_arch}" | head -n1 || find "$z_tmp" -name nfqws -type f | head -n1)" "${bin_dir}/nfqws"
+                chmod +x "${bin_dir}/nfqws"
+            elif [ -d "$z_tmp/nfqws" ]; then
+                make -C "$z_tmp/nfqws" >/dev/null 2>&1 || true
+                if [ -f "$z_tmp/nfqws/nfqws" ]; then
+                    cp "$z_tmp/nfqws/nfqws" "${bin_dir}/nfqws"
+                    chmod +x "${bin_dir}/nfqws"
+                fi
             fi
         fi
-        rm -rf "$z_tmp"
+        rm -rf "$z_tmp" 2>/dev/null || true
     fi
 
     local qnum="${ZAPRET_QNUM:-200}"
     local desync="${ZAPRET_DESYNC:-split2}"
     local fooling="${ZAPRET_FOOLING:-md5sig,badseq}"
+    local iptables_bin
+    iptables_bin="$(command -v iptables 2>/dev/null || echo "/usr/sbin/iptables")"
 
     mkdir -p /etc/systemd/system
     cat << EOF > /etc/systemd/system/zapret-server.service
@@ -5448,10 +5468,10 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStartPre=-/usr/sbin/iptables -t mangle -D POSTROUTING -p tcp -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original -m mark ! --mark 0x40000000/0x40000000 -j NFQUEUE --queue-num ${qnum} --queue-bypass
-ExecStartPre=/usr/sbin/iptables -t mangle -I POSTROUTING -p tcp -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original -m mark ! --mark 0x40000000/0x40000000 -j NFQUEUE --queue-num ${qnum} --queue-bypass
-ExecStart=/usr/local/bin/nfqws --qnum=${qnum} --dpi-desync=${desync} --dpi-desync-fooling=${fooling}
-ExecStopPost=-/usr/sbin/iptables -t mangle -D POSTROUTING -p tcp -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original -m mark ! --mark 0x40000000/0x40000000 -j NFQUEUE --queue-num ${qnum} --queue-bypass
+ExecStartPre=-${iptables_bin} -t mangle -D POSTROUTING -p tcp -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original -m mark ! --mark 0x40000000/0x40000000 -j NFQUEUE --queue-num ${qnum} --queue-bypass
+ExecStartPre=${iptables_bin} -t mangle -I POSTROUTING -p tcp -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original -m mark ! --mark 0x40000000/0x40000000 -j NFQUEUE --queue-num ${qnum} --queue-bypass
+ExecStart=${bin_dir}/nfqws --qnum=${qnum} --dpi-desync=${desync} --dpi-desync-fooling=${fooling}
+ExecStopPost=-${iptables_bin} -t mangle -D POSTROUTING -p tcp -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original -m mark ! --mark 0x40000000/0x40000000 -j NFQUEUE --queue-num ${qnum} --queue-bypass
 Restart=always
 RestartSec=3s
 LimitNOFILE=65535
@@ -5463,11 +5483,11 @@ EOF
     if command -v systemctl >/dev/null 2>&1; then
         systemctl daemon-reload 2>/dev/null || true
         systemctl enable zapret-server >/dev/null 2>&1 || true
-        if [ -x /usr/local/bin/nfqws ]; then
+        if [ -x "${bin_dir}/nfqws" ]; then
             systemctl restart zapret-server 2>/dev/null || true
             ok "Служба Server-Side Zapret активирована (NFQUEUE $qnum, desync: $desync)."
         else
-            warn "Бинарник /usr/local/bin/nfqws не найден, запуск zapret-server отложен."
+            warn "Бинарник ${bin_dir}/nfqws не найден, запуск zapret-server отложен."
         fi
     fi
 }
@@ -5483,18 +5503,25 @@ setup_masque_service() {
         *) sb_arch="amd64" ;;
     esac
 
-    if [ ! -x /usr/local/bin/sing-box ]; then
+    local bin_dir="${LOCAL_BIN_DIR:-/usr/local/bin}"
+    [ -d "$bin_dir" ] || mkdir -p "$bin_dir" 2>/dev/null || true
+
+    if [ ! -x "${bin_dir}/sing-box" ]; then
         local sb_ver="1.11.4"
         local sb_tmp="/tmp/sing-box_${sb_ver}"
         mkdir -p "$sb_tmp"
-        if curl -fsSL --connect-timeout 15 "https://github.com/SagerNet/sing-box/releases/download/v${sb_ver}/sing-box-${sb_ver}-linux-${sb_arch}.tar.gz" -o "$sb_tmp/sb.tar.gz" 2>/dev/null; then
+        if curl -fsSL --connect-timeout 15 "https://github.com/SagerNet/sing-box/releases/download/v${sb_ver}/sing-box-${sb_ver}-linux-${sb_arch}.tar.gz" -o "$sb_tmp/sb.tar.gz" 2>/dev/null || \
+           curl -fsSL --connect-timeout 15 "https://ghfast.top/https://github.com/SagerNet/sing-box/releases/download/v${sb_ver}/sing-box-${sb_ver}-linux-${sb_arch}.tar.gz" -o "$sb_tmp/sb.tar.gz" 2>/dev/null; then
             tar -zxf "$sb_tmp/sb.tar.gz" -C "$sb_tmp" --strip-components=1 2>/dev/null || true
             if [ -f "$sb_tmp/sing-box" ]; then
-                cp "$sb_tmp/sing-box" /usr/local/bin/sing-box
-                chmod +x /usr/local/bin/sing-box
+                cp "$sb_tmp/sing-box" "${bin_dir}/sing-box"
+                chmod +x "${bin_dir}/sing-box"
+            elif [ -n "$(find "$sb_tmp" -name sing-box -type f 2>/dev/null)" ]; then
+                cp "$(find "$sb_tmp" -name sing-box -type f | head -n1)" "${bin_dir}/sing-box"
+                chmod +x "${bin_dir}/sing-box"
             fi
         fi
-        rm -rf "$sb_tmp"
+        rm -rf "$sb_tmp" 2>/dev/null || true
     fi
 
     local masque_p="${MASQUE_PORT:-8445}"
@@ -5576,7 +5603,7 @@ After=network.target network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/sing-box run -c /etc/sing-box/masque.json
+ExecStart=${bin_dir}/sing-box run -c /etc/sing-box/masque.json
 Restart=always
 RestartSec=3s
 LimitNOFILE=65535
@@ -5588,11 +5615,11 @@ EOF
     if command -v systemctl >/dev/null 2>&1; then
         systemctl daemon-reload 2>/dev/null || true
         systemctl enable sing-box-masque >/dev/null 2>&1 || true
-        if [ -x /usr/local/bin/sing-box ]; then
+        if [ -x "${bin_dir}/sing-box" ]; then
             systemctl restart sing-box-masque 2>/dev/null || true
             ok "Служба Sing-box MASQUE активирована (порт ${masque_p}/udp, H3/QUIC)."
         else
-            warn "Бинарник /usr/local/bin/sing-box не найден, запуск sing-box-masque отложен."
+            warn "Бинарник ${bin_dir}/sing-box не найден, запуск sing-box-masque отложен."
         fi
     fi
 }
@@ -5608,9 +5635,13 @@ setup_shadowtls_service() {
         *) st_arch="x86_64" ;;
     esac
 
-    if [ ! -x /usr/local/bin/shadow-tls ]; then
-        if curl -fsSL --connect-timeout 15 "https://github.com/ihciah/shadow-tls/releases/latest/download/shadow-tls-${st_arch}-unknown-linux-musl" -o /usr/local/bin/shadow-tls 2>/dev/null; then
-            chmod +x /usr/local/bin/shadow-tls
+    local bin_dir="${LOCAL_BIN_DIR:-/usr/local/bin}"
+    [ -d "$bin_dir" ] || mkdir -p "$bin_dir" 2>/dev/null || true
+
+    if [ ! -x "${bin_dir}/shadow-tls" ]; then
+        if curl -fsSL --connect-timeout 15 "https://github.com/ihciah/shadow-tls/releases/latest/download/shadow-tls-${st_arch}-unknown-linux-musl" -o "${bin_dir}/shadow-tls" 2>/dev/null || \
+           curl -fsSL --connect-timeout 15 "https://ghfast.top/https://github.com/ihciah/shadow-tls/releases/latest/download/shadow-tls-${st_arch}-unknown-linux-musl" -o "${bin_dir}/shadow-tls" 2>/dev/null; then
+            chmod +x "${bin_dir}/shadow-tls"
         fi
     fi
 
@@ -5627,7 +5658,7 @@ After=network.target network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/shadow-tls --v3 server --listen 127.0.0.1:${st_port} --server 127.0.0.1:${ss_backend_port} --tls ${st_sni}:443 --password ${st_pwd}
+ExecStart=${bin_dir}/shadow-tls --v3 server --listen 127.0.0.1:${st_port} --server 127.0.0.1:${ss_backend_port} --tls ${st_sni}:443 --password ${st_pwd}
 Restart=always
 RestartSec=3s
 LimitNOFILE=65535
@@ -5639,11 +5670,11 @@ EOF
     if command -v systemctl >/dev/null 2>&1; then
         systemctl daemon-reload 2>/dev/null || true
         systemctl enable shadow-tls >/dev/null 2>&1 || true
-        if [ -x /usr/local/bin/shadow-tls ]; then
+        if [ -x "${bin_dir}/shadow-tls" ]; then
             systemctl restart shadow-tls 2>/dev/null || true
             ok "Служба ShadowTLS v4 активирована (порт ${st_port}, decoy: ${st_sni})."
         else
-            warn "Бинарник /usr/local/bin/shadow-tls не найден, запуск shadow-tls отложен."
+            warn "Бинарник ${bin_dir}/shadow-tls не найден, запуск shadow-tls отложен."
         fi
     fi
 }
@@ -5652,25 +5683,32 @@ setup_wstunnel_service() {
     log "Настройка службы Wstunnel L7..."
     local cur_arch
     cur_arch=$(uname -m 2>/dev/null || echo "x86_64")
-    local ws_arch="x64"
+    local ws_arch="amd64"
     case "$cur_arch" in
-        x86_64|amd64) ws_arch="x64" ;;
+        x86_64|amd64) ws_arch="amd64" ;;
         aarch64|arm64) ws_arch="arm64" ;;
-        *) ws_arch="x64" ;;
+        *) ws_arch="amd64" ;;
     esac
 
-    if [ ! -x /usr/local/bin/wstunnel ]; then
-        local ws_ver="10.1.7"
+    local bin_dir="${LOCAL_BIN_DIR:-/usr/local/bin}"
+    [ -d "$bin_dir" ] || mkdir -p "$bin_dir" 2>/dev/null || true
+
+    if [ ! -x "${bin_dir}/wstunnel" ]; then
+        local ws_ver="11.0.0"
         local ws_tmp="/tmp/wstunnel_${ws_ver}"
         mkdir -p "$ws_tmp"
-        if curl -fsSL --connect-timeout 15 "https://github.com/erebe/wstunnel/releases/download/v${ws_ver}/wstunnel-linux-${ws_arch}.tar.gz" -o "$ws_tmp/ws.tar.gz" 2>/dev/null; then
+        if curl -fsSL --connect-timeout 15 "https://github.com/erebe/wstunnel/releases/download/v${ws_ver}/wstunnel_${ws_ver}_linux_${ws_arch}.tar.gz" -o "$ws_tmp/ws.tar.gz" 2>/dev/null || \
+           curl -fsSL --connect-timeout 15 "https://ghfast.top/https://github.com/erebe/wstunnel/releases/download/v${ws_ver}/wstunnel_${ws_ver}_linux_${ws_arch}.tar.gz" -o "$ws_tmp/ws.tar.gz" 2>/dev/null; then
             tar -zxf "$ws_tmp/ws.tar.gz" -C "$ws_tmp" 2>/dev/null || true
             if [ -f "$ws_tmp/wstunnel" ]; then
-                cp "$ws_tmp/wstunnel" /usr/local/bin/wstunnel
-                chmod +x /usr/local/bin/wstunnel
+                cp "$ws_tmp/wstunnel" "${bin_dir}/wstunnel"
+                chmod +x "${bin_dir}/wstunnel"
+            elif [ -n "$(find "$ws_tmp" -name wstunnel -type f 2>/dev/null)" ]; then
+                cp "$(find "$ws_tmp" -name wstunnel -type f | head -n1)" "${bin_dir}/wstunnel"
+                chmod +x "${bin_dir}/wstunnel"
             fi
         fi
-        rm -rf "$ws_tmp"
+        rm -rf "$ws_tmp" 2>/dev/null || true
     fi
 
     local ws_port="${WSTUNNEL_PORT:-8080}"
@@ -5685,7 +5723,7 @@ After=network.target network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/wstunnel server --restrict-http-upgrade-path-prefix ${ws_prefix} ws://127.0.0.1:${ws_port}
+ExecStart=${bin_dir}/wstunnel server --restrict-http-upgrade-path-prefix ${ws_prefix} ws://127.0.0.1:${ws_port}
 Restart=always
 RestartSec=3s
 LimitNOFILE=65535
@@ -5697,11 +5735,11 @@ EOF
     if command -v systemctl >/dev/null 2>&1; then
         systemctl daemon-reload 2>/dev/null || true
         systemctl enable wstunnel >/dev/null 2>&1 || true
-        if [ -x /usr/local/bin/wstunnel ]; then
+        if [ -x "${bin_dir}/wstunnel" ]; then
             systemctl restart wstunnel 2>/dev/null || true
             ok "Служба Wstunnel L7 активирована (порт ${ws_port}, prefix: /${ws_prefix}/)."
         else
-            warn "Бинарник /usr/local/bin/wstunnel не найден, запуск wstunnel отложен."
+            warn "Бинарник ${bin_dir}/wstunnel не найден, запуск wstunnel отложен."
         fi
     fi
 }
@@ -8858,6 +8896,9 @@ done
 if is_true "${CLASSIC_ENABLED:-0}"; then
     for ext_sni in "${!EXT_SNI_TO_PORT[@]}"; do
         port="${EXT_SNI_TO_PORT[$ext_sni]}"
+        if is_true "${ENABLE_SHADOWTLS:-0}" && [ "$ext_sni" = "${SHADOWTLS_SNI:-gateway.icloud.com}" ]; then
+            continue
+        fi
         STREAM_MAP_RULES+="        ${ext_sni}     reality_backend_${port};"$'\n'
     done
 fi

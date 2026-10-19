@@ -573,6 +573,69 @@ systemctl enable fail2ban
 systemctl restart fail2ban
 
 #####################################
+# SERVER-SIDE ZAPRET (NFQWS DPI DESYNC)
+#####################################
+if [[ "${ENABLE_ZAPRET:-n}" == "y" || "${ENABLE_ZAPRET:-0}" == "1" ]] || prompt_yes_no "Установить Server-Side Zapret nfqws (DPI Desync для обхода блокировок)?"; then
+    echo "Установка Server-Side Zapret nfqws..."
+    apt-get install -y libnetfilter-queue1 iptables 2>/dev/null || true
+    cur_arch=$(uname -m 2>/dev/null || echo "x86_64")
+    z_arch="x86_64"
+    case "$cur_arch" in
+        x86_64|amd64) z_arch="x86_64" ;;
+        aarch64|arm64) z_arch="aarch64" ;;
+        *) z_arch="x86_64" ;;
+    esac
+    if [ ! -x /usr/local/bin/nfqws ]; then
+        z_ver="${ZAPRET_VERSION:-v69.2}"
+        z_tmp="/tmp/zapret_${z_ver}"
+        mkdir -p "$z_tmp"
+        if curl -fsSL --connect-timeout 15 "https://github.com/bol-van/zapret/releases/download/${z_ver}/zapret-${z_ver}.tar.gz" -o "$z_tmp/zapret.tar.gz" 2>/dev/null || \
+           curl -fsSL --connect-timeout 15 "https://ghfast.top/https://github.com/bol-van/zapret/releases/download/${z_ver}/zapret-${z_ver}.tar.gz" -o "$z_tmp/zapret.tar.gz" 2>/dev/null; then
+            tar -zxf "$z_tmp/zapret.tar.gz" -C "$z_tmp" --strip-components=1 2>/dev/null || true
+            if [ -f "$z_tmp/binaries/${z_arch}/nfqws" ]; then
+                cp "$z_tmp/binaries/${z_arch}/nfqws" /usr/local/bin/nfqws
+                chmod +x /usr/local/bin/nfqws
+            elif [ -n "$(find "$z_tmp" -name nfqws -type f 2>/dev/null)" ]; then
+                cp "$(find "$z_tmp" -name nfqws -type f | grep "${z_arch}" | head -n1 || find "$z_tmp" -name nfqws -type f | head -n1)" /usr/local/bin/nfqws
+                chmod +x /usr/local/bin/nfqws
+            fi
+        fi
+        rm -rf "$z_tmp"
+    fi
+    qnum="${ZAPRET_QNUM:-200}"
+    desync="${ZAPRET_DESYNC:-split2}"
+    fooling="${ZAPRET_FOOLING:-md5sig,badseq}"
+    iptables_bin="$(command -v iptables 2>/dev/null || echo "/usr/sbin/iptables")"
+
+    mkdir -p /etc/systemd/system
+    cat << EOF > /etc/systemd/system/zapret-server.service
+[Unit]
+Description=Server-Side Zapret nfqws DPI Desync Daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStartPre=-${iptables_bin} -t mangle -D POSTROUTING -p tcp -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original -m mark ! --mark 0x40000000/0x40000000 -j NFQUEUE --queue-num ${qnum} --queue-bypass
+ExecStartPre=${iptables_bin} -t mangle -I POSTROUTING -p tcp -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original -m mark ! --mark 0x40000000/0x40000000 -j NFQUEUE --queue-num ${qnum} --queue-bypass
+ExecStart=/usr/local/bin/nfqws --qnum=${qnum} --dpi-desync=${desync} --dpi-desync-fooling=${fooling}
+ExecStopPost=-${iptables_bin} -t mangle -D POSTROUTING -p tcp -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original -m mark ! --mark 0x40000000/0x40000000 -j NFQUEUE --queue-num ${qnum} --queue-bypass
+Restart=always
+RestartSec=3s
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable zapret-server >/dev/null 2>&1 || true
+    if [ -x /usr/local/bin/nfqws ]; then
+        systemctl restart zapret-server 2>/dev/null || true
+        echo "✔ Служба Server-Side Zapret активирована (NFQUEUE $qnum, desync: $desync)."
+    fi
+fi
+
+#####################################
 # 3X-UI 
 #####################################
 if prompt_yes_no "Установить 3x-ui (потребуется интерактивная настройка панели)"; then

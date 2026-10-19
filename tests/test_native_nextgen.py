@@ -11,10 +11,13 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 BASH = Path(r"C:\Program Files\Git\bin\bash.exe") if os.name == "nt" else Path(shutil.which("bash") or "bash")
 
 
@@ -36,12 +39,13 @@ def run_shell(code: str, env: dict | None = None) -> subprocess.CompletedProcess
 
 class TestNativeNginxStreamConfig(unittest.TestCase):
     def test_shadowtls_stream_stripper_architecture(self):
-        """When ENABLE_SHADOWTLS=1, Nginx Stream must map SNI to internal stripper upstream."""
+        """When ENABLE_SHADOWTLS=1, Nginx Stream must map SNI to internal stripper upstream and prevent duplicate SNI."""
         res = run_shell(r"""
 set -euo pipefail
 ALL_DOMAINS=("example.com")
 STEAL_ENABLED=0
-CLASSIC_ENABLED=0
+CLASSIC_ENABLED=1
+declare -A EXT_SNI_TO_PORT=(["gateway.icloud.com"]="46443" ["itunes.apple.com"]="46443")
 ENABLE_SHADOWTLS=1
 SHADOWTLS_SNI="gateway.icloud.com"
 SHADOWTLS_PORT=8543
@@ -51,11 +55,21 @@ STREAM_MAP_RULES=""
 REALITY_UPSTREAMS=""
 
 for dom in "${ALL_DOMAINS[@]}"; do
-    STREAM_MAP_RULES+="        ${dom}     nginx_http_backend;"$'\\n'
+    STREAM_MAP_RULES+="        ${dom}     nginx_http_backend;"$'\n'
 done
 
+if [[ "${CLASSIC_ENABLED:-0}" == "1" || "${CLASSIC_ENABLED:-0}" == "y" ]]; then
+    for ext_sni in "${!EXT_SNI_TO_PORT[@]}"; do
+        port="${EXT_SNI_TO_PORT[$ext_sni]}"
+        if [[ "${ENABLE_SHADOWTLS:-0}" == "1" || "${ENABLE_SHADOWTLS:-0}" == "y" ]] && [ "$ext_sni" = "${SHADOWTLS_SNI:-gateway.icloud.com}" ]; then
+            continue
+        fi
+        STREAM_MAP_RULES+="        ${ext_sni}     reality_backend_${port};"$'\n'
+    done
+fi
+
 if [[ "${ENABLE_SHADOWTLS:-0}" == "1" || "${ENABLE_SHADOWTLS:-0}" == "y" ]]; then
-    STREAM_MAP_RULES+="        ${SHADOWTLS_SNI:-gateway.icloud.com}     shadowtls_backend;"$'\\n'
+    STREAM_MAP_RULES+="        ${SHADOWTLS_SNI:-gateway.icloud.com}     shadowtls_backend;"$'\n'
 fi
 
 SHADOWTLS_STREAM_BLOCKS=""
@@ -99,6 +113,10 @@ EOF
 
 echo "--- STREAM CONF ---"
 echo "$stream_conf"
+
+# Verify no duplicate gateway.icloud.com in map
+count=$(echo "$stream_conf" | grep -c "gateway.icloud.com" || true)
+echo "GATEWAY_COUNT: $count"
 """)
         self.assertEqual(res.returncode, 0, f"Script failed: {res.stderr}")
         out = res.stdout
@@ -111,6 +129,8 @@ echo "$stream_conf"
         self.assertIn("listen 127.0.0.1:8542 proxy_protocol;", out)
         self.assertIn("proxy_pass 127.0.0.1:8543;", out)
         self.assertNotIn("proxy_pass 127.0.0.1:8543 proxy_protocol", out)
+        # 4. No duplicate SNI mapping
+        self.assertIn("GATEWAY_COUNT: 1", out)
 
     def test_shadowtls_disabled_by_default(self):
         """When ENABLE_SHADOWTLS=0, no shadowtls_backend upstream or stripper should exist."""
@@ -180,19 +200,19 @@ echo "$WSTUNNEL_LOCATION_BLOCK"
 
 
 class TestNativeInstallerServices(unittest.TestCase):
-    def test_setup_zapret_service_unit(self):
-        """Zapret service must be created with iptables connbytes 1:6 mangle and queue-bypass."""
+    def test_setup_zapret_service_real_invocation(self):
+        """Invoke setup_zapret_service from src/installer/steps.sh and inspect generated unit."""
         res = run_shell("""
 set -euo pipefail
 log(){ echo "LOG:$*"; }; ok(){ echo "OK:$*"; }; warn(){ echo "WARN:$*"; }; die(){ echo "DIE:$*"; exit 1; };
 is_true(){ [[ "${1:-0}" == "1" || "${1,,}" == "y" || "${1,,}" == "true" ]]; }
 
-source src/installer/steps.sh
+MOCK_ROOT=$(mktemp -d)
+mkdir -p "$MOCK_ROOT/etc/systemd/system" "$MOCK_ROOT/usr/local/bin"
+touch "$MOCK_ROOT/usr/local/bin/nfqws"
+chmod +x "$MOCK_ROOT/usr/local/bin/nfqws"
+export LOCAL_BIN_DIR="$MOCK_ROOT/usr/local/bin"
 
-TMPDIR=$(mktemp -d)
-mkdir -p "$TMPDIR/etc/systemd/system"
-
-# Mock systemctl and iptables
 systemctl(){ echo "MOCK_SYSTEMCTL:$*"; }
 iptables(){ echo "MOCK_IPTABLES:$*"; }
 
@@ -200,29 +220,16 @@ ZAPRET_QNUM=200
 ZAPRET_DESYNC="split2"
 ZAPRET_FOOLING="md5sig,badseq"
 
-# Re-define file target to TMPDIR
-cat << EOF > "$TMPDIR/etc/systemd/system/zapret-server.service"
-[Unit]
-Description=Server-Side Zapret nfqws DPI Desync Daemon
-After=network-online.target
-Wants=network-online.target
+# Source the real implementation
+source src/installer/steps.sh
 
-[Service]
-Type=simple
-ExecStartPre=-/usr/sbin/iptables -t mangle -D POSTROUTING -p tcp -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original -m mark ! --mark 0x40000000/0x40000000 -j NFQUEUE --queue-num ${ZAPRET_QNUM} --queue-bypass
-ExecStartPre=/usr/sbin/iptables -t mangle -I POSTROUTING -p tcp -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original -m mark ! --mark 0x40000000/0x40000000 -j NFQUEUE --queue-num ${ZAPRET_QNUM} --queue-bypass
-ExecStart=/usr/local/bin/nfqws --qnum=${ZAPRET_QNUM} --dpi-desync=${ZAPRET_DESYNC} --dpi-desync-fooling=${ZAPRET_FOOLING}
-ExecStopPost=-/usr/sbin/iptables -t mangle -D POSTROUTING -p tcp -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original -m mark ! --mark 0x40000000/0x40000000 -j NFQUEUE --queue-num ${ZAPRET_QNUM} --queue-bypass
-Restart=always
-RestartSec=3s
-LimitNOFILE=65535
+# Temporarily override /etc/systemd/system target via sed in test
+eval "$(declare -f setup_zapret_service | sed "s|/etc/systemd/system|$MOCK_ROOT/etc/systemd/system|g")"
 
-[Install]
-WantedBy=multi-user.target
-EOF
+setup_zapret_service
 
-cat "$TMPDIR/etc/systemd/system/zapret-server.service"
-rm -rf "$TMPDIR"
+cat "$MOCK_ROOT/etc/systemd/system/zapret-server.service"
+rm -rf "$MOCK_ROOT"
 """)
         self.assertEqual(res.returncode, 0, f"Script failed: {res.stderr}")
         content = res.stdout
@@ -233,82 +240,38 @@ rm -rf "$TMPDIR"
         self.assertIn("--dpi-desync-fooling=md5sig,badseq", content)
 
     def test_setup_masque_json_validity(self):
-        """Sing-box MASQUE config must be valid JSON with alpn h3 and connect_udp."""
+        """Invoke setup_masque_service from src/installer/steps.sh and inspect generated JSON."""
         res = run_shell("""
 set -euo pipefail
+log(){ echo "LOG:$*"; }; ok(){ echo "OK:$*"; }; warn(){ echo "WARN:$*"; }; die(){ echo "DIE:$*"; exit 1; };
+is_true(){ [[ "${1:-0}" == "1" || "${1,,}" == "y" || "${1,,}" == "true" ]]; }
+
+MOCK_ROOT=$(mktemp -d)
+mkdir -p "$MOCK_ROOT/etc/sing-box" "$MOCK_ROOT/etc/systemd/system" "$MOCK_ROOT/usr/local/bin"
+touch "$MOCK_ROOT/usr/local/bin/sing-box"
+chmod +x "$MOCK_ROOT/usr/local/bin/sing-box"
+export LOCAL_BIN_DIR="$MOCK_ROOT/usr/local/bin"
+
+systemctl(){ echo "MOCK_SYSTEMCTL:$*"; }
+
 PRIMARY_DOMAIN="vpn.example.com"
 MASQUE_PORT=8445
 MASQUE_USER="client1"
 MASQUE_PASSWORD="TestPassword123456"
-cert_file="/etc/letsencrypt/live/vpn.example.com/fullchain.pem"
-key_file="/etc/letsencrypt/live/vpn.example.com/privkey.pem"
 
-cat << EOF
-{
-  "log": {
-    "level": "warn",
-    "timestamp": true
-  },
-  "inbounds": [
-    {
-      "type": "masque",
-      "tag": "masque-in",
-      "listen": "::",
-      "listen_port": ${MASQUE_PORT},
-      "tcp_fast_open": true,
-      "sniff": true,
-      "sniff_override_destination": true,
-      "users": [
-        {
-          "username": "${MASQUE_USER}",
-          "password": "${MASQUE_PASSWORD}"
-        }
-      ],
-      "tls": {
-        "enabled": true,
-        "server_name": "${PRIMARY_DOMAIN}",
-        "certificate_path": "${cert_file}",
-        "key_path": "${key_file}",
-        "alpn": ["h3"]
-      },
-      "connect_udp": {
-        "enabled": true,
-        "uri_template": "/.well-known/masque/udp/{target_host}/{target_port}/"
-      },
-      "connect_ip": {
-        "enabled": true,
-        "uri_template": "/.well-known/masque/ip/"
-      }
-    }
-  ],
-  "outbounds": [
-    {
-      "type": "direct",
-      "tag": "direct"
-    },
-    {
-      "type": "block",
-      "tag": "block"
-    }
-  ],
-  "route": {
-    "rules": [
-      {
-        "port": 25,
-        "outbound": "block"
-      },
-      {
-        "ip_is_private": true,
-        "outbound": "block"
-      }
-    ],
-    "final": "direct"
-  }
-}
-EOF
+source src/installer/steps.sh
+
+eval "$(declare -f setup_masque_service | sed "s|/etc/sing-box|$MOCK_ROOT/etc/sing-box|g" | sed "s|/etc/systemd/system|$MOCK_ROOT/etc/systemd/system|g")"
+
+setup_masque_service >/dev/null
+
+cat "$MOCK_ROOT/etc/sing-box/masque.json"
+rm -rf "$MOCK_ROOT"
 """)
         self.assertEqual(res.returncode, 0, f"Script failed: {res.stderr}")
-        data = json.loads(res.stdout)
+        raw = res.stdout
+        json_str = raw[raw.find("{"):] if "{" in raw else raw
+        data = json.loads(json_str)
         ib = data["inbounds"][0]
         self.assertEqual(ib["type"], "masque")
         self.assertEqual(ib["listen_port"], 8445)
@@ -316,6 +279,73 @@ EOF
         self.assertTrue(ib["connect_udp"]["enabled"])
         self.assertTrue(ib["connect_ip"]["enabled"])
         self.assertEqual(ib["users"][0]["username"], "client1")
+
+    def test_setup_wstunnel_service_real_invocation(self):
+        """Invoke setup_wstunnel_service from src/installer/steps.sh and inspect generated unit."""
+        res = run_shell("""
+set -euo pipefail
+log(){ echo "LOG:$*"; }; ok(){ echo "OK:$*"; }; warn(){ echo "WARN:$*"; }; die(){ echo "DIE:$*"; exit 1; };
+is_true(){ [[ "${1:-0}" == "1" || "${1,,}" == "y" || "${1,,}" == "true" ]]; }
+
+MOCK_ROOT=$(mktemp -d)
+mkdir -p "$MOCK_ROOT/etc/systemd/system" "$MOCK_ROOT/usr/local/bin"
+touch "$MOCK_ROOT/usr/local/bin/wstunnel"
+chmod +x "$MOCK_ROOT/usr/local/bin/wstunnel"
+export LOCAL_BIN_DIR="$MOCK_ROOT/usr/local/bin"
+
+systemctl(){ echo "MOCK_SYSTEMCTL:$*"; }
+
+WSTUNNEL_PORT=8080
+WSTUNNEL_PREFIX="/custom-ws/"
+
+source src/installer/steps.sh
+
+eval "$(declare -f setup_wstunnel_service | sed "s|/etc/systemd/system|$MOCK_ROOT/etc/systemd/system|g")"
+
+setup_wstunnel_service
+
+cat "$MOCK_ROOT/etc/systemd/system/wstunnel.service"
+rm -rf "$MOCK_ROOT"
+""")
+        self.assertEqual(res.returncode, 0, f"Script failed: {res.stderr}")
+        content = res.stdout
+        self.assertIn("wstunnel server --restrict-http-upgrade-path-prefix custom-ws ws://127.0.0.1:8080", content)
+
+    def test_setup_shadowtls_service_real_invocation(self):
+        """Invoke setup_shadowtls_service from src/installer/steps.sh and inspect generated unit."""
+        res = run_shell("""
+set -euo pipefail
+log(){ echo "LOG:$*"; }; ok(){ echo "OK:$*"; }; warn(){ echo "WARN:$*"; }; die(){ echo "DIE:$*"; exit 1; };
+is_true(){ [[ "${1:-0}" == "1" || "${1,,}" == "y" || "${1,,}" == "true" ]]; }
+
+MOCK_ROOT=$(mktemp -d)
+mkdir -p "$MOCK_ROOT/etc/systemd/system" "$MOCK_ROOT/usr/local/bin"
+touch "$MOCK_ROOT/usr/local/bin/shadow-tls"
+chmod +x "$MOCK_ROOT/usr/local/bin/shadow-tls"
+export LOCAL_BIN_DIR="$MOCK_ROOT/usr/local/bin"
+
+systemctl(){ echo "MOCK_SYSTEMCTL:$*"; }
+
+SHADOWTLS_PORT=8543
+SS2022_PORT=8388
+SHADOWTLS_SNI="gateway.icloud.com"
+SHADOWTLS_PASSWORD="SecretPassword123"
+
+source src/installer/steps.sh
+
+eval "$(declare -f setup_shadowtls_service | sed "s|/etc/systemd/system|$MOCK_ROOT/etc/systemd/system|g")"
+
+setup_shadowtls_service
+
+cat "$MOCK_ROOT/etc/systemd/system/shadow-tls.service"
+rm -rf "$MOCK_ROOT"
+""")
+        self.assertEqual(res.returncode, 0, f"Script failed: {res.stderr}")
+        content = res.stdout
+        self.assertIn("--listen 127.0.0.1:8543", content)
+        self.assertIn("--server 127.0.0.1:8388", content)
+        self.assertIn("--tls gateway.icloud.com:443", content)
+        self.assertIn("--password SecretPassword123", content)
 
 
 class TestEnvAndCLIIntegration(unittest.TestCase):
@@ -379,6 +409,23 @@ echo "CLI_ENABLE_SS2022: $CLI_ENABLE_SS2022"
         self.assertIn("CLI_ENABLE_WSTUNNEL: y", res.stdout)
         self.assertIn("CLI_ENABLE_ZAPRET: y", res.stdout)
         self.assertIn("CLI_ENABLE_SS2022: y", res.stdout)
+
+    def test_ss2022_udp_over_tcp_configured(self):
+        """Shadowsocks 2022 inbound must have udpOverTcp and udp_over_tcp configured."""
+        conf_py = (ROOT / "src/entrypoints/configure_3xui.main.sh").read_text(encoding="utf-8")
+        inbounds_py = (ROOT / "src/xray/inbounds.py").read_text(encoding="utf-8")
+        self.assertIn('"udpOverTcp": True', conf_py)
+        self.assertIn('"udp_over_tcp": True', conf_py)
+        self.assertIn('target_settings["udpOverTcp"] = True', inbounds_py)
+        self.assertIn('target_settings["udp_over_tcp"] = True', inbounds_py)
+
+    def test_zapret_integrated_in_os_hardening_and_secure_vps(self):
+        """Zapret service must be called in step_os_hardening and secure-vps.sh."""
+        steps_sh = (ROOT / "src/installer/steps.sh").read_text(encoding="utf-8")
+        sec_vps_sh = (ROOT / "secure-vps.sh").read_text(encoding="utf-8")
+        self.assertIn("setup_zapret_service", steps_sh)
+        self.assertIn("zapret-server.service", sec_vps_sh)
+        self.assertIn("connbytes 1:6", sec_vps_sh)
 
 
 if __name__ == "__main__":

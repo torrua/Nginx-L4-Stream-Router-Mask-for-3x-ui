@@ -1583,6 +1583,8 @@ if enable_ss2022:
         "method": ss_method,
         "password": unified_ss_server_pass,
         "network": "tcp,udp",
+        "udpOverTcp": True,
+        "udp_over_tcp": True,
         "clients": [{
             "email": unified_email,
             "password": unified_ss_client_pass,
@@ -2162,9 +2164,10 @@ else
 fi
 
 # Сохранение учетных данных в защищенный файл
-if [ "$DRY_RUN" -eq 0 ] && [ -n "${ADMIN_PASSWORD:-}" ]; then
+if [ "$DRY_RUN" -eq 0 ]; then
     CRED_FILE="/root/vpn_credentials.txt"
-    cat << EOF_CRED > "$CRED_FILE"
+    if [ -n "${ADMIN_PASSWORD:-}" ]; then
+        cat << EOF_CRED > "$CRED_FILE"
 =====================================================================
 УЧЕТНЫЕ ДАННЫЕ ПАНЕЛИ И СЕРВИСОВ 3X-UI
 Файл обновлен: $(date '+%Y-%m-%d %H:%M:%S')
@@ -2192,8 +2195,24 @@ $([ -n "${NODE_TOKEN:-}" ] && printf "3X-UI Node Token:      %s\nИмя ноды
 (Объединяет все конфигурации: Steal REALITY, Classic REALITY, xHTTP, Hysteria 2, AWG v3, AWG v2, SS-2022, TUIC v5, MTProxy, MASQUE, ShadowTLS, Wstunnel, Zapret)
 =====================================================================
 EOF_CRED
+        echo -e "  - ${BOLD}Файл с паролями:${NC}        ${CYAN}$CRED_FILE${NC} (chmod 600)"
+    elif [ -f "$CRED_FILE" ]; then
+        if [ -n "${MASQUE_URI:-}" ] && ! grep -q "MASQUE (RFC 9484):" "$CRED_FILE" 2>/dev/null; then
+            echo "MASQUE (RFC 9484):       ${MASQUE_URI}" >> "$CRED_FILE"
+        fi
+        if [ -n "${SHADOWTLS_URI:-}" ] && ! grep -q "ShadowTLS v4:" "$CRED_FILE" 2>/dev/null; then
+            echo "ShadowTLS v4:            ${SHADOWTLS_URI}" >> "$CRED_FILE"
+            echo "ShadowTLS + SS-2022:     ${SS_SHADOWTLS_URI}" >> "$CRED_FILE"
+        fi
+        if [ -n "${WSTUNNEL_CLI:-}" ] && ! grep -q "Wstunnel Client CLI:" "$CRED_FILE" 2>/dev/null; then
+            echo "Wstunnel Client CLI:     ${WSTUNNEL_CLI}" >> "$CRED_FILE"
+        fi
+        if [ -n "${ZAPRET_INFO:-}" ] && ! grep -q "Server-Side Zapret:" "$CRED_FILE" 2>/dev/null; then
+            echo "Server-Side Zapret:      ${ZAPRET_INFO}" >> "$CRED_FILE"
+        fi
+        echo -e "  - ${BOLD}Файл с паролями:${NC}        ${CYAN}$CRED_FILE${NC} (обновлен, chmod 600)"
+    fi
     chmod 600 "$CRED_FILE" 2>/dev/null || true
-    echo -e "  - ${BOLD}Файл с паролями:${NC}        ${CYAN}$CRED_FILE${NC} (chmod 600)"
 fi
 echo -e "${GREEN}=====================================================================${NC}"
 echo

@@ -211,6 +211,9 @@ done
 if is_true "${CLASSIC_ENABLED:-0}"; then
     for ext_sni in "${!EXT_SNI_TO_PORT[@]}"; do
         port="${EXT_SNI_TO_PORT[$ext_sni]}"
+        if is_true "${ENABLE_SHADOWTLS:-0}" && [ "$ext_sni" = "${SHADOWTLS_SNI:-gateway.icloud.com}" ]; then
+            continue
+        fi
         STREAM_MAP_RULES+="        ${ext_sni}     reality_backend_${port};"$'\n'
     done
 fi

@@ -93,6 +93,10 @@ step_os_hardening() {
             local masque_p="${MASQUE_PORT:-8445}"
             ufw allow "${masque_p}/udp" comment 'MASQUE RFC 9484' >/dev/null 2>&1 || true
         fi
+        if is_true "${ENABLE_DNSTT:-0}"; then
+            local dnstt_p="${DNSTT_PORT:-53053}"
+            ufw allow "${dnstt_p}/udp" comment 'DNSTT DoH Tunnel' >/dev/null 2>&1 || true
+        fi
         if [[ "${HY2_PORT_HOPPING,,}" == "y" || "${HY2_PORT_HOPPING:-}" == "1" ]] && [ -n "${HY2_PORT_HOPPING_RANGE:-}" ]; then
             ufw allow "${HY2_PORT_HOPPING_RANGE//:/ }/udp" comment 'Hysteria 2 Port Hopping' >/dev/null 2>&1 || true
         fi
@@ -107,6 +111,8 @@ step_os_hardening() {
         ufw deny 9443/tcp  comment 'Trojan Internal' >/dev/null 2>&1 || true
         ufw deny "${SHADOWTLS_PORT:-8543}/tcp" comment 'ShadowTLS Internal' >/dev/null 2>&1 || true
         ufw deny 8542/tcp comment 'ShadowTLS Stripper Internal' >/dev/null 2>&1 || true
+        ufw deny "${NAIVE_PORT:-8446}/tcp" comment 'NaïveProxy Internal' >/dev/null 2>&1 || true
+        ufw deny 8447/tcp comment 'NaïveProxy Stripper Internal' >/dev/null 2>&1 || true
         ufw deny "${WSTUNNEL_PORT:-8080}/tcp" comment 'Wstunnel Internal' >/dev/null 2>&1 || true
         ufw deny "$PANEL_INTERNAL_PORT"/tcp comment '3X-UI Panel Internal' >/dev/null 2>&1 || true
     else
@@ -536,7 +542,12 @@ setup_naive_service() {
     local bin_dir="${LOCAL_BIN_DIR:-/usr/local/bin}"
     [ -d "$bin_dir" ] || mkdir -p "$bin_dir" 2>/dev/null || true
 
-    if [ ! -x "${bin_dir}/caddy-naive" ]; then
+    local caddy_bin="${bin_dir}/caddy-naive"
+    if [ ! -x "$caddy_bin" ] && [ -x "${bin_dir}/caddy" ]; then
+        caddy_bin="${bin_dir}/caddy"
+    fi
+
+    if [ ! -x "$caddy_bin" ]; then
         local caddy_tmp="/tmp/caddy_naive_$$"
         mkdir -p "$caddy_tmp"
         local rel_ver="${SCRIPT_VERSION:-v8.1.0}"
@@ -548,6 +559,11 @@ setup_naive_service() {
             if [ -f "$caddy_tmp/caddy-naive" ]; then
                 cp "$caddy_tmp/caddy-naive" "${bin_dir}/caddy-naive"
                 chmod +x "${bin_dir}/caddy-naive"
+                caddy_bin="${bin_dir}/caddy-naive"
+            elif [ -f "$caddy_tmp/caddy" ]; then
+                cp "$caddy_tmp/caddy" "${bin_dir}/caddy-naive"
+                chmod +x "${bin_dir}/caddy-naive"
+                caddy_bin="${bin_dir}/caddy-naive"
             fi
         fi
         rm -rf "$caddy_tmp" 2>/dev/null || true
@@ -562,18 +578,23 @@ setup_naive_service() {
     fi
     local naive_domain="${NAIVE_DOMAIN:-${PRIMARY_DOMAIN:-}}"
 
-    mkdir -p /etc/naiveproxy /var/www/html
+    mkdir -p /etc/caddy /etc/naiveproxy /var/www/html 2>/dev/null || true
     local tls_directive="tls internal"
-    if [ -n "${PRIMARY_DOMAIN:-}" ] && [ -f "/etc/letsencrypt/live/${PRIMARY_DOMAIN}/fullchain.pem" ] && [ -f "/etc/letsencrypt/live/${PRIMARY_DOMAIN}/privkey.pem" ]; then
+    local cert_domain="${PRIMARY_DOMAIN:-${DOMAIN:-${naive_domain}}}"
+    if [ -n "$cert_domain" ] && [ -f "/etc/letsencrypt/live/${cert_domain}/fullchain.pem" ] && [ -f "/etc/letsencrypt/live/${cert_domain}/privkey.pem" ]; then
+        tls_directive="tls /etc/letsencrypt/live/${cert_domain}/fullchain.pem /etc/letsencrypt/live/${cert_domain}/privkey.pem"
+    elif [ -n "${PRIMARY_DOMAIN:-}" ] && [ -f "/etc/letsencrypt/live/${PRIMARY_DOMAIN}/fullchain.pem" ] && [ -f "/etc/letsencrypt/live/${PRIMARY_DOMAIN}/privkey.pem" ]; then
         tls_directive="tls /etc/letsencrypt/live/${PRIMARY_DOMAIN}/fullchain.pem /etc/letsencrypt/live/${PRIMARY_DOMAIN}/privkey.pem"
     fi
 
-    cat << EOF > /etc/naiveproxy/Caddyfile
+    cat << EOF > /etc/caddy/Caddyfile
 {
   order forward_proxy before reverse_proxy
+  admin off
 }
 
 :${naive_port} {
+  bind 127.0.0.1
   ${tls_directive}
 
   forward_proxy {
@@ -588,6 +609,7 @@ setup_naive_service() {
   }
 }
 EOF
+    cp -f /etc/caddy/Caddyfile /etc/naiveproxy/Caddyfile 2>/dev/null || true
 
     mkdir -p /etc/systemd/system
     cat << EOF > /etc/systemd/system/caddy-naive.service
@@ -597,7 +619,7 @@ After=network.target network-online.target
 
 [Service]
 Type=simple
-ExecStart=${bin_dir}/caddy-naive run --config /etc/naiveproxy/Caddyfile --adapter caddyfile
+ExecStart=${caddy_bin} run --config /etc/caddy/Caddyfile --adapter caddyfile
 Restart=always
 RestartSec=3s
 LimitNOFILE=65535
@@ -609,11 +631,91 @@ EOF
     if command -v systemctl >/dev/null 2>&1; then
         systemctl daemon-reload 2>/dev/null || true
         systemctl enable caddy-naive >/dev/null 2>&1 || true
-        if [ -x "${bin_dir}/caddy-naive" ]; then
+        if [ -x "$caddy_bin" ]; then
             systemctl restart caddy-naive 2>/dev/null || true
             ok "Служба NaïveProxy активирована (порт ${naive_port}, user: ${naive_user})."
         else
-            warn "Бинарник ${bin_dir}/caddy-naive не найден, запуск caddy-naive отложен."
+            warn "Бинарник ${caddy_bin} не найден, запуск caddy-naive отложен."
+        fi
+    fi
+}
+
+setup_dnstt_service() {
+    log "Настройка службы DNSTT (DoH DNS Tunneling)..."
+    local cur_arch
+    cur_arch=$(uname -m 2>/dev/null || echo "x86_64")
+    local dnstt_arch="amd64"
+    case "$cur_arch" in
+        x86_64|amd64) dnstt_arch="amd64" ;;
+        aarch64|arm64) dnstt_arch="arm64" ;;
+        *) dnstt_arch="amd64" ;;
+    esac
+
+    local bin_dir="${LOCAL_BIN_DIR:-/usr/local/bin}"
+    [ -d "$bin_dir" ] || mkdir -p "$bin_dir" 2>/dev/null || true
+
+    if [ ! -x "${bin_dir}/dnstt-server" ]; then
+        local dnstt_tmp="/tmp/dnstt_$$"
+        mkdir -p "$dnstt_tmp"
+        local rel_ver="${SCRIPT_VERSION:-v8.1.0}"
+        local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/dnstt-server-linux-${dnstt_arch}.tar.gz"
+        local dl_mirror="https://ghfast.top/${dl_url}"
+        if curl -fsSL --connect-timeout 15 "$dl_url" -o "$dnstt_tmp/dnstt.tar.gz" 2>/dev/null || \
+           curl -fsSL --connect-timeout 15 "$dl_mirror" -o "$dnstt_tmp/dnstt.tar.gz" 2>/dev/null; then
+            tar -zxf "$dnstt_tmp/dnstt.tar.gz" -C "$dnstt_tmp" 2>/dev/null || true
+            if [ -f "$dnstt_tmp/dnstt-server" ]; then
+                cp "$dnstt_tmp/dnstt-server" "${bin_dir}/dnstt-server"
+                chmod +x "${bin_dir}/dnstt-server"
+            fi
+        fi
+        rm -rf "$dnstt_tmp" 2>/dev/null || true
+    fi
+
+    local dnstt_port="${DNSTT_PORT:-53053}"
+    local ss_backend_port="${SS2022_PORT:-8388}"
+    local dnstt_domain="${DNSTT_DOMAIN:-t.${PRIMARY_DOMAIN:-example.com}}"
+
+    mkdir -p /etc/dnstt
+    chmod 700 /etc/dnstt 2>/dev/null || true
+
+    if [ ! -f /etc/dnstt/server.key ] || [ ! -f /etc/dnstt/server.pub ]; then
+        if [ -x "${bin_dir}/dnstt-server" ]; then
+            ${bin_dir}/dnstt-server -gen-key -privkey-file /etc/dnstt/server.key -pubkey-file /etc/dnstt/server.pub 2>/dev/null || true
+        fi
+        if [ ! -f /etc/dnstt/server.key ] || [ ! -f /etc/dnstt/server.pub ]; then
+            head /dev/urandom 2>/dev/null | tr -dc 0-9a-f | head -c 64 > /etc/dnstt/server.key 2>/dev/null || echo "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" > /etc/dnstt/server.key
+            head /dev/urandom 2>/dev/null | tr -dc 0-9a-f | head -c 64 > /etc/dnstt/server.pub 2>/dev/null || echo "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210" > /etc/dnstt/server.pub
+        fi
+        chmod 600 /etc/dnstt/server.key /etc/dnstt/server.pub 2>/dev/null || true
+    fi
+
+    DNSTT_PUBKEY="$(cat /etc/dnstt/server.pub 2>/dev/null | tr -d '[:space:]')"
+
+    mkdir -p /etc/systemd/system
+    cat << EOF > /etc/systemd/system/dnstt-server.service
+[Unit]
+Description=DNSTT DNS Tunneling Server Daemon (DoH / UDP)
+After=network.target network-online.target
+
+[Service]
+Type=simple
+ExecStart=${bin_dir}/dnstt-server -udp 0.0.0.0:${dnstt_port} -privkey-file /etc/dnstt/server.key ${dnstt_domain} 127.0.0.1:${ss_backend_port}
+Restart=always
+RestartSec=3s
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload 2>/dev/null || true
+        systemctl enable dnstt-server >/dev/null 2>&1 || true
+        if [ -x "${bin_dir}/dnstt-server" ]; then
+            systemctl restart dnstt-server 2>/dev/null || true
+            ok "Служба DNSTT активирована (порт ${dnstt_port}/udp, домен: ${dnstt_domain})."
+        else
+            warn "Бинарник ${bin_dir}/dnstt-server не найден, запуск dnstt-server отложен."
         fi
     fi
 }
@@ -633,6 +735,9 @@ deploy_native_nextgen_services() {
     fi
     if is_true "${ENABLE_NAIVE:-0}"; then
         setup_naive_service
+    fi
+    if is_true "${ENABLE_DNSTT:-0}"; then
+        setup_dnstt_service
     fi
 }
 

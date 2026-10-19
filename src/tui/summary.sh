@@ -41,6 +41,9 @@ fi
 if [[ "${ENABLE_MASQUE:-}" == "1" || "${ENABLE_MASQUE,,}" == "y" ]] && [ -n "${MASQUE_PORT:-}" ]; then
     UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${MASQUE_PORT}/udp"
 fi
+if [[ "${ENABLE_DNSTT:-}" == "1" || "${ENABLE_DNSTT,,}" == "y" ]] && [ -n "${DNSTT_PORT:-}" ]; then
+    UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${DNSTT_PORT}/udp"
+fi
 
 SSL_CERT_REPORT=""
 for dom in "${ALL_DOMAINS[@]}"; do
@@ -185,6 +188,15 @@ else
             export ZAPRET_QNUM
             export ZAPRET_DESYNC
             export ZAPRET_FOOLING
+            export ENABLE_NAIVE
+            export NAIVE_PORT
+            export NAIVE_DOMAIN
+            export NAIVE_USER
+            export NAIVE_PASS
+            export ENABLE_DNSTT
+            export DNSTT_PORT
+            export DNSTT_DOMAIN
+            export DNSTT_PUBKEY
             bash "$CONFIG_EXEC" --config "$SAVED_CONFIG_FILE" -y
         }
         run_with_spinner "Автоматическая настройка базы 3X-UI и создание инбаундов" run_configure_3xui_task || die "Ошибка настройки базы 3X-UI."

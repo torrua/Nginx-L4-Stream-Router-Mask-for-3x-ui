@@ -203,6 +203,8 @@ for dom in "${ALL_DOMAINS[@]}"; do
     if is_true "${STEAL_ENABLED:-0}" && [ -n "${DOMAIN_TO_PORT[$dom]:-}" ]; then
         port="${DOMAIN_TO_PORT[$dom]}"
         STREAM_MAP_RULES+="        ${dom}     reality_backend_${port};"$'\n'
+    elif is_true "${ENABLE_NAIVE:-0}" && [ -n "${NAIVE_DOMAIN:-}" ] && [ "$dom" = "$NAIVE_DOMAIN" ]; then
+        STREAM_MAP_RULES+="        ${dom}     naive_backend;"$'\n'
     else
         STREAM_MAP_RULES+="        ${dom}     nginx_http_backend;"$'\n'
     fi
@@ -222,6 +224,12 @@ if is_true "${ENABLE_SHADOWTLS:-0}"; then
     STREAM_MAP_RULES+="        ${SHADOWTLS_SNI:-gateway.icloud.com}     shadowtls_backend;"$'\n'
 fi
 
+if is_true "${ENABLE_NAIVE:-0}" && [ -n "${NAIVE_DOMAIN:-}" ]; then
+    if [[ ! "$STREAM_MAP_RULES" =~ "$NAIVE_DOMAIN" ]]; then
+        STREAM_MAP_RULES+="        ${NAIVE_DOMAIN}     naive_backend;"$'\n'
+    fi
+fi
+
 SHADOWTLS_STREAM_BLOCKS=""
 if is_true "${ENABLE_SHADOWTLS:-0}"; then
     SHADOWTLS_STREAM_BLOCKS="
@@ -232,6 +240,20 @@ upstream shadowtls_backend {
 server {
     listen 127.0.0.1:8542 proxy_protocol;
     proxy_pass 127.0.0.1:${SHADOWTLS_PORT:-8543};
+}
+"
+fi
+
+NAIVE_STREAM_BLOCKS=""
+if is_true "${ENABLE_NAIVE:-0}"; then
+    NAIVE_STREAM_BLOCKS="
+upstream naive_backend {
+    server 127.0.0.1:8447;
+}
+
+server {
+    listen 127.0.0.1:8447 proxy_protocol;
+    proxy_pass 127.0.0.1:${NAIVE_PORT:-8446};
 }
 "
 fi
@@ -291,6 +313,7 @@ upstream nginx_http_backend {
 
 ${REALITY_UPSTREAMS}
 ${SHADOWTLS_STREAM_BLOCKS}
+${NAIVE_STREAM_BLOCKS}
 
 server {
     listen 443 backlog=65535 reuseport;

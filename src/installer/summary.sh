@@ -71,6 +71,8 @@ $([ -n "${MASQUE_URI:-}" ] && printf "\n[ MASQUE RFC 9484 (Sing-box) ]\nURI: %s\
 $([ -n "${SHADOWTLS_URI:-}" ] && printf "\n[ SHADOWTLS v4 + SS-2022 ]\nShadowTLS URI:        %s\nShadowTLS + SS-2022:  %s\n" "${SHADOWTLS_URI}" "${SS_SHADOWTLS_URI:-}")
 $([ -n "${WSTUNNEL_CLI:-}" ] && printf "\n[ WSTUNNEL (L7 Nginx WebSocket) ]\nClient CLI:           %s\n" "${WSTUNNEL_CLI}")
 $([ -n "${ZAPRET_INFO:-}" ] && printf "\n[ SERVER-SIDE ZAPRET ]\nСтатус:               %s\n" "${ZAPRET_INFO}")
+$([ -n "${NAIVE_URI:-}" ] && printf "\n[ NAÏVEPROXY (Chrome HTTPS Forward Proxy) ]\nNaïveProxy URI:       %s\n" "${NAIVE_URI}")
+$([ -n "${DNSTT_CLI:-}" ] && printf "\n[ DNSTT (DoH DNS Tunneling) ]\nDNSTT Client CLI:     %s\nDNSTT Public Key:     %s\n" "${DNSTT_CLI}" "${DNSTT_PUBKEY:-}")
 
 [ НАСТРОЙКА КЛИЕНТОВ ]
 1. Добавьте ссылку на подписку в клиент:
@@ -113,12 +115,14 @@ print_dashboard() {
     echo -e "    ${DIM}• Фаервол UFW:${RESET}    ${GREEN}Порты протоколов (10443, 55443 и др.) изолированы${RESET}"
     echo -e "    ${DIM}• Ядро Linux:${RESET}     ${GREEN}BBR активирован, IPv6 отключен (no leak)${RESET}"
     echo ""
-    if [ -n "${MASQUE_URI:-}" ] || [ -n "${SHADOWTLS_URI:-}" ] || [ -n "${WSTUNNEL_CLI:-}" ] || [ -n "${ZAPRET_INFO:-}" ]; then
+    if [ -n "${MASQUE_URI:-}" ] || [ -n "${SHADOWTLS_URI:-}" ] || [ -n "${WSTUNNEL_CLI:-}" ] || [ -n "${ZAPRET_INFO:-}" ] || [ -n "${NAIVE_URI:-}" ] || [ -n "${DNSTT_CLI:-}" ]; then
         echo -e "  ${WHITE}${BOLD}Протоколы нового поколения (Next-Gen Protocols):${RESET}"
         [ -n "${MASQUE_URI:-}" ] && echo -e "    ${CYAN}${ARROW} MASQUE:${RESET}       ${GREEN}${MASQUE_URI}${RESET}"
         [ -n "${SHADOWTLS_URI:-}" ] && echo -e "    ${CYAN}${ARROW} ShadowTLS:${RESET}    ${GREEN}${SHADOWTLS_URI}${RESET}"
         [ -n "${WSTUNNEL_CLI:-}" ] && echo -e "    ${CYAN}${ARROW} Wstunnel:${RESET}     ${CYAN}${WSTUNNEL_CLI}${RESET}"
         [ -n "${ZAPRET_INFO:-}" ] && echo -e "    ${CYAN}${ARROW} Zapret:${RESET}       ${GREEN}nfqws активен (DPI Desync connbytes 1:6)${RESET}"
+        [ -n "${NAIVE_URI:-}" ] && echo -e "    ${CYAN}${ARROW} NaïveProxy:${RESET}   ${GREEN}${NAIVE_URI}${RESET}"
+        [ -n "${DNSTT_CLI:-}" ] && echo -e "    ${CYAN}${ARROW} DNSTT DoH:${RESET}    ${CYAN}${DNSTT_CLI}${RESET}"
         echo ""
     fi
     if [ "$SSH_PORT" -ne "${SSH_ACTIVE_PORT:-22}" ]; then

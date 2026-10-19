@@ -147,6 +147,73 @@ echo "STREAM_MAP_RULES: $STREAM_MAP_RULES"
         self.assertEqual(res.returncode, 0)
         self.assertNotIn("shadowtls_backend", res.stdout)
 
+    def test_naive_stream_stripper_architecture(self):
+        """When ENABLE_NAIVE=1, Nginx Stream must map NAIVE_DOMAIN to internal stripper upstream and strip proxy_protocol."""
+        res = run_shell(r"""
+set -euo pipefail
+ALL_DOMAINS=("example.com" "naive.example.com")
+STEAL_ENABLED=0
+CLASSIC_ENABLED=0
+ENABLE_NAIVE=1
+NAIVE_DOMAIN="naive.example.com"
+NAIVE_PORT=8446
+
+STREAM_MAP_RULES=""
+for dom in "${ALL_DOMAINS[@]}"; do
+    if [[ "${ENABLE_NAIVE:-0}" == "1" ]] && [ -n "${NAIVE_DOMAIN:-}" ] && [ "$dom" = "$NAIVE_DOMAIN" ]; then
+        STREAM_MAP_RULES+="        ${dom}     naive_backend;"$'\n'
+    else
+        STREAM_MAP_RULES+="        ${dom}     nginx_http_backend;"$'\n'
+    fi
+done
+
+if [[ "${ENABLE_NAIVE:-0}" == "1" ]] && [ -n "${NAIVE_DOMAIN:-}" ]; then
+    if [[ ! "$STREAM_MAP_RULES" =~ "$NAIVE_DOMAIN" ]]; then
+        STREAM_MAP_RULES+="        ${NAIVE_DOMAIN}     naive_backend;"$'\n'
+    fi
+fi
+
+NAIVE_STREAM_BLOCKS=""
+if [[ "${ENABLE_NAIVE:-0}" == "1" ]]; then
+    NAIVE_STREAM_BLOCKS="
+upstream naive_backend {
+    server 127.0.0.1:8447;
+}
+
+server {
+    listen 127.0.0.1:8447 proxy_protocol;
+    proxy_pass 127.0.0.1:${NAIVE_PORT:-8446};
+}
+"
+fi
+
+stream_conf=$(cat << EOF
+map \$ssl_preread_server_name \$backend_gate {
+    hostnames;
+    ""                     nginx_http_backend;
+${STREAM_MAP_RULES}    default                nginx_http_backend;
+}
+
+${NAIVE_STREAM_BLOCKS}
+EOF
+)
+
+echo "--- STREAM CONF ---"
+echo "$stream_conf"
+count=$(echo "$stream_conf" | grep -c "naive.example.com" || true)
+echo "NAIVE_COUNT: $count"
+""")
+        self.assertEqual(res.returncode, 0, f"Script failed: {res.stderr}")
+        out = res.stdout
+        self.assertIn("naive.example.com     naive_backend;", out)
+        self.assertIn("upstream naive_backend {", out)
+        self.assertIn("server 127.0.0.1:8447;", out)
+        self.assertIn("listen 127.0.0.1:8447 proxy_protocol;", out)
+        self.assertIn("proxy_pass 127.0.0.1:8446;", out)
+        self.assertNotIn("proxy_pass 127.0.0.1:8446 proxy_protocol", out)
+        self.assertIn("NAIVE_COUNT: 1", out)
+
+
 
 class TestNativeNginxL7Config(unittest.TestCase):
     def test_wstunnel_location_and_badbot_bypass(self):
@@ -347,6 +414,91 @@ rm -rf "$MOCK_ROOT"
         self.assertIn("--tls gateway.icloud.com:443", content)
         self.assertIn("--password SecretPassword123", content)
 
+    def test_setup_naive_service_real_invocation(self):
+        """Invoke setup_naive_service from src/installer/steps.sh and inspect generated Caddyfile and unit."""
+        res = run_shell("""
+set -euo pipefail
+log(){ echo "LOG:$*"; }; ok(){ echo "OK:$*"; }; warn(){ echo "WARN:$*"; }; die(){ echo "DIE:$*"; exit 1; };
+is_true(){ [[ "${1:-0}" == "1" || "${1,,}" == "y" || "${1,,}" == "true" ]]; }
+
+MOCK_ROOT=$(mktemp -d)
+mkdir -p "$MOCK_ROOT/etc/caddy" "$MOCK_ROOT/etc/systemd/system" "$MOCK_ROOT/usr/local/bin" "$MOCK_ROOT/var/www/html"
+touch "$MOCK_ROOT/usr/local/bin/caddy-naive"
+chmod +x "$MOCK_ROOT/usr/local/bin/caddy-naive"
+export LOCAL_BIN_DIR="$MOCK_ROOT/usr/local/bin"
+
+systemctl(){ echo "MOCK_SYSTEMCTL:$*"; }
+
+PRIMARY_DOMAIN="example.com"
+NAIVE_PORT=8446
+NAIVE_USER="alice"
+NAIVE_PASS="SecretNaivePass99"
+NAIVE_DOMAIN="naive.example.com"
+
+source src/installer/steps.sh
+
+eval "$(declare -f setup_naive_service | sed "s|/etc/caddy|$MOCK_ROOT/etc/caddy|g" | sed "s|/etc/naiveproxy|$MOCK_ROOT/etc/caddy|g" | sed "s|/var/www/html|$MOCK_ROOT/var/www/html|g" | sed "s|/etc/systemd/system|$MOCK_ROOT/etc/systemd/system|g")"
+
+setup_naive_service
+
+echo "--- CADDYFILE ---"
+cat "$MOCK_ROOT/etc/caddy/Caddyfile"
+echo "--- SERVICE ---"
+cat "$MOCK_ROOT/etc/systemd/system/caddy-naive.service"
+rm -rf "$MOCK_ROOT"
+""")
+        self.assertEqual(res.returncode, 0, f"Script failed: {res.stderr}")
+        out = res.stdout
+        self.assertIn(":8446 {", out)
+        self.assertIn("bind 127.0.0.1", out)
+        self.assertIn("forward_proxy {", out)
+        self.assertIn("basic_auth alice SecretNaivePass99", out)
+        self.assertIn("probe_resistance", out)
+        self.assertIn("ExecStart=", out)
+        self.assertIn("caddy-naive run --config", out)
+        self.assertIn("Caddyfile --adapter caddyfile", out)
+
+    def test_setup_dnstt_service_real_invocation(self):
+        """Invoke setup_dnstt_service from src/installer/steps.sh and inspect generated keys and unit."""
+        res = run_shell("""
+set -euo pipefail
+log(){ echo "LOG:$*"; }; ok(){ echo "OK:$*"; }; warn(){ echo "WARN:$*"; }; die(){ echo "DIE:$*"; exit 1; };
+is_true(){ [[ "${1:-0}" == "1" || "${1,,}" == "y" || "${1,,}" == "true" ]]; }
+
+MOCK_ROOT=$(mktemp -d)
+mkdir -p "$MOCK_ROOT/etc/dnstt" "$MOCK_ROOT/etc/systemd/system" "$MOCK_ROOT/usr/local/bin"
+touch "$MOCK_ROOT/usr/local/bin/dnstt-server"
+chmod +x "$MOCK_ROOT/usr/local/bin/dnstt-server"
+export LOCAL_BIN_DIR="$MOCK_ROOT/usr/local/bin"
+
+systemctl(){ echo "MOCK_SYSTEMCTL:$*"; }
+
+DNSTT_PORT=53053
+SS2022_PORT=8388
+DNSTT_DOMAIN="t.example.com"
+
+source src/installer/steps.sh
+
+eval "$(declare -f setup_dnstt_service | sed "s|/etc/dnstt|$MOCK_ROOT/etc/dnstt|g" | sed "s|/etc/systemd/system|$MOCK_ROOT/etc/systemd/system|g")"
+
+setup_dnstt_service
+
+echo "--- KEY EXISTS ---"
+[ -f "$MOCK_ROOT/etc/dnstt/server.key" ] && echo "KEY_OK"
+[ -f "$MOCK_ROOT/etc/dnstt/server.pub" ] && echo "PUB_OK"
+echo "--- SERVICE ---"
+cat "$MOCK_ROOT/etc/systemd/system/dnstt-server.service"
+rm -rf "$MOCK_ROOT"
+""")
+        self.assertEqual(res.returncode, 0, f"Script failed: {res.stderr}")
+        out = res.stdout
+        self.assertIn("KEY_OK", out)
+        self.assertIn("PUB_OK", out)
+        self.assertIn("ExecStart=", out)
+        self.assertIn("-udp 0.0.0.0:53053", out)
+        self.assertIn("-privkey-file", out)
+        self.assertIn("server.key t.example.com 127.0.0.1:8388", out)
+
 
 class TestEnvAndCLIIntegration(unittest.TestCase):
     def test_shadowtls_auto_activates_ss2022(self):
@@ -357,6 +509,23 @@ log(){ :; }; ok(){ :; }; warn(){ :; };
 is_true() { local val="${1:-0}"; [[ "$val" == "1" || "${val,,}" == "y" || "${val,,}" == "true" ]]; }
 PRIMARY_DOMAIN="example.com"
 ENABLE_SHADOWTLS=1
+ENABLE_SS2022=0
+CLI_ENABLE_SS2022=""
+source src/system/env.sh
+reconstruct_arrays_from_vars
+echo "FINAL_ENABLE_SS2022: $ENABLE_SS2022"
+""")
+        self.assertEqual(res.returncode, 0)
+        self.assertIn("FINAL_ENABLE_SS2022: 1", res.stdout)
+
+    def test_dnstt_auto_activates_ss2022(self):
+        """Enabling DNSTT must auto-activate SS2022 if not explicitly disabled."""
+        res = run_shell("""
+set -euo pipefail
+log(){ :; }; ok(){ :; }; warn(){ :; };
+is_true() { local val="${1:-0}"; [[ "$val" == "1" || "${val,,}" == "y" || "${val,,}" == "true" ]]; }
+PRIMARY_DOMAIN="example.com"
+ENABLE_DNSTT=1
 ENABLE_SS2022=0
 CLI_ENABLE_SS2022=""
 source src/system/env.sh
@@ -388,6 +557,34 @@ echo "CLI_WSTUNNEL_PREFIX: $CLI_WSTUNNEL_PREFIX"
         self.assertIn("CLI_MASQUE_PORT: 8999", res.stdout)
         self.assertIn("CLI_WSTUNNEL_PREFIX: /customws", res.stdout)
 
+    def test_cli_naive_and_dnstt_flags(self):
+        """CLI arguments for naive and dnstt are parsed accurately."""
+        res = run_shell("""
+set -euo pipefail
+log(){ :; }; ok(){ :; }; warn(){ :; }; die(){ echo "ABORT:$*"; exit 1; };
+set -- --naive --naive-port 8449 --naive-domain naive.test.com --naive-user testuser --naive-pass secretpass --dnstt --dnstt-port 53054 --dnstt-domain dnstt.test.com --dnstt-pubkey abcdef123456
+source src/tui/prompts.sh
+echo "CLI_ENABLE_NAIVE: $CLI_ENABLE_NAIVE"
+echo "CLI_NAIVE_PORT: $CLI_NAIVE_PORT"
+echo "CLI_NAIVE_DOMAIN: $CLI_NAIVE_DOMAIN"
+echo "CLI_NAIVE_USER: $CLI_NAIVE_USER"
+echo "CLI_NAIVE_PASS: $CLI_NAIVE_PASS"
+echo "CLI_ENABLE_DNSTT: $CLI_ENABLE_DNSTT"
+echo "CLI_DNSTT_PORT: $CLI_DNSTT_PORT"
+echo "CLI_DNSTT_DOMAIN: $CLI_DNSTT_DOMAIN"
+echo "CLI_DNSTT_PUBKEY: $CLI_DNSTT_PUBKEY"
+""")
+        self.assertEqual(res.returncode, 0, f"Script failed: {res.stderr}")
+        self.assertIn("CLI_ENABLE_NAIVE: y", res.stdout)
+        self.assertIn("CLI_NAIVE_PORT: 8449", res.stdout)
+        self.assertIn("CLI_NAIVE_DOMAIN: naive.test.com", res.stdout)
+        self.assertIn("CLI_NAIVE_USER: testuser", res.stdout)
+        self.assertIn("CLI_NAIVE_PASS: secretpass", res.stdout)
+        self.assertIn("CLI_ENABLE_DNSTT: y", res.stdout)
+        self.assertIn("CLI_DNSTT_PORT: 53054", res.stdout)
+        self.assertIn("CLI_DNSTT_DOMAIN: dnstt.test.com", res.stdout)
+        self.assertIn("CLI_DNSTT_PUBKEY: abcdef123456", res.stdout)
+
     def test_cli_all_protocols_flag(self):
         """--all-protocols enables all next-gen and classic protocols in express mode."""
         res = run_shell("""
@@ -401,6 +598,8 @@ echo "CLI_ENABLE_SHADOWTLS: $CLI_ENABLE_SHADOWTLS"
 echo "CLI_ENABLE_WSTUNNEL: $CLI_ENABLE_WSTUNNEL"
 echo "CLI_ENABLE_ZAPRET: $CLI_ENABLE_ZAPRET"
 echo "CLI_ENABLE_SS2022: $CLI_ENABLE_SS2022"
+echo "CLI_ENABLE_NAIVE: $CLI_ENABLE_NAIVE"
+echo "CLI_ENABLE_DNSTT: $CLI_ENABLE_DNSTT"
 """)
         self.assertEqual(res.returncode, 0)
         self.assertIn("CLI_ALL_PROTOCOLS: 1", res.stdout)
@@ -409,6 +608,8 @@ echo "CLI_ENABLE_SS2022: $CLI_ENABLE_SS2022"
         self.assertIn("CLI_ENABLE_WSTUNNEL: y", res.stdout)
         self.assertIn("CLI_ENABLE_ZAPRET: y", res.stdout)
         self.assertIn("CLI_ENABLE_SS2022: y", res.stdout)
+        self.assertIn("CLI_ENABLE_NAIVE: y", res.stdout)
+        self.assertIn("CLI_ENABLE_DNSTT: y", res.stdout)
 
     def test_ss2022_udp_over_tcp_configured(self):
         """Shadowsocks 2022 inbound must have udpOverTcp and udp_over_tcp configured."""
@@ -433,6 +634,13 @@ echo "CLI_ENABLE_SS2022: $CLI_ENABLE_SS2022"
         self.assertIn("setup_naive_service", steps_sh)
         self.assertIn("caddy-naive.service", steps_sh)
         self.assertIn("forward_proxy", steps_sh)
+
+    def test_dnstt_service_integrated_in_deploy_services(self):
+        """DNSTT service must be defined and called in deploy_native_nextgen_services."""
+        steps_sh = (ROOT / "src/installer/steps.sh").read_text(encoding="utf-8")
+        self.assertIn("setup_dnstt_service", steps_sh)
+        self.assertIn("dnstt-server.service", steps_sh)
+        self.assertIn("deploy_native_nextgen_services", steps_sh)
 
 
 if __name__ == "__main__":

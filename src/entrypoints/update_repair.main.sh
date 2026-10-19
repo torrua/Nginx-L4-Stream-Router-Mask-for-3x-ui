@@ -262,6 +262,15 @@ export ENABLE_SS2022="${ENABLE_SS2022:-n}"
 export SS2022_PORT="${SS2022_PORT:-8388}"
 export ENABLE_SHADOWTLS="${ENABLE_SHADOWTLS:-n}"
 export SHADOWTLS_PORT="${SHADOWTLS_PORT:-8543}"
+export ENABLE_NAIVE="${ENABLE_NAIVE:-n}"
+export NAIVE_PORT="${NAIVE_PORT:-8446}"
+export NAIVE_DOMAIN="${NAIVE_DOMAIN:-}"
+export NAIVE_USER="${NAIVE_USER:-user}"
+export NAIVE_PASS="${NAIVE_PASS:-}"
+export ENABLE_DNSTT="${ENABLE_DNSTT:-n}"
+export DNSTT_PORT="${DNSTT_PORT:-53053}"
+export DNSTT_DOMAIN="${DNSTT_DOMAIN:-}"
+export DNSTT_PUBKEY="${DNSTT_PUBKEY:-}"
 export ENABLE_TUIC="${ENABLE_TUIC:-n}"
 export TUIC_PORT="${TUIC_PORT:-8448}"
 export ENABLE_MTPROTO="${ENABLE_MTPROTO:-n}"
@@ -1239,10 +1248,22 @@ if not dry_run:
 
     enable_naive = os.environ.get("ENABLE_NAIVE", "n").lower() in ("1", "y", "true")
     naive_port = int(os.environ.get("NAIVE_PORT") or "8446")
-    naive_domain = (os.environ.get("NAIVE_DOMAIN") or domain).strip()
+    naive_domain = (os.environ.get("NAIVE_DOMAIN") or (f"naive.{domain}" if domain else "localhost")).strip()
     naive_user = (os.environ.get("NAIVE_USER") or "user").strip()
     naive_pass = (os.environ.get("NAIVE_PASS") or "").strip() or unified_ss_client_pass
-    naive_uri = f"naive+https://{naive_user}:{naive_pass}@{naive_domain}:{naive_port}#{urllib.parse.quote('NaïveProxy Chrome')}"
+    naive_uri = f"naive+https://{naive_user}:{naive_pass}@{naive_domain}:443#{urllib.parse.quote('NaïveProxy')}"
+
+    enable_dnstt = os.environ.get("ENABLE_DNSTT", "n").lower() in ("1", "y", "true")
+    dnstt_port = int(os.environ.get("DNSTT_PORT") or "53053")
+    dnstt_domain = (os.environ.get("DNSTT_DOMAIN") or (f"t.{domain}" if domain else "t.example.com")).strip()
+    dnstt_pubkey = os.environ.get("DNSTT_PUBKEY", "").strip()
+    if not dnstt_pubkey and os.path.isfile("/etc/dnstt/server.pub"):
+        try:
+            with open("/etc/dnstt/server.pub", "r") as pf:
+                dnstt_pubkey = pf.read().strip()
+        except Exception:
+            pass
+    dnstt_cli = f"dnstt-client -doh https://dns.google/dns-query -pubkey {dnstt_pubkey} {dnstt_domain} 127.0.0.1:1080"
 
     try:
         cur.execute("PRAGMA wal_checkpoint(TRUNCATE)")
@@ -1291,6 +1312,11 @@ if not dry_run:
                 f.write(f"NAIVE_PORT='{naive_port}'\n")
                 f.write(f"NAIVE_USER='{naive_user}'\n")
                 f.write(f"NAIVE_PASS='{naive_pass}'\n")
+            if enable_dnstt or os.path.exists("/etc/systemd/system/dnstt-server.service"):
+                f.write(f"DNSTT_CLI='{dnstt_cli}'\n")
+                f.write(f"DNSTT_PORT='{dnstt_port}'\n")
+                f.write(f"DNSTT_DOMAIN='{dnstt_domain}'\n")
+                f.write(f"DNSTT_PUBKEY='{dnstt_pubkey}'\n")
         os.umask(old_umask)
         os.chmod(run_file, 0o600)
     except Exception:
@@ -1356,6 +1382,7 @@ else
     [ -n "${WSTUNNEL_CLI:-}" ] && echo -e "  - ${BOLD}Wstunnel CLI:${NC}         ${CYAN}${WSTUNNEL_CLI}${NC}"
     [ -n "${ZAPRET_INFO:-}" ] && echo -e "  - ${BOLD}Server-Side Zapret:${NC}   ${GREEN}${ZAPRET_INFO}${NC}"
     [ -n "${NAIVE_URI:-}" ] && echo -e "  - ${BOLD}NaïveProxy:${NC}          ${CYAN}${NAIVE_URI}${NC}"
+    [ -n "${DNSTT_CLI:-}" ] && echo -e "  - ${BOLD}DNSTT DoH Tunnel:${NC}    ${CYAN}${DNSTT_CLI}${NC}"
 
     if [ -f "/root/vpn_credentials.txt" ]; then
         if [ -n "${UNIFIED_VLESS_ENKEY:-}" ]; then
@@ -1392,6 +1419,10 @@ else
         fi
         if [ -n "${NAIVE_URI:-}" ] && ! grep -q "NaïveProxy (Chrome HTTPS):" /root/vpn_credentials.txt 2>/dev/null; then
             echo "NaïveProxy (Chrome HTTPS): ${NAIVE_URI}" >> /root/vpn_credentials.txt
+        fi
+        if [ -n "${DNSTT_CLI:-}" ] && ! grep -q "DNSTT DoH Tunnel:" /root/vpn_credentials.txt 2>/dev/null; then
+            echo "DNSTT DoH Tunnel:        ${DNSTT_CLI}" >> /root/vpn_credentials.txt
+            [ -n "${DNSTT_PUBKEY:-}" ] && echo "DNSTT Public Key:        ${DNSTT_PUBKEY}" >> /root/vpn_credentials.txt
         fi
     fi
 fi

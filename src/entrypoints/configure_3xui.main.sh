@@ -217,6 +217,17 @@ SHADOWTLS_PORT="${SHADOWTLS_PORT:-8543}"
 SHADOWTLS_SNI="${SHADOWTLS_SNI:-gateway.icloud.com}"
 SHADOWTLS_PASSWORD="${SHADOWTLS_PASSWORD:-}"
 
+ENABLE_NAIVE="${ENABLE_NAIVE:-n}"
+NAIVE_PORT="${NAIVE_PORT:-8446}"
+NAIVE_DOMAIN="${NAIVE_DOMAIN:-}"
+NAIVE_USER="${NAIVE_USER:-user}"
+NAIVE_PASS="${NAIVE_PASS:-}"
+
+ENABLE_DNSTT="${ENABLE_DNSTT:-n}"
+DNSTT_PORT="${DNSTT_PORT:-53053}"
+DNSTT_DOMAIN="${DNSTT_DOMAIN:-}"
+DNSTT_PUBKEY="${DNSTT_PUBKEY:-}"
+
 ENABLE_TUIC="${ENABLE_TUIC:-n}"
 TUIC_PORT="${TUIC_PORT:-8448}"
 
@@ -417,6 +428,15 @@ export ENABLE_SHADOWTLS
 export SHADOWTLS_PORT
 export SHADOWTLS_SNI
 export SHADOWTLS_PASSWORD
+export ENABLE_NAIVE
+export NAIVE_PORT
+export NAIVE_DOMAIN
+export NAIVE_USER
+export NAIVE_PASS
+export ENABLE_DNSTT
+export DNSTT_PORT
+export DNSTT_DOMAIN
+export DNSTT_PUBKEY
 export ENABLE_TUIC
 export TUIC_PORT
 export ENABLE_MTPROTO
@@ -1779,10 +1799,22 @@ zapret_info = f"Active (NFQUEUE {zapret_qnum}, desync: {zapret_desync}, fooling:
 
 enable_naive = os.environ.get("ENABLE_NAIVE", "n").lower() in ("1", "y", "true")
 naive_port = int(os.environ.get("NAIVE_PORT") or "8446")
-naive_domain = (os.environ.get("NAIVE_DOMAIN") or domain).strip()
+naive_domain = (os.environ.get("NAIVE_DOMAIN") or (f"naive.{domain}" if domain else "localhost")).strip()
 naive_user = (os.environ.get("NAIVE_USER") or "user").strip()
 naive_pass = (os.environ.get("NAIVE_PASS") or "").strip() or unified_ss_client_pass
-naive_uri = f"naive+https://{naive_user}:{naive_pass}@{naive_domain}:{naive_port}#{urllib.parse.quote(make_remark('NaïveProxy Chrome'))}"
+naive_uri = f"naive+https://{naive_user}:{naive_pass}@{naive_domain}:443#{urllib.parse.quote(make_remark('NaïveProxy'))}"
+
+enable_dnstt = os.environ.get("ENABLE_DNSTT", "n").lower() in ("1", "y", "true")
+dnstt_port = int(os.environ.get("DNSTT_PORT") or "53053")
+dnstt_domain = (os.environ.get("DNSTT_DOMAIN") or (f"t.{domain}" if domain else "t.example.com")).strip()
+dnstt_pubkey = os.environ.get("DNSTT_PUBKEY", "").strip()
+if not dnstt_pubkey and os.path.isfile("/etc/dnstt/server.pub"):
+    try:
+        with open("/etc/dnstt/server.pub", "r") as pf:
+            dnstt_pubkey = pf.read().strip()
+    except Exception:
+        pass
+dnstt_cli = f"dnstt-client -doh https://dns.google/dns-query -pubkey {dnstt_pubkey} {dnstt_domain} 127.0.0.1:1080"
 
 if not dry_run:
     try:
@@ -1838,6 +1870,11 @@ if not dry_run:
                 f.write(f"NAIVE_PORT='{naive_port}'\n")
                 f.write(f"NAIVE_USER='{naive_user}'\n")
                 f.write(f"NAIVE_PASS='{naive_pass}'\n")
+            if enable_dnstt:
+                f.write(f"DNSTT_CLI='{dnstt_cli}'\n")
+                f.write(f"DNSTT_PORT='{dnstt_port}'\n")
+                f.write(f"DNSTT_DOMAIN='{dnstt_domain}'\n")
+                f.write(f"DNSTT_PUBKEY='{dnstt_pubkey}'\n")
         os.umask(old_umask)
         os.chmod(run_file, 0o600)
     except Exception:
@@ -2107,6 +2144,9 @@ SS_SHADOWTLS_URI=""
 WSTUNNEL_CLI=""
 WSTUNNEL_URI=""
 ZAPRET_INFO=""
+NAIVE_URI=""
+DNSTT_CLI=""
+DNSTT_PUBKEY=""
 for c_env in "/run/3xui_unified_client.env" "/tmp/3xui_unified_client.env"; do
     if [ -f "$c_env" ]; then
         source "$c_env"
@@ -2172,6 +2212,9 @@ else
     if [ -n "${NAIVE_URI:-}" ]; then
         echo -e "  - ${BOLD}NaïveProxy:${NC}          ${CYAN}${NAIVE_URI}${NC}"
     fi
+    if [ -n "${DNSTT_CLI:-}" ]; then
+        echo -e "  - ${BOLD}DNSTT DoH Tunnel:${NC}    ${CYAN}${DNSTT_CLI}${NC}"
+    fi
     if [[ "${ENABLE_NODE_TOKEN,,}" == "y" || "${ENABLE_NODE_TOKEN:-}" == "1" ]] && [ -n "${NODE_TOKEN:-}" ]; then
         echo -e "  - ${BOLD}3X-UI Node API:${NC}         ${GREEN}${NODE_TOKEN_NAME}${NC} (Host: ${CYAN}${PRIMARY_DOMAIN}:443${NC}, Path: ${CYAN}/${PANEL_PATH#/}/${NC})"
         echo -e "  - ${BOLD}API Bearer Token:${NC}       ${YELLOW}${NODE_TOKEN}${NC}"
@@ -2207,8 +2250,9 @@ $([ -n "${SHADOWTLS_URI:-}" ] && printf "ShadowTLS v4:            %s\nShadowTLS 
 $([ -n "${WSTUNNEL_CLI:-}" ] && printf "Wstunnel Client CLI:     %s\n" "${WSTUNNEL_CLI}")
 $([ -n "${ZAPRET_INFO:-}" ] && printf "Server-Side Zapret:      %s\n" "${ZAPRET_INFO}")
 $([ -n "${NAIVE_URI:-}" ] && printf "NaïveProxy (Chrome HTTPS): %s\n" "${NAIVE_URI}")
+$([ -n "${DNSTT_CLI:-}" ] && printf "DNSTT DoH Tunnel:        %s\nDNSTT Public Key:        %s\n" "${DNSTT_CLI}" "${DNSTT_PUBKEY}")
 $([ -n "${NODE_TOKEN:-}" ] && printf "3X-UI Node Token:      %s\nИмя ноды (Node Name):  %s (Host: %s:443, Path: /%s/)\n" "${NODE_TOKEN}" "${NODE_TOKEN_NAME}" "${PRIMARY_DOMAIN}" "${PANEL_PATH#/}")
-(Объединяет все конфигурации: Steal REALITY, Classic REALITY, xHTTP, Hysteria 2, AWG v3, AWG v2, SS-2022, TUIC v5, MTProxy, MASQUE, ShadowTLS, Wstunnel, Zapret, NaïveProxy)
+(Объединяет все конфигурации: Steal REALITY, Classic REALITY, xHTTP, Hysteria 2, AWG v3, AWG v2, SS-2022, TUIC v5, MTProxy, MASQUE, ShadowTLS, Wstunnel, Zapret, NaïveProxy, DNSTT)
 =====================================================================
 EOF_CRED
         echo -e "  - ${BOLD}Файл с паролями:${NC}        ${CYAN}$CRED_FILE${NC} (chmod 600)"
@@ -2228,6 +2272,10 @@ EOF_CRED
         fi
         if [ -n "${NAIVE_URI:-}" ] && ! grep -q "NaïveProxy (Chrome HTTPS):" "$CRED_FILE" 2>/dev/null; then
             echo "NaïveProxy (Chrome HTTPS): ${NAIVE_URI}" >> "$CRED_FILE"
+        fi
+        if [ -n "${DNSTT_CLI:-}" ] && ! grep -q "DNSTT DoH Tunnel:" "$CRED_FILE" 2>/dev/null; then
+            echo "DNSTT DoH Tunnel:        ${DNSTT_CLI}" >> "$CRED_FILE"
+            echo "DNSTT Public Key:        ${DNSTT_PUBKEY}" >> "$CRED_FILE"
         fi
         echo -e "  - ${BOLD}Файл с паролями:${NC}        ${CYAN}$CRED_FILE${NC} (обновлен, chmod 600)"
     fi

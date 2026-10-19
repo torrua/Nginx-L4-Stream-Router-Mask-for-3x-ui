@@ -1726,8 +1726,12 @@ for item in res:
         echo -e "      ${DIM}• Server-Side Zapret:${NC}   $zapret_status"
 
         local naive_status="${RED}Отключен${NC}"
-        is_true "${ENABLE_NAIVE:-0}" && naive_status="${GREEN}Включен${NC} (:${NAIVE_PORT:-8446}/tcp, Chrome HTTPS Caddy)"
+        is_true "${ENABLE_NAIVE:-0}" && naive_status="${GREEN}Включен${NC} (Nginx :443 SNI ${NAIVE_DOMAIN:-naive.$PRIMARY_DOMAIN} ➜ :${NAIVE_PORT:-8446})"
         echo -e "      ${DIM}• NaïveProxy:${NC}          $naive_status"
+
+        local dnstt_status="${RED}Отключен${NC}"
+        is_true "${ENABLE_DNSTT:-0}" && dnstt_status="${GREEN}Включен${NC} (UDP :${DNSTT_PORT:-53053} ➜ SS-2022, Zone: ${DNSTT_DOMAIN:-t.$PRIMARY_DOMAIN})"
+        echo -e "      ${DIM}• DNSTT DoH Tunnel:${NC}     $dnstt_status"
 
         local agh_status="${RED}Отключен${NC}"
         if is_true "${ENABLE_AGH:-0}"; then

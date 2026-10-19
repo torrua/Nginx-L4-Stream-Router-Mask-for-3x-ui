@@ -19,7 +19,9 @@
    * [2.4. Опциональный модуль AdGuard Home: Приватный DoH + Split-DNS](#24-опциональный-модуль-adguard-home-приватный-doh--split-dns)
    * [2.5. Скоростные UDP-туннели: Hysteria 2 и AmneziaWG (динамический аллокатор и безопасность)](#25-скоростные-udp-туннели-hysteria-2-и-amneziawg-динамический-аллокатор-и-безопасность)
    * [2.6. Межпроцессная связь через Unix Sockets в RAM](#26-межпроцессная-связь-через-unix-sockets-в-ram)
-   * [2.7. Подсистема интерактивного мастера, префлайт-инспектор и отказоустойчивость (v7.5.0)](#27-подсистема-интерактивного-мастера-префлайт-инспектор-и-отказоустойчивость-v740)
+   * [2.7. Подсистема интерактивного мастера, префлайт-инспектор и отказоустойчивость (v7.5.0)](#27-подсистема-интерактивного-мастера-префлайт-инспектор-и-отказоустойчивость-v750)
+   * [2.8. Протоколы нового поколения: Shadowsocks 2022, TUIC v5 и Telegram MTProxy](#28-протоколы-нового-поколения-shadowsocks-2022-tuic-v5-и-telegram-mtproxy)
+   * [2.9. Автономный шлюз AmneziaWG (awg-mgr) и Pure-Python Curve25519](#29-автономный-шлюз-amneziawg-awg-mgr-и-pure-python-curve25519)
 3. [Схема движения сетевого трафика (Mermaid)](#3-схема-движения-сетевого-трафика)
 4. [Совместимость клиентских приложений](#4-совместимость-клиентских-приложений)
 5. [Настройка брандмауэра UFW (Защита от сканирования)](#5-настройка-брандмауэра-ufw-защита-от-сканирования)
@@ -185,6 +187,30 @@ net.netfilter.nf_conntrack_tcp_timeout_time_wait = 30
 * **Разделение интерактивного и CI/CD режимов:**
   * В неинтерактивном режиме (`-y`, `--config`) весь интерактивный движок пропускается функцией `run_non_interactive_setup` для максимальной предсказуемости и стабильности в скриптах автоматизации.
 
+### 2.8. Протоколы нового поколения: Shadowsocks 2022, TUIC v5 и Telegram MTProxy
+* **Shadowsocks 2022 (`8388` TCP/UDP):**
+  * Современная спецификация протокола Shadowsocks с методом шифрования `2022-blake3-aes-128-gcm`.
+  * Индивидуальный 16-байтный Base64-ключ, генерируемый через Blake3.
+  * Встроенная криптографическая защита от атак повторного воспроизведения пакетов (Anti-Replay) и минимальные задержки при обработке пакетов.
+* **TUIC v5 (`8448/udp`):**
+  * Высокоскоростной транспортный протокол поверх UDP/QUIC 0-RTT, оптимизированный для мобильных устройств.
+  * Бесшовная миграция соединений (Connection Migration): при смене сотовых вышек или переключении между Wi-Fi и сотовой связью соединение не сбрасывается и сессия не требует повторного установления.
+  * Собственные алгоритмы контроля перегрузок на уровне пользователя (BBR / Cubic).
+  * Автоматическая привязка доверенного сертификата Let's Encrypt / acme.sh (`alpn: ["spdy/3.1", "h3"]`).
+* **Telegram MTProxy с маскировкой FakeTLS (`8444/tcp`):**
+  * Встроенный шлюз MTProto для прямого подключения мессенджера Telegram на смартфонах и ПК без необходимости использовать сторонние VPN-клиенты.
+  * 16-байтный секрет в шестнадцатеричном формате с префиксом `ee` (FakeTLS) и указанием домена маскировки (по умолчанию: `gateway.icloud.com`).
+  * Для систем фильтрации трафик выглядит как стандартное защищенное TLS-соединение с доверенным веб-сайтом.
+
+### 2.9. Автономный шлюз AmneziaWG (`awg-mgr`) и Pure-Python Curve25519
+* **Автономное развертывание (`ENABLE_AWG_STANDALONE=1`):**
+  * Возможность запуска AmneziaWG в качестве системной службы ядра Linux (`awg-quick@awg0`) без Nginx, веб-сервера и панели управления 3X-UI.
+  * Минимальное потребление оперативной памяти (менее 50 МБ) для создания легковесных сетевых шлюзов.
+* **Поддержка доменных эндпоинтов без SSL (`--awg-host`):**
+  * Протокол WireGuard/AmneziaWG работает поверх UDP и выполняет шифрование на эллиптических кривых Curve25519. Для подключения клиентов достаточно обычной DNS A-записи домена или прямого IP сервера (выпуск веб-сертификатов SSL не требуется).
+* **Генератор ключей на чистом Python (Pure-Python Curve25519 RFC 7748):**
+  * Генерация ключевых пар Curve25519 не требует компиляторов gcc, заголовочных файлов ядра или сторонних C-библиотек, работая на любой чистой ОС со стандартным интерпретатором Python 3.
+
 ---
 
 ## 3. Схема движения сетевого трафика
@@ -192,7 +218,8 @@ net.netfilter.nf_conntrack_tcp_timeout_time_wait = 30
 ```mermaid
 graph TD
     Client443TCP[Клиент: 443/TCP] --> NginxStream(Nginx Stream L4 Router)
-    Client443UDP[Клиент: 443/UDP / 8443/UDP / 8444/UDP] -->|Напрямую в обход Nginx| XrayHysteria[Xray: Hysteria 2 / AWG]
+    ClientUDP[Клиент: 443/UDP / 8443/UDP / 8448/UDP] -->|Напрямую в обход Nginx| XrayUDP[Xray UDP: Hysteria 2 / AWG / TUIC v5]
+    ClientDirectTCP[Клиент: 8388/TCP, 8444/TCP] -->|Напрямую в обход Nginx| XrayDirectTCP[Xray TCP: Shadowsocks 2022 / MTProxy]
 
     NginxStream -->|SNI: Главный / WWW / Доп. домены / Пустой SNI| NginxSock[Unix Socket: /dev/shm/nginx-http.sock]
     NginxStream -->|SNI: Steal-Oneself cdn.yourdomain.online| XrayStealREALITY[Xray REALITY :45443]
@@ -219,11 +246,11 @@ graph TD
 
 | Платформа | Приложение | Поддерживаемые протоколы | Особенности |
 | :--- | :--- | :--- | :--- |
-| **Windows** | **v2rayN** / **Sing-box** / **NekoBox** | VLESS (xHTTP/REALITY), Hysteria 2, AWG, DoH | v2rayN v6.40+ (Xray-core v24.11+ / v25+) |
-| **Android** | **v2rayNG** / **NekoBox** / **Sing-box** | VLESS (xHTTP/REALITY), Hysteria 2, AWG, DoH | v2rayNG v1.9.15+, поддержка Частного DNS |
-| **iOS / iPadOS** | **Happ Proxy** / **FoXray** / **Streisand** / **Karing** | VLESS (xHTTP/REALITY), Hysteria 2, AWG, DoH | Актуальные версии из App Store |
-| **macOS** | **V2RayXS** / **FoXray** / **NekoBox** | VLESS (xHTTP/REALITY), Hysteria 2, AWG, DoH | Нативная поддержка Xray-core |
-| **Роутеры** | **Keenetic** / **OpenWrt** / **MikroTik** | VLESS REALITY, VLESS xHTTP, AWG v2.0, DoH | Нативная поддержка DoH с ClientID |
+| **Windows** | **v2rayN** / **Happ** / **NekoBox** / **Telegram** | VLESS (xHTTP/REALITY), Hysteria 2, AWG, TUIC v5, SS-2022, MTProxy, DoH | v2rayN v6.40+ (Xray-core v24.11+ / v25+) |
+| **Android** | **v2rayNG** / **Happ Proxy** / **NekoBox** / **Telegram** | VLESS (xHTTP/REALITY), Hysteria 2, AWG, TUIC v5, SS-2022, MTProxy, DoH | v2rayNG v1.9.15+, поддержка Частного DNS |
+| **iOS / iPadOS** | **Happ Proxy** / **FoXray** / **Streisand** / **Telegram** | VLESS (xHTTP/REALITY), Hysteria 2, AWG, TUIC v5, SS-2022, MTProxy, DoH | Актуальные версии из App Store |
+| **macOS** | **FoXray** / **V2RayXS** / **Karing** / **Telegram** | VLESS (xHTTP/REALITY), Hysteria 2, AWG, TUIC v5, SS-2022, MTProxy, DoH | Нативная поддержка Xray-core и MTProxy |
+| **Роутеры** | **Keenetic** / **OpenWrt** / **MikroTik** | VLESS REALITY, VLESS xHTTP, AWG v2.0, Shadowsocks, DoH | Нативная поддержка DoH с ClientID |
 
 ---
 
@@ -232,13 +259,17 @@ graph TD
 После завершения работы `setup_mask.sh` и создания инбаундов крайне рекомендуется изолировать внутренние порты от прямого доступа из интернета:
 
 ```bash
-# 1. Разрешаем внешние рабочие порты: SSH, Веб, Hysteria 2 и AmneziaWG UDP
+# 1. Разрешаем внешние рабочие порты: SSH, Веб, Hysteria 2, AmneziaWG, TUIC, Shadowsocks, MTProxy
 sudo ufw allow 2222/tcp comment 'Custom SSH'
 sudo ufw allow 80/tcp comment 'HTTP ACME'
 sudo ufw allow 443/tcp comment 'Nginx HTTPS & Stream'
 sudo ufw allow 443/udp comment 'Hysteria 2 QUIC'
 sudo ufw allow 8443/udp comment 'AmneziaWG v3.1'
 sudo ufw allow 8444/udp comment 'AmneziaWG v2.0'
+sudo ufw allow 8448/udp comment 'TUIC v5 QUIC'
+sudo ufw allow 8388/tcp comment 'Shadowsocks 2022 TCP'
+sudo ufw allow 8388/udp comment 'Shadowsocks 2022 UDP'
+sudo ufw allow 8444/tcp comment 'Telegram MTProxy FakeTLS'
 # Опционально: только если в мастере был явно включен Port Hopping для Hysteria 2:
 # sudo ufw allow 20000:50000/udp comment 'Hysteria 2 Port Hopping'
 
@@ -352,6 +383,38 @@ sudo ufw deny 9443/tcp comment 'Block Direct Anti-Loop Port'
   * H1–H4: `"149419586", "878791997", "1251051976", "1657628296"`
   * `HeaderProtectionKey`: ПУСТО | `MTU`: `1280`
   * `Jc = 2, Jmin = 20, Jmax = 50`, `S1 = 16, S2 = 20, S3 = 24, S4 = 16`
+
+#### G. Инбаунд `<Префикс> (Shadowsocks 2022)` (TCP/UDP 8388)
+* **Основное:** Порт: `8388` | Listen IP: `0.0.0.0` | Протокол: `shadowsocks`
+* **Настройки (Settings):**
+  * Метод шифрования: `2022-blake3-aes-128-gcm`
+  * Пароль: 16-байтный Base64-ключ, сгенерированный через Blake3
+  * Поддерживаемые сети: `tcp,udp`
+* **Поток (Stream Settings):**
+  * Безопасность: `none` | Сеть: `tcp`
+
+#### H. Инбаунд `<Префикс> (TUIC v5)` (UDP 8448)
+* **Основное:** Порт: `8448` | Listen IP: `0.0.0.0` | Протокол: `tuic`
+* **Настройки (Settings):**
+  * Учетные данные: UUID клиента и токен-пароль
+  * Версия протокола: `5`
+  * Контроль перегрузок: `bbr` (или `cubic`)
+  * Режим релея UDP: `native`
+  * Нулевая задержка старта: 0-RTT рукопожатие
+* **Поток (Stream Settings):**
+  * Сеть: `tuic` | Безопасность: `tls`
+  * ALPN: `spdy/3.1, h3` | SNI: `yourdomain.online`
+  * Пути к сертификатам:
+    * Публичный ключ: `/etc/letsencrypt/live/yourdomain.online/fullchain.pem`
+    * Приватный ключ: `/etc/letsencrypt/live/yourdomain.online/privkey.pem`
+
+#### I. Инбаунд `<Префикс> (Telegram MTProxy)` (TCP 8444 FakeTLS)
+* **Основное:** Порт: `8444` | Listen IP: `0.0.0.0` | Протокол: `mtproto`
+* **Настройки (Settings):**
+  * Секрет: 16-байтный hex-секрет с префиксом `ee` (FakeTLS) и доменом маскировки (`gateway.icloud.com`)
+  * Спонсорский тег (Ad Tag): опционально (32 hex-символа от `@MTProxybot`)
+* **Поток (Stream Settings):**
+  * Безопасность: `none` | Сеть: `tcp`
 
 ---
 
@@ -807,6 +870,90 @@ nginx -t && systemctl start nginx x-ui AdGuardHome
 ```
 </details>
 
+<details>
+<summary><b>6. JSON: Shadowsocks 2022 (Порт 8388 TCP/UDP, Blake3-AES-128-GCM)</b></summary>
+
+```json
+{
+  "listen": "0.0.0.0",
+  "port": 8388,
+  "protocol": "shadowsocks",
+  "settings": {
+    "method": "2022-blake3-aes-128-gcm",
+    "password": "YOUR_SERVER_BASE64_KEY_16_BYTES",
+    "network": "tcp,udp",
+    "clients": [
+      {
+        "password": "YOUR_CLIENT_BASE64_KEY_16_BYTES",
+        "email": "default_user@client.local"
+      }
+    ]
+  },
+  "streamSettings": {
+    "network": "tcp",
+    "security": "none"
+  }
+}
+```
+</details>
+
+<details>
+<summary><b>7. JSON: TUIC v5 (Порт 8448 UDP, QUIC 0-RTT, BBR)</b></summary>
+
+```json
+{
+  "listen": "0.0.0.0",
+  "port": 8448,
+  "protocol": "tuic",
+  "settings": {
+    "certificate": "/etc/letsencrypt/live/yourdomain.online/fullchain.pem",
+    "private_key": "/etc/letsencrypt/live/yourdomain.online/privkey.pem",
+    "congestion_control": "bbr",
+    "alpn": ["h3", "spdy/3.1"],
+    "udp_relay_mode": "native",
+    "zero_rtt_handshake": true,
+    "clients": [
+      {
+        "uuid": "00000000-0000-0000-0000-000000000000",
+        "password": "YOUR_TOKEN_PASSWORD",
+        "email": "default_user@client.local"
+      }
+    ]
+  },
+  "streamSettings": {
+    "network": "quic",
+    "security": "tls"
+  }
+}
+```
+</details>
+
+<details>
+<summary><b>8. JSON: Telegram MTProxy (Порт 8444 TCP, FakeTLS)</b></summary>
+
+```json
+{
+  "listen": "0.0.0.0",
+  "port": 8444,
+  "protocol": "mtproto",
+  "settings": {
+    "preferIp": "prefer-ipv4",
+    "clients": [
+      {
+        "secret": "ee0123456789abcdef0123456789abcdef676174657761792e69636c6f75642e636f6d",
+        "adTag": "",
+        "email": "default_user@client.local"
+      }
+    ]
+  },
+  "streamSettings": {
+    "network": "tcp",
+    "security": "none"
+  }
+}
+```
+</details>
+
 ---
 
 ## 13. Исходящая маршрутизация: Cloudflare WARP и выборочный роутинг
@@ -1014,6 +1161,11 @@ src/
 * **Защита от циклов:** строгий контроль стека вызовов предотвращает рекурсивное зацикливание.
 * **Синтаксический контроль:** автоматическая валидация `bash -n` и Python AST для всех встроенных heredoc-блоков (`python3 - << 'EOF'`).
 * **Контроль дрифта (Drift Detection):** в GitHub Actions CI выполняется `python scripts/build.py --check --lint`. Любые несогласованности между `src/` и корневыми скриптами автоматически блокируют PR.
+
+### Автоматизация версионирования (Single Source of Truth / SSOT)
+Начиная с версии v8.0.0, номер версии проекта фиксируется в единственном источнике истины — файле `VERSION` в корне репозитория:
+* **Синхронизация во всех файлах:** команда `python scripts/build.py --bump <новая_версия>` или `python scripts/build.py --sync-version` автоматически обновляет версию в файле `VERSION`, документации ([`README.md`](../README.md), [`docs/ARCHITECTURE.md`](ARCHITECTURE.md), бейджах), тестах и баннерах консольного интерфейса.
+* **Макроподстановка сборщика:** в исходных файлах точек входа `src/entrypoints/` используются макросы `__VERSION__` (подставляет `vX.Y.Z`) и `__RAW_VERSION__` (подставляет `X.Y.Z`), которые сборщик заменяет актуальным значением из `VERSION` на этапе генерации дистрибутивов.
 
 ---
 

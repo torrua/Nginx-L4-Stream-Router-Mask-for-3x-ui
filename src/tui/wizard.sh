@@ -581,6 +581,40 @@ for item in res:
             ENABLE_MTPROTO=0
         fi
 
+        if [[ "${ENABLE_MASQUE,,}" == "y" || "${ENABLE_MASQUE:-}" == "1" ]]; then
+            ENABLE_MASQUE=1
+            MASQUE_PORT="${MASQUE_PORT:-8445}"
+        else
+            ENABLE_MASQUE=0
+        fi
+
+        if [[ "${ENABLE_SHADOWTLS,,}" == "y" || "${ENABLE_SHADOWTLS:-}" == "1" ]]; then
+            ENABLE_SHADOWTLS=1
+            SHADOWTLS_PORT="${SHADOWTLS_PORT:-8543}"
+            SHADOWTLS_SNI="${SHADOWTLS_SNI:-gateway.icloud.com}"
+            ENABLE_SS2022=1
+        else
+            ENABLE_SHADOWTLS=0
+        fi
+
+        if [[ "${ENABLE_WSTUNNEL,,}" == "y" || "${ENABLE_WSTUNNEL:-}" == "1" ]]; then
+            ENABLE_WSTUNNEL=1
+            WSTUNNEL_PORT="${WSTUNNEL_PORT:-8080}"
+            local _wst_pref="${WSTUNNEL_PREFIX:-/wstunnel}"
+            _wst_pref="/${_wst_pref#/}"
+            _wst_pref="${_wst_pref%/}"
+            WSTUNNEL_PREFIX="${_wst_pref}/"
+        else
+            ENABLE_WSTUNNEL=0
+        fi
+
+        if [[ "${ENABLE_ZAPRET,,}" == "y" || "${ENABLE_ZAPRET:-}" == "1" ]]; then
+            ENABLE_ZAPRET=1
+            ZAPRET_QNUM="${ZAPRET_QNUM:-200}"
+        else
+            ENABLE_ZAPRET=0
+        fi
+
         if is_true "${ENABLE_AWG_V3:-0}" || is_true "${ENABLE_AWG_V2:-0}" || is_true "${ENABLE_AWG_STANDALONE:-0}"; then
             start_amneziawg_preinstall_bg
         fi
@@ -632,6 +666,14 @@ for item in res:
             WARP_LICENSE_KEY=""
         fi
 
+        ENABLE_HOST_SECURITY="${ENABLE_HOST_SECURITY:-n}"
+        local _act_p
+        _act_p=$(detect_active_ssh_port)
+        [ -n "$_act_p" ] || _act_p=22
+        SSH_ACTIVE_PORT="${SSH_ACTIVE_PORT:-$_act_p}"
+        SSH_PORT="${SSH_PORT:-$SSH_ACTIVE_PORT}"
+        ENABLE_FAIL2BAN="${ENABLE_FAIL2BAN:-n}"
+
         rebuild_all_domains
         sync_reality_ports
     }
@@ -642,7 +684,7 @@ for item in res:
 
     q_step_domain() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 1/12: Конфигурация главного сайта (домена) ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 1/13: Конфигурация главного сайта (домена) ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Ваш основной домен (например, ${BOLD}yourdomain.online${NC})."
             echo -e "     На нем будет работать веб-маска (декой-сайт), панель 3X-UI,"
@@ -690,7 +732,7 @@ for item in res:
 
     q_step_steal() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 2/12: Настройка VLESS REALITY (маскировка под свой сайт) ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 2/13: Настройка VLESS REALITY (маскировка под свой сайт) ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Режим REALITY, маскирующийся под ${BOLD}собственный поддомен${NC} (напр. cdn.$PRIMARY_DOMAIN)."
             echo -e "     ${GREEN}Преимущество:${NC} Трафик выглядит как обычный просмотр вашего сайта."
@@ -766,7 +808,7 @@ for item in res:
 
     q_step_classic() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 3/12: Настройка VLESS REALITY (маскировка под популярные сервисы) ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 3/13: Настройка VLESS REALITY (маскировка под популярные сервисы) ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Режим REALITY, маскирующийся под ${BOLD}известные сервисы${NC} (Apple, Microsoft, Samsung)."
             echo -e "     ${GREEN}Преимущество:${NC} Даже если ваш собственный домен окажется недоступен, это подключение продолжит"
@@ -870,7 +912,7 @@ for item in res:
 
     q_step_ports() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 4/12: Настройка путей и внутренних портов (3X-UI и VLESS xHTTP) ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 4/13: Настройка путей и внутренних портов (3X-UI и VLESS xHTTP) ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Внутренние порты и секретные URI-пути для веб-панели 3X-UI,"
             echo -e "     сервера подписок для клиентов и инбаунда VLESS xHTTP (HTTP/2 Stream-One)."
@@ -956,7 +998,7 @@ for item in res:
 
     q_step_protocols() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 5/12: Выбор протоколов и транспортов (VPN / Прокси) ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 5/13: Выбор протоколов и транспортов (VPN / Прокси) ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Выберите протоколы подключения, которые будут развернуты на сервере."
             echo -e "     • ${GREEN}Hysteria 2${NC}: сверхбыстрый QUIC/UDP протокол с BBR Brutal для стриминга и мобильного интернета."
@@ -966,6 +1008,10 @@ for item in res:
             echo -e "     • ${GREEN}TUIC v5${NC}: 0-RTT рукопожатие на чистом QUIC для мгновенного отклика."
             echo -e "     • ${GREEN}Shadowsocks 2022${NC}: устойчивый к зондированию шифрованный протокол."
             echo -e "     • ${GREEN}Telegram MTProxy${NC}: прямой доступ для клиентов Telegram без дополнительных VPN-приложений."
+            echo -e "     • ${GREEN}MASQUE (RFC 9484)${NC}: стандартизированный IETF CONNECT-UDP/IP прокси поверх HTTP/3 QUIC."
+            echo -e "     • ${GREEN}ShadowTLS v4${NC}: идеальная маскировка под Apple gateway.icloud.com через Nginx Stream L4."
+            echo -e "     • ${GREEN}Wstunnel (Nginx L7)${NC}: WebSocket туннелирование через порт 443 HTTPS с валидным SSL."
+            echo -e "     • ${GREEN}Server-Side Zapret${NC}: десинхронизация DPI ТСПУ прямо на VPS через nfqws connbytes 1:6."
             echo
         fi
 
@@ -977,6 +1023,10 @@ for item in res:
             "ENABLE_TUIC"
             "ENABLE_SS2022"
             "ENABLE_MTPROTO"
+            "ENABLE_MASQUE"
+            "ENABLE_SHADOWTLS"
+            "ENABLE_WSTUNNEL"
+            "ENABLE_ZAPRET"
         )
         local proto_labels=(
             "Hysteria 2 (UDP/QUIC Brutal CC, :${HY2_PORT:-443})"
@@ -986,6 +1036,10 @@ for item in res:
             "TUIC v5 (QUIC 0-RTT + BBR, :${TUIC_PORT:-8448}/udp)"
             "Shadowsocks 2022 (2022-blake3-aes-256-gcm, :${SS2022_PORT:-8388})"
             "Telegram MTProxy (FakeTLS прямой доступ, :${MTPROTO_PORT:-8444}/tcp)"
+            "MASQUE (RFC 9484 / RFC 9298 via Sing-box, :${MASQUE_PORT:-8445}/udp)"
+            "ShadowTLS v4 + SS-2022 (Nginx Stream :443 SNI ${SHADOWTLS_SNI:-gateway.icloud.com})"
+            "Wstunnel over Nginx L7 (HTTPS WebSocket :443 -> :${WSTUNNEL_PORT:-8080})"
+            "Server-Side Zapret (DPI Desync nfqws connbytes 1:6 NFQUEUE 200)"
         )
 
         prompt_multiselect "Выберите протоколы для установки" proto_keys proto_labels || return $?
@@ -1076,6 +1130,62 @@ for item in res:
             MTPROTO_ADTAG=""
         fi
 
+        if is_true "$ENABLE_MASQUE"; then
+            [ -n "${MASQUE_PORT:-}" ] || MASQUE_PORT="8445"
+            [ -n "${MASQUE_USER:-}" ] || MASQUE_USER="client"
+            [ -n "${MASQUE_PASSWORD:-}" ] || MASQUE_PASSWORD="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "masque${RANDOM}")"
+            if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+                prompt_default "  UDP-порт для MASQUE (HTTP/3)" "$MASQUE_PORT" MASQUE_PORT || return $?
+                prompt_default "  Имя пользователя для MASQUE" "$MASQUE_USER" MASQUE_USER || return $?
+            fi
+        else
+            MASQUE_PORT=""
+        fi
+
+        if is_true "$ENABLE_SHADOWTLS"; then
+            [ -n "${SHADOWTLS_PORT:-}" ] || SHADOWTLS_PORT="8543"
+            [ -n "${SHADOWTLS_SNI:-}" ] || SHADOWTLS_SNI="gateway.icloud.com"
+            [ -n "${SHADOWTLS_PASSWORD:-}" ] || SHADOWTLS_PASSWORD="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "stls${RANDOM}")"
+            ENABLE_SS2022=1
+            [ -n "${SS2022_PORT:-}" ] || SS2022_PORT="8388"
+            if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+                prompt_default "  Локальный порт для ShadowTLS" "$SHADOWTLS_PORT" SHADOWTLS_PORT || return $?
+                prompt_default "  FakeTLS SNI для ShadowTLS" "$SHADOWTLS_SNI" SHADOWTLS_SNI || return $?
+            fi
+        else
+            SHADOWTLS_PORT=""
+            SHADOWTLS_SNI=""
+        fi
+
+        if is_true "$ENABLE_WSTUNNEL"; then
+            [ -n "${WSTUNNEL_PORT:-}" ] || WSTUNNEL_PORT="8080"
+            [ -n "${WSTUNNEL_PREFIX:-}" ] || WSTUNNEL_PREFIX="/wstunnel"
+            local _wp="${WSTUNNEL_PREFIX#/}"
+            _wp="${_wp%/}"
+            WSTUNNEL_PREFIX="/${_wp}/"
+            [ -n "${WSTUNNEL_SECRET:-}" ] || WSTUNNEL_SECRET="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "wst${RANDOM}")"
+            if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+                prompt_default "  Локальный порт для Wstunnel daemon" "$WSTUNNEL_PORT" WSTUNNEL_PORT || return $?
+                prompt_default "  HTTP-путь location для Wstunnel" "$WSTUNNEL_PREFIX" WSTUNNEL_PREFIX || return $?
+            fi
+        else
+            WSTUNNEL_PORT=""
+            WSTUNNEL_PREFIX=""
+        fi
+
+        if is_true "$ENABLE_ZAPRET"; then
+            [ -n "${ZAPRET_QNUM:-}" ] || ZAPRET_QNUM="200"
+            [ -n "${ZAPRET_DESYNC:-}" ] || ZAPRET_DESYNC="split2"
+            [ -n "${ZAPRET_FOOLING:-}" ] || ZAPRET_FOOLING="md5sig,badseq"
+            if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+                prompt_default "  Очередь NFQUEUE для Zapret" "$ZAPRET_QNUM" ZAPRET_QNUM || return $?
+                prompt_default "  Режим desync для nfqws" "$ZAPRET_DESYNC" ZAPRET_DESYNC || return $?
+                prompt_default "  Режим fooling для nfqws" "$ZAPRET_FOOLING" ZAPRET_FOOLING || return $?
+            fi
+        else
+            ZAPRET_QNUM=""
+        fi
+
         rebuild_all_domains
         return 0
     }
@@ -1122,7 +1232,7 @@ for item in res:
 
     q_step_agh() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 6/12: Настройка приватного AdGuard Home DoH + Split-DNS ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 6/13: Настройка приватного AdGuard Home DoH + Split-DNS ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Приватный шифрованный DNS (DNS-over-HTTPS) с защитой от рекламы и трекеров."
             echo -e "     ${GREEN}Split-DNS:${NC} Запросы к российским сайтам (.ru, банки, Госуслуги) направляются"
@@ -1168,7 +1278,7 @@ for item in res:
 
     q_step_decoy() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 7/12: Выбор темы для сайта-маскировки (Decoy Site) ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 7/13: Выбор темы для сайта-маскировки (Decoy Site) ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Веб-сайт, который отображается в браузере при обращении к вашему домену."
             echo -e "     Защищает сервер от выявления цензорами, активными сканерами и сетевыми ботами."
@@ -1201,7 +1311,7 @@ for item in res:
 
     q_step_ssl_domains() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 8/12: Реестр SSL-сертификатов и дополнительные домены ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 8/13: Реестр SSL-сертификатов и дополнительные домены ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Список доменов, для которых будут автоматически получены SSL-сертификаты."
             echo -e "  ${DIM}Следующие домены уже включены автоматически из предыдущих шагов:${NC}"
@@ -1239,7 +1349,7 @@ for item in res:
 
     q_step_ssl_engine() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 9/12: Выбор метода выпуска SSL-сертификатов ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 9/13: Выбор метода выпуска SSL-сертификатов ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Способ валидации владения доменом для Let's Encrypt."
             echo -e "    ${GREEN}[1] Классический Certbot (HTTP-01, Рекомендуется)${NC}"
@@ -1281,7 +1391,7 @@ for item in res:
 
     q_step_3xui_auto() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 10/12: Автоматическая настройка базы данных панели 3X-UI ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 10/13: Автоматическая настройка базы данных панели 3X-UI ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Автоматическое создание подключений (REALITY со своим сайтом, внешними сервисами, xHTTP)"
             echo -e "     в базе данных панели 3X-UI, а также настройка секретных путей и подписок."
@@ -1326,7 +1436,7 @@ for item in res:
 
     q_step_warp() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 11/12: Исходящий туннель Cloudflare WARP ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 11/13: Исходящий туннель Cloudflare WARP ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Исходящий WireGuard туннель от вашего VPS в сеть Cloudflare."
             echo -e "     ${GREEN}Преимущество:${NC} Полностью избавляет от капч Google/Cloudflare и разблокирует"
@@ -1344,6 +1454,83 @@ for item in res:
             ENABLE_WARP="n"
             WARP_LICENSE_KEY=""
             log "Интеграция Cloudflare WARP отключена."
+        fi
+        return 0
+    }
+
+    q_step_security() {
+        echo
+        echo -e "${YELLOW}━━━ Шаг 12/13: Безопасность сервера (SSH и Fail2ban) ━━━${NC}"
+        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+            echo -e "  ${CYAN}💡 Что это:${NC} Базовая защита операционной системы хоста."
+            echo -e "     ${GREEN}Преимущество:${NC} Перенос порта SSH со стандартного 22 скрывает сервер"
+            echo -e "     от автоматических сканеров портов, а Fail2ban автоматически блокирует IP-адреса"
+            echo -e "     злоумышленников после нескольких неудачных попыток подбора паролей."
+            echo
+        fi
+
+        local def_active_port
+        def_active_port=$(detect_active_ssh_port)
+        [ -n "$def_active_port" ] || def_active_port=22
+        SSH_ACTIVE_PORT="${SSH_ACTIVE_PORT:-$def_active_port}"
+
+        local current_configured_port="${SSH_PORT:-$SSH_ACTIVE_PORT}"
+
+        prompt_yes_no "Настроить безопасность сервера (порт SSH и защиту Fail2ban)?" "${ENABLE_HOST_SECURITY:-n}" ENABLE_HOST_SECURITY || return $?
+        if is_true "$ENABLE_HOST_SECURITY"; then
+            ENABLE_HOST_SECURITY="y"
+
+            # Вопрос 1: Порт SSH
+            echo
+            local keep_ssh="y"
+            if [ "$current_configured_port" -ne "$SSH_ACTIVE_PORT" ]; then
+                keep_ssh="n"
+            fi
+            prompt_yes_no "  Оставить текущий порт SSH (${SSH_ACTIVE_PORT})?" "$keep_ssh" KEEP_SSH || return $?
+            if is_true "$KEEP_SSH"; then
+                SSH_PORT="$SSH_ACTIVE_PORT"
+                ok "Используется текущий порт SSH: ${WHITE}$SSH_PORT${NC}"
+            else
+                while true; do
+                    local custom_p="${current_configured_port}"
+                    [ "$custom_p" -eq "$SSH_ACTIVE_PORT" ] && custom_p=2222
+                    prompt_default "  Введите новый порт SSH (1024-65535)" "$custom_p" custom_p || return $?
+                    if [[ "$custom_p" =~ ^[0-9]+$ ]] && [ "$custom_p" -ge 1024 ] && [ "$custom_p" -le 65535 ]; then
+                        # Проверка на конфликт с известными портами сервисов
+                        local conflict=0
+                        for reserved in 80 443 "${PANEL_PORT:-10443}" "${SUB_PORT:-55443}" "${XHTTP_STREAM_PORT:-50443}" "${HY2_PORT:-443}" "${AWG_V3_PORT:-8443}" "${AWG_V2_PORT:-8444}" "${AWG_STANDALONE_PORT:-8445}" "${SS2022_PORT:-8388}" "${TUIC_PORT:-8448}"; do
+                            if [ "$custom_p" -eq "$reserved" ]; then
+                                warn "  Порт $custom_p уже используется для одного из VPN/прокси сервисов. Выберите другой."
+                                conflict=1
+                                break
+                            fi
+                        done
+                        if [ "$conflict" -eq 0 ]; then
+                            SSH_PORT="$custom_p"
+                            ok "Новый порт SSH: ${WHITE}$SSH_PORT${NC} (активный порт $SSH_ACTIVE_PORT также останется разрешен в UFW для защиты от потери связи)"
+                            break
+                        fi
+                    else
+                        warn "  Порт должен быть числом от 1024 до 65535."
+                    fi
+                done
+            fi
+
+            # Вопрос 2: Fail2ban
+            echo
+            prompt_yes_no "  Установить и включить Fail2ban (защита от брутфорса)?" "${ENABLE_FAIL2BAN:-y}" ENABLE_FAIL2BAN || return $?
+            if is_true "$ENABLE_FAIL2BAN"; then
+                ENABLE_FAIL2BAN="y"
+                ok "Служба Fail2ban будет установлена и настроена с backend=systemd."
+            else
+                ENABLE_FAIL2BAN="n"
+                log "Установка Fail2ban пропущена."
+            fi
+        else
+            ENABLE_HOST_SECURITY="n"
+            SSH_PORT="$SSH_ACTIVE_PORT"
+            ENABLE_FAIL2BAN="n"
+            log "Настройки SSH и Fail2ban оставлены без изменений."
         fi
         return 0
     }
@@ -1410,6 +1597,22 @@ for item in res:
         is_true "${ENABLE_MTPROTO:-0}" && mtp_status="${GREEN}Включен${NC} (:${MTPROTO_PORT:-8444}/tcp, FakeTLS: ${MTPROTO_FAKETLS_DOMAIN:-gateway.icloud.com})"
         echo -e "      ${DIM}• Telegram MTProxy:${NC}     $mtp_status"
 
+        local masque_status="${RED}Отключен${NC}"
+        is_true "${ENABLE_MASQUE:-0}" && masque_status="${GREEN}Включен${NC} (:${MASQUE_PORT:-8445}/udp, RFC 9484)"
+        echo -e "      ${DIM}• MASQUE (RFC 9484):${NC}    $masque_status"
+
+        local stls_status="${RED}Отключен${NC}"
+        is_true "${ENABLE_SHADOWTLS:-0}" && stls_status="${GREEN}Включен${NC} (Nginx :443 SNI ${SHADOWTLS_SNI:-gateway.icloud.com} ➜ :${SHADOWTLS_PORT:-8543})"
+        echo -e "      ${DIM}• ShadowTLS v4:${NC}         $stls_status"
+
+        local wst_status="${RED}Отключен${NC}"
+        is_true "${ENABLE_WSTUNNEL:-0}" && wst_status="${GREEN}Включен${NC} (Nginx :443 HTTPS ${WSTUNNEL_PREFIX:-/wstunnel/} ➜ :${WSTUNNEL_PORT:-8080})"
+        echo -e "      ${DIM}• Wstunnel over Nginx:${NC}  $wst_status"
+
+        local zapret_status="${RED}Отключен${NC}"
+        is_true "${ENABLE_ZAPRET:-0}" && zapret_status="${GREEN}Включен${NC} (NFQUEUE ${ZAPRET_QNUM:-200}, ${ZAPRET_DESYNC:-split2})"
+        echo -e "      ${DIM}• Server-Side Zapret:${NC}   $zapret_status"
+
         local agh_status="${RED}Отключен${NC}"
         if is_true "${ENABLE_AGH:-0}"; then
             local m_desc="Основной домен"
@@ -1440,10 +1643,22 @@ for item in res:
         is_true "${ENABLE_WARP:-n}" && warp_status="${GREEN}Включен${NC} (WireGuard MTU: 1280)"
         echo -e "  ${CYAN}[11]${NC} ${BOLD}Cloudflare WARP:${NC}      $warp_status"
 
+        local sec_status="${DIM}Без изменений (порт ${SSH_PORT:-$SSH_ACTIVE_PORT}, Fail2ban выкл)${NC}"
+        if is_true "${ENABLE_HOST_SECURITY:-n}"; then
+            local f2b_str="${RED}выкл${NC}"
+            is_true "${ENABLE_FAIL2BAN:-n}" && f2b_str="${GREEN}вкл${NC}"
+            if [ "${SSH_PORT:-$SSH_ACTIVE_PORT}" -ne "${SSH_ACTIVE_PORT:-22}" ]; then
+                sec_status="${GREEN}Настроена${NC} (SSH порт: ${WHITE}${SSH_PORT}${NC} [было ${SSH_ACTIVE_PORT}], Fail2ban: ${f2b_str})"
+            else
+                sec_status="${GREEN}Настроена${NC} (SSH порт: ${WHITE}${SSH_PORT}${NC}, Fail2ban: ${f2b_str})"
+            fi
+        fi
+        echo -e "  ${CYAN}[12]${NC} ${BOLD}Безопасность сервера:${NC}    $sec_status"
+
         echo
         echo -e "${YELLOW}════════════════════════════════════════════════════════════════════════════════${NC}"
         echo -e "  ${GREEN}[Enter]${NC} или ${GREEN}[y]${NC}  ${BOLD}Начать установку с выбранными параметрами${NC}"
-        echo -e "  ${CYAN}[1 - 11]${NC}        ${BOLD}Изменить соответствующий раздел конфигурации${NC}"
+        echo -e "  ${CYAN}[1 - 12]${NC}        ${BOLD}Изменить соответствующий раздел конфигурации${NC}"
         echo -e "  ${RED}[q]${NC}             ${BOLD}Отмена и выход${NC}"
         echo -e "${YELLOW}════════════════════════════════════════════════════════════════════════════════${NC}"
         echo
@@ -1466,11 +1681,11 @@ for item in res:
                 die "Установка отменена пользователем."
             fi
 
-            if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le 11 ]; then
+            if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le 12 ]; then
                 return $((100 + choice))
             fi
 
-            warn "  Некорректный ввод. Нажмите Enter для старта, номер [1-11] для изменения или 'q' для выхода."
+            warn "  Некорректный ввод. Нажмите Enter для старта, номер [1-12] для изменения или 'q' для выхода."
         done
     }
 
@@ -1496,13 +1711,13 @@ for item in res:
 
         WIZARD_ALLOW_BACK=1
         if [ "${START_AT_REVIEW:-0}" -eq 1 ]; then
-            CURRENT_STEP=12
+            CURRENT_STEP=13
             EDITING_FROM_REVIEW=0
         else
             CURRENT_STEP=1
             EDITING_FROM_REVIEW=0
         fi
-        TOTAL_STEPS=12
+        TOTAL_STEPS=13
 
         while [ "$CURRENT_STEP" -le "$TOTAL_STEPS" ]; do
             res=0
@@ -1518,13 +1733,14 @@ for item in res:
                 9) q_step_ssl_engine || res=$? ;;
                 10) q_step_3xui_auto || res=$? ;;
                 11) q_step_warp || res=$? ;;
-                12) q_step_review || res=$? ;;
+                12) q_step_security || res=$? ;;
+                13) q_step_review || res=$? ;;
             esac
 
             if [ "$res" -eq 10 ]; then
                 # Запрос перехода назад
                 if [ "$EDITING_FROM_REVIEW" -eq 1 ]; then
-                    CURRENT_STEP=12
+                    CURRENT_STEP=13
                     EDITING_FROM_REVIEW=0
                 elif [ "$CURRENT_STEP" -gt 1 ]; then
                     CURRENT_STEP=$((CURRENT_STEP - 1))
@@ -1544,15 +1760,15 @@ for item in res:
                         warn "Вы уже на первом шаге."
                     fi
                 fi
-            elif [ "$res" -ge 101 ] && [ "$res" -le 111 ]; then
+            elif [ "$res" -ge 101 ] && [ "$res" -le 112 ]; then
                 # Переход к конкретному шагу из экрана Review
                 CURRENT_STEP=$((res - 100))
                 EDITING_FROM_REVIEW=1
             elif [ "$res" -eq 0 ]; then
-                if [ "$CURRENT_STEP" -eq 12 ]; then
+                if [ "$CURRENT_STEP" -eq 13 ]; then
                     break
                 elif [ "$EDITING_FROM_REVIEW" -eq 1 ]; then
-                    CURRENT_STEP=12
+                    CURRENT_STEP=13
                     EDITING_FROM_REVIEW=0
                 else
                     CURRENT_STEP=$((CURRENT_STEP + 1))

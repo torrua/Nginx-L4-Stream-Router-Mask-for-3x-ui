@@ -835,7 +835,7 @@ class TestExtraProtocolsInbounds(unittest.TestCase):
         self.assertIn("q_step_awg_v3", wizard_content)
         self.assertIn("q_step_awg_v2", wizard_content)
         self.assertIn("q_step_awg_standalone", wizard_content)
-        self.assertIn("TOTAL_STEPS=12", wizard_content)
+        self.assertIn("TOTAL_STEPS=13", wizard_content)
         self.assertIn("AmneziaWG v3.1 (инбаунд 3X-UI", wizard_content)
         self.assertIn("Автономный сервер AmneziaWG", wizard_content)
 
@@ -843,6 +843,33 @@ class TestExtraProtocolsInbounds(unittest.TestCase):
         env_content = env_path.read_text(encoding="utf-8")
         self.assertIn("ENABLE_AWG_STANDALONE", env_content)
         self.assertIn("AWG_STANDALONE_PORT", env_content)
+
+    def test_host_security_and_fail2ban(self):
+        """Verify host security (SSH port change & Fail2ban) is integrated in wizard, security.sh and env."""
+        security_sh = Path("src/system/security.sh")
+        self.assertTrue(security_sh.exists(), "src/system/security.sh must exist")
+        sec_content = security_sh.read_text(encoding="utf-8")
+        self.assertIn("apply_ssh_configuration()", sec_content)
+        self.assertIn("apply_fail2ban_configuration()", sec_content)
+        self.assertIn("backend = systemd", sec_content)
+        self.assertIn("99-hardening.conf", sec_content)
+
+        wizard_path = Path("src/tui/wizard.sh")
+        wizard_content = wizard_path.read_text(encoding="utf-8")
+        self.assertIn("q_step_security", wizard_content)
+        self.assertIn("ENABLE_HOST_SECURITY", wizard_content)
+        self.assertIn("ENABLE_FAIL2BAN", wizard_content)
+        self.assertIn("Шаг 12/13: Безопасность сервера", wizard_content)
+
+        env_path = Path("src/system/env.sh")
+        env_content = env_path.read_text(encoding="utf-8")
+        self.assertIn("ENABLE_HOST_SECURITY", env_content)
+        self.assertIn("ENABLE_FAIL2BAN", env_content)
+
+        setup_main = Path("src/entrypoints/setup_mask.main.sh").read_text(encoding="utf-8")
+        self.assertIn('# @include "system/security.sh"', setup_main)
+        self.assertIn("apply_ssh_configuration", setup_main)
+        self.assertIn("apply_fail2ban_configuration", setup_main)
 
     def test_multiselect_numeric_fallback_and_tui_detection(self):
         """Verify multiselect graceful fallback (Option A) and terminal capability detection."""

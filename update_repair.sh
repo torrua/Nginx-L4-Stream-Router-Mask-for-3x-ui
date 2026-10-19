@@ -2164,6 +2164,31 @@ if not dry_run:
     mtproto_https_uri = f"https://t.me/proxy?server={domain}&port={mtproto_port}&secret={unified_mtp_secret}"
     mtproto_bot_secret = unified_mtp_secret[2:34] if len(unified_mtp_secret) >= 34 else unified_mtp_secret
 
+    enable_masque = os.environ.get("ENABLE_MASQUE", "n").lower() in ("1", "y", "true")
+    masque_port = int(os.environ.get("MASQUE_PORT") or "8445")
+    masque_user = (os.environ.get("MASQUE_USER") or "client").strip()
+    masque_password = os.environ.get("MASQUE_PASSWORD", "").strip() or unified_ss_client_pass
+    masque_uri = f"masque://{masque_user}:{masque_password}@{domain}:{masque_port}?alpn=h3#{urllib.parse.quote('MASQUE RFC 9484')}"
+
+    enable_shadowtls = os.environ.get("ENABLE_SHADOWTLS", "n").lower() in ("1", "y", "true")
+    shadowtls_port = int(os.environ.get("SHADOWTLS_PORT") or "8543")
+    shadowtls_sni = (os.environ.get("SHADOWTLS_SNI") or "gateway.icloud.com").strip()
+    shadowtls_password = os.environ.get("SHADOWTLS_PASSWORD", "").strip()
+    shadowtls_uri = f"shadowtls://{shadowtls_password}@{domain}:443?sni={shadowtls_sni}&version=4#{urllib.parse.quote('ShadowTLS v4')}"
+    ss_shadowtls_uri = f"ss://{b64_ss_userinfo}@{domain}:443?plugin=shadow-tls;host={shadowtls_sni};password={shadowtls_password};version=4#{urllib.parse.quote('ShadowTLS + SS-2022')}"
+
+    enable_wstunnel = os.environ.get("ENABLE_WSTUNNEL", "n").lower() in ("1", "y", "true")
+    wstunnel_port = int(os.environ.get("WSTUNNEL_PORT") or "8080")
+    wstunnel_prefix = (os.environ.get("WSTUNNEL_PREFIX") or "secret-ws").strip().strip("/")
+    wstunnel_cli = f"wstunnel client -L socks5://127.0.0.1:1080 --http-upgrade-path-prefix {wstunnel_prefix} wss://{domain}:443"
+    wstunnel_uri = f"wstunnel://{domain}:443/{wstunnel_prefix}"
+
+    enable_zapret = os.environ.get("ENABLE_ZAPRET", "n").lower() in ("1", "y", "true")
+    zapret_qnum = os.environ.get("ZAPRET_QNUM", "200").strip()
+    zapret_desync = os.environ.get("ZAPRET_DESYNC", "split2").strip()
+    zapret_fooling = os.environ.get("ZAPRET_FOOLING", "md5sig,badseq").strip()
+    zapret_info = f"Active (NFQUEUE {zapret_qnum}, desync: {zapret_desync}, fooling: {zapret_fooling})"
+
     try:
         cur.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     except Exception:
@@ -2193,6 +2218,19 @@ if not dry_run:
                 f.write(f"MTPROTO_SECRET='{unified_mtp_secret}'\n")
                 f.write(f"MTPROTO_BOT_SECRET='{mtproto_bot_secret}'\n")
                 f.write(f"MTPROTO_PORT='{mtproto_port}'\n")
+            if enable_masque or os.path.exists("/etc/sing-box/masque.json"):
+                f.write(f"MASQUE_URI='{masque_uri}'\n")
+                f.write(f"MASQUE_PORT='{masque_port}'\n")
+            if enable_shadowtls or os.path.exists("/etc/systemd/system/shadow-tls.service"):
+                f.write(f"SHADOWTLS_URI='{shadowtls_uri}'\n")
+                f.write(f"SS_SHADOWTLS_URI='{ss_shadowtls_uri}'\n")
+                f.write(f"SHADOWTLS_PORT='{shadowtls_port}'\n")
+            if enable_wstunnel or os.path.exists("/etc/systemd/system/wstunnel.service"):
+                f.write(f"WSTUNNEL_CLI='{wstunnel_cli}'\n")
+                f.write(f"WSTUNNEL_URI='{wstunnel_uri}'\n")
+                f.write(f"WSTUNNEL_PORT='{wstunnel_port}'\n")
+            if enable_zapret or os.path.exists("/etc/systemd/system/zapret-server.service"):
+                f.write(f"ZAPRET_INFO='{zapret_info}'\n")
         os.umask(old_umask)
         os.chmod(run_file, 0o600)
     except Exception:
@@ -2252,6 +2290,11 @@ else
     [ -n "${SS2022_URI:-}" ] && echo -e "  - ${BOLD}Shadowsocks 2022:${NC}    ${CYAN}${SS2022_URI}${NC}"
     [ -n "${TUIC_URI:-}" ] && echo -e "  - ${BOLD}TUIC v5 (QUIC+BBR):${NC}  ${CYAN}${TUIC_URI}${NC}"
     [ -n "${MTPROTO_TG_URI:-}" ] && echo -e "  - ${BOLD}Telegram MTProxy:${NC}    ${CYAN}${MTPROTO_TG_URI}${NC}"
+    [ -n "${MASQUE_URI:-}" ] && echo -e "  - ${BOLD}MASQUE (RFC 9484):${NC}    ${CYAN}${MASQUE_URI}${NC}"
+    [ -n "${SHADOWTLS_URI:-}" ] && echo -e "  - ${BOLD}ShadowTLS v4:${NC}         ${CYAN}${SHADOWTLS_URI}${NC}"
+    [ -n "${SS_SHADOWTLS_URI:-}" ] && echo -e "  - ${BOLD}ShadowTLS + SS-2022:${NC}  ${CYAN}${SS_SHADOWTLS_URI}${NC}"
+    [ -n "${WSTUNNEL_CLI:-}" ] && echo -e "  - ${BOLD}Wstunnel CLI:${NC}         ${CYAN}${WSTUNNEL_CLI}${NC}"
+    [ -n "${ZAPRET_INFO:-}" ] && echo -e "  - ${BOLD}Server-Side Zapret:${NC}   ${GREEN}${ZAPRET_INFO}${NC}"
 
     if [ -f "/root/vpn_credentials.txt" ]; then
         if [ -n "${UNIFIED_VLESS_ENKEY:-}" ]; then
@@ -2272,6 +2315,19 @@ else
             echo "MTProxy Web Link:          ${MTPROTO_HTTPS_URI:-}" >> /root/vpn_credentials.txt
             echo "MTProxy FakeTLS Secret:    ${MTPROTO_SECRET:-}" >> /root/vpn_credentials.txt
             [ -n "${MTPROTO_BOT_SECRET:-}" ] && echo "MTProxy Key для @MTProxybot: ${MTPROTO_BOT_SECRET}" >> /root/vpn_credentials.txt
+        fi
+        if [ -n "${MASQUE_URI:-}" ] && ! grep -q "MASQUE (RFC 9484):" /root/vpn_credentials.txt 2>/dev/null; then
+            echo "MASQUE (RFC 9484):       ${MASQUE_URI}" >> /root/vpn_credentials.txt
+        fi
+        if [ -n "${SHADOWTLS_URI:-}" ] && ! grep -q "ShadowTLS v4:" /root/vpn_credentials.txt 2>/dev/null; then
+            echo "ShadowTLS v4:            ${SHADOWTLS_URI}" >> /root/vpn_credentials.txt
+            echo "ShadowTLS + SS-2022:     ${SS_SHADOWTLS_URI}" >> /root/vpn_credentials.txt
+        fi
+        if [ -n "${WSTUNNEL_CLI:-}" ] && ! grep -q "Wstunnel Client CLI:" /root/vpn_credentials.txt 2>/dev/null; then
+            echo "Wstunnel Client CLI:     ${WSTUNNEL_CLI}" >> /root/vpn_credentials.txt
+        fi
+        if [ -n "${ZAPRET_INFO:-}" ] && ! grep -q "Server-Side Zapret:" /root/vpn_credentials.txt 2>/dev/null; then
+            echo "Server-Side Zapret:      ${ZAPRET_INFO}" >> /root/vpn_credentials.txt
         fi
     fi
 fi

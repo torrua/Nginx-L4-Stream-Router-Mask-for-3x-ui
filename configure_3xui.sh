@@ -2816,6 +2816,32 @@ mtproto_tg_uri = f"tg://proxy?server={domain}&port={mtproto_port}&secret={unifie
 mtproto_https_uri = f"https://t.me/proxy?server={domain}&port={mtproto_port}&secret={unified_mtp_secret}"
 mtproto_bot_secret = unified_mtp_secret[2:34] if len(unified_mtp_secret) >= 34 else unified_mtp_secret
 
+# Формирование клиентских реквизитов для протоколов нового поколения (Next-Gen Protocols)
+enable_masque = os.environ.get("ENABLE_MASQUE", "n").lower() in ("1", "y", "true")
+masque_port = int(os.environ.get("MASQUE_PORT") or "8445")
+masque_user = (os.environ.get("MASQUE_USER") or "client").strip()
+masque_password = os.environ.get("MASQUE_PASSWORD", "").strip() or unified_ss_client_pass
+masque_uri = f"masque://{masque_user}:{masque_password}@{domain}:{masque_port}?alpn=h3#{urllib.parse.quote(make_remark('MASQUE RFC 9484'))}"
+
+enable_shadowtls = os.environ.get("ENABLE_SHADOWTLS", "n").lower() in ("1", "y", "true")
+shadowtls_port = int(os.environ.get("SHADOWTLS_PORT") or "8543")
+shadowtls_sni = (os.environ.get("SHADOWTLS_SNI") or "gateway.icloud.com").strip()
+shadowtls_password = os.environ.get("SHADOWTLS_PASSWORD", "").strip()
+shadowtls_uri = f"shadowtls://{shadowtls_password}@{domain}:443?sni={shadowtls_sni}&version=4#{urllib.parse.quote(make_remark('ShadowTLS v4'))}"
+ss_shadowtls_uri = f"ss://{b64_ss_userinfo}@{domain}:443?plugin=shadow-tls;host={shadowtls_sni};password={shadowtls_password};version=4#{urllib.parse.quote(make_remark('ShadowTLS + SS-2022'))}"
+
+enable_wstunnel = os.environ.get("ENABLE_WSTUNNEL", "n").lower() in ("1", "y", "true")
+wstunnel_port = int(os.environ.get("WSTUNNEL_PORT") or "8080")
+wstunnel_prefix = (os.environ.get("WSTUNNEL_PREFIX") or "secret-ws").strip().strip("/")
+wstunnel_cli = f"wstunnel client -L socks5://127.0.0.1:1080 --http-upgrade-path-prefix {wstunnel_prefix} wss://{domain}:443"
+wstunnel_uri = f"wstunnel://{domain}:443/{wstunnel_prefix}"
+
+enable_zapret = os.environ.get("ENABLE_ZAPRET", "n").lower() in ("1", "y", "true")
+zapret_qnum = os.environ.get("ZAPRET_QNUM", "200").strip()
+zapret_desync = os.environ.get("ZAPRET_DESYNC", "split2").strip()
+zapret_fooling = os.environ.get("ZAPRET_FOOLING", "md5sig,badseq").strip()
+zapret_info = f"Active (NFQUEUE {zapret_qnum}, desync: {zapret_desync}, fooling: {zapret_fooling})"
+
 if not dry_run:
     try:
         cur.execute("PRAGMA wal_checkpoint(TRUNCATE)")
@@ -2847,6 +2873,24 @@ if not dry_run:
                 f.write(f"MTPROTO_SECRET='{unified_mtp_secret}'\n")
                 f.write(f"MTPROTO_BOT_SECRET='{mtproto_bot_secret}'\n")
                 f.write(f"MTPROTO_PORT='{mtproto_port}'\n")
+            if enable_masque:
+                f.write(f"MASQUE_URI='{masque_uri}'\n")
+                f.write(f"MASQUE_PORT='{masque_port}'\n")
+                f.write(f"MASQUE_USER='{masque_user}'\n")
+                f.write(f"MASQUE_PASSWORD='{masque_password}'\n")
+            if enable_shadowtls:
+                f.write(f"SHADOWTLS_URI='{shadowtls_uri}'\n")
+                f.write(f"SS_SHADOWTLS_URI='{ss_shadowtls_uri}'\n")
+                f.write(f"SHADOWTLS_PORT='{shadowtls_port}'\n")
+                f.write(f"SHADOWTLS_SNI='{shadowtls_sni}'\n")
+                f.write(f"SHADOWTLS_PASSWORD='{shadowtls_password}'\n")
+            if enable_wstunnel:
+                f.write(f"WSTUNNEL_CLI='{wstunnel_cli}'\n")
+                f.write(f"WSTUNNEL_URI='{wstunnel_uri}'\n")
+                f.write(f"WSTUNNEL_PREFIX='{wstunnel_prefix}'\n")
+                f.write(f"WSTUNNEL_PORT='{wstunnel_port}'\n")
+            if enable_zapret:
+                f.write(f"ZAPRET_INFO='{zapret_info}'\n")
         os.umask(old_umask)
         os.chmod(run_file, 0o600)
     except Exception:
@@ -3110,6 +3154,12 @@ MTPROTO_TG_URI=""
 MTPROTO_HTTPS_URI=""
 MTPROTO_SECRET=""
 MTPROTO_BOT_SECRET=""
+MASQUE_URI=""
+SHADOWTLS_URI=""
+SS_SHADOWTLS_URI=""
+WSTUNNEL_CLI=""
+WSTUNNEL_URI=""
+ZAPRET_INFO=""
 for c_env in "/run/3xui_unified_client.env" "/tmp/3xui_unified_client.env"; do
     if [ -f "$c_env" ]; then
         source "$c_env"
@@ -3159,6 +3209,19 @@ else
             echo -e "  - ${BOLD}Ключ для @MTProxybot:${NC} ${YELLOW}${MTPROTO_BOT_SECRET}${NC} (боту передавать строго эти 32 символа!)"
         fi
     fi
+    if [ -n "${MASQUE_URI:-}" ]; then
+        echo -e "  - ${BOLD}MASQUE (RFC 9484):${NC}    ${CYAN}${MASQUE_URI}${NC}"
+    fi
+    if [ -n "${SHADOWTLS_URI:-}" ]; then
+        echo -e "  - ${BOLD}ShadowTLS v4:${NC}         ${CYAN}${SHADOWTLS_URI}${NC}"
+        echo -e "  - ${BOLD}ShadowTLS + SS-2022:${NC}  ${CYAN}${SS_SHADOWTLS_URI}${NC}"
+    fi
+    if [ -n "${WSTUNNEL_CLI:-}" ]; then
+        echo -e "  - ${BOLD}Wstunnel CLI:${NC}         ${CYAN}${WSTUNNEL_CLI}${NC}"
+    fi
+    if [ -n "${ZAPRET_INFO:-}" ]; then
+        echo -e "  - ${BOLD}Server-Side Zapret:${NC}   ${GREEN}${ZAPRET_INFO}${NC}"
+    fi
     if [[ "${ENABLE_NODE_TOKEN,,}" == "y" || "${ENABLE_NODE_TOKEN:-}" == "1" ]] && [ -n "${NODE_TOKEN:-}" ]; then
         echo -e "  - ${BOLD}3X-UI Node API:${NC}         ${GREEN}${NODE_TOKEN_NAME}${NC} (Host: ${CYAN}${PRIMARY_DOMAIN}:443${NC}, Path: ${CYAN}/${PANEL_PATH#/}/${NC})"
         echo -e "  - ${BOLD}API Bearer Token:${NC}       ${YELLOW}${NODE_TOKEN}${NC}"
@@ -3188,8 +3251,12 @@ $([ -n "${UNIFIED_AWG_HPK:-}" ] && echo "AmneziaWG v3.1 HPK:    ${UNIFIED_AWG_HP
 $([ -n "${SS2022_URI:-}" ] && printf "Shadowsocks 2022:       %s\n" "${SS2022_URI}")
 $([ -n "${TUIC_URI:-}" ] && printf "TUIC v5 (QUIC+BBR):     %s\n" "${TUIC_URI}")
 $([ -n "${MTPROTO_TG_URI:-}" ] && printf "Telegram MTProxy (Клиент): %s\nMTProxy Web Link:          %s\nMTProxy FakeTLS Secret:    %s\n$([ -n "${MTPROTO_BOT_SECRET:-}" ] && printf "MTProxy Key для @MTProxybot: %s (ВНИМАНИЕ: боту передавать строго эти 32 символа! Ссылку от бота клиентам не давать)\n" "${MTPROTO_BOT_SECRET}")" "${MTPROTO_TG_URI}" "${MTPROTO_HTTPS_URI}" "${MTPROTO_SECRET:-}")
+$([ -n "${MASQUE_URI:-}" ] && printf "MASQUE (RFC 9484):       %s\n" "${MASQUE_URI}")
+$([ -n "${SHADOWTLS_URI:-}" ] && printf "ShadowTLS v4:            %s\nShadowTLS + SS-2022:     %s\n" "${SHADOWTLS_URI}" "${SS_SHADOWTLS_URI}")
+$([ -n "${WSTUNNEL_CLI:-}" ] && printf "Wstunnel Client CLI:     %s\n" "${WSTUNNEL_CLI}")
+$([ -n "${ZAPRET_INFO:-}" ] && printf "Server-Side Zapret:      %s\n" "${ZAPRET_INFO}")
 $([ -n "${NODE_TOKEN:-}" ] && printf "3X-UI Node Token:      %s\nИмя ноды (Node Name):  %s (Host: %s:443, Path: /%s/)\n" "${NODE_TOKEN}" "${NODE_TOKEN_NAME}" "${PRIMARY_DOMAIN}" "${PANEL_PATH#/}")
-(Объединяет все конфигурации: Steal REALITY, Classic REALITY, xHTTP, Hysteria 2, AWG v3, AWG v2, SS-2022, TUIC v5, MTProxy)
+(Объединяет все конфигурации: Steal REALITY, Classic REALITY, xHTTP, Hysteria 2, AWG v3, AWG v2, SS-2022, TUIC v5, MTProxy, MASQUE, ShadowTLS, Wstunnel, Zapret)
 =====================================================================
 EOF_CRED
     chmod 600 "$CRED_FILE" 2>/dev/null || true

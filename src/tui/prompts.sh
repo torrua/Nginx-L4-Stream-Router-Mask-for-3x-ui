@@ -465,6 +465,18 @@ CLI_MTPROTO_FAKETLS_DOMAIN=""
 CLI_MTPROTO_ADTAG=""
 CLI_ENABLE_WEB_STACK=""
 CLI_AWG_SERVER_HOST=""
+CLI_ENABLE_MASQUE=""
+CLI_MASQUE_PORT=""
+CLI_ENABLE_SHADOWTLS=""
+CLI_SHADOWTLS_PORT=""
+CLI_SHADOWTLS_SNI=""
+CLI_SHADOWTLS_PASSWORD=""
+CLI_ENABLE_WSTUNNEL=""
+CLI_WSTUNNEL_PORT=""
+CLI_WSTUNNEL_PREFIX=""
+CLI_ENABLE_ZAPRET=""
+CLI_ZAPRET_QNUM=""
+CLI_ALL_PROTOCOLS=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -632,6 +644,102 @@ while [[ $# -gt 0 ]]; do
             CLI_MTPROTO_ADTAG="$2"
             shift 2
             ;;
+        --masque|--enable-masque)
+            ENABLE_MASQUE="y"
+            CLI_ENABLE_MASQUE="y"
+            shift
+            ;;
+        --no-masque|--disable-masque)
+            ENABLE_MASQUE="n"
+            CLI_ENABLE_MASQUE="n"
+            shift
+            ;;
+        --masque-port)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: порт MASQUE."
+            MASQUE_PORT="$2"
+            CLI_MASQUE_PORT="$2"
+            shift 2
+            ;;
+        --shadowtls|--enable-shadowtls)
+            ENABLE_SHADOWTLS="y"
+            CLI_ENABLE_SHADOWTLS="y"
+            shift
+            ;;
+        --no-shadowtls|--disable-shadowtls)
+            ENABLE_SHADOWTLS="n"
+            CLI_ENABLE_SHADOWTLS="n"
+            shift
+            ;;
+        --shadowtls-port)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: порт ShadowTLS."
+            SHADOWTLS_PORT="$2"
+            CLI_SHADOWTLS_PORT="$2"
+            shift 2
+            ;;
+        --shadowtls-sni)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: SNI ShadowTLS."
+            SHADOWTLS_SNI="$2"
+            CLI_SHADOWTLS_SNI="$2"
+            shift 2
+            ;;
+        --shadowtls-pass|--shadowtls-password)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: пароль ShadowTLS."
+            SHADOWTLS_PASSWORD="$2"
+            CLI_SHADOWTLS_PASSWORD="$2"
+            shift 2
+            ;;
+        --wstunnel|--enable-wstunnel)
+            ENABLE_WSTUNNEL="y"
+            CLI_ENABLE_WSTUNNEL="y"
+            shift
+            ;;
+        --no-wstunnel|--disable-wstunnel)
+            ENABLE_WSTUNNEL="n"
+            CLI_ENABLE_WSTUNNEL="n"
+            shift
+            ;;
+        --wstunnel-port)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: порт Wstunnel."
+            WSTUNNEL_PORT="$2"
+            CLI_WSTUNNEL_PORT="$2"
+            shift 2
+            ;;
+        --wstunnel-prefix|--wstunnel-path)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: путь Wstunnel."
+            WSTUNNEL_PREFIX="$2"
+            CLI_WSTUNNEL_PREFIX="$2"
+            shift 2
+            ;;
+        --zapret|--enable-zapret)
+            ENABLE_ZAPRET="y"
+            CLI_ENABLE_ZAPRET="y"
+            shift
+            ;;
+        --no-zapret|--disable-zapret)
+            ENABLE_ZAPRET="n"
+            CLI_ENABLE_ZAPRET="n"
+            shift
+            ;;
+        --zapret-qnum)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: номер очереди NFQUEUE для Zapret."
+            ZAPRET_QNUM="$2"
+            CLI_ZAPRET_QNUM="$2"
+            shift 2
+            ;;
+        --all-protocols|--all-proto)
+            CLI_ALL_PROTOCOLS="1"
+            ALL_PROTOCOLS="1"
+            ENABLE_HY2="y"; CLI_ENABLE_HY2="y"
+            ENABLE_AWG_V3="y"; CLI_ENABLE_AWG_V3="y"
+            ENABLE_SS2022="y"; CLI_ENABLE_SS2022="y"
+            ENABLE_TUIC="y"; CLI_ENABLE_TUIC="y"
+            ENABLE_MTPROTO="y"; CLI_ENABLE_MTPROTO="y"
+            ENABLE_MASQUE="y"; CLI_ENABLE_MASQUE="y"
+            ENABLE_SHADOWTLS="y"; CLI_ENABLE_SHADOWTLS="y"
+            ENABLE_WSTUNNEL="y"; CLI_ENABLE_WSTUNNEL="y"
+            ENABLE_ZAPRET="y"; CLI_ENABLE_ZAPRET="y"
+            shift
+            ;;
         -m|--email)
             [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: email."
             LE_EMAIL="$2"
@@ -780,6 +888,23 @@ fi
 [ -n "${CLI_MTPROTO_ADTAG:-}" ]   && MTPROTO_ADTAG="$CLI_MTPROTO_ADTAG"
 [ -n "${CLI_ENABLE_WEB_STACK:-}" ] && ENABLE_WEB_STACK="$CLI_ENABLE_WEB_STACK"
 [ -n "${CLI_AWG_SERVER_HOST:-}" ]  && AWG_SERVER_HOST="$CLI_AWG_SERVER_HOST"
+[ -n "${CLI_ENABLE_MASQUE:-}" ]      && ENABLE_MASQUE="$CLI_ENABLE_MASQUE"
+[ -n "${CLI_MASQUE_PORT:-}" ]        && MASQUE_PORT="$CLI_MASQUE_PORT"
+[ -n "${CLI_ENABLE_SHADOWTLS:-}" ]   && ENABLE_SHADOWTLS="$CLI_ENABLE_SHADOWTLS"
+[ -n "${CLI_SHADOWTLS_PORT:-}" ]     && SHADOWTLS_PORT="$CLI_SHADOWTLS_PORT"
+[ -n "${CLI_SHADOWTLS_SNI:-}" ]      && SHADOWTLS_SNI="$CLI_SHADOWTLS_SNI"
+[ -n "${CLI_SHADOWTLS_PASSWORD:-}" ] && SHADOWTLS_PASSWORD="$CLI_SHADOWTLS_PASSWORD"
+[ -n "${CLI_ENABLE_WSTUNNEL:-}" ]    && ENABLE_WSTUNNEL="$CLI_ENABLE_WSTUNNEL"
+[ -n "${CLI_WSTUNNEL_PORT:-}" ]      && WSTUNNEL_PORT="$CLI_WSTUNNEL_PORT"
+[ -n "${CLI_WSTUNNEL_PREFIX:-}" ]    && WSTUNNEL_PREFIX="$CLI_WSTUNNEL_PREFIX"
+[ -n "${CLI_ENABLE_ZAPRET:-}" ]      && ENABLE_ZAPRET="$CLI_ENABLE_ZAPRET"
+[ -n "${CLI_ZAPRET_QNUM:-}" ]        && ZAPRET_QNUM="$CLI_ZAPRET_QNUM"
+[ -n "${CLI_ALL_PROTOCOLS:-}" ]      && ALL_PROTOCOLS="$CLI_ALL_PROTOCOLS"
+
+_stls_chk="${ENABLE_SHADOWTLS:-}"
+if [[ "$_stls_chk" == "1" || "${_stls_chk,,}" == "y" ]] && [ -z "${CLI_ENABLE_SS2022:-}" ]; then
+    ENABLE_SS2022="y"
+fi
 
 # Сессия всегда сохраняется в setup_mask.env в текущей папке или рядом со скриптом
 SAVED_CONFIG_FILE="${CONFIG_FILE:-./setup_mask.env}"

@@ -418,6 +418,11 @@ show_help() {
   --web-stack / --no-web-stack Включить / отключить установку комплекса веб-маскировки Nginx + 3X-UI
   --awg-standalone             Включить установку автономного сервера AmneziaWG (awg-mgr)
   --awg-host <HOST/IP>         Домен или IP-адрес для подключения клиентов AmneziaWG (Endpoint)
+  --masque / --no-masque       Включить / отключить MASQUE (RFC 9484 / RFC 9298, :8445/udp)
+  --shadowtls / --no-shadowtls Включить / отключить ShadowTLS v4 + SS-2022 (Nginx Stream SNI)
+  --wstunnel / --no-wstunnel   Включить / отключить Wstunnel over Nginx L7 (HTTPS WebSocket)
+  --zapret / --no-zapret       Включить / отключить Server-Side Zapret nfqws (DPI bypass)
+  --all-protocols              Включить все протоколы (включая стек следующего поколения)
   -r, --resume                 Продолжить установку с последнего незавершенного шага
   --step <N>                   Принудительно начать выполнение с указанного шага (1-8)
   --check, --doctor            Запустить быструю диагностику состояния сервисов и выйти
@@ -594,6 +599,31 @@ AGH_PASS=""
 AGH_CLIENT_ID="home-router"
 # Использовать AdGuard Home как DNS для VPN-клиентов (Xray DNS → 127.0.0.1) [y/n]
 AGH_XRAY_DNS="y"
+
+# --- 9. ПРОТОКОЛЫ СЛЕДУЮЩЕГО ПОКОЛЕНИЯ (NEXT-GEN) ---
+# MASQUE (RFC 9484 / RFC 9298 via Sing-box daemon, HTTP/3 UDP) [y/n]
+ENABLE_MASQUE="n"
+MASQUE_PORT="8445"
+MASQUE_USER="client"
+MASQUE_PASSWORD=""
+
+# ShadowTLS v4 + Shadowsocks-2022 (Маскировка под Apple gateway.icloud.com через Nginx Stream L4) [y/n]
+ENABLE_SHADOWTLS="n"
+SHADOWTLS_PORT="8543"
+SHADOWTLS_SNI="gateway.icloud.com"
+SHADOWTLS_PASSWORD=""
+
+# Wstunnel over Nginx L7 (Туннелирование WebSocket через порт 443 HTTPS с SSL) [y/n]
+ENABLE_WSTUNNEL="n"
+WSTUNNEL_PREFIX="/wstunnel"
+WSTUNNEL_PORT="8080"
+WSTUNNEL_SECRET=""
+
+# Server-Side Zapret nfqws (Десинхронизация DPI ТСПУ через iptables NFQUEUE connbytes 1:6) [y/n]
+ENABLE_ZAPRET="n"
+ZAPRET_QNUM="200"
+ZAPRET_DESYNC="split2"
+ZAPRET_FOOLING="md5sig,badseq"
 EOF_CONF
     ok "Шаблон конфигурации успешно сгенерирован: '$target_file'"
 }
@@ -895,10 +925,19 @@ reconstruct_arrays_from_vars() {
     fi
     _v="${ENABLE_MASQUE:-n}"; if is_true "$_v"; then ENABLE_MASQUE=1; else ENABLE_MASQUE=0; fi
     MASQUE_PORT="${MASQUE_PORT:-8445}"
+    MASQUE_USER="${MASQUE_USER:-client}"
+    if [ "$ENABLE_MASQUE" -eq 1 ] && [ -z "${MASQUE_PASSWORD:-}" ]; then
+        MASQUE_PASSWORD="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "masque${RANDOM}")"
+    fi
     _v="${ENABLE_SHADOWTLS:-n}"; if is_true "$_v"; then ENABLE_SHADOWTLS=1; else ENABLE_SHADOWTLS=0; fi
     SHADOWTLS_PORT="${SHADOWTLS_PORT:-8543}"
     SHADOWTLS_SNI="${SHADOWTLS_SNI:-gateway.icloud.com}"
-    SHADOWTLS_PASSWORD="${SHADOWTLS_PASSWORD:-}"
+    if [ "$ENABLE_SHADOWTLS" -eq 1 ] && [ -z "${SHADOWTLS_PASSWORD:-}" ]; then
+        SHADOWTLS_PASSWORD="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "stls${RANDOM}")"
+    fi
+    if [ "$ENABLE_SHADOWTLS" -eq 1 ] && [ "${ENABLE_WEB_STACK:-1}" -eq 1 ]; then
+        ENABLE_SS2022=1
+    fi
     _v="${ENABLE_NAIVE:-n}"; if is_true "$_v"; then ENABLE_NAIVE=1; else ENABLE_NAIVE=0; fi
     NAIVE_PORT="${NAIVE_PORT:-8446}"
     NAIVE_DOMAIN="${NAIVE_DOMAIN:-}"
@@ -910,9 +949,14 @@ reconstruct_arrays_from_vars() {
     ZAPRET_FOOLING="${ZAPRET_FOOLING:-md5sig,badseq}"
     _v="${ENABLE_WSTUNNEL:-n}"; if is_true "$_v"; then ENABLE_WSTUNNEL=1; else ENABLE_WSTUNNEL=0; fi
     WSTUNNEL_DOMAIN="${WSTUNNEL_DOMAIN:-}"
-    WSTUNNEL_PREFIX="${WSTUNNEL_PREFIX:-/wstunnel}"
+    local _wst_pref="${WSTUNNEL_PREFIX:-/wstunnel}"
+    _wst_pref="/${_wst_pref#/}"
+    _wst_pref="${_wst_pref%/}"
+    WSTUNNEL_PREFIX="${_wst_pref}/"
     WSTUNNEL_PORT="${WSTUNNEL_PORT:-8080}"
-    WSTUNNEL_SECRET="${WSTUNNEL_SECRET:-}"
+    if [ "$ENABLE_WSTUNNEL" -eq 1 ] && [ -z "${WSTUNNEL_SECRET:-}" ]; then
+        WSTUNNEL_SECRET="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "wst${RANDOM}")"
+    fi
     CF_AUTH_METHOD="${CF_AUTH_METHOD:-1}"
 }
 
@@ -991,6 +1035,10 @@ save_session_state() {
     v="${ENABLE_ZAPRET:-n}"; is_true "$v" && zapret_save="y"
     local wstunnel_save="n"
     v="${ENABLE_WSTUNNEL:-n}"; is_true "$v" && wstunnel_save="y"
+    local host_security_save="n"
+    v="${ENABLE_HOST_SECURITY:-n}"; is_true "$v" && host_security_save="y"
+    local fail2ban_save="n"
+    v="${ENABLE_FAIL2BAN:-n}"; is_true "$v" && fail2ban_save="y"
 
     local _save_panel_path="${RAW_PATH:-${PANEL_PATH:-my-3x-panel}}"
     _save_panel_path="${_save_panel_path#/}"
@@ -1113,6 +1161,8 @@ SUB_LISTEN="${SUB_LISTEN:-127.0.0.1}"
 DOKPLOY_COEXISTENCE="$dokploy_coexist_save"
 ENABLE_MASQUE="$masque_save"
 MASQUE_PORT="${MASQUE_PORT:-8445}"
+MASQUE_USER="${MASQUE_USER:-client}"
+MASQUE_PASSWORD="${MASQUE_PASSWORD:-}"
 ENABLE_SHADOWTLS="$shadowtls_save"
 SHADOWTLS_PORT="${SHADOWTLS_PORT:-8543}"
 SHADOWTLS_SNI="${SHADOWTLS_SNI:-gateway.icloud.com}"
@@ -1131,6 +1181,10 @@ WSTUNNEL_DOMAIN="${WSTUNNEL_DOMAIN:-}"
 WSTUNNEL_PREFIX="${WSTUNNEL_PREFIX:-/wstunnel}"
 WSTUNNEL_PORT="${WSTUNNEL_PORT:-8080}"
 WSTUNNEL_SECRET="${WSTUNNEL_SECRET:-}"
+
+ENABLE_HOST_SECURITY="$host_security_save"
+SSH_PORT="${SSH_PORT:-${SSH_ACTIVE_PORT:-22}}"
+ENABLE_FAIL2BAN="$fail2ban_save"
 
 LAST_COMPLETED_STEP="${LAST_COMPLETED_STEP:-0}"
 EOF_SAVE
@@ -1610,6 +1664,18 @@ CLI_MTPROTO_FAKETLS_DOMAIN=""
 CLI_MTPROTO_ADTAG=""
 CLI_ENABLE_WEB_STACK=""
 CLI_AWG_SERVER_HOST=""
+CLI_ENABLE_MASQUE=""
+CLI_MASQUE_PORT=""
+CLI_ENABLE_SHADOWTLS=""
+CLI_SHADOWTLS_PORT=""
+CLI_SHADOWTLS_SNI=""
+CLI_SHADOWTLS_PASSWORD=""
+CLI_ENABLE_WSTUNNEL=""
+CLI_WSTUNNEL_PORT=""
+CLI_WSTUNNEL_PREFIX=""
+CLI_ENABLE_ZAPRET=""
+CLI_ZAPRET_QNUM=""
+CLI_ALL_PROTOCOLS=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -1777,6 +1843,102 @@ while [[ $# -gt 0 ]]; do
             CLI_MTPROTO_ADTAG="$2"
             shift 2
             ;;
+        --masque|--enable-masque)
+            ENABLE_MASQUE="y"
+            CLI_ENABLE_MASQUE="y"
+            shift
+            ;;
+        --no-masque|--disable-masque)
+            ENABLE_MASQUE="n"
+            CLI_ENABLE_MASQUE="n"
+            shift
+            ;;
+        --masque-port)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: порт MASQUE."
+            MASQUE_PORT="$2"
+            CLI_MASQUE_PORT="$2"
+            shift 2
+            ;;
+        --shadowtls|--enable-shadowtls)
+            ENABLE_SHADOWTLS="y"
+            CLI_ENABLE_SHADOWTLS="y"
+            shift
+            ;;
+        --no-shadowtls|--disable-shadowtls)
+            ENABLE_SHADOWTLS="n"
+            CLI_ENABLE_SHADOWTLS="n"
+            shift
+            ;;
+        --shadowtls-port)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: порт ShadowTLS."
+            SHADOWTLS_PORT="$2"
+            CLI_SHADOWTLS_PORT="$2"
+            shift 2
+            ;;
+        --shadowtls-sni)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: SNI ShadowTLS."
+            SHADOWTLS_SNI="$2"
+            CLI_SHADOWTLS_SNI="$2"
+            shift 2
+            ;;
+        --shadowtls-pass|--shadowtls-password)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: пароль ShadowTLS."
+            SHADOWTLS_PASSWORD="$2"
+            CLI_SHADOWTLS_PASSWORD="$2"
+            shift 2
+            ;;
+        --wstunnel|--enable-wstunnel)
+            ENABLE_WSTUNNEL="y"
+            CLI_ENABLE_WSTUNNEL="y"
+            shift
+            ;;
+        --no-wstunnel|--disable-wstunnel)
+            ENABLE_WSTUNNEL="n"
+            CLI_ENABLE_WSTUNNEL="n"
+            shift
+            ;;
+        --wstunnel-port)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: порт Wstunnel."
+            WSTUNNEL_PORT="$2"
+            CLI_WSTUNNEL_PORT="$2"
+            shift 2
+            ;;
+        --wstunnel-prefix|--wstunnel-path)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: путь Wstunnel."
+            WSTUNNEL_PREFIX="$2"
+            CLI_WSTUNNEL_PREFIX="$2"
+            shift 2
+            ;;
+        --zapret|--enable-zapret)
+            ENABLE_ZAPRET="y"
+            CLI_ENABLE_ZAPRET="y"
+            shift
+            ;;
+        --no-zapret|--disable-zapret)
+            ENABLE_ZAPRET="n"
+            CLI_ENABLE_ZAPRET="n"
+            shift
+            ;;
+        --zapret-qnum)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: номер очереди NFQUEUE для Zapret."
+            ZAPRET_QNUM="$2"
+            CLI_ZAPRET_QNUM="$2"
+            shift 2
+            ;;
+        --all-protocols|--all-proto)
+            CLI_ALL_PROTOCOLS="1"
+            ALL_PROTOCOLS="1"
+            ENABLE_HY2="y"; CLI_ENABLE_HY2="y"
+            ENABLE_AWG_V3="y"; CLI_ENABLE_AWG_V3="y"
+            ENABLE_SS2022="y"; CLI_ENABLE_SS2022="y"
+            ENABLE_TUIC="y"; CLI_ENABLE_TUIC="y"
+            ENABLE_MTPROTO="y"; CLI_ENABLE_MTPROTO="y"
+            ENABLE_MASQUE="y"; CLI_ENABLE_MASQUE="y"
+            ENABLE_SHADOWTLS="y"; CLI_ENABLE_SHADOWTLS="y"
+            ENABLE_WSTUNNEL="y"; CLI_ENABLE_WSTUNNEL="y"
+            ENABLE_ZAPRET="y"; CLI_ENABLE_ZAPRET="y"
+            shift
+            ;;
         -m|--email)
             [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: email."
             LE_EMAIL="$2"
@@ -1925,6 +2087,23 @@ fi
 [ -n "${CLI_MTPROTO_ADTAG:-}" ]   && MTPROTO_ADTAG="$CLI_MTPROTO_ADTAG"
 [ -n "${CLI_ENABLE_WEB_STACK:-}" ] && ENABLE_WEB_STACK="$CLI_ENABLE_WEB_STACK"
 [ -n "${CLI_AWG_SERVER_HOST:-}" ]  && AWG_SERVER_HOST="$CLI_AWG_SERVER_HOST"
+[ -n "${CLI_ENABLE_MASQUE:-}" ]      && ENABLE_MASQUE="$CLI_ENABLE_MASQUE"
+[ -n "${CLI_MASQUE_PORT:-}" ]        && MASQUE_PORT="$CLI_MASQUE_PORT"
+[ -n "${CLI_ENABLE_SHADOWTLS:-}" ]   && ENABLE_SHADOWTLS="$CLI_ENABLE_SHADOWTLS"
+[ -n "${CLI_SHADOWTLS_PORT:-}" ]     && SHADOWTLS_PORT="$CLI_SHADOWTLS_PORT"
+[ -n "${CLI_SHADOWTLS_SNI:-}" ]      && SHADOWTLS_SNI="$CLI_SHADOWTLS_SNI"
+[ -n "${CLI_SHADOWTLS_PASSWORD:-}" ] && SHADOWTLS_PASSWORD="$CLI_SHADOWTLS_PASSWORD"
+[ -n "${CLI_ENABLE_WSTUNNEL:-}" ]    && ENABLE_WSTUNNEL="$CLI_ENABLE_WSTUNNEL"
+[ -n "${CLI_WSTUNNEL_PORT:-}" ]      && WSTUNNEL_PORT="$CLI_WSTUNNEL_PORT"
+[ -n "${CLI_WSTUNNEL_PREFIX:-}" ]    && WSTUNNEL_PREFIX="$CLI_WSTUNNEL_PREFIX"
+[ -n "${CLI_ENABLE_ZAPRET:-}" ]      && ENABLE_ZAPRET="$CLI_ENABLE_ZAPRET"
+[ -n "${CLI_ZAPRET_QNUM:-}" ]        && ZAPRET_QNUM="$CLI_ZAPRET_QNUM"
+[ -n "${CLI_ALL_PROTOCOLS:-}" ]      && ALL_PROTOCOLS="$CLI_ALL_PROTOCOLS"
+
+_stls_chk="${ENABLE_SHADOWTLS:-}"
+if [[ "$_stls_chk" == "1" || "${_stls_chk,,}" == "y" ]] && [ -z "${CLI_ENABLE_SS2022:-}" ]; then
+    ENABLE_SS2022="y"
+fi
 
 # Сессия всегда сохраняется в setup_mask.env в текущей папке или рядом со скриптом
 SAVED_CONFIG_FILE="${CONFIG_FILE:-./setup_mask.env}"
@@ -2831,6 +3010,110 @@ supports_x86_64_v3() {
     return 1
 }
 
+
+# ==============================================================================
+#  Подсистема безопасности хоста: SSH Hardening & Fail2ban
+# ==============================================================================
+
+apply_ssh_configuration() {
+    local target_port="${1:-22}"
+    local active_port="${2:-22}"
+
+    if [ "$target_port" -eq "$active_port" ]; then
+        return 0
+    fi
+
+    local ssh_svc
+    ssh_svc=$(get_ssh_service_name)
+
+    # 1. Отключаем systemd socket-activation (Ubuntu 22.10+, Ubuntu 24.04 LTS),
+    # чтобы служба корректно слушала кастомный порт через стандартный unit.
+    systemctl stop ssh.socket 2>/dev/null || true
+    systemctl disable ssh.socket 2>/dev/null || true
+    systemctl enable "${ssh_svc}.service" 2>/dev/null || true
+
+    # 2. Обновляем базовый /etc/ssh/sshd_config с гарантией директивы Include
+    if [ -f /etc/ssh/sshd_config ]; then
+        sed -i -E "s/^[#\s]*Port [0-9]+/Port ${target_port}/" /etc/ssh/sshd_config || true
+        if ! grep -q "^Include /etc/ssh/sshd_config.d/\*\.conf" /etc/ssh/sshd_config 2>/dev/null; then
+            sed -i '1i Include /etc/ssh/sshd_config.d/*.conf' /etc/ssh/sshd_config 2>/dev/null || true
+        fi
+    fi
+
+    # 3. Drop-in конфигурация для OpenSSH с явным портом
+    mkdir -p /etc/ssh/sshd_config.d/
+    cat << EOF > /etc/ssh/sshd_config.d/99-hardening.conf
+Port ${target_port}
+AddressFamily inet
+PubkeyAuthentication yes
+EOF
+    chmod 600 /etc/ssh/sshd_config.d/99-hardening.conf 2>/dev/null || true
+
+    # 4. Проверяем валидность конфигурации sshd перед перезапуском
+    mkdir -p /run/sshd
+    if /usr/sbin/sshd -t 2>/dev/null; then
+        systemctl restart "${ssh_svc}.service" || true
+        ok "Служба SSH успешно переведена на порт ${WHITE}${target_port}${NC}."
+    else
+        # При синтаксической ошибке — безопасный откат
+        warn "Ошибка валидации sshd -t при смене порта! Откат изменений для предотвращения потери доступа."
+        rm -f /etc/ssh/sshd_config.d/99-hardening.conf
+        systemctl restart "${ssh_svc}.service" || true
+        return 1
+    fi
+    return 0
+}
+
+apply_fail2ban_configuration() {
+    local target_port="${1:-22}"
+    local active_port="${2:-22}"
+
+    # 1. Установка пакетов fail2ban и python3-systemd (для чтения journald в Ubuntu 24.04 / Debian 12)
+    if ! command -v fail2ban-client >/dev/null 2>&1; then
+        if command -v apt-get >/dev/null 2>&1; then
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -y >/dev/null 2>&1 || true
+            apt-get install -y fail2ban python3-systemd >/dev/null 2>&1 || apt-get install -y fail2ban >/dev/null 2>&1 || true
+        fi
+    fi
+
+    if ! command -v fail2ban-client >/dev/null 2>&1; then
+        warn "Пакет fail2ban не найден в системе и не может быть установлен."
+        return 1
+    fi
+
+    # 2. Формируем список защищаемых портов (и активный, и целевой)
+    local port_str="${active_port}"
+    if [ "$target_port" -ne "$active_port" ]; then
+        port_str="${active_port},${target_port}"
+    fi
+
+    mkdir -p /etc/fail2ban
+    cat << EOF > /etc/fail2ban/jail.local
+[DEFAULT]
+bantime = 1h
+findtime = 10m
+maxretry = 5
+backend = systemd
+
+[sshd]
+enabled = true
+port = ${port_str}
+EOF
+    chmod 644 /etc/fail2ban/jail.local 2>/dev/null || true
+
+    # 3. Активация и запуск службы
+    systemctl enable fail2ban >/dev/null 2>&1 || true
+    systemctl restart fail2ban >/dev/null 2>&1 || true
+
+    if systemctl is-active --quiet fail2ban 2>/dev/null; then
+        ok "Служба Fail2ban успешно запущена и защищает SSH (порты: ${WHITE}${port_str}${NC})."
+    else
+        warn "Служба Fail2ban была установлена, но не смогла запуститься. Проверьте journalctl -u fail2ban."
+        return 1
+    fi
+    return 0
+}
 
 setup_nginx_mainline() {
     export DEBIAN_FRONTEND=noninteractive
@@ -4937,6 +5220,531 @@ EOF_AWG0
     fi
 }
 
+# --- Installation Steps ---
+
+step_os_hardening() {
+    export DEBIAN_FRONTEND=noninteractive
+    
+    # Update package lists
+    apt-get update -y
+    
+    local extra_pkgs=""
+    if is_true "${ENABLE_ZAPRET:-0}"; then
+        extra_pkgs="libnetfilter-queue1 iptables"
+    fi
+
+    # Install foundational tools (включая python3-systemd для fail2ban, python3-bcrypt для 3x-ui и sqlite3)
+    apt-get install -y curl wget git jq ufw certbot fail2ban python3-systemd python3-bcrypt sqlite3 ca-certificates lsb-release gnupg sed coreutils $extra_pkgs
+
+    # 0. Инициализация Swapfile для систем с малым объемом памяти (<= 2GB)
+    local total_mem_kb
+    total_mem_kb=$(grep MemTotal /proc/meminfo 2>/dev/null | awk '{print $2}' || echo "0")
+    if [ "$total_mem_kb" -gt 0 ] && [ "$total_mem_kb" -lt 2500000 ]; then
+        if ! swapon --show 2>/dev/null | grep -q "/swapfile" || [ ! -s /swapfile ]; then
+            if [ -f /swapfile ] && [ ! -s /swapfile ]; then
+                swapoff /swapfile >/dev/null 2>&1 || true
+                rm -f /swapfile
+            fi
+            if [ ! -f /swapfile ]; then
+                fallocate -l 2G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
+                chmod 600 /swapfile
+                mkswap /swapfile >/dev/null 2>&1 || true
+                swapon /swapfile >/dev/null 2>&1 || true
+                if ! grep -q "^/swapfile" /etc/fstab 2>/dev/null; then
+                    echo "/swapfile swap swap defaults 0 0" >> /etc/fstab
+                fi
+            fi
+        fi
+    fi
+    
+    # 1. Enable BBR, Conntrack, Socket Limits & System Network Tuning
+    apply_sysctl_and_limits
+
+
+    # 2. SSH Configuration & Fail2ban (защита от потери доступа)
+    apply_ssh_configuration "$SSH_PORT" "$SSH_ACTIVE_PORT"
+    apply_fail2ban_configuration "$SSH_PORT" "$SSH_ACTIVE_PORT"
+
+    # 3. UFW Firewall Setup & Disable IPv6 in UFW (Non-destructive)
+    # Сохраняем существующие правила брандмауэра и контейнерные цепочки (отказ от деструктивного ufw --force reset)
+    if [ -f /etc/default/ufw ]; then
+        sed -i 's/^DEFAULT_FORWARD_POLICY=.*/DEFAULT_FORWARD_POLICY="ACCEPT"/' /etc/default/ufw
+        if grep -q "^IPV6=" /etc/default/ufw; then
+            sed -i 's/^IPV6=.*/IPV6=no/' /etc/default/ufw 2>/dev/null || true
+        else
+            echo "IPV6=no" >> /etc/default/ufw 2>/dev/null || true
+        fi
+    fi
+    ufw default deny incoming >/dev/null 2>&1 || true
+    ufw default allow outgoing >/dev/null 2>&1 || true
+
+    # КРИТИЧЕСКАЯ ЗАЩИТА: Всегда разрешаем ТЕКУЩИЙ активный порт SSH
+    ufw allow "${SSH_ACTIVE_PORT}/tcp" comment 'Current SSH Port' >/dev/null 2>&1 || true
+
+    # Если задан новый целевой порт — разрешаем и его параллельно (защита от потери доступа)
+    if [ "$SSH_PORT" -ne "$SSH_ACTIVE_PORT" ]; then
+        ufw allow "${SSH_PORT}/tcp" comment 'Target SSH Port' >/dev/null 2>&1 || true
+    fi
+    if is_true "${ENABLE_WEB_STACK:-y}"; then
+        ufw allow 80/tcp comment 'HTTP / ACME' >/dev/null 2>&1 || true
+        ufw allow 443/tcp comment 'HTTPS / L4 Router' >/dev/null 2>&1 || true
+        ufw allow 443/udp comment 'QUIC / H3 / Hysteria 2' >/dev/null 2>&1 || true
+        if is_true "${ENABLE_AWG_V3:-n}"; then
+            ufw allow "${AWG_V3_PORT:-8443}/udp" comment 'AmneziaWG v3' >/dev/null 2>&1 || true
+        fi
+        if is_true "${ENABLE_AWG_V2:-n}"; then
+            ufw allow "${AWG_V2_PORT:-8444}/udp" comment 'AmneziaWG v2' >/dev/null 2>&1 || true
+        fi
+        if is_true "${ENABLE_AWG_STANDALONE:-0}"; then
+            ufw allow "${AWG_STANDALONE_PORT:-8445}/udp" comment 'AmneziaWG Standalone Server' >/dev/null 2>&1 || true
+        fi
+        if is_true "${ENABLE_SS2022:-0}"; then
+            local ss_p="${SS2022_PORT:-8388}"
+            ufw allow "${ss_p}/tcp" comment 'Shadowsocks 2022 TCP' >/dev/null 2>&1 || true
+            ufw allow "${ss_p}/udp" comment 'Shadowsocks 2022 UDP' >/dev/null 2>&1 || true
+        fi
+        if is_true "${ENABLE_TUIC:-0}"; then
+            local tuic_p="${TUIC_PORT:-8448}"
+            ufw allow "${tuic_p}/udp" comment 'TUIC v5 QUIC' >/dev/null 2>&1 || true
+        fi
+        if is_true "${ENABLE_MTPROTO:-0}"; then
+            local mtp_p="${MTPROTO_PORT:-8444}"
+            ufw allow "${mtp_p}/tcp" comment 'Telegram MTProxy FakeTLS' >/dev/null 2>&1 || true
+        fi
+        if is_true "${ENABLE_MASQUE:-0}"; then
+            local masque_p="${MASQUE_PORT:-8445}"
+            ufw allow "${masque_p}/udp" comment 'MASQUE RFC 9484' >/dev/null 2>&1 || true
+        fi
+        if [[ "${HY2_PORT_HOPPING,,}" == "y" || "${HY2_PORT_HOPPING:-}" == "1" ]] && [ -n "${HY2_PORT_HOPPING_RANGE:-}" ]; then
+            ufw allow "${HY2_PORT_HOPPING_RANGE//:/ }/udp" comment 'Hysteria 2 Port Hopping' >/dev/null 2>&1 || true
+        fi
+        
+        # Deny direct access to internal 3X-UI inbound ports
+        ufw deny 10443/tcp comment 'VLESS Reality Internal' >/dev/null 2>&1 || true
+        ufw deny 11443/tcp comment 'Anti-Loop Stub Internal' >/dev/null 2>&1 || true
+        ufw deny 55443/tcp comment 'VLESS gRPC Internal' >/dev/null 2>&1 || true
+        ufw deny 45443/tcp comment 'VLESS WS Internal' >/dev/null 2>&1 || true
+        ufw deny 46443/tcp comment 'VLESS Classic Internal' >/dev/null 2>&1 || true
+        ufw deny 50443/tcp comment 'VLESS xHTTP Internal' >/dev/null 2>&1 || true
+        ufw deny 9443/tcp  comment 'Trojan Internal' >/dev/null 2>&1 || true
+        ufw deny "${SHADOWTLS_PORT:-8543}/tcp" comment 'ShadowTLS Internal' >/dev/null 2>&1 || true
+        ufw deny 8542/tcp comment 'ShadowTLS Stripper Internal' >/dev/null 2>&1 || true
+        ufw deny "${WSTUNNEL_PORT:-8080}/tcp" comment 'Wstunnel Internal' >/dev/null 2>&1 || true
+        ufw deny "$PANEL_INTERNAL_PORT"/tcp comment '3X-UI Panel Internal' >/dev/null 2>&1 || true
+    else
+        ufw allow "${AWG_STANDALONE_PORT:-8445}/udp" comment 'AmneziaWG Standalone Server' >/dev/null 2>&1 || true
+    fi
+    
+    echo "y" | ufw enable >/dev/null 2>&1 || true
+}
+
+step_install_3xui() {
+    export DEBIAN_FRONTEND=noninteractive
+    
+    # Kill any existing service if reinstalling
+    systemctl stop x-ui >/dev/null 2>&1 || true
+    
+    # Download and run official 3x-ui release with default quick install
+    # (Все параметры: логин, пароль, порт и webBasePath настраиваются через SQLite в configure_3xui.sh)
+    local ui_installer="/tmp/3x-ui-install.sh"
+    rm -f "$ui_installer"
+    if ! curl -fsSL --connect-timeout 15 "https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh" -o "$ui_installer" 2>/dev/null; then
+        curl -fsSL --connect-timeout 15 "https://ghfast.top/https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh" -o "$ui_installer" 2>/dev/null || true
+    fi
+    
+    if [ -f "$ui_installer" ]; then
+        printf "n\n" | bash "$ui_installer" >/dev/null 2>&1 || true
+        rm -f "$ui_installer"
+    else
+        printf "n\n" | bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh) >/dev/null 2>&1 || true
+    fi
+
+    # Allow service to settle
+    sleep 2
+    systemctl enable x-ui >/dev/null 2>&1 || true
+    systemctl restart x-ui >/dev/null 2>&1 || true
+}
+
+step_install_nginx_and_mask() {
+    # Download scripts from repository into /root if not present
+    mkdir -p /root/nginx_mask_setup
+    cd /root/nginx_mask_setup
+    
+    if [ -f "${SCRIPT_DIR}/setup_mask.sh" ]; then
+        cp "${SCRIPT_DIR}/setup_mask.sh" ./setup_mask.sh
+    else
+        wget -qO setup_mask.sh "${REPO_URL}/setup_mask.sh"
+    fi
+    if [ -f "${SCRIPT_DIR}/configure_3xui.sh" ]; then
+        cp "${SCRIPT_DIR}/configure_3xui.sh" ./configure_3xui.sh
+    else
+        wget -qO configure_3xui.sh "${REPO_URL}/configure_3xui.sh"
+    fi
+    chmod +x setup_mask.sh configure_3xui.sh
+    
+    # Download decoy template if needed
+    if [ -f "${SCRIPT_DIR}/site.tar.gz" ]; then
+        cp "${SCRIPT_DIR}/site.tar.gz" /root/nginx_mask_setup/
+    fi
+
+    # Run setup_mask.sh in automated mode with explicit admin credentials
+    export ADMIN_USERNAME="$PANEL_USER"
+    export ADMIN_PASSWORD="$PANEL_PASS"
+    export PANEL_PORT="$PANEL_INTERNAL_PORT"
+    export PANEL_PATH="/$PANEL_SECRET/"
+    export SUB_PATH="/$SUB_SECRET/"
+    export SUB_TITLE="${SUB_TITLE:-}"
+    export XHTTP_STREAM_PATH="/$XHTTP_SECRET/"
+
+    bash ./setup_mask.sh --auto \
+        --domain "$PRIMARY_DOMAIN" \
+        --email "$LE_EMAIL" \
+        --no-www \
+        --hy2 \
+        --panel-port "$PANEL_INTERNAL_PORT" \
+        --panel-path "/$PANEL_SECRET/" \
+        --sub-path "/$SUB_SECRET/" \
+        --sub-title "${SUB_TITLE:-}" \
+        --xhttp-path "/$XHTTP_SECRET/" \
+        --user "$PANEL_USER" \
+        --pass "$PANEL_PASS" || die "Ошибка при развертывании маскировки Nginx (setup_mask.sh)."
+}
+
+setup_zapret_service() {
+    log "Настройка службы Server-Side Zapret nfqws..."
+    local cur_arch
+    cur_arch=$(uname -m 2>/dev/null || echo "x86_64")
+    local z_arch="x86_64"
+    case "$cur_arch" in
+        x86_64|amd64) z_arch="x86_64" ;;
+        aarch64|arm64) z_arch="aarch64" ;;
+        *) z_arch="x86_64" ;;
+    esac
+
+    if [ ! -x /usr/local/bin/nfqws ]; then
+        local z_ver="${ZAPRET_VERSION:-v69.2}"
+        local z_tmp="/tmp/zapret_${z_ver}"
+        mkdir -p "$z_tmp"
+        if curl -fsSL --connect-timeout 15 "https://github.com/bol-van/zapret/releases/download/${z_ver}/zapret-${z_ver}.tar.gz" -o "$z_tmp/zapret.tar.gz" 2>/dev/null; then
+            tar -zxf "$z_tmp/zapret.tar.gz" -C "$z_tmp" --strip-components=1 2>/dev/null || true
+            if [ -f "$z_tmp/binaries/${z_arch}/nfqws" ]; then
+                cp "$z_tmp/binaries/${z_arch}/nfqws" /usr/local/bin/nfqws
+                chmod +x /usr/local/bin/nfqws
+            fi
+        fi
+        rm -rf "$z_tmp"
+    fi
+
+    local qnum="${ZAPRET_QNUM:-200}"
+    local desync="${ZAPRET_DESYNC:-split2}"
+    local fooling="${ZAPRET_FOOLING:-md5sig,badseq}"
+
+    mkdir -p /etc/systemd/system
+    cat << EOF > /etc/systemd/system/zapret-server.service
+[Unit]
+Description=Server-Side Zapret nfqws DPI Desync Daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStartPre=-/usr/sbin/iptables -t mangle -D POSTROUTING -p tcp -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original -m mark ! --mark 0x40000000/0x40000000 -j NFQUEUE --queue-num ${qnum} --queue-bypass
+ExecStartPre=/usr/sbin/iptables -t mangle -I POSTROUTING -p tcp -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original -m mark ! --mark 0x40000000/0x40000000 -j NFQUEUE --queue-num ${qnum} --queue-bypass
+ExecStart=/usr/local/bin/nfqws --qnum=${qnum} --dpi-desync=${desync} --dpi-desync-fooling=${fooling}
+ExecStopPost=-/usr/sbin/iptables -t mangle -D POSTROUTING -p tcp -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original -m mark ! --mark 0x40000000/0x40000000 -j NFQUEUE --queue-num ${qnum} --queue-bypass
+Restart=always
+RestartSec=3s
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload 2>/dev/null || true
+        systemctl enable zapret-server >/dev/null 2>&1 || true
+        if [ -x /usr/local/bin/nfqws ]; then
+            systemctl restart zapret-server 2>/dev/null || true
+            ok "Служба Server-Side Zapret активирована (NFQUEUE $qnum, desync: $desync)."
+        else
+            warn "Бинарник /usr/local/bin/nfqws не найден, запуск zapret-server отложен."
+        fi
+    fi
+}
+
+setup_masque_service() {
+    log "Настройка службы Sing-box MASQUE (RFC 9484 / RFC 9298)..."
+    local cur_arch
+    cur_arch=$(uname -m 2>/dev/null || echo "x86_64")
+    local sb_arch="amd64"
+    case "$cur_arch" in
+        x86_64|amd64) sb_arch="amd64" ;;
+        aarch64|arm64) sb_arch="arm64" ;;
+        *) sb_arch="amd64" ;;
+    esac
+
+    if [ ! -x /usr/local/bin/sing-box ]; then
+        local sb_ver="1.11.4"
+        local sb_tmp="/tmp/sing-box_${sb_ver}"
+        mkdir -p "$sb_tmp"
+        if curl -fsSL --connect-timeout 15 "https://github.com/SagerNet/sing-box/releases/download/v${sb_ver}/sing-box-${sb_ver}-linux-${sb_arch}.tar.gz" -o "$sb_tmp/sb.tar.gz" 2>/dev/null; then
+            tar -zxf "$sb_tmp/sb.tar.gz" -C "$sb_tmp" --strip-components=1 2>/dev/null || true
+            if [ -f "$sb_tmp/sing-box" ]; then
+                cp "$sb_tmp/sing-box" /usr/local/bin/sing-box
+                chmod +x /usr/local/bin/sing-box
+            fi
+        fi
+        rm -rf "$sb_tmp"
+    fi
+
+    local masque_p="${MASQUE_PORT:-8445}"
+    local masque_u="${MASQUE_USER:-client}"
+    local masque_pw="${MASQUE_PASSWORD:-}"
+    local cert_file="${SSL_BASE_DIR:-/etc/letsencrypt/live}/${PRIMARY_DOMAIN}/fullchain.pem"
+    local key_file="${SSL_BASE_DIR:-/etc/letsencrypt/live}/${PRIMARY_DOMAIN}/privkey.pem"
+
+    mkdir -p /etc/sing-box
+    cat << EOF > /etc/sing-box/masque.json
+{
+  "log": {
+    "level": "warn",
+    "timestamp": true
+  },
+  "inbounds": [
+    {
+      "type": "masque",
+      "tag": "masque-in",
+      "listen": "::",
+      "listen_port": ${masque_p},
+      "tcp_fast_open": true,
+      "sniff": true,
+      "sniff_override_destination": true,
+      "users": [
+        {
+          "username": "${masque_u}",
+          "password": "${masque_pw}"
+        }
+      ],
+      "tls": {
+        "enabled": true,
+        "server_name": "${PRIMARY_DOMAIN}",
+        "certificate_path": "${cert_file}",
+        "key_path": "${key_file}",
+        "alpn": ["h3"]
+      },
+      "connect_udp": {
+        "enabled": true,
+        "uri_template": "/.well-known/masque/udp/{target_host}/{target_port}/"
+      },
+      "connect_ip": {
+        "enabled": true,
+        "uri_template": "/.well-known/masque/ip/"
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "port": 25,
+        "outbound": "block"
+      },
+      {
+        "ip_is_private": true,
+        "outbound": "block"
+      }
+    ],
+    "final": "direct"
+  }
+}
+EOF
+
+    mkdir -p /etc/systemd/system
+    cat << EOF > /etc/systemd/system/sing-box-masque.service
+[Unit]
+Description=Sing-box MASQUE (RFC 9484 / RFC 9298) Daemon
+After=network.target network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/sing-box run -c /etc/sing-box/masque.json
+Restart=always
+RestartSec=3s
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload 2>/dev/null || true
+        systemctl enable sing-box-masque >/dev/null 2>&1 || true
+        if [ -x /usr/local/bin/sing-box ]; then
+            systemctl restart sing-box-masque 2>/dev/null || true
+            ok "Служба Sing-box MASQUE активирована (порт ${masque_p}/udp, H3/QUIC)."
+        else
+            warn "Бинарник /usr/local/bin/sing-box не найден, запуск sing-box-masque отложен."
+        fi
+    fi
+}
+
+setup_shadowtls_service() {
+    log "Настройка службы ShadowTLS v4..."
+    local cur_arch
+    cur_arch=$(uname -m 2>/dev/null || echo "x86_64")
+    local st_arch="x86_64"
+    case "$cur_arch" in
+        x86_64|amd64) st_arch="x86_64" ;;
+        aarch64|arm64) st_arch="aarch64" ;;
+        *) st_arch="x86_64" ;;
+    esac
+
+    if [ ! -x /usr/local/bin/shadow-tls ]; then
+        if curl -fsSL --connect-timeout 15 "https://github.com/ihciah/shadow-tls/releases/latest/download/shadow-tls-${st_arch}-unknown-linux-musl" -o /usr/local/bin/shadow-tls 2>/dev/null; then
+            chmod +x /usr/local/bin/shadow-tls
+        fi
+    fi
+
+    local st_port="${SHADOWTLS_PORT:-8543}"
+    local ss_backend_port="${SS2022_PORT:-8388}"
+    local st_sni="${SHADOWTLS_SNI:-gateway.icloud.com}"
+    local st_pwd="${SHADOWTLS_PASSWORD:-}"
+
+    mkdir -p /etc/systemd/system
+    cat << EOF > /etc/systemd/system/shadow-tls.service
+[Unit]
+Description=ShadowTLS v4 Stealth SNI Decoy Gateway
+After=network.target network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/shadow-tls --v3 server --listen 127.0.0.1:${st_port} --server 127.0.0.1:${ss_backend_port} --tls ${st_sni}:443 --password ${st_pwd}
+Restart=always
+RestartSec=3s
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload 2>/dev/null || true
+        systemctl enable shadow-tls >/dev/null 2>&1 || true
+        if [ -x /usr/local/bin/shadow-tls ]; then
+            systemctl restart shadow-tls 2>/dev/null || true
+            ok "Служба ShadowTLS v4 активирована (порт ${st_port}, decoy: ${st_sni})."
+        else
+            warn "Бинарник /usr/local/bin/shadow-tls не найден, запуск shadow-tls отложен."
+        fi
+    fi
+}
+
+setup_wstunnel_service() {
+    log "Настройка службы Wstunnel L7..."
+    local cur_arch
+    cur_arch=$(uname -m 2>/dev/null || echo "x86_64")
+    local ws_arch="x64"
+    case "$cur_arch" in
+        x86_64|amd64) ws_arch="x64" ;;
+        aarch64|arm64) ws_arch="arm64" ;;
+        *) ws_arch="x64" ;;
+    esac
+
+    if [ ! -x /usr/local/bin/wstunnel ]; then
+        local ws_ver="10.1.7"
+        local ws_tmp="/tmp/wstunnel_${ws_ver}"
+        mkdir -p "$ws_tmp"
+        if curl -fsSL --connect-timeout 15 "https://github.com/erebe/wstunnel/releases/download/v${ws_ver}/wstunnel-linux-${ws_arch}.tar.gz" -o "$ws_tmp/ws.tar.gz" 2>/dev/null; then
+            tar -zxf "$ws_tmp/ws.tar.gz" -C "$ws_tmp" 2>/dev/null || true
+            if [ -f "$ws_tmp/wstunnel" ]; then
+                cp "$ws_tmp/wstunnel" /usr/local/bin/wstunnel
+                chmod +x /usr/local/bin/wstunnel
+            fi
+        fi
+        rm -rf "$ws_tmp"
+    fi
+
+    local ws_port="${WSTUNNEL_PORT:-8080}"
+    local ws_prefix="${WSTUNNEL_PREFIX#/}"
+    ws_prefix="${ws_prefix%/}"
+
+    mkdir -p /etc/systemd/system
+    cat << EOF > /etc/systemd/system/wstunnel.service
+[Unit]
+Description=Wstunnel L7 WebSocket Tunnel Daemon
+After=network.target network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/wstunnel server --restrict-http-upgrade-path-prefix ${ws_prefix} ws://127.0.0.1:${ws_port}
+Restart=always
+RestartSec=3s
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload 2>/dev/null || true
+        systemctl enable wstunnel >/dev/null 2>&1 || true
+        if [ -x /usr/local/bin/wstunnel ]; then
+            systemctl restart wstunnel 2>/dev/null || true
+            ok "Служба Wstunnel L7 активирована (порт ${ws_port}, prefix: /${ws_prefix}/)."
+        else
+            warn "Бинарник /usr/local/bin/wstunnel не найден, запуск wstunnel отложен."
+        fi
+    fi
+}
+
+deploy_native_nextgen_services() {
+    if is_true "${ENABLE_ZAPRET:-0}"; then
+        setup_zapret_service
+    fi
+    if is_true "${ENABLE_MASQUE:-0}"; then
+        setup_masque_service
+    fi
+    if is_true "${ENABLE_SHADOWTLS:-0}"; then
+        setup_shadowtls_service
+    fi
+    if is_true "${ENABLE_WSTUNNEL:-0}"; then
+        setup_wstunnel_service
+    fi
+}
+
+step_configure_inbounds() {
+    cd /root/nginx_mask_setup
+    if [ -f "./configure_3xui.sh" ]; then
+        export ADMIN_USERNAME="$PANEL_USER"
+        export ADMIN_PASSWORD="$PANEL_PASS"
+        export PANEL_PORT="$PANEL_INTERNAL_PORT"
+        export PANEL_PATH="/$PANEL_SECRET/"
+        export SUB_PATH="/$SUB_SECRET/"
+        export SUB_TITLE="${SUB_TITLE:-}"
+        export XHTTP_STREAM_PATH="/$XHTTP_SECRET/"
+        local cfg_arg=()
+        [ -f "/root/nginx_mask_setup/setup_mask.env" ] && cfg_arg=(--config "/root/nginx_mask_setup/setup_mask.env")
+        bash ./configure_3xui.sh --non-interactive --domain "$PRIMARY_DOMAIN" "${cfg_arg[@]}" || true
+    fi
+    
+    # Развертывание сервисов нового поколения (Zapret, MASQUE, ShadowTLS, Wstunnel)
+    deploy_native_nextgen_services
+
+    # Ensure Nginx is reloaded and active
+    nginx -t >/dev/null 2>&1 && systemctl reload nginx || systemctl restart nginx
+}
+
+# Save credentials and connection summary
+
 # =============================================================
 #  ИНТЕРАКТИВНАЯ КОНФИГУРАЦИЯ И СЦЕНАРИИ МАРШРУТИЗАЦИИ
 # =============================================================
@@ -5520,6 +6328,40 @@ for item in res:
             ENABLE_MTPROTO=0
         fi
 
+        if [[ "${ENABLE_MASQUE,,}" == "y" || "${ENABLE_MASQUE:-}" == "1" ]]; then
+            ENABLE_MASQUE=1
+            MASQUE_PORT="${MASQUE_PORT:-8445}"
+        else
+            ENABLE_MASQUE=0
+        fi
+
+        if [[ "${ENABLE_SHADOWTLS,,}" == "y" || "${ENABLE_SHADOWTLS:-}" == "1" ]]; then
+            ENABLE_SHADOWTLS=1
+            SHADOWTLS_PORT="${SHADOWTLS_PORT:-8543}"
+            SHADOWTLS_SNI="${SHADOWTLS_SNI:-gateway.icloud.com}"
+            ENABLE_SS2022=1
+        else
+            ENABLE_SHADOWTLS=0
+        fi
+
+        if [[ "${ENABLE_WSTUNNEL,,}" == "y" || "${ENABLE_WSTUNNEL:-}" == "1" ]]; then
+            ENABLE_WSTUNNEL=1
+            WSTUNNEL_PORT="${WSTUNNEL_PORT:-8080}"
+            local _wst_pref="${WSTUNNEL_PREFIX:-/wstunnel}"
+            _wst_pref="/${_wst_pref#/}"
+            _wst_pref="${_wst_pref%/}"
+            WSTUNNEL_PREFIX="${_wst_pref}/"
+        else
+            ENABLE_WSTUNNEL=0
+        fi
+
+        if [[ "${ENABLE_ZAPRET,,}" == "y" || "${ENABLE_ZAPRET:-}" == "1" ]]; then
+            ENABLE_ZAPRET=1
+            ZAPRET_QNUM="${ZAPRET_QNUM:-200}"
+        else
+            ENABLE_ZAPRET=0
+        fi
+
         if is_true "${ENABLE_AWG_V3:-0}" || is_true "${ENABLE_AWG_V2:-0}" || is_true "${ENABLE_AWG_STANDALONE:-0}"; then
             start_amneziawg_preinstall_bg
         fi
@@ -5571,6 +6413,14 @@ for item in res:
             WARP_LICENSE_KEY=""
         fi
 
+        ENABLE_HOST_SECURITY="${ENABLE_HOST_SECURITY:-n}"
+        local _act_p
+        _act_p=$(detect_active_ssh_port)
+        [ -n "$_act_p" ] || _act_p=22
+        SSH_ACTIVE_PORT="${SSH_ACTIVE_PORT:-$_act_p}"
+        SSH_PORT="${SSH_PORT:-$SSH_ACTIVE_PORT}"
+        ENABLE_FAIL2BAN="${ENABLE_FAIL2BAN:-n}"
+
         rebuild_all_domains
         sync_reality_ports
     }
@@ -5581,7 +6431,7 @@ for item in res:
 
     q_step_domain() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 1/12: Конфигурация главного сайта (домена) ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 1/13: Конфигурация главного сайта (домена) ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Ваш основной домен (например, ${BOLD}yourdomain.online${NC})."
             echo -e "     На нем будет работать веб-маска (декой-сайт), панель 3X-UI,"
@@ -5629,7 +6479,7 @@ for item in res:
 
     q_step_steal() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 2/12: Настройка VLESS REALITY (маскировка под свой сайт) ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 2/13: Настройка VLESS REALITY (маскировка под свой сайт) ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Режим REALITY, маскирующийся под ${BOLD}собственный поддомен${NC} (напр. cdn.$PRIMARY_DOMAIN)."
             echo -e "     ${GREEN}Преимущество:${NC} Трафик выглядит как обычный просмотр вашего сайта."
@@ -5705,7 +6555,7 @@ for item in res:
 
     q_step_classic() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 3/12: Настройка VLESS REALITY (маскировка под популярные сервисы) ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 3/13: Настройка VLESS REALITY (маскировка под популярные сервисы) ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Режим REALITY, маскирующийся под ${BOLD}известные сервисы${NC} (Apple, Microsoft, Samsung)."
             echo -e "     ${GREEN}Преимущество:${NC} Даже если ваш собственный домен окажется недоступен, это подключение продолжит"
@@ -5809,7 +6659,7 @@ for item in res:
 
     q_step_ports() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 4/12: Настройка путей и внутренних портов (3X-UI и VLESS xHTTP) ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 4/13: Настройка путей и внутренних портов (3X-UI и VLESS xHTTP) ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Внутренние порты и секретные URI-пути для веб-панели 3X-UI,"
             echo -e "     сервера подписок для клиентов и инбаунда VLESS xHTTP (HTTP/2 Stream-One)."
@@ -5895,7 +6745,7 @@ for item in res:
 
     q_step_protocols() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 5/12: Выбор протоколов и транспортов (VPN / Прокси) ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 5/13: Выбор протоколов и транспортов (VPN / Прокси) ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Выберите протоколы подключения, которые будут развернуты на сервере."
             echo -e "     • ${GREEN}Hysteria 2${NC}: сверхбыстрый QUIC/UDP протокол с BBR Brutal для стриминга и мобильного интернета."
@@ -5905,6 +6755,10 @@ for item in res:
             echo -e "     • ${GREEN}TUIC v5${NC}: 0-RTT рукопожатие на чистом QUIC для мгновенного отклика."
             echo -e "     • ${GREEN}Shadowsocks 2022${NC}: устойчивый к зондированию шифрованный протокол."
             echo -e "     • ${GREEN}Telegram MTProxy${NC}: прямой доступ для клиентов Telegram без дополнительных VPN-приложений."
+            echo -e "     • ${GREEN}MASQUE (RFC 9484)${NC}: стандартизированный IETF CONNECT-UDP/IP прокси поверх HTTP/3 QUIC."
+            echo -e "     • ${GREEN}ShadowTLS v4${NC}: идеальная маскировка под Apple gateway.icloud.com через Nginx Stream L4."
+            echo -e "     • ${GREEN}Wstunnel (Nginx L7)${NC}: WebSocket туннелирование через порт 443 HTTPS с валидным SSL."
+            echo -e "     • ${GREEN}Server-Side Zapret${NC}: десинхронизация DPI ТСПУ прямо на VPS через nfqws connbytes 1:6."
             echo
         fi
 
@@ -5916,6 +6770,10 @@ for item in res:
             "ENABLE_TUIC"
             "ENABLE_SS2022"
             "ENABLE_MTPROTO"
+            "ENABLE_MASQUE"
+            "ENABLE_SHADOWTLS"
+            "ENABLE_WSTUNNEL"
+            "ENABLE_ZAPRET"
         )
         local proto_labels=(
             "Hysteria 2 (UDP/QUIC Brutal CC, :${HY2_PORT:-443})"
@@ -5925,6 +6783,10 @@ for item in res:
             "TUIC v5 (QUIC 0-RTT + BBR, :${TUIC_PORT:-8448}/udp)"
             "Shadowsocks 2022 (2022-blake3-aes-256-gcm, :${SS2022_PORT:-8388})"
             "Telegram MTProxy (FakeTLS прямой доступ, :${MTPROTO_PORT:-8444}/tcp)"
+            "MASQUE (RFC 9484 / RFC 9298 via Sing-box, :${MASQUE_PORT:-8445}/udp)"
+            "ShadowTLS v4 + SS-2022 (Nginx Stream :443 SNI ${SHADOWTLS_SNI:-gateway.icloud.com})"
+            "Wstunnel over Nginx L7 (HTTPS WebSocket :443 -> :${WSTUNNEL_PORT:-8080})"
+            "Server-Side Zapret (DPI Desync nfqws connbytes 1:6 NFQUEUE 200)"
         )
 
         prompt_multiselect "Выберите протоколы для установки" proto_keys proto_labels || return $?
@@ -6015,6 +6877,62 @@ for item in res:
             MTPROTO_ADTAG=""
         fi
 
+        if is_true "$ENABLE_MASQUE"; then
+            [ -n "${MASQUE_PORT:-}" ] || MASQUE_PORT="8445"
+            [ -n "${MASQUE_USER:-}" ] || MASQUE_USER="client"
+            [ -n "${MASQUE_PASSWORD:-}" ] || MASQUE_PASSWORD="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "masque${RANDOM}")"
+            if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+                prompt_default "  UDP-порт для MASQUE (HTTP/3)" "$MASQUE_PORT" MASQUE_PORT || return $?
+                prompt_default "  Имя пользователя для MASQUE" "$MASQUE_USER" MASQUE_USER || return $?
+            fi
+        else
+            MASQUE_PORT=""
+        fi
+
+        if is_true "$ENABLE_SHADOWTLS"; then
+            [ -n "${SHADOWTLS_PORT:-}" ] || SHADOWTLS_PORT="8543"
+            [ -n "${SHADOWTLS_SNI:-}" ] || SHADOWTLS_SNI="gateway.icloud.com"
+            [ -n "${SHADOWTLS_PASSWORD:-}" ] || SHADOWTLS_PASSWORD="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "stls${RANDOM}")"
+            ENABLE_SS2022=1
+            [ -n "${SS2022_PORT:-}" ] || SS2022_PORT="8388"
+            if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+                prompt_default "  Локальный порт для ShadowTLS" "$SHADOWTLS_PORT" SHADOWTLS_PORT || return $?
+                prompt_default "  FakeTLS SNI для ShadowTLS" "$SHADOWTLS_SNI" SHADOWTLS_SNI || return $?
+            fi
+        else
+            SHADOWTLS_PORT=""
+            SHADOWTLS_SNI=""
+        fi
+
+        if is_true "$ENABLE_WSTUNNEL"; then
+            [ -n "${WSTUNNEL_PORT:-}" ] || WSTUNNEL_PORT="8080"
+            [ -n "${WSTUNNEL_PREFIX:-}" ] || WSTUNNEL_PREFIX="/wstunnel"
+            local _wp="${WSTUNNEL_PREFIX#/}"
+            _wp="${_wp%/}"
+            WSTUNNEL_PREFIX="/${_wp}/"
+            [ -n "${WSTUNNEL_SECRET:-}" ] || WSTUNNEL_SECRET="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "wst${RANDOM}")"
+            if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+                prompt_default "  Локальный порт для Wstunnel daemon" "$WSTUNNEL_PORT" WSTUNNEL_PORT || return $?
+                prompt_default "  HTTP-путь location для Wstunnel" "$WSTUNNEL_PREFIX" WSTUNNEL_PREFIX || return $?
+            fi
+        else
+            WSTUNNEL_PORT=""
+            WSTUNNEL_PREFIX=""
+        fi
+
+        if is_true "$ENABLE_ZAPRET"; then
+            [ -n "${ZAPRET_QNUM:-}" ] || ZAPRET_QNUM="200"
+            [ -n "${ZAPRET_DESYNC:-}" ] || ZAPRET_DESYNC="split2"
+            [ -n "${ZAPRET_FOOLING:-}" ] || ZAPRET_FOOLING="md5sig,badseq"
+            if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+                prompt_default "  Очередь NFQUEUE для Zapret" "$ZAPRET_QNUM" ZAPRET_QNUM || return $?
+                prompt_default "  Режим desync для nfqws" "$ZAPRET_DESYNC" ZAPRET_DESYNC || return $?
+                prompt_default "  Режим fooling для nfqws" "$ZAPRET_FOOLING" ZAPRET_FOOLING || return $?
+            fi
+        else
+            ZAPRET_QNUM=""
+        fi
+
         rebuild_all_domains
         return 0
     }
@@ -6061,7 +6979,7 @@ for item in res:
 
     q_step_agh() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 6/12: Настройка приватного AdGuard Home DoH + Split-DNS ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 6/13: Настройка приватного AdGuard Home DoH + Split-DNS ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Приватный шифрованный DNS (DNS-over-HTTPS) с защитой от рекламы и трекеров."
             echo -e "     ${GREEN}Split-DNS:${NC} Запросы к российским сайтам (.ru, банки, Госуслуги) направляются"
@@ -6107,7 +7025,7 @@ for item in res:
 
     q_step_decoy() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 7/12: Выбор темы для сайта-маскировки (Decoy Site) ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 7/13: Выбор темы для сайта-маскировки (Decoy Site) ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Веб-сайт, который отображается в браузере при обращении к вашему домену."
             echo -e "     Защищает сервер от выявления цензорами, активными сканерами и сетевыми ботами."
@@ -6140,7 +7058,7 @@ for item in res:
 
     q_step_ssl_domains() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 8/12: Реестр SSL-сертификатов и дополнительные домены ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 8/13: Реестр SSL-сертификатов и дополнительные домены ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Список доменов, для которых будут автоматически получены SSL-сертификаты."
             echo -e "  ${DIM}Следующие домены уже включены автоматически из предыдущих шагов:${NC}"
@@ -6178,7 +7096,7 @@ for item in res:
 
     q_step_ssl_engine() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 9/12: Выбор метода выпуска SSL-сертификатов ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 9/13: Выбор метода выпуска SSL-сертификатов ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Способ валидации владения доменом для Let's Encrypt."
             echo -e "    ${GREEN}[1] Классический Certbot (HTTP-01, Рекомендуется)${NC}"
@@ -6220,7 +7138,7 @@ for item in res:
 
     q_step_3xui_auto() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 10/12: Автоматическая настройка базы данных панели 3X-UI ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 10/13: Автоматическая настройка базы данных панели 3X-UI ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Автоматическое создание подключений (REALITY со своим сайтом, внешними сервисами, xHTTP)"
             echo -e "     в базе данных панели 3X-UI, а также настройка секретных путей и подписок."
@@ -6265,7 +7183,7 @@ for item in res:
 
     q_step_warp() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 11/12: Исходящий туннель Cloudflare WARP ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 11/13: Исходящий туннель Cloudflare WARP ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Исходящий WireGuard туннель от вашего VPS в сеть Cloudflare."
             echo -e "     ${GREEN}Преимущество:${NC} Полностью избавляет от капч Google/Cloudflare и разблокирует"
@@ -6283,6 +7201,83 @@ for item in res:
             ENABLE_WARP="n"
             WARP_LICENSE_KEY=""
             log "Интеграция Cloudflare WARP отключена."
+        fi
+        return 0
+    }
+
+    q_step_security() {
+        echo
+        echo -e "${YELLOW}━━━ Шаг 12/13: Безопасность сервера (SSH и Fail2ban) ━━━${NC}"
+        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+            echo -e "  ${CYAN}💡 Что это:${NC} Базовая защита операционной системы хоста."
+            echo -e "     ${GREEN}Преимущество:${NC} Перенос порта SSH со стандартного 22 скрывает сервер"
+            echo -e "     от автоматических сканеров портов, а Fail2ban автоматически блокирует IP-адреса"
+            echo -e "     злоумышленников после нескольких неудачных попыток подбора паролей."
+            echo
+        fi
+
+        local def_active_port
+        def_active_port=$(detect_active_ssh_port)
+        [ -n "$def_active_port" ] || def_active_port=22
+        SSH_ACTIVE_PORT="${SSH_ACTIVE_PORT:-$def_active_port}"
+
+        local current_configured_port="${SSH_PORT:-$SSH_ACTIVE_PORT}"
+
+        prompt_yes_no "Настроить безопасность сервера (порт SSH и защиту Fail2ban)?" "${ENABLE_HOST_SECURITY:-n}" ENABLE_HOST_SECURITY || return $?
+        if is_true "$ENABLE_HOST_SECURITY"; then
+            ENABLE_HOST_SECURITY="y"
+
+            # Вопрос 1: Порт SSH
+            echo
+            local keep_ssh="y"
+            if [ "$current_configured_port" -ne "$SSH_ACTIVE_PORT" ]; then
+                keep_ssh="n"
+            fi
+            prompt_yes_no "  Оставить текущий порт SSH (${SSH_ACTIVE_PORT})?" "$keep_ssh" KEEP_SSH || return $?
+            if is_true "$KEEP_SSH"; then
+                SSH_PORT="$SSH_ACTIVE_PORT"
+                ok "Используется текущий порт SSH: ${WHITE}$SSH_PORT${NC}"
+            else
+                while true; do
+                    local custom_p="${current_configured_port}"
+                    [ "$custom_p" -eq "$SSH_ACTIVE_PORT" ] && custom_p=2222
+                    prompt_default "  Введите новый порт SSH (1024-65535)" "$custom_p" custom_p || return $?
+                    if [[ "$custom_p" =~ ^[0-9]+$ ]] && [ "$custom_p" -ge 1024 ] && [ "$custom_p" -le 65535 ]; then
+                        # Проверка на конфликт с известными портами сервисов
+                        local conflict=0
+                        for reserved in 80 443 "${PANEL_PORT:-10443}" "${SUB_PORT:-55443}" "${XHTTP_STREAM_PORT:-50443}" "${HY2_PORT:-443}" "${AWG_V3_PORT:-8443}" "${AWG_V2_PORT:-8444}" "${AWG_STANDALONE_PORT:-8445}" "${SS2022_PORT:-8388}" "${TUIC_PORT:-8448}"; do
+                            if [ "$custom_p" -eq "$reserved" ]; then
+                                warn "  Порт $custom_p уже используется для одного из VPN/прокси сервисов. Выберите другой."
+                                conflict=1
+                                break
+                            fi
+                        done
+                        if [ "$conflict" -eq 0 ]; then
+                            SSH_PORT="$custom_p"
+                            ok "Новый порт SSH: ${WHITE}$SSH_PORT${NC} (активный порт $SSH_ACTIVE_PORT также останется разрешен в UFW для защиты от потери связи)"
+                            break
+                        fi
+                    else
+                        warn "  Порт должен быть числом от 1024 до 65535."
+                    fi
+                done
+            fi
+
+            # Вопрос 2: Fail2ban
+            echo
+            prompt_yes_no "  Установить и включить Fail2ban (защита от брутфорса)?" "${ENABLE_FAIL2BAN:-y}" ENABLE_FAIL2BAN || return $?
+            if is_true "$ENABLE_FAIL2BAN"; then
+                ENABLE_FAIL2BAN="y"
+                ok "Служба Fail2ban будет установлена и настроена с backend=systemd."
+            else
+                ENABLE_FAIL2BAN="n"
+                log "Установка Fail2ban пропущена."
+            fi
+        else
+            ENABLE_HOST_SECURITY="n"
+            SSH_PORT="$SSH_ACTIVE_PORT"
+            ENABLE_FAIL2BAN="n"
+            log "Настройки SSH и Fail2ban оставлены без изменений."
         fi
         return 0
     }
@@ -6349,6 +7344,22 @@ for item in res:
         is_true "${ENABLE_MTPROTO:-0}" && mtp_status="${GREEN}Включен${NC} (:${MTPROTO_PORT:-8444}/tcp, FakeTLS: ${MTPROTO_FAKETLS_DOMAIN:-gateway.icloud.com})"
         echo -e "      ${DIM}• Telegram MTProxy:${NC}     $mtp_status"
 
+        local masque_status="${RED}Отключен${NC}"
+        is_true "${ENABLE_MASQUE:-0}" && masque_status="${GREEN}Включен${NC} (:${MASQUE_PORT:-8445}/udp, RFC 9484)"
+        echo -e "      ${DIM}• MASQUE (RFC 9484):${NC}    $masque_status"
+
+        local stls_status="${RED}Отключен${NC}"
+        is_true "${ENABLE_SHADOWTLS:-0}" && stls_status="${GREEN}Включен${NC} (Nginx :443 SNI ${SHADOWTLS_SNI:-gateway.icloud.com} ➜ :${SHADOWTLS_PORT:-8543})"
+        echo -e "      ${DIM}• ShadowTLS v4:${NC}         $stls_status"
+
+        local wst_status="${RED}Отключен${NC}"
+        is_true "${ENABLE_WSTUNNEL:-0}" && wst_status="${GREEN}Включен${NC} (Nginx :443 HTTPS ${WSTUNNEL_PREFIX:-/wstunnel/} ➜ :${WSTUNNEL_PORT:-8080})"
+        echo -e "      ${DIM}• Wstunnel over Nginx:${NC}  $wst_status"
+
+        local zapret_status="${RED}Отключен${NC}"
+        is_true "${ENABLE_ZAPRET:-0}" && zapret_status="${GREEN}Включен${NC} (NFQUEUE ${ZAPRET_QNUM:-200}, ${ZAPRET_DESYNC:-split2})"
+        echo -e "      ${DIM}• Server-Side Zapret:${NC}   $zapret_status"
+
         local agh_status="${RED}Отключен${NC}"
         if is_true "${ENABLE_AGH:-0}"; then
             local m_desc="Основной домен"
@@ -6379,10 +7390,22 @@ for item in res:
         is_true "${ENABLE_WARP:-n}" && warp_status="${GREEN}Включен${NC} (WireGuard MTU: 1280)"
         echo -e "  ${CYAN}[11]${NC} ${BOLD}Cloudflare WARP:${NC}      $warp_status"
 
+        local sec_status="${DIM}Без изменений (порт ${SSH_PORT:-$SSH_ACTIVE_PORT}, Fail2ban выкл)${NC}"
+        if is_true "${ENABLE_HOST_SECURITY:-n}"; then
+            local f2b_str="${RED}выкл${NC}"
+            is_true "${ENABLE_FAIL2BAN:-n}" && f2b_str="${GREEN}вкл${NC}"
+            if [ "${SSH_PORT:-$SSH_ACTIVE_PORT}" -ne "${SSH_ACTIVE_PORT:-22}" ]; then
+                sec_status="${GREEN}Настроена${NC} (SSH порт: ${WHITE}${SSH_PORT}${NC} [было ${SSH_ACTIVE_PORT}], Fail2ban: ${f2b_str})"
+            else
+                sec_status="${GREEN}Настроена${NC} (SSH порт: ${WHITE}${SSH_PORT}${NC}, Fail2ban: ${f2b_str})"
+            fi
+        fi
+        echo -e "  ${CYAN}[12]${NC} ${BOLD}Безопасность сервера:${NC}    $sec_status"
+
         echo
         echo -e "${YELLOW}════════════════════════════════════════════════════════════════════════════════${NC}"
         echo -e "  ${GREEN}[Enter]${NC} или ${GREEN}[y]${NC}  ${BOLD}Начать установку с выбранными параметрами${NC}"
-        echo -e "  ${CYAN}[1 - 11]${NC}        ${BOLD}Изменить соответствующий раздел конфигурации${NC}"
+        echo -e "  ${CYAN}[1 - 12]${NC}        ${BOLD}Изменить соответствующий раздел конфигурации${NC}"
         echo -e "  ${RED}[q]${NC}             ${BOLD}Отмена и выход${NC}"
         echo -e "${YELLOW}════════════════════════════════════════════════════════════════════════════════${NC}"
         echo
@@ -6405,11 +7428,11 @@ for item in res:
                 die "Установка отменена пользователем."
             fi
 
-            if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le 11 ]; then
+            if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le 12 ]; then
                 return $((100 + choice))
             fi
 
-            warn "  Некорректный ввод. Нажмите Enter для старта, номер [1-11] для изменения или 'q' для выхода."
+            warn "  Некорректный ввод. Нажмите Enter для старта, номер [1-12] для изменения или 'q' для выхода."
         done
     }
 
@@ -6435,13 +7458,13 @@ for item in res:
 
         WIZARD_ALLOW_BACK=1
         if [ "${START_AT_REVIEW:-0}" -eq 1 ]; then
-            CURRENT_STEP=12
+            CURRENT_STEP=13
             EDITING_FROM_REVIEW=0
         else
             CURRENT_STEP=1
             EDITING_FROM_REVIEW=0
         fi
-        TOTAL_STEPS=12
+        TOTAL_STEPS=13
 
         while [ "$CURRENT_STEP" -le "$TOTAL_STEPS" ]; do
             res=0
@@ -6457,13 +7480,14 @@ for item in res:
                 9) q_step_ssl_engine || res=$? ;;
                 10) q_step_3xui_auto || res=$? ;;
                 11) q_step_warp || res=$? ;;
-                12) q_step_review || res=$? ;;
+                12) q_step_security || res=$? ;;
+                13) q_step_review || res=$? ;;
             esac
 
             if [ "$res" -eq 10 ]; then
                 # Запрос перехода назад
                 if [ "$EDITING_FROM_REVIEW" -eq 1 ]; then
-                    CURRENT_STEP=12
+                    CURRENT_STEP=13
                     EDITING_FROM_REVIEW=0
                 elif [ "$CURRENT_STEP" -gt 1 ]; then
                     CURRENT_STEP=$((CURRENT_STEP - 1))
@@ -6483,15 +7507,15 @@ for item in res:
                         warn "Вы уже на первом шаге."
                     fi
                 fi
-            elif [ "$res" -ge 101 ] && [ "$res" -le 111 ]; then
+            elif [ "$res" -ge 101 ] && [ "$res" -le 112 ]; then
                 # Переход к конкретному шагу из экрана Review
                 CURRENT_STEP=$((res - 100))
                 EDITING_FROM_REVIEW=1
             elif [ "$res" -eq 0 ]; then
-                if [ "$CURRENT_STEP" -eq 12 ]; then
+                if [ "$CURRENT_STEP" -eq 13 ]; then
                     break
                 elif [ "$EDITING_FROM_REVIEW" -eq 1 ]; then
-                    CURRENT_STEP=12
+                    CURRENT_STEP=13
                     EDITING_FROM_REVIEW=0
                 else
                     CURRENT_STEP=$((CURRENT_STEP + 1))
@@ -6639,6 +7663,22 @@ if ! should_skip_step 2; then
         run_with_spinner "Применение системных параметров BBR и лимитов дескрипторов" apply_sysctl_and_limits || die "Ошибка применения сетевого тюнинга."
     fi
     step_finish 2
+fi
+
+# --- Настройка безопасности хоста: SSH & Fail2ban ---
+local_active_ssh="${SSH_ACTIVE_PORT:-22}"
+local_target_ssh="${SSH_PORT:-$local_active_ssh}"
+if is_true "${ENABLE_HOST_SECURITY:-n}" || [ "$local_target_ssh" -ne "$local_active_ssh" ] || is_true "${ENABLE_FAIL2BAN:-n}"; then
+    if [ "$local_target_ssh" -ne "$local_active_ssh" ]; then
+        run_with_spinner "Применение конфигурации OpenSSH (порт $local_target_ssh)" apply_ssh_configuration "$local_target_ssh" "$local_active_ssh" || warn "Не удалось применить конфигурацию SSH."
+        if command -v ufw >/dev/null 2>&1; then
+            ufw allow "${local_active_ssh}/tcp" comment 'Current SSH Port' >/dev/null 2>&1 || true
+            ufw allow "${local_target_ssh}/tcp" comment 'Target SSH Port' >/dev/null 2>&1 || true
+        fi
+    fi
+    if is_true "${ENABLE_FAIL2BAN:-n}"; then
+        run_with_spinner "Установка и настройка службы Fail2ban" apply_fail2ban_configuration "$local_target_ssh" "$local_active_ssh" || warn "Не удалось настроить Fail2ban."
+    fi
 fi
 
 if is_true "${ENABLE_WEB_STACK:-y}"; then
@@ -7635,6 +8675,12 @@ if ! should_skip_step 6; then
     # Определение поддержки директив HTTP/2 в установленной версии Nginx
     determine_nginx_http2_mode
 
+    wstunnel_badbot_bypass=""
+    if is_true "${ENABLE_WSTUNNEL:-0}" && [ -n "${WSTUNNEL_PREFIX:-}" ]; then
+        wstunnel_clean_prefix="${WSTUNNEL_PREFIX%/}"
+        wstunnel_badbot_bypass="        ~^1:[01]:${wstunnel_clean_prefix}/ 0;"$'\n'
+    fi
+
     # 1. Глобальный файл конфигурации /etc/nginx/nginx.conf
     cat << EOF > /etc/nginx/nginx.conf
 user $NGINX_USER;
@@ -7758,7 +8804,7 @@ ${HTTP2_HTTP_PARAMS}
         ~^1:[01]:/json/ 0;
         ~^1:[01]:/clash/ 0;
         ~^1:[01]:${XHTTP_STREAM_PATH} 0;
-        ~^1:[01]:/dns-query 0;
+${wstunnel_badbot_bypass}        ~^1:[01]:/dns-query 0;
         ~^1:[01]:/agh/ 0;
         ~(^1:|:1) 1;
         default 0;
@@ -7816,6 +8862,24 @@ if is_true "${CLASSIC_ENABLED:-0}"; then
     done
 fi
 
+if is_true "${ENABLE_SHADOWTLS:-0}"; then
+    STREAM_MAP_RULES+="        ${SHADOWTLS_SNI:-gateway.icloud.com}     shadowtls_backend;"$'\n'
+fi
+
+SHADOWTLS_STREAM_BLOCKS=""
+if is_true "${ENABLE_SHADOWTLS:-0}"; then
+    SHADOWTLS_STREAM_BLOCKS="
+upstream shadowtls_backend {
+    server 127.0.0.1:8542;
+}
+
+server {
+    listen 127.0.0.1:8542 proxy_protocol;
+    proxy_pass 127.0.0.1:${SHADOWTLS_PORT:-8543};
+}
+"
+fi
+
 for port in "${ALL_REALITY_PORTS[@]:-}"; do
     if [ -n "$port" ]; then
         REALITY_UPSTREAMS+="
@@ -7870,6 +8934,7 @@ upstream nginx_http_backend {
 }
 
 ${REALITY_UPSTREAMS}
+${SHADOWTLS_STREAM_BLOCKS}
 
 server {
     listen 443 backlog=65535 reuseport;
@@ -8000,6 +9065,27 @@ else
         location / {
             return 404;
         }
+"
+fi
+
+WSTUNNEL_LOCATION_BLOCK=""
+if is_true "${ENABLE_WSTUNNEL:-0}" && [ -n "${WSTUNNEL_PREFIX:-}" ]; then
+    wstunnel_clean_prefix="${WSTUNNEL_PREFIX%/}"
+    WSTUNNEL_LOCATION_BLOCK="
+    # --- ЛОКАЦИЯ: WSTUNNEL (L7 WebSocket Tunnel) ---
+    location ^~ ${wstunnel_clean_prefix}/ {
+        proxy_pass http://127.0.0.1:${WSTUNNEL_PORT:-8080};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection \$connection_upgrade;
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Real-IP \$ak_real_ip;
+        proxy_set_header X-Forwarded-For \$ak_real_ip;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+        proxy_buffering off;
+    }
 "
 fi
 
@@ -8189,6 +9275,7 @@ server {
         grpc_pass grpc://xray_xhttp_stream;
     }
 
+    $WSTUNNEL_LOCATION_BLOCK
     $AGH_MAIN_LOCATION_BLOCKS
 
     # --- ЛОКАЦИЯ 4: ДЕКОЙ САЙТ / МАСКИРОВКА ---
@@ -8259,6 +9346,7 @@ server {
     error_page 400 403 404 405 @notfound;
 
     $DECOY_LOCATION_BLOCKS
+    $WSTUNNEL_LOCATION_BLOCK
 
     location ^~ ${PANEL_PATH} {
         proxy_hide_header Content-Security-Policy;
@@ -8559,6 +9647,9 @@ fi
 if [[ "${ENABLE_MTPROTO:-}" == "1" || "${ENABLE_MTPROTO,,}" == "y" ]] && [ -n "${MTPROTO_PORT:-}" ]; then
     UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${MTPROTO_PORT}/tcp"
 fi
+if [[ "${ENABLE_MASQUE:-}" == "1" || "${ENABLE_MASQUE,,}" == "y" ]] && [ -n "${MASQUE_PORT:-}" ]; then
+    UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${MASQUE_PORT}/udp"
+fi
 
 SSL_CERT_REPORT=""
 for dom in "${ALL_DOMAINS[@]}"; do
@@ -8687,6 +9778,22 @@ else
             export MTPROTO_PORT
             export MTPROTO_FAKETLS_DOMAIN
             export MTPROTO_ADTAG
+            export ENABLE_MASQUE
+            export MASQUE_PORT
+            export MASQUE_USER
+            export MASQUE_PASSWORD
+            export ENABLE_SHADOWTLS
+            export SHADOWTLS_PORT
+            export SHADOWTLS_SNI
+            export SHADOWTLS_PASSWORD
+            export ENABLE_WSTUNNEL
+            export WSTUNNEL_PORT
+            export WSTUNNEL_PREFIX
+            export WSTUNNEL_SECRET
+            export ENABLE_ZAPRET
+            export ZAPRET_QNUM
+            export ZAPRET_DESYNC
+            export ZAPRET_FOOLING
             bash "$CONFIG_EXEC" --config "$SAVED_CONFIG_FILE" -y
         }
         run_with_spinner "Автоматическая настройка базы 3X-UI и создание инбаундов" run_configure_3xui_task || die "Ошибка настройки базы 3X-UI."
@@ -8750,6 +9857,11 @@ EOF_GEOTMR
         run_with_spinner "Активация таймера еженедельного обновления geosite.dat и geoip.dat" setup_xray_geo_timer_task
     else
         warn "Скрипт configure_3xui.sh не найден. Выполните настройку вручную."
+    fi
+
+    # Развертывание фоновых служб нового поколения (Zapret, MASQUE, ShadowTLS, Wstunnel)
+    if command -v deploy_native_nextgen_services >/dev/null 2>&1; then
+        deploy_native_nextgen_services
     fi
 
     step_finish 7

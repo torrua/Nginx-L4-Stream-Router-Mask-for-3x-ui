@@ -16,6 +16,7 @@ trap 'echo -e "\n[!] Внимание: получен сигнал SIGHUP, пр�
 # @include "common/logger.sh"
 # @include "common/preflight.sh"
 # @include "system/sysctl.sh"
+# @include "system/security.sh"
 
 
 # --- Global Paths & Logs ---

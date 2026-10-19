@@ -171,10 +171,19 @@ reconstruct_arrays_from_vars() {
     fi
     _v="${ENABLE_MASQUE:-n}"; if is_true "$_v"; then ENABLE_MASQUE=1; else ENABLE_MASQUE=0; fi
     MASQUE_PORT="${MASQUE_PORT:-8445}"
+    MASQUE_USER="${MASQUE_USER:-client}"
+    if [ "$ENABLE_MASQUE" -eq 1 ] && [ -z "${MASQUE_PASSWORD:-}" ]; then
+        MASQUE_PASSWORD="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "masque${RANDOM}")"
+    fi
     _v="${ENABLE_SHADOWTLS:-n}"; if is_true "$_v"; then ENABLE_SHADOWTLS=1; else ENABLE_SHADOWTLS=0; fi
     SHADOWTLS_PORT="${SHADOWTLS_PORT:-8543}"
     SHADOWTLS_SNI="${SHADOWTLS_SNI:-gateway.icloud.com}"
-    SHADOWTLS_PASSWORD="${SHADOWTLS_PASSWORD:-}"
+    if [ "$ENABLE_SHADOWTLS" -eq 1 ] && [ -z "${SHADOWTLS_PASSWORD:-}" ]; then
+        SHADOWTLS_PASSWORD="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "stls${RANDOM}")"
+    fi
+    if [ "$ENABLE_SHADOWTLS" -eq 1 ] && [ "${ENABLE_WEB_STACK:-1}" -eq 1 ]; then
+        ENABLE_SS2022=1
+    fi
     _v="${ENABLE_NAIVE:-n}"; if is_true "$_v"; then ENABLE_NAIVE=1; else ENABLE_NAIVE=0; fi
     NAIVE_PORT="${NAIVE_PORT:-8446}"
     NAIVE_DOMAIN="${NAIVE_DOMAIN:-}"
@@ -186,9 +195,14 @@ reconstruct_arrays_from_vars() {
     ZAPRET_FOOLING="${ZAPRET_FOOLING:-md5sig,badseq}"
     _v="${ENABLE_WSTUNNEL:-n}"; if is_true "$_v"; then ENABLE_WSTUNNEL=1; else ENABLE_WSTUNNEL=0; fi
     WSTUNNEL_DOMAIN="${WSTUNNEL_DOMAIN:-}"
-    WSTUNNEL_PREFIX="${WSTUNNEL_PREFIX:-/wstunnel}"
+    local _wst_pref="${WSTUNNEL_PREFIX:-/wstunnel}"
+    _wst_pref="/${_wst_pref#/}"
+    _wst_pref="${_wst_pref%/}"
+    WSTUNNEL_PREFIX="${_wst_pref}/"
     WSTUNNEL_PORT="${WSTUNNEL_PORT:-8080}"
-    WSTUNNEL_SECRET="${WSTUNNEL_SECRET:-}"
+    if [ "$ENABLE_WSTUNNEL" -eq 1 ] && [ -z "${WSTUNNEL_SECRET:-}" ]; then
+        WSTUNNEL_SECRET="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "wst${RANDOM}")"
+    fi
     CF_AUTH_METHOD="${CF_AUTH_METHOD:-1}"
 }
 
@@ -267,6 +281,10 @@ save_session_state() {
     v="${ENABLE_ZAPRET:-n}"; is_true "$v" && zapret_save="y"
     local wstunnel_save="n"
     v="${ENABLE_WSTUNNEL:-n}"; is_true "$v" && wstunnel_save="y"
+    local host_security_save="n"
+    v="${ENABLE_HOST_SECURITY:-n}"; is_true "$v" && host_security_save="y"
+    local fail2ban_save="n"
+    v="${ENABLE_FAIL2BAN:-n}"; is_true "$v" && fail2ban_save="y"
 
     local _save_panel_path="${RAW_PATH:-${PANEL_PATH:-my-3x-panel}}"
     _save_panel_path="${_save_panel_path#/}"
@@ -389,6 +407,8 @@ SUB_LISTEN="${SUB_LISTEN:-127.0.0.1}"
 DOKPLOY_COEXISTENCE="$dokploy_coexist_save"
 ENABLE_MASQUE="$masque_save"
 MASQUE_PORT="${MASQUE_PORT:-8445}"
+MASQUE_USER="${MASQUE_USER:-client}"
+MASQUE_PASSWORD="${MASQUE_PASSWORD:-}"
 ENABLE_SHADOWTLS="$shadowtls_save"
 SHADOWTLS_PORT="${SHADOWTLS_PORT:-8543}"
 SHADOWTLS_SNI="${SHADOWTLS_SNI:-gateway.icloud.com}"
@@ -407,6 +427,10 @@ WSTUNNEL_DOMAIN="${WSTUNNEL_DOMAIN:-}"
 WSTUNNEL_PREFIX="${WSTUNNEL_PREFIX:-/wstunnel}"
 WSTUNNEL_PORT="${WSTUNNEL_PORT:-8080}"
 WSTUNNEL_SECRET="${WSTUNNEL_SECRET:-}"
+
+ENABLE_HOST_SECURITY="$host_security_save"
+SSH_PORT="${SSH_PORT:-${SSH_ACTIVE_PORT:-22}}"
+ENABLE_FAIL2BAN="$fail2ban_save"
 
 LAST_COMPLETED_STEP="${LAST_COMPLETED_STEP:-0}"
 EOF_SAVE

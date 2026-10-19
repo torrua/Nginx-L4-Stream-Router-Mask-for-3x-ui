@@ -39,6 +39,13 @@ save_and_display_summary() {
         fi
     fi
 
+    local client_env=""
+    [ -f "/run/3xui_unified_client.env" ] && client_env="/run/3xui_unified_client.env"
+    [ -z "$client_env" ] && [ -f "/tmp/3xui_unified_client.env" ] && client_env="/tmp/3xui_unified_client.env"
+    if [ -n "$client_env" ]; then
+        . "$client_env" 2>/dev/null || true
+    fi
+
     cat <<EOF > "$CREDENTIALS_FILE"
 ====================================================================
  NGINX L4 STREAM ROUTER & 3X-UI — УЧЕТНЫЕ ДАННЫЕ СЕРВЕРА
@@ -60,6 +67,10 @@ SSH Порт:       ${SSH_PORT}
 [ ПРЯМЫЕ ССЫЛКИ НА ПОДПИСКУ КЛИЕНТОВ ]
 $( [ -n "$sub_link" ] && echo "Универсальная подписка (Base64): ${sub_link}" || echo "Универсальная подписка: В панели -> Подключения" )
 $( [ -n "$clash_link" ] && echo "Подписка для Clash / Mihomo:   ${clash_link}" || true )
+$([ -n "${MASQUE_URI:-}" ] && printf "\n[ MASQUE RFC 9484 (Sing-box) ]\nURI: %s\n" "${MASQUE_URI}")
+$([ -n "${SHADOWTLS_URI:-}" ] && printf "\n[ SHADOWTLS v4 + SS-2022 ]\nShadowTLS URI:        %s\nShadowTLS + SS-2022:  %s\n" "${SHADOWTLS_URI}" "${SS_SHADOWTLS_URI:-}")
+$([ -n "${WSTUNNEL_CLI:-}" ] && printf "\n[ WSTUNNEL (L7 Nginx WebSocket) ]\nClient CLI:           %s\n" "${WSTUNNEL_CLI}")
+$([ -n "${ZAPRET_INFO:-}" ] && printf "\n[ SERVER-SIDE ZAPRET ]\nСтатус:               %s\n" "${ZAPRET_INFO}")
 
 [ НАСТРОЙКА КЛИЕНТОВ ]
 1. Добавьте ссылку на подписку в клиент:
@@ -102,6 +113,14 @@ print_dashboard() {
     echo -e "    ${DIM}• Фаервол UFW:${RESET}    ${GREEN}Порты протоколов (10443, 55443 и др.) изолированы${RESET}"
     echo -e "    ${DIM}• Ядро Linux:${RESET}     ${GREEN}BBR активирован, IPv6 отключен (no leak)${RESET}"
     echo ""
+    if [ -n "${MASQUE_URI:-}" ] || [ -n "${SHADOWTLS_URI:-}" ] || [ -n "${WSTUNNEL_CLI:-}" ] || [ -n "${ZAPRET_INFO:-}" ]; then
+        echo -e "  ${WHITE}${BOLD}Протоколы нового поколения (Next-Gen Protocols):${RESET}"
+        [ -n "${MASQUE_URI:-}" ] && echo -e "    ${CYAN}${ARROW} MASQUE:${RESET}       ${GREEN}${MASQUE_URI}${RESET}"
+        [ -n "${SHADOWTLS_URI:-}" ] && echo -e "    ${CYAN}${ARROW} ShadowTLS:${RESET}    ${GREEN}${SHADOWTLS_URI}${RESET}"
+        [ -n "${WSTUNNEL_CLI:-}" ] && echo -e "    ${CYAN}${ARROW} Wstunnel:${RESET}     ${CYAN}${WSTUNNEL_CLI}${RESET}"
+        [ -n "${ZAPRET_INFO:-}" ] && echo -e "    ${CYAN}${ARROW} Zapret:${RESET}       ${GREEN}nfqws активен (DPI Desync connbytes 1:6)${RESET}"
+        echo ""
+    fi
     if [ "$SSH_PORT" -ne "${SSH_ACTIVE_PORT:-22}" ]; then
         echo -e "  ${YELLOW}${BOLD}⚠️  ВНИМАНИЕ: Порт SSH изменен на ${WHITE}${SSH_PORT}${YELLOW}!${RESET}"
         echo -e "    ${DIM}1. Проверьте вход в НОВОМ окне терминала:${RESET} ${CYAN}ssh -p ${SSH_PORT} root@${PRIMARY_DOMAIN}${RESET}"

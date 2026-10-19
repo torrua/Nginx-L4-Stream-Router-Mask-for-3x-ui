@@ -273,7 +273,10 @@ inspect_port_conflicts() {
 
     # 3. Проверка внешних портов маршрутизации и маскирования (80 и 443 TCP)
     local _web_stack="${ENABLE_WEB_STACK:-y}"
-    if [[ "${_web_stack,,}" == "y" || "${_web_stack}" == "1" || "${_web_stack,,}" == "true" ]]; then
+    local _dokploy_coexist="${DOKPLOY_COEXISTENCE:-n}"
+    if [[ "${_dokploy_coexist,,}" == "y" || "${_dokploy_coexist}" == "1" || "${_dokploy_coexist,,}" == "true" || "${_web_stack,,}" == "dokploy" ]]; then
+        ok "Режим бесконфликтного сосуществования с Dokploy активен: порты 80 и 443 зарезервированы для Traefik (проксирование через WebSocket / Docker Compose)."
+    elif [[ "${_web_stack,,}" == "y" || "${_web_stack}" == "1" || "${_web_stack,,}" == "true" ]]; then
         for p in 80 443; do
             if is_port_in_use "tcp" "$p"; then
                 local w_owner
@@ -346,6 +349,46 @@ inspect_port_conflicts() {
             fi
         else
             ok "Порт $awg_p/udp (AmneziaWG Standalone) свободен."
+        fi
+    fi
+
+    # 6. Проверка портов протоколов следующего поколения (MASQUE, ShadowTLS, NaïveProxy)
+    local _masque_en="${ENABLE_MASQUE:-n}"
+    if [[ "${_masque_en,,}" == "y" || "${_masque_en}" == "1" || "${_masque_en,,}" == "true" ]]; then
+        local m_port="${MASQUE_PORT:-8445}"
+        if [[ "${_awg_sa,,}" == "y" || "${_awg_sa}" == "1" || "${_awg_sa,,}" == "true" ]] && [ "$m_port" = "${AWG_STANDALONE_PORT:-8445}" ]; then
+            warn "Коллизия портов: MASQUE и AmneziaWG Standalone используют один UDP-порт ($m_port)! Измените MASQUE_PORT или AWG_STANDALONE_PORT."
+        fi
+        if is_port_in_use "udp" "$m_port"; then
+            local m_owner
+            m_owner=$(get_port_listener_info "udp" "$m_port")
+            warn "Порт $m_port/udp (MASQUE) занят: ${m_owner:-сторонней службой}."
+        else
+            ok "Порт $m_port/udp (MASQUE HTTP/3 Datagram) свободен."
+        fi
+    fi
+
+    local _stls_en="${ENABLE_SHADOWTLS:-n}"
+    if [[ "${_stls_en,,}" == "y" || "${_stls_en}" == "1" || "${_stls_en,,}" == "true" ]]; then
+        local st_port="${SHADOWTLS_PORT:-8543}"
+        if is_port_in_use "tcp" "$st_port"; then
+            local st_owner
+            st_owner=$(get_port_listener_info "tcp" "$st_port")
+            warn "Порт $st_port/tcp (ShadowTLS v4) занят: ${st_owner:-сторонней службой}."
+        else
+            ok "Порт $st_port/tcp (ShadowTLS v4) свободен."
+        fi
+    fi
+
+    local _naive_en="${ENABLE_NAIVE:-n}"
+    if [[ "${_naive_en,,}" == "y" || "${_naive_en}" == "1" || "${_naive_en,,}" == "true" ]]; then
+        local n_port="${NAIVE_PORT:-8446}"
+        if is_port_in_use "tcp" "$n_port"; then
+            local n_owner
+            n_owner=$(get_port_listener_info "tcp" "$n_port")
+            warn "Порт $n_port/tcp (NaïveProxy) занят: ${n_owner:-сторонней службой}."
+        else
+            ok "Порт $n_port/tcp (NaïveProxy) свободен."
         fi
     fi
 
@@ -895,6 +938,498 @@ supports_x86_64_v3() {
     return 1
 }
 
+# ==============================================================================
+#  Подсистема безопасности хоста: SSH Hardening, SSH Keys, Dual-Port & Fail2ban
+# ==============================================================================
+
+WHITE="${WHITE:-}"
+NC="${NC:-}"
+YELLOW="${YELLOW:-}"
+RED="${RED:-}"
+GREEN="${GREEN:-}"
+CYAN="${CYAN:-}"
+BOLD="${BOLD:-}"
+ARROW="${ARROW:-}"
+DIM="${DIM:-}"
+
+has_authorized_keys() {
+    local target_user="${1:-root}"
+    local user_home
+    if [ "$target_user" = "root" ]; then
+        user_home="/root"
+    else
+        user_home=$(eval echo "~$target_user" 2>/dev/null || echo "/home/$target_user")
+    fi
+    local auth_file="${user_home}/.ssh/authorized_keys"
+    if [ -f "$auth_file" ] && [ -s "$auth_file" ]; then
+        if grep -qE '^[[:space:]]*(ssh-rsa|ssh-ed25519|ecdsa-sha2-[a-z0-9]+|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-[a-z0-9]+@openssh\.com)' "$auth_file" 2>/dev/null; then
+            return 0
+        fi
+    fi
+    return 1
+}
+
+add_authorized_key() {
+    local key_data="$1"
+    local target_user="${2:-root}"
+    [ -n "$key_data" ] || return 1
+
+    local user_home
+    if [ "$target_user" = "root" ]; then
+        user_home="/root"
+    else
+        user_home=$(eval echo "~$target_user" 2>/dev/null || echo "/home/$target_user")
+    fi
+
+    mkdir -p "${user_home}/.ssh"
+    chmod 700 "${user_home}/.ssh" 2>/dev/null || true
+
+    local auth_file="${user_home}/.ssh/authorized_keys"
+    touch "$auth_file"
+    chmod 600 "$auth_file" 2>/dev/null || true
+
+    # Проверка, не добавлен ли уже этот ключ
+    local clean_key
+    clean_key=$(echo "$key_data" | awk '{print $1" "$2}')
+    if [ -n "$clean_key" ] && grep -Fq "$clean_key" "$auth_file" 2>/dev/null; then
+        ok "SSH-ключ уже присутствует в $auth_file."
+        return 0
+    fi
+
+    echo "$key_data" >> "$auth_file"
+    chmod 600 "$auth_file" 2>/dev/null || true
+    if [ "$target_user" != "root" ] && command -v chown >/dev/null 2>&1; then
+        chown -R "${target_user}:${target_user}" "${user_home}/.ssh" 2>/dev/null || true
+    fi
+    ok "SSH-ключ успешно добавлен в ${auth_file}."
+    return 0
+}
+
+generate_ed25519_keypair() {
+    local target_user="${1:-root}"
+    local user_home
+    if [ "$target_user" = "root" ]; then
+        user_home="/root"
+    else
+        user_home=$(eval echo "~$target_user" 2>/dev/null || echo "/home/$target_user")
+    fi
+
+    mkdir -p "${user_home}/.ssh"
+    chmod 700 "${user_home}/.ssh" 2>/dev/null || true
+
+    local key_file="${user_home}/.ssh/id_ed25519_$(date +%Y%m%d_%H%M%S)"
+    if ! ssh-keygen -t ed25519 -f "$key_file" -C "server-${target_user}-$(date +%Y%m%d)" -N "" -q 2>/dev/null; then
+        warn "Не удалось сгенерировать пару ключей ssh-keygen."
+        return 1
+    fi
+
+    local auth_file="${user_home}/.ssh/authorized_keys"
+    cat "${key_file}.pub" >> "$auth_file"
+    chmod 600 "$auth_file" "${key_file}" 2>/dev/null || true
+    if [ "$target_user" != "root" ] && command -v chown >/dev/null 2>&1; then
+        chown -R "${target_user}:${target_user}" "${user_home}/.ssh" 2>/dev/null || true
+    fi
+
+    echo
+    echo -e "${RED}╔════════════════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${RED}║${NC}             ${WHITE}${BOLD}🔑 ВНИМАНИЕ: СОХРАНИТЕ ЭТОТ ПРИВАТНЫЙ КЛЮЧ ПРЯМО СЕЙЧАС!${NC}           ${RED}║${NC}"
+    echo -e "${RED}╚════════════════════════════════════════════════════════════════════════════════╝${NC}"
+    echo -e "  ${YELLOW}Скопируйте всё содержимое между линиями и сохраните в файл на своем ПК${NC}"
+    echo -e "  ${YELLOW}(например, ~/.ssh/server_key или puttygen -> id_ed25519.ppk):${NC}"
+    echo -e "${CYAN}--------------------------------------------------------------------------------${NC}"
+    cat "$key_file"
+    echo -e "${CYAN}--------------------------------------------------------------------------------${NC}"
+    echo
+    if [ -t 0 ]; then
+        local dummy=""
+        read -r -p "  Нажмите [Enter] после того, как сохранили приватный ключ в надежном месте..." dummy </dev/tty 2>/dev/null || read -r -p "  Нажмите [Enter]..." dummy 2>/dev/null || true
+    fi
+    ok "SSH-ключ Ed25519 сгенерирован и добавлен в ${auth_file}."
+    return 0
+}
+
+verify_ssh_local_port() {
+    local port="$1"
+    local timeout_sec="${2:-3}"
+
+    # 1. Попытка чтения баннера SSH-2.0 через Bash /dev/tcp
+    local banner=""
+    banner=$(timeout "$timeout_sec" bash -c "exec 3<>/dev/tcp/127.0.0.1/$port; head -n 1 <&3" 2>/dev/null || true)
+    if [[ "$banner" == *"SSH-2.0"* ]]; then
+        return 0
+    fi
+
+    # 2. Попытка через nc
+    if command -v nc >/dev/null 2>&1; then
+        if nc -z -w "$timeout_sec" 127.0.0.1 "$port" 2>/dev/null; then
+            return 0
+        fi
+    fi
+
+    # 3. Попытка через ss
+    if command -v ss >/dev/null 2>&1; then
+        if ss -tln sport = ":$port" 2>/dev/null | grep -q ":$port"; then
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+apply_ssh_configuration() {
+    local target_port="${1:-22}"
+    local active_port="${2:-22}"
+    local disable_pwd="${3:-n}"
+
+    local ssh_svc
+    ssh_svc=$(get_ssh_service_name)
+
+    # 1. Отключаем systemd socket-activation (Ubuntu 22.10+, Ubuntu 24.04 LTS),
+    # чтобы служба корректно слушала кастомный порт через стандартный unit.
+    systemctl stop ssh.socket 2>/dev/null || true
+    systemctl disable ssh.socket 2>/dev/null || true
+    systemctl enable "${ssh_svc}.service" 2>/dev/null || true
+
+    # 2. Обновляем базовый /etc/ssh/sshd_config с гарантией директивы Include
+    if [ -f /etc/ssh/sshd_config ]; then
+        sed -i -E "s/^[#\s]*Port [0-9]+/Port ${target_port}/" /etc/ssh/sshd_config 2>/dev/null || true
+        if ! grep -q "^Include /etc/ssh/sshd_config.d/\*\.conf" /etc/ssh/sshd_config 2>/dev/null; then
+            sed -i '1i Include /etc/ssh/sshd_config.d/*.conf' /etc/ssh/sshd_config 2>/dev/null || true
+        fi
+    fi
+
+    # 3. Drop-in конфигурация: ДВУХПОРТОВЫЙ РЕЖИМ при смене порта
+    mkdir -p /etc/ssh/sshd_config.d/
+    local dropin_file="/etc/ssh/sshd_config.d/99-hardening.conf"
+
+    # Формируем директивы портов
+    local port_directives="Port ${target_port}"
+    if [ "$target_port" -ne "$active_port" ]; then
+        port_directives="Port ${target_port}
+Port ${active_port}"
+    fi
+
+    # Проверяем, можно ли отключить вход по паролю (ТОЛЬКО если есть валидные ключи)
+    local pwd_directives=""
+    if is_true "$disable_pwd"; then
+        if has_authorized_keys "root"; then
+            pwd_directives="PasswordAuthentication no
+KbdInteractiveAuthentication no
+ChallengeResponseAuthentication no
+UsePAM yes"
+            ok "Вход по паролю будет отключен (авторизованные SSH-ключи подтверждены)."
+        else
+            warn "Внимание: в authorized_keys не найдено SSH-ключей! Вход по паролю оставлен включенным для предотвращения потери доступа."
+        fi
+    fi
+
+    cat << EOF > "$dropin_file"
+# Сгенерировано Nginx Stream Router Security Subsystem
+${port_directives}
+AddressFamily inet
+PubkeyAuthentication yes
+${pwd_directives}
+EOF
+    chmod 600 "$dropin_file" 2>/dev/null || true
+
+    # 4. Проверяем валидность конфигурации sshd перед перезапуском
+    mkdir -p /run/sshd 2>/dev/null || true
+    if /usr/sbin/sshd -t 2>/dev/null; then
+        systemctl daemon-reload 2>/dev/null || true
+        systemctl restart "${ssh_svc}.service" 2>/dev/null || systemctl restart ssh 2>/dev/null || true
+    else
+        # При синтаксической ошибке — безопасный откат
+        warn "Ошибка валидации sshd -t при настройке SSH! Выполнен откат изменений drop-in для предотвращения потери доступа."
+        rm -f "$dropin_file"
+        systemctl restart "${ssh_svc}.service" 2>/dev/null || true
+        return 1
+    fi
+
+    # 5. Локальный тест ответа порта
+    if [ "$target_port" -ne "$active_port" ]; then
+        if verify_ssh_local_port "$target_port" 5; then
+            ok "Служба SSH запущена в переходном режиме: слушает новый порт ${WHITE}${target_port}${NC} и резервный порт ${WHITE}${active_port}${NC}."
+        else
+            warn "Локальный тест порта $target_port не дал ответа! Выполняется откат на активный порт $active_port..."
+            cat << EOF > "$dropin_file"
+Port ${active_port}
+AddressFamily inet
+PubkeyAuthentication yes
+EOF
+            chmod 600 "$dropin_file" 2>/dev/null || true
+            systemctl restart "${ssh_svc}.service" 2>/dev/null || true
+            return 1
+        fi
+    else
+        ok "Конфигурация SSH успешно применена (порт ${WHITE}${target_port}${NC})."
+    fi
+
+    return 0
+}
+
+deploy_ssh_transition_watcher() {
+    local target_port="$1"
+    local active_port="$2"
+    local ttl_hours="${3:-24}"
+
+    [ "$target_port" -eq "$active_port" ] && return 0
+
+    local watcher_script="/usr/local/bin/ssh-transition-watcher.sh"
+    local watcher_service="/etc/systemd/system/ssh-transition-watcher.service"
+    local bin_dir="/usr/local/bin"
+    [ -d "$bin_dir" ] || mkdir -p "$bin_dir" 2>/dev/null || true
+
+    cat << 'EOF' > "$watcher_script"
+#!/usr/bin/env bash
+# SSH Port Transition Watcher — безопасное закрытие старого порта при первом успешном входе на новый
+set -u
+TARGET_PORT="${1:-2222}"
+ACTIVE_PORT="${2:-22}"
+TTL_HOURS="${3:-24}"
+
+START_TIME=$(date +%s)
+MAX_RUNTIME=$((TTL_HOURS * 3600))
+
+logger -t ssh-watcher "Запущен безопасный монитор перехода SSH: цель=$TARGET_PORT, старый=$ACTIVE_PORT, TTL=${TTL_HOURS}ч."
+
+while true; do
+    NOW=$(date +%s)
+    ELAPSED=$((NOW - START_TIME))
+    if [ "$ELAPSED" -ge "$MAX_RUNTIME" ]; then
+        logger -t ssh-watcher "Истек лимит времени ожидания (${TTL_HOURS}ч). Старый порт $ACTIVE_PORT оставлен для предотвращения потери доступа."
+        exit 0
+    fi
+
+    # Ищем установленное внешнее соединение на целевой порт
+    EST=$(ss -tn sport = ":${TARGET_PORT}" state established 2>/dev/null | grep -vE '127\.0\.0\.1|::1|Local Address' | wc -l)
+    if [ "$EST" -gt 0 ]; then
+        logger -t ssh-watcher "Обнаружено успешное подключение на порт $TARGET_PORT! Финализация перехода и закрытие порта $ACTIVE_PORT..."
+
+        # 1. Удаляем старый порт из drop-in sshd
+        if [ -f /etc/ssh/sshd_config.d/99-hardening.conf ]; then
+            sed -i "/^Port ${ACTIVE_PORT}$/d" /etc/ssh/sshd_config.d/99-hardening.conf 2>/dev/null || true
+        fi
+        systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null || true
+
+        # 2. Удаляем старый порт из UFW
+        if command -v ufw >/dev/null 2>&1; then
+            ufw delete allow "${ACTIVE_PORT}/tcp" >/dev/null 2>&1 || true
+        fi
+
+        # 3. Обновляем Fail2ban
+        if [ -f /etc/fail2ban/jail.local ]; then
+            sed -i "s/port = .*/port = ${TARGET_PORT}/" /etc/fail2ban/jail.local 2>/dev/null || true
+            systemctl reload fail2ban 2>/dev/null || systemctl restart fail2ban 2>/dev/null || true
+        fi
+
+        logger -t ssh-watcher "Переход SSH успешно завершен. Порт $ACTIVE_PORT закрыт, активен только $TARGET_PORT."
+        systemctl disable --now ssh-transition-watcher.service 2>/dev/null || true
+        rm -f /etc/systemd/system/ssh-transition-watcher.service /usr/local/bin/ssh-transition-watcher.sh 2>/dev/null || true
+        systemctl daemon-reload 2>/dev/null || true
+        exit 0
+    fi
+
+    sleep 5
+done
+EOF
+    chmod +x "$watcher_script" 2>/dev/null || true
+
+    mkdir -p /etc/systemd/system
+    cat << EOF > "$watcher_service"
+[Unit]
+Description=SSH Port Transition Safe Watcher
+After=network.target sshd.service ssh.service
+
+[Service]
+Type=simple
+ExecStart=${watcher_script} ${target_port} ${active_port} ${ttl_hours}
+Restart=no
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload 2>/dev/null || true
+        systemctl enable --now ssh-transition-watcher.service >/dev/null 2>&1 || true
+        ok "Развернут фоновый сторожевой сервис ${WHITE}ssh-transition-watcher.service${NC}."
+    fi
+}
+
+finalize_ssh_transition() {
+    local target_port="$1"
+    local active_port="$2"
+    local ssh_svc
+    ssh_svc=$(get_ssh_service_name)
+
+    [ "$target_port" -eq "$active_port" ] && return 0
+
+    log "Финализация перехода SSH: закрытие резервного порта ${active_port}..."
+
+    # 1. Удаляем старый порт из drop-in конфигурации
+    if [ -f /etc/ssh/sshd_config.d/99-hardening.conf ]; then
+        sed -i "/^Port ${active_port}$/d" /etc/ssh/sshd_config.d/99-hardening.conf 2>/dev/null || true
+    fi
+
+    # 2. Обновляем базовый /etc/ssh/sshd_config
+    if [ -f /etc/ssh/sshd_config ]; then
+        sed -i -E "s/^[#\s]*Port [0-9]+/Port ${target_port}/" /etc/ssh/sshd_config 2>/dev/null || true
+    fi
+
+    # 3. Валидация и перезагрузка sshd
+    mkdir -p /run/sshd 2>/dev/null || true
+    if /usr/sbin/sshd -t 2>/dev/null; then
+        systemctl reload "${ssh_svc}.service" 2>/dev/null || systemctl restart "${ssh_svc}.service" 2>/dev/null || true
+    fi
+
+    # 4. Удаляем старый порт из UFW
+    if command -v ufw >/dev/null 2>&1; then
+        ufw delete allow "${active_port}/tcp" >/dev/null 2>&1 || true
+    fi
+
+    # 5. Обновляем Fail2ban
+    if [ -f /etc/fail2ban/jail.local ]; then
+        sed -i "s/port = .*/port = ${target_port}/" /etc/fail2ban/jail.local 2>/dev/null || true
+        systemctl reload fail2ban 2>/dev/null || systemctl restart fail2ban 2>/dev/null || true
+    fi
+
+    # 6. Останавливаем и удаляем watcher
+    systemctl disable --now ssh-transition-watcher.service >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/ssh-transition-watcher.service /usr/local/bin/ssh-transition-watcher.sh 2>/dev/null || true
+    systemctl daemon-reload 2>/dev/null || true
+
+    ok "Резервный порт SSH ${active_port} закрыт. SSH теперь работает исключительно на порту ${WHITE}${target_port}${NC}."
+}
+
+wait_and_finalize_ssh_transition() {
+    local target_port="$1"
+    local active_port="$2"
+    local timeout_sec="${3:-30}"
+
+    [ "$target_port" -eq "$active_port" ] && return 0
+
+    if is_true "${FORCE_CLOSE_OLD_SSH:-n}"; then
+        ok "Включен режим принудительного закрытия (--force-close-old-ssh / FORCE_CLOSE_OLD_SSH=y)."
+        finalize_ssh_transition "$target_port" "$active_port"
+        return 0
+    fi
+
+    # Если скрипт выполняется не интерактивно (нет tty) — поднимаем watcher и выходим
+    if [ ! -t 0 ] || [ "${NON_INTERACTIVE:-0}" -eq 1 ]; then
+        log "Неинтерактивный запуск: активирован фоновый watcher перехода SSH."
+        deploy_ssh_transition_watcher "$target_port" "$active_port" 24
+        return 0
+    fi
+
+    local host_ip
+    host_ip=$(get_wan_ip)
+
+    echo
+    echo -e "${YELLOW}╔════════════════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${YELLOW}║${NC}             ${WHITE}${BOLD}⚡ БЕЗОПАСНЫЙ ПЕРЕХОД SSH: ПОРТЫ ${target_port} (НОВЫЙ) И ${active_port} (СТАРЫЙ)${NC}            ${YELLOW}║${NC}"
+    echo -e "${YELLOW}╚════════════════════════════════════════════════════════════════════════════════╝${NC}"
+    echo -e "  Служба SSH сейчас слушает ${GREEN}ОБА порта (${target_port} и ${active_port})${NC}. Ваша текущая сессия не прервана."
+    echo -e "  Брандмауэр UFW и Fail2ban защищают оба порта."
+    echo
+    echo -e "  ${CYAN}${BOLD}ПРОВЕРЬТЕ ПОДКЛЮЧЕНИЕ В НОВОЙ ВКЛАДКЕ ТЕРМИНАЛА:${NC}"
+    echo -e "    ${WHITE}ssh -p ${target_port} root@${host_ip}${NC}"
+    echo
+    echo -e "  ${WHITE}[1]${NC} Ожидать вашего подключения (${timeout_sec} сек, автозакрытие при успехе) ${GREEN}[Enter]${NC}"
+    echo -e "  ${WHITE}[2]${NC} Оставить оба порта и передать контроль фоновому watcher (закроет старый порт позже)"
+    echo -e "  ${WHITE}[3]${NC} Закрыть старый порт ${active_port} прямо сейчас"
+    echo
+
+    local choice=""
+    echo -ne "  ${WHITE}${ARROW} Ваш выбор [1/2/3] (по умолчанию 1): ${NC}"
+    read -r -t 10 choice </dev/tty || choice="1"
+    choice="${choice:-1}"
+    choice=$(echo "$choice" | tr -d '[:space:]')
+
+    case "$choice" in
+        2)
+            deploy_ssh_transition_watcher "$target_port" "$active_port" 24
+            ok "Оба порта (${target_port} и ${active_port}) остаются открытыми. Watcher закроет ${active_port} после входа."
+            return 0
+            ;;
+        3)
+            finalize_ssh_transition "$target_port" "$active_port"
+            return 0
+            ;;
+        *)
+            echo -e "  ${CYAN}Ожидание входящего подключения на порт ${target_port} (${timeout_sec} сек)...${NC}"
+            local elapsed=0
+            while [ "$elapsed" -lt "$timeout_sec" ]; do
+                local est_count=0
+                est_count=$(ss -tn sport = ":${target_port}" state established 2>/dev/null | grep -vE '127\.0\.0\.1|::1|Local Address' | wc -l)
+                if [ "$est_count" -gt 0 ]; then
+                    echo
+                    ok "Успешное входящее подключение на порт ${target_port} обнаружено!"
+                    finalize_ssh_transition "$target_port" "$active_port"
+                    return 0
+                fi
+                sleep 1
+                elapsed=$((elapsed + 1))
+                echo -ne "\r  ${DIM}Осталось: $((timeout_sec - elapsed)) сек...${NC} "
+            done
+            echo
+            warn "За ${timeout_sec} сек новых подключений не зафиксировано."
+            ok "Для вашей безопасности старый порт ${active_port} пока оставлен открытым."
+            deploy_ssh_transition_watcher "$target_port" "$active_port" 24
+            return 0
+            ;;
+    esac
+}
+
+apply_fail2ban_configuration() {
+    local target_port="${1:-22}"
+    local active_port="${2:-22}"
+
+    # 1. Установка пакетов fail2ban и python3-systemd (для чтения journald в Ubuntu 24.04 / Debian 12)
+    if ! command -v fail2ban-client >/dev/null 2>&1; then
+        if command -v apt-get >/dev/null 2>&1; then
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -y >/dev/null 2>&1 || true
+            apt-get install -y fail2ban python3-systemd >/dev/null 2>&1 || apt-get install -y fail2ban >/dev/null 2>&1 || true
+        fi
+    fi
+
+    if ! command -v fail2ban-client >/dev/null 2>&1; then
+        warn "Пакет fail2ban не найден в системе и не может быть установлен."
+        return 1
+    fi
+
+    # 2. Формируем список защищаемых портов (и активный, и целевой)
+    local port_str="${active_port}"
+    if [ "$target_port" -ne "$active_port" ]; then
+        port_str="${active_port},${target_port}"
+    fi
+
+    mkdir -p /etc/fail2ban
+    cat << EOF > /etc/fail2ban/jail.local
+[DEFAULT]
+bantime = 1h
+findtime = 10m
+maxretry = 5
+backend = systemd
+
+[sshd]
+enabled = true
+port = ${port_str}
+EOF
+    chmod 644 /etc/fail2ban/jail.local 2>/dev/null || true
+
+    # 3. Активация и запуск службы
+    systemctl enable fail2ban >/dev/null 2>&1 || true
+    systemctl restart fail2ban >/dev/null 2>&1 || true
+
+    if systemctl is-active --quiet fail2ban 2>/dev/null; then
+        ok "Служба Fail2ban успешно запущена и защищает SSH (порты: ${WHITE}${port_str}${NC})."
+    else
+        warn "Служба Fail2ban была установлена, но не смогла запуститься. Проверьте journalctl -u fail2ban."
+        return 1
+    fi
+    return 0
+}
 
 
 # --- Global Paths & Logs ---
@@ -1251,50 +1786,6 @@ collect_express_inputs() {
     fi
 }
 
-# --- SSH Configuration & Hardening ---
-apply_ssh_configuration() {
-    local target_port="$1"
-    local active_port="$2"
-
-    if [ "$target_port" -eq "$active_port" ]; then
-        return 0
-    fi
-
-    local ssh_svc
-    ssh_svc=$(get_ssh_service_name)
-
-    # 1. Отключаем systemd socket-activation (Ubuntu 22.10+, Ubuntu 24.04 LTS)
-    systemctl stop ssh.socket 2>/dev/null || true
-    systemctl disable ssh.socket 2>/dev/null || true
-    systemctl enable "${ssh_svc}.service" 2>/dev/null || true
-
-    # 2. Обновляем базовый /etc/ssh/sshd_config с гарантией Include
-    if [ -f /etc/ssh/sshd_config ]; then
-        sed -i -E "s/^[#\s]*Port [0-9]+/Port ${target_port}/" /etc/ssh/sshd_config || true
-        if ! grep -q "^Include /etc/ssh/sshd_config.d/\*\.conf" /etc/ssh/sshd_config 2>/dev/null; then
-            sed -i '1i Include /etc/ssh/sshd_config.d/*.conf' /etc/ssh/sshd_config 2>/dev/null || true
-        fi
-    fi
-
-    # 3. Drop-in конфигурация для OpenSSH с явным портом
-    mkdir -p /etc/ssh/sshd_config.d/
-    cat << EOF > /etc/ssh/sshd_config.d/99-hardening.conf
-Port ${target_port}
-AddressFamily inet
-PubkeyAuthentication yes
-EOF
-
-    # 4. Проверяем валидность конфигурации sshd перед перезапуском
-    mkdir -p /run/sshd
-    if /usr/sbin/sshd -t 2>/dev/null; then
-        systemctl restart "${ssh_svc}.service" || true
-    else
-        # При синтаксической ошибке — безопасный откат
-        rm -f /etc/ssh/sshd_config.d/99-hardening.conf
-        systemctl restart "${ssh_svc}.service" || true
-    fi
-}
-
 
 # --- Installation Steps ---
 
@@ -1304,8 +1795,13 @@ step_os_hardening() {
     # Update package lists
     apt-get update -y
     
+    local extra_pkgs=""
+    if is_true "${ENABLE_ZAPRET:-0}"; then
+        extra_pkgs="libnetfilter-queue1 iptables"
+    fi
+
     # Install foundational tools (включая python3-systemd для fail2ban, python3-bcrypt для 3x-ui и sqlite3)
-    apt-get install -y curl wget git jq ufw certbot fail2ban python3-systemd python3-bcrypt sqlite3 ca-certificates lsb-release gnupg sed coreutils
+    apt-get install -y curl wget git jq ufw certbot fail2ban python3-systemd python3-bcrypt sqlite3 ca-certificates lsb-release gnupg sed coreutils $extra_pkgs
 
     # 0. Инициализация Swapfile для систем с малым объемом памяти (<= 2GB)
     local total_mem_kb
@@ -1333,19 +1829,8 @@ step_os_hardening() {
 
 
     # 2. SSH Configuration & Fail2ban (защита от потери доступа)
-    apply_ssh_configuration "$SSH_PORT" "$SSH_ACTIVE_PORT"
-
-    cat << EOF > /etc/fail2ban/jail.local
-[sshd]
-enabled = true
-port = ${SSH_ACTIVE_PORT},${SSH_PORT}
-maxretry = 5
-findtime = 10m
-bantime = 1h
-backend = systemd
-EOF
-    systemctl enable fail2ban >/dev/null 2>&1 || true
-    systemctl restart fail2ban >/dev/null 2>&1 || true
+    apply_ssh_configuration "$SSH_PORT" "$SSH_ACTIVE_PORT" "${DISABLE_PASSWORD_AUTH:-n}"
+    apply_fail2ban_configuration "$SSH_PORT" "$SSH_ACTIVE_PORT"
 
     # 3. UFW Firewall Setup & Disable IPv6 in UFW (Non-destructive)
     # Сохраняем существующие правила брандмауэра и контейнерные цепочки (отказ от деструктивного ufw --force reset)
@@ -1393,6 +1878,10 @@ EOF
             local mtp_p="${MTPROTO_PORT:-8444}"
             ufw allow "${mtp_p}/tcp" comment 'Telegram MTProxy FakeTLS' >/dev/null 2>&1 || true
         fi
+        if is_true "${ENABLE_MASQUE:-0}"; then
+            local masque_p="${MASQUE_PORT:-8445}"
+            ufw allow "${masque_p}/udp" comment 'MASQUE RFC 9484' >/dev/null 2>&1 || true
+        fi
         if [[ "${HY2_PORT_HOPPING,,}" == "y" || "${HY2_PORT_HOPPING:-}" == "1" ]] && [ -n "${HY2_PORT_HOPPING_RANGE:-}" ]; then
             ufw allow "${HY2_PORT_HOPPING_RANGE//:/ }/udp" comment 'Hysteria 2 Port Hopping' >/dev/null 2>&1 || true
         fi
@@ -1405,12 +1894,20 @@ EOF
         ufw deny 46443/tcp comment 'VLESS Classic Internal' >/dev/null 2>&1 || true
         ufw deny 50443/tcp comment 'VLESS xHTTP Internal' >/dev/null 2>&1 || true
         ufw deny 9443/tcp  comment 'Trojan Internal' >/dev/null 2>&1 || true
+        ufw deny "${SHADOWTLS_PORT:-8543}/tcp" comment 'ShadowTLS Internal' >/dev/null 2>&1 || true
+        ufw deny 8542/tcp comment 'ShadowTLS Stripper Internal' >/dev/null 2>&1 || true
+        ufw deny "${WSTUNNEL_PORT:-8080}/tcp" comment 'Wstunnel Internal' >/dev/null 2>&1 || true
         ufw deny "$PANEL_INTERNAL_PORT"/tcp comment '3X-UI Panel Internal' >/dev/null 2>&1 || true
     else
         ufw allow "${AWG_STANDALONE_PORT:-8445}/udp" comment 'AmneziaWG Standalone Server' >/dev/null 2>&1 || true
     fi
     
     echo "y" | ufw enable >/dev/null 2>&1 || true
+
+    # 4. Server-Side Zapret (DPI Desync nfqws)
+    if is_true "${ENABLE_ZAPRET:-0}"; then
+        setup_zapret_service
+    fi
 }
 
 step_install_3xui() {
@@ -1485,6 +1982,350 @@ step_install_nginx_and_mask() {
         --pass "$PANEL_PASS" || die "Ошибка при развертывании маскировки Nginx (setup_mask.sh)."
 }
 
+setup_zapret_service() {
+    log "Настройка службы Server-Side Zapret nfqws..."
+    local cur_arch
+    cur_arch=$(uname -m 2>/dev/null || echo "x86_64")
+    local z_arch="x86_64"
+    case "$cur_arch" in
+        x86_64|amd64) z_arch="x86_64" ;;
+        aarch64|arm64) z_arch="aarch64" ;;
+        *) z_arch="x86_64" ;;
+    esac
+
+    local bin_dir="${LOCAL_BIN_DIR:-/usr/local/bin}"
+    [ -d "$bin_dir" ] || mkdir -p "$bin_dir" 2>/dev/null || true
+
+    if [ ! -x "${bin_dir}/nfqws" ]; then
+        local z_ver="${ZAPRET_VERSION:-v69.2}"
+        local z_tmp="/tmp/zapret_${z_ver}"
+        mkdir -p "$z_tmp"
+        if curl -fsSL --connect-timeout 15 "https://github.com/bol-van/zapret/releases/download/${z_ver}/zapret-${z_ver}.tar.gz" -o "$z_tmp/zapret.tar.gz" 2>/dev/null || \
+           curl -fsSL --connect-timeout 15 "https://ghfast.top/https://github.com/bol-van/zapret/releases/download/${z_ver}/zapret-${z_ver}.tar.gz" -o "$z_tmp/zapret.tar.gz" 2>/dev/null; then
+            tar -zxf "$z_tmp/zapret.tar.gz" -C "$z_tmp" --strip-components=1 2>/dev/null || true
+            if [ -f "$z_tmp/binaries/${z_arch}/nfqws" ]; then
+                cp "$z_tmp/binaries/${z_arch}/nfqws" "${bin_dir}/nfqws"
+                chmod +x "${bin_dir}/nfqws"
+            elif [ -n "$(find "$z_tmp" -name nfqws -type f 2>/dev/null)" ]; then
+                cp "$(find "$z_tmp" -name nfqws -type f | grep "${z_arch}" | head -n1 || find "$z_tmp" -name nfqws -type f | head -n1)" "${bin_dir}/nfqws"
+                chmod +x "${bin_dir}/nfqws"
+            elif [ -d "$z_tmp/nfqws" ]; then
+                make -C "$z_tmp/nfqws" >/dev/null 2>&1 || true
+                if [ -f "$z_tmp/nfqws/nfqws" ]; then
+                    cp "$z_tmp/nfqws/nfqws" "${bin_dir}/nfqws"
+                    chmod +x "${bin_dir}/nfqws"
+                fi
+            fi
+        fi
+        rm -rf "$z_tmp" 2>/dev/null || true
+    fi
+
+    local qnum="${ZAPRET_QNUM:-200}"
+    local desync="${ZAPRET_DESYNC:-split2}"
+    local fooling="${ZAPRET_FOOLING:-md5sig,badseq}"
+    local iptables_bin
+    iptables_bin="$(command -v iptables 2>/dev/null || echo "/usr/sbin/iptables")"
+
+    mkdir -p /etc/systemd/system
+    cat << EOF > /etc/systemd/system/zapret-server.service
+[Unit]
+Description=Server-Side Zapret nfqws DPI Desync Daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStartPre=-${iptables_bin} -t mangle -D POSTROUTING -p tcp -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original -m mark ! --mark 0x40000000/0x40000000 -j NFQUEUE --queue-num ${qnum} --queue-bypass
+ExecStartPre=${iptables_bin} -t mangle -I POSTROUTING -p tcp -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original -m mark ! --mark 0x40000000/0x40000000 -j NFQUEUE --queue-num ${qnum} --queue-bypass
+ExecStart=${bin_dir}/nfqws --qnum=${qnum} --dpi-desync=${desync} --dpi-desync-fooling=${fooling}
+ExecStopPost=-${iptables_bin} -t mangle -D POSTROUTING -p tcp -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original -m mark ! --mark 0x40000000/0x40000000 -j NFQUEUE --queue-num ${qnum} --queue-bypass
+Restart=always
+RestartSec=3s
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload 2>/dev/null || true
+        systemctl enable zapret-server >/dev/null 2>&1 || true
+        if [ -x "${bin_dir}/nfqws" ]; then
+            systemctl restart zapret-server 2>/dev/null || true
+            ok "Служба Server-Side Zapret активирована (NFQUEUE $qnum, desync: $desync)."
+        else
+            warn "Бинарник ${bin_dir}/nfqws не найден, запуск zapret-server отложен."
+        fi
+    fi
+}
+
+setup_masque_service() {
+    log "Настройка службы Sing-box MASQUE (RFC 9484 / RFC 9298)..."
+    local cur_arch
+    cur_arch=$(uname -m 2>/dev/null || echo "x86_64")
+    local sb_arch="amd64"
+    case "$cur_arch" in
+        x86_64|amd64) sb_arch="amd64" ;;
+        aarch64|arm64) sb_arch="arm64" ;;
+        *) sb_arch="amd64" ;;
+    esac
+
+    local bin_dir="${LOCAL_BIN_DIR:-/usr/local/bin}"
+    [ -d "$bin_dir" ] || mkdir -p "$bin_dir" 2>/dev/null || true
+
+    if [ ! -x "${bin_dir}/sing-box" ]; then
+        local sb_ver="1.11.4"
+        local sb_tmp="/tmp/sing-box_${sb_ver}"
+        mkdir -p "$sb_tmp"
+        if curl -fsSL --connect-timeout 15 "https://github.com/SagerNet/sing-box/releases/download/v${sb_ver}/sing-box-${sb_ver}-linux-${sb_arch}.tar.gz" -o "$sb_tmp/sb.tar.gz" 2>/dev/null || \
+           curl -fsSL --connect-timeout 15 "https://ghfast.top/https://github.com/SagerNet/sing-box/releases/download/v${sb_ver}/sing-box-${sb_ver}-linux-${sb_arch}.tar.gz" -o "$sb_tmp/sb.tar.gz" 2>/dev/null; then
+            tar -zxf "$sb_tmp/sb.tar.gz" -C "$sb_tmp" --strip-components=1 2>/dev/null || true
+            if [ -f "$sb_tmp/sing-box" ]; then
+                cp "$sb_tmp/sing-box" "${bin_dir}/sing-box"
+                chmod +x "${bin_dir}/sing-box"
+            elif [ -n "$(find "$sb_tmp" -name sing-box -type f 2>/dev/null)" ]; then
+                cp "$(find "$sb_tmp" -name sing-box -type f | head -n1)" "${bin_dir}/sing-box"
+                chmod +x "${bin_dir}/sing-box"
+            fi
+        fi
+        rm -rf "$sb_tmp" 2>/dev/null || true
+    fi
+
+    local masque_p="${MASQUE_PORT:-8445}"
+    local masque_u="${MASQUE_USER:-client}"
+    local masque_pw="${MASQUE_PASSWORD:-}"
+    local cert_file="${SSL_BASE_DIR:-/etc/letsencrypt/live}/${PRIMARY_DOMAIN}/fullchain.pem"
+    local key_file="${SSL_BASE_DIR:-/etc/letsencrypt/live}/${PRIMARY_DOMAIN}/privkey.pem"
+
+    mkdir -p /etc/sing-box
+    cat << EOF > /etc/sing-box/masque.json
+{
+  "log": {
+    "level": "warn",
+    "timestamp": true
+  },
+  "inbounds": [
+    {
+      "type": "masque",
+      "tag": "masque-in",
+      "listen": "::",
+      "listen_port": ${masque_p},
+      "tcp_fast_open": true,
+      "sniff": true,
+      "sniff_override_destination": true,
+      "users": [
+        {
+          "username": "${masque_u}",
+          "password": "${masque_pw}"
+        }
+      ],
+      "tls": {
+        "enabled": true,
+        "server_name": "${PRIMARY_DOMAIN}",
+        "certificate_path": "${cert_file}",
+        "key_path": "${key_file}",
+        "alpn": ["h3"]
+      },
+      "connect_udp": {
+        "enabled": true,
+        "uri_template": "/.well-known/masque/udp/{target_host}/{target_port}/"
+      },
+      "connect_ip": {
+        "enabled": true,
+        "uri_template": "/.well-known/masque/ip/"
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "port": 25,
+        "outbound": "block"
+      },
+      {
+        "ip_is_private": true,
+        "outbound": "block"
+      }
+    ],
+    "final": "direct"
+  }
+}
+EOF
+
+    mkdir -p /etc/systemd/system
+    cat << EOF > /etc/systemd/system/sing-box-masque.service
+[Unit]
+Description=Sing-box MASQUE (RFC 9484 / RFC 9298) Daemon
+After=network.target network-online.target
+
+[Service]
+Type=simple
+ExecStart=${bin_dir}/sing-box run -c /etc/sing-box/masque.json
+Restart=always
+RestartSec=3s
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload 2>/dev/null || true
+        systemctl enable sing-box-masque >/dev/null 2>&1 || true
+        if [ -x "${bin_dir}/sing-box" ]; then
+            systemctl restart sing-box-masque 2>/dev/null || true
+            ok "Служба Sing-box MASQUE активирована (порт ${masque_p}/udp, H3/QUIC)."
+        else
+            warn "Бинарник ${bin_dir}/sing-box не найден, запуск sing-box-masque отложен."
+        fi
+    fi
+}
+
+setup_shadowtls_service() {
+    log "Настройка службы ShadowTLS v4..."
+    local cur_arch
+    cur_arch=$(uname -m 2>/dev/null || echo "x86_64")
+    local st_arch="x86_64"
+    case "$cur_arch" in
+        x86_64|amd64) st_arch="x86_64" ;;
+        aarch64|arm64) st_arch="aarch64" ;;
+        *) st_arch="x86_64" ;;
+    esac
+
+    local bin_dir="${LOCAL_BIN_DIR:-/usr/local/bin}"
+    [ -d "$bin_dir" ] || mkdir -p "$bin_dir" 2>/dev/null || true
+
+    if [ ! -x "${bin_dir}/shadow-tls" ]; then
+        if curl -fsSL --connect-timeout 15 "https://github.com/ihciah/shadow-tls/releases/latest/download/shadow-tls-${st_arch}-unknown-linux-musl" -o "${bin_dir}/shadow-tls" 2>/dev/null || \
+           curl -fsSL --connect-timeout 15 "https://ghfast.top/https://github.com/ihciah/shadow-tls/releases/latest/download/shadow-tls-${st_arch}-unknown-linux-musl" -o "${bin_dir}/shadow-tls" 2>/dev/null; then
+            chmod +x "${bin_dir}/shadow-tls"
+        fi
+    fi
+
+    local st_port="${SHADOWTLS_PORT:-8543}"
+    local ss_backend_port="${SS2022_PORT:-8388}"
+    local st_sni="${SHADOWTLS_SNI:-gateway.icloud.com}"
+    local st_pwd="${SHADOWTLS_PASSWORD:-}"
+
+    mkdir -p /etc/systemd/system
+    cat << EOF > /etc/systemd/system/shadow-tls.service
+[Unit]
+Description=ShadowTLS v4 Stealth SNI Decoy Gateway
+After=network.target network-online.target
+
+[Service]
+Type=simple
+ExecStart=${bin_dir}/shadow-tls --v3 server --listen 127.0.0.1:${st_port} --server 127.0.0.1:${ss_backend_port} --tls ${st_sni}:443 --password ${st_pwd}
+Restart=always
+RestartSec=3s
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload 2>/dev/null || true
+        systemctl enable shadow-tls >/dev/null 2>&1 || true
+        if [ -x "${bin_dir}/shadow-tls" ]; then
+            systemctl restart shadow-tls 2>/dev/null || true
+            ok "Служба ShadowTLS v4 активирована (порт ${st_port}, decoy: ${st_sni})."
+        else
+            warn "Бинарник ${bin_dir}/shadow-tls не найден, запуск shadow-tls отложен."
+        fi
+    fi
+}
+
+setup_wstunnel_service() {
+    log "Настройка службы Wstunnel L7..."
+    local cur_arch
+    cur_arch=$(uname -m 2>/dev/null || echo "x86_64")
+    local ws_arch="amd64"
+    case "$cur_arch" in
+        x86_64|amd64) ws_arch="amd64" ;;
+        aarch64|arm64) ws_arch="arm64" ;;
+        *) ws_arch="amd64" ;;
+    esac
+
+    local bin_dir="${LOCAL_BIN_DIR:-/usr/local/bin}"
+    [ -d "$bin_dir" ] || mkdir -p "$bin_dir" 2>/dev/null || true
+
+    if [ ! -x "${bin_dir}/wstunnel" ]; then
+        local ws_ver="11.0.0"
+        local ws_tmp="/tmp/wstunnel_${ws_ver}"
+        mkdir -p "$ws_tmp"
+        if curl -fsSL --connect-timeout 15 "https://github.com/erebe/wstunnel/releases/download/v${ws_ver}/wstunnel_${ws_ver}_linux_${ws_arch}.tar.gz" -o "$ws_tmp/ws.tar.gz" 2>/dev/null || \
+           curl -fsSL --connect-timeout 15 "https://ghfast.top/https://github.com/erebe/wstunnel/releases/download/v${ws_ver}/wstunnel_${ws_ver}_linux_${ws_arch}.tar.gz" -o "$ws_tmp/ws.tar.gz" 2>/dev/null; then
+            tar -zxf "$ws_tmp/ws.tar.gz" -C "$ws_tmp" 2>/dev/null || true
+            if [ -f "$ws_tmp/wstunnel" ]; then
+                cp "$ws_tmp/wstunnel" "${bin_dir}/wstunnel"
+                chmod +x "${bin_dir}/wstunnel"
+            elif [ -n "$(find "$ws_tmp" -name wstunnel -type f 2>/dev/null)" ]; then
+                cp "$(find "$ws_tmp" -name wstunnel -type f | head -n1)" "${bin_dir}/wstunnel"
+                chmod +x "${bin_dir}/wstunnel"
+            fi
+        fi
+        rm -rf "$ws_tmp" 2>/dev/null || true
+    fi
+
+    local ws_port="${WSTUNNEL_PORT:-8080}"
+    local ws_prefix="${WSTUNNEL_PREFIX#/}"
+    ws_prefix="${ws_prefix%/}"
+
+    mkdir -p /etc/systemd/system
+    cat << EOF > /etc/systemd/system/wstunnel.service
+[Unit]
+Description=Wstunnel L7 WebSocket Tunnel Daemon
+After=network.target network-online.target
+
+[Service]
+Type=simple
+ExecStart=${bin_dir}/wstunnel server --restrict-http-upgrade-path-prefix ${ws_prefix} ws://127.0.0.1:${ws_port}
+Restart=always
+RestartSec=3s
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload 2>/dev/null || true
+        systemctl enable wstunnel >/dev/null 2>&1 || true
+        if [ -x "${bin_dir}/wstunnel" ]; then
+            systemctl restart wstunnel 2>/dev/null || true
+            ok "Служба Wstunnel L7 активирована (порт ${ws_port}, prefix: /${ws_prefix}/)."
+        else
+            warn "Бинарник ${bin_dir}/wstunnel не найден, запуск wstunnel отложен."
+        fi
+    fi
+}
+
+deploy_native_nextgen_services() {
+    if is_true "${ENABLE_ZAPRET:-0}"; then
+        setup_zapret_service
+    fi
+    if is_true "${ENABLE_MASQUE:-0}"; then
+        setup_masque_service
+    fi
+    if is_true "${ENABLE_SHADOWTLS:-0}"; then
+        setup_shadowtls_service
+    fi
+    if is_true "${ENABLE_WSTUNNEL:-0}"; then
+        setup_wstunnel_service
+    fi
+}
+
 step_configure_inbounds() {
     cd /root/nginx_mask_setup
     if [ -f "./configure_3xui.sh" ]; then
@@ -1500,6 +2341,9 @@ step_configure_inbounds() {
         bash ./configure_3xui.sh --non-interactive --domain "$PRIMARY_DOMAIN" "${cfg_arg[@]}" || true
     fi
     
+    # Развертывание сервисов нового поколения (Zapret, MASQUE, ShadowTLS, Wstunnel)
+    deploy_native_nextgen_services
+
     # Ensure Nginx is reloaded and active
     nginx -t >/dev/null 2>&1 && systemctl reload nginx || systemctl restart nginx
 }
@@ -1547,6 +2391,13 @@ save_and_display_summary() {
         fi
     fi
 
+    local client_env=""
+    [ -f "/run/3xui_unified_client.env" ] && client_env="/run/3xui_unified_client.env"
+    [ -z "$client_env" ] && [ -f "/tmp/3xui_unified_client.env" ] && client_env="/tmp/3xui_unified_client.env"
+    if [ -n "$client_env" ]; then
+        . "$client_env" 2>/dev/null || true
+    fi
+
     cat <<EOF > "$CREDENTIALS_FILE"
 ====================================================================
  NGINX L4 STREAM ROUTER & 3X-UI — УЧЕТНЫЕ ДАННЫЕ СЕРВЕРА
@@ -1568,6 +2419,10 @@ SSH Порт:       ${SSH_PORT}
 [ ПРЯМЫЕ ССЫЛКИ НА ПОДПИСКУ КЛИЕНТОВ ]
 $( [ -n "$sub_link" ] && echo "Универсальная подписка (Base64): ${sub_link}" || echo "Универсальная подписка: В панели -> Подключения" )
 $( [ -n "$clash_link" ] && echo "Подписка для Clash / Mihomo:   ${clash_link}" || true )
+$([ -n "${MASQUE_URI:-}" ] && printf "\n[ MASQUE RFC 9484 (Sing-box) ]\nURI: %s\n" "${MASQUE_URI}")
+$([ -n "${SHADOWTLS_URI:-}" ] && printf "\n[ SHADOWTLS v4 + SS-2022 ]\nShadowTLS URI:        %s\nShadowTLS + SS-2022:  %s\n" "${SHADOWTLS_URI}" "${SS_SHADOWTLS_URI:-}")
+$([ -n "${WSTUNNEL_CLI:-}" ] && printf "\n[ WSTUNNEL (L7 Nginx WebSocket) ]\nClient CLI:           %s\n" "${WSTUNNEL_CLI}")
+$([ -n "${ZAPRET_INFO:-}" ] && printf "\n[ SERVER-SIDE ZAPRET ]\nСтатус:               %s\n" "${ZAPRET_INFO}")
 
 [ НАСТРОЙКА КЛИЕНТОВ ]
 1. Добавьте ссылку на подписку в клиент:
@@ -1610,6 +2465,14 @@ print_dashboard() {
     echo -e "    ${DIM}• Фаервол UFW:${RESET}    ${GREEN}Порты протоколов (10443, 55443 и др.) изолированы${RESET}"
     echo -e "    ${DIM}• Ядро Linux:${RESET}     ${GREEN}BBR активирован, IPv6 отключен (no leak)${RESET}"
     echo ""
+    if [ -n "${MASQUE_URI:-}" ] || [ -n "${SHADOWTLS_URI:-}" ] || [ -n "${WSTUNNEL_CLI:-}" ] || [ -n "${ZAPRET_INFO:-}" ]; then
+        echo -e "  ${WHITE}${BOLD}Протоколы нового поколения (Next-Gen Protocols):${RESET}"
+        [ -n "${MASQUE_URI:-}" ] && echo -e "    ${CYAN}${ARROW} MASQUE:${RESET}       ${GREEN}${MASQUE_URI}${RESET}"
+        [ -n "${SHADOWTLS_URI:-}" ] && echo -e "    ${CYAN}${ARROW} ShadowTLS:${RESET}    ${GREEN}${SHADOWTLS_URI}${RESET}"
+        [ -n "${WSTUNNEL_CLI:-}" ] && echo -e "    ${CYAN}${ARROW} Wstunnel:${RESET}     ${CYAN}${WSTUNNEL_CLI}${RESET}"
+        [ -n "${ZAPRET_INFO:-}" ] && echo -e "    ${CYAN}${ARROW} Zapret:${RESET}       ${GREEN}nfqws активен (DPI Desync connbytes 1:6)${RESET}"
+        echo ""
+    fi
     if [ "$SSH_PORT" -ne "${SSH_ACTIVE_PORT:-22}" ]; then
         echo -e "  ${YELLOW}${BOLD}⚠️  ВНИМАНИЕ: Порт SSH изменен на ${WHITE}${SSH_PORT}${YELLOW}!${RESET}"
         echo -e "    ${DIM}1. Проверьте вход в НОВОМ окне терминала:${RESET} ${CYAN}ssh -p ${SSH_PORT} root@${PRIMARY_DOMAIN}${RESET}"
@@ -1673,6 +2536,10 @@ main() {
     
     save_and_display_summary
     print_dashboard
+
+    if [ "${SSH_PORT:-$SSH_ACTIVE_PORT}" -ne "${SSH_ACTIVE_PORT:-22}" ]; then
+        wait_and_finalize_ssh_transition "${SSH_PORT:-$SSH_ACTIVE_PORT}" "${SSH_ACTIVE_PORT:-22}"
+    fi
 }
 
 main "$@"

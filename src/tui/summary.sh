@@ -38,6 +38,9 @@ fi
 if [[ "${ENABLE_MTPROTO:-}" == "1" || "${ENABLE_MTPROTO,,}" == "y" ]] && [ -n "${MTPROTO_PORT:-}" ]; then
     UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${MTPROTO_PORT}/tcp"
 fi
+if [[ "${ENABLE_MASQUE:-}" == "1" || "${ENABLE_MASQUE,,}" == "y" ]] && [ -n "${MASQUE_PORT:-}" ]; then
+    UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${MASQUE_PORT}/udp"
+fi
 
 SSL_CERT_REPORT=""
 for dom in "${ALL_DOMAINS[@]}"; do
@@ -166,6 +169,22 @@ else
             export MTPROTO_PORT
             export MTPROTO_FAKETLS_DOMAIN
             export MTPROTO_ADTAG
+            export ENABLE_MASQUE
+            export MASQUE_PORT
+            export MASQUE_USER
+            export MASQUE_PASSWORD
+            export ENABLE_SHADOWTLS
+            export SHADOWTLS_PORT
+            export SHADOWTLS_SNI
+            export SHADOWTLS_PASSWORD
+            export ENABLE_WSTUNNEL
+            export WSTUNNEL_PORT
+            export WSTUNNEL_PREFIX
+            export WSTUNNEL_SECRET
+            export ENABLE_ZAPRET
+            export ZAPRET_QNUM
+            export ZAPRET_DESYNC
+            export ZAPRET_FOOLING
             bash "$CONFIG_EXEC" --config "$SAVED_CONFIG_FILE" -y
         }
         run_with_spinner "Автоматическая настройка базы 3X-UI и создание инбаундов" run_configure_3xui_task || die "Ошибка настройки базы 3X-UI."
@@ -229,6 +248,11 @@ EOF_GEOTMR
         run_with_spinner "Активация таймера еженедельного обновления geosite.dat и geoip.dat" setup_xray_geo_timer_task
     else
         warn "Скрипт configure_3xui.sh не найден. Выполните настройку вручную."
+    fi
+
+    # Развертывание фоновых служб нового поколения (Zapret, MASQUE, ShadowTLS, Wstunnel)
+    if command -v deploy_native_nextgen_services >/dev/null 2>&1; then
+        deploy_native_nextgen_services
     fi
 
     step_finish 7

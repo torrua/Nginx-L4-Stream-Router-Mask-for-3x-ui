@@ -46,6 +46,8 @@ SCRIPT_VERSION="__VERSION__"
 
 # @include "system/sysctl.sh"
 
+# @include "system/security.sh"
+
 # @include "nginx/install.sh"
 
 # @include "ssl/certs.sh"
@@ -53,6 +55,8 @@ SCRIPT_VERSION="__VERSION__"
 # @include "system/preinstall.sh"
 
 # @include "awg/setup.sh"
+
+# @include "installer/steps.sh"
 
 # @include "tui/wizard.sh"
 
@@ -96,6 +100,25 @@ if ! should_skip_step 2; then
         run_with_spinner "Применение системных параметров BBR и лимитов дескрипторов" apply_sysctl_and_limits || die "Ошибка применения сетевого тюнинга."
     fi
     step_finish 2
+fi
+
+# --- Настройка безопасности хоста: SSH & Fail2ban ---
+local_active_ssh="${SSH_ACTIVE_PORT:-22}"
+local_target_ssh="${SSH_PORT:-$local_active_ssh}"
+if is_true "${ENABLE_HOST_SECURITY:-n}" || [ "$local_target_ssh" -ne "$local_active_ssh" ] || is_true "${ENABLE_FAIL2BAN:-n}" || is_true "${DISABLE_PASSWORD_AUTH:-n}"; then
+    if [ -n "${SSH_PUBLIC_KEY:-}" ]; then
+        add_authorized_key "$SSH_PUBLIC_KEY" "root"
+    fi
+    if [ "$local_target_ssh" -ne "$local_active_ssh" ] || is_true "${DISABLE_PASSWORD_AUTH:-n}"; then
+        run_with_spinner "Применение конфигурации OpenSSH (порт $local_target_ssh)" apply_ssh_configuration "$local_target_ssh" "$local_active_ssh" "${DISABLE_PASSWORD_AUTH:-n}" || warn "Не удалось применить конфигурацию SSH."
+        if command -v ufw >/dev/null 2>&1; then
+            ufw allow "${local_active_ssh}/tcp" comment 'Current SSH Port' >/dev/null 2>&1 || true
+            ufw allow "${local_target_ssh}/tcp" comment 'Target SSH Port' >/dev/null 2>&1 || true
+        fi
+    fi
+    if is_true "${ENABLE_FAIL2BAN:-n}"; then
+        run_with_spinner "Установка и настройка службы Fail2ban" apply_fail2ban_configuration "$local_target_ssh" "$local_active_ssh" || warn "Не удалось настроить Fail2ban."
+    fi
 fi
 
 if is_true "${ENABLE_WEB_STACK:-y}"; then
@@ -492,5 +515,9 @@ for ((s_idx=1; s_idx<=TOTAL_STEPS; s_idx++)); do
     fi
 done
 echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}\n"
+
+if [ "$local_target_ssh" -ne "$local_active_ssh" ]; then
+    wait_and_finalize_ssh_transition "$local_target_ssh" "$local_active_ssh"
+fi
 
 exit 0

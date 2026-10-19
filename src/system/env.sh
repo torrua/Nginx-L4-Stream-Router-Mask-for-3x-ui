@@ -163,7 +163,53 @@ reconstruct_arrays_from_vars() {
     HY2_PORT_HOPPING="${HY2_PORT_HOPPING:-n}"
     AUTO_SETUP_3XUI="${AUTO_SETUP_3XUI:-y}"
     PORT_AGH_WEB="${PORT_AGH_WEB:-3000}"
+
+    # Сосуществование с Dokploy и протоколы следующего поколения
+    _v="${DOKPLOY_COEXISTENCE:-n}"; if is_true "$_v"; then DOKPLOY_COEXISTENCE="y"; else DOKPLOY_COEXISTENCE="n"; fi
+    if [ "$DOKPLOY_COEXISTENCE" = "y" ]; then
+        ENABLE_WEB_STACK=0
+    fi
+    _v="${ENABLE_MASQUE:-n}"; if is_true "$_v"; then ENABLE_MASQUE=1; else ENABLE_MASQUE=0; fi
+    MASQUE_PORT="${MASQUE_PORT:-8445}"
+    MASQUE_USER="${MASQUE_USER:-client}"
+    if [ "$ENABLE_MASQUE" -eq 1 ] && [ -z "${MASQUE_PASSWORD:-}" ]; then
+        MASQUE_PASSWORD="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "masque${RANDOM}")"
+    fi
+    _v="${ENABLE_SHADOWTLS:-n}"; if is_true "$_v"; then ENABLE_SHADOWTLS=1; else ENABLE_SHADOWTLS=0; fi
+    SHADOWTLS_PORT="${SHADOWTLS_PORT:-8543}"
+    SHADOWTLS_SNI="${SHADOWTLS_SNI:-gateway.icloud.com}"
+    if [ "$ENABLE_SHADOWTLS" -eq 1 ] && [ -z "${SHADOWTLS_PASSWORD:-}" ]; then
+        SHADOWTLS_PASSWORD="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "stls${RANDOM}")"
+    fi
+    if [ "$ENABLE_SHADOWTLS" -eq 1 ] && [ "${ENABLE_WEB_STACK:-1}" -eq 1 ]; then
+        ENABLE_SS2022=1
+    fi
+    _v="${ENABLE_NAIVE:-n}"; if is_true "$_v"; then ENABLE_NAIVE=1; else ENABLE_NAIVE=0; fi
+    NAIVE_PORT="${NAIVE_PORT:-8446}"
+    NAIVE_DOMAIN="${NAIVE_DOMAIN:-}"
+    NAIVE_USER="${NAIVE_USER:-user}"
+    NAIVE_PASS="${NAIVE_PASS:-}"
+    _v="${ENABLE_ZAPRET:-n}"; if is_true "$_v"; then ENABLE_ZAPRET=1; else ENABLE_ZAPRET=0; fi
+    ZAPRET_QNUM="${ZAPRET_QNUM:-200}"
+    ZAPRET_DESYNC="${ZAPRET_DESYNC:-split2}"
+    ZAPRET_FOOLING="${ZAPRET_FOOLING:-md5sig,badseq}"
+    _v="${ENABLE_WSTUNNEL:-n}"; if is_true "$_v"; then ENABLE_WSTUNNEL=1; else ENABLE_WSTUNNEL=0; fi
+    WSTUNNEL_DOMAIN="${WSTUNNEL_DOMAIN:-}"
+    local _wst_pref="${WSTUNNEL_PREFIX:-/wstunnel}"
+    _wst_pref="/${_wst_pref#/}"
+    _wst_pref="${_wst_pref%/}"
+    WSTUNNEL_PREFIX="${_wst_pref}/"
+    WSTUNNEL_PORT="${WSTUNNEL_PORT:-8080}"
+    if [ "$ENABLE_WSTUNNEL" -eq 1 ] && [ -z "${WSTUNNEL_SECRET:-}" ]; then
+        WSTUNNEL_SECRET="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "wst${RANDOM}")"
+    fi
     CF_AUTH_METHOD="${CF_AUTH_METHOD:-1}"
+    _v="${ENABLE_HOST_SECURITY:-n}"; if is_true "$_v"; then ENABLE_HOST_SECURITY="y"; else ENABLE_HOST_SECURITY="n"; fi
+    SSH_PORT="${SSH_PORT:-${SSH_ACTIVE_PORT:-22}}"
+    _v="${ENABLE_FAIL2BAN:-n}"; if is_true "$_v"; then ENABLE_FAIL2BAN="y"; else ENABLE_FAIL2BAN="n"; fi
+    _v="${DISABLE_PASSWORD_AUTH:-n}"; if is_true "$_v"; then DISABLE_PASSWORD_AUTH="y"; else DISABLE_PASSWORD_AUTH="n"; fi
+    SSH_PUBLIC_KEY="${SSH_PUBLIC_KEY:-}"
+    _v="${FORCE_CLOSE_OLD_SSH:-n}"; if is_true "$_v"; then FORCE_CLOSE_OLD_SSH="y"; else FORCE_CLOSE_OLD_SSH="n"; fi
 }
 
 load_env_file() {
@@ -195,8 +241,14 @@ save_session_state() {
     umask 077
 
     local v=""
+    local dokploy_coexist_save="n"
+    v="${DOKPLOY_COEXISTENCE:-n}"; is_true "$v" && dokploy_coexist_save="y"
     local web_stack_save="n"
-    v="${ENABLE_WEB_STACK:-y}"; is_true "$v" && web_stack_save="y"
+    if [ "$dokploy_coexist_save" = "y" ]; then
+        web_stack_save="dokploy"
+    else
+        v="${ENABLE_WEB_STACK:-y}"; is_true "$v" && web_stack_save="y"
+    fi
     local steal_save="n"
     v="${ENABLE_STEAL:-${STEAL_ENABLED:-n}}"; is_true "$v" && steal_save="y"
     local classic_save="n"
@@ -225,6 +277,24 @@ save_session_state() {
     v="${ENABLE_AGH:-n}"; is_true "$v" && agh_save="y"
     local agh_xray_save="n"
     v="${AGH_XRAY_DNS:-n}"; is_true "$v" && agh_xray_save="y"
+    local masque_save="n"
+    v="${ENABLE_MASQUE:-n}"; is_true "$v" && masque_save="y"
+    local shadowtls_save="n"
+    v="${ENABLE_SHADOWTLS:-n}"; is_true "$v" && shadowtls_save="y"
+    local naive_save="n"
+    v="${ENABLE_NAIVE:-n}"; is_true "$v" && naive_save="y"
+    local zapret_save="n"
+    v="${ENABLE_ZAPRET:-n}"; is_true "$v" && zapret_save="y"
+    local wstunnel_save="n"
+    v="${ENABLE_WSTUNNEL:-n}"; is_true "$v" && wstunnel_save="y"
+    local host_security_save="n"
+    v="${ENABLE_HOST_SECURITY:-n}"; is_true "$v" && host_security_save="y"
+    local fail2ban_save="n"
+    v="${ENABLE_FAIL2BAN:-n}"; is_true "$v" && fail2ban_save="y"
+    local disable_pwd_save="n"
+    v="${DISABLE_PASSWORD_AUTH:-n}"; is_true "$v" && disable_pwd_save="y"
+    local force_close_old_save="n"
+    v="${FORCE_CLOSE_OLD_SSH:-n}"; is_true "$v" && force_close_old_save="y"
 
     local _save_panel_path="${RAW_PATH:-${PANEL_PATH:-my-3x-panel}}"
     _save_panel_path="${_save_panel_path#/}"
@@ -343,6 +413,38 @@ BLOCK_SMTP="${BLOCK_SMTP:-true}"
 BLOCK_LAN="${BLOCK_LAN:-true}"
 WEB_LISTEN="${WEB_LISTEN:-127.0.0.1}"
 SUB_LISTEN="${SUB_LISTEN:-127.0.0.1}"
+
+DOKPLOY_COEXISTENCE="$dokploy_coexist_save"
+ENABLE_MASQUE="$masque_save"
+MASQUE_PORT="${MASQUE_PORT:-8445}"
+MASQUE_USER="${MASQUE_USER:-client}"
+MASQUE_PASSWORD="${MASQUE_PASSWORD:-}"
+ENABLE_SHADOWTLS="$shadowtls_save"
+SHADOWTLS_PORT="${SHADOWTLS_PORT:-8543}"
+SHADOWTLS_SNI="${SHADOWTLS_SNI:-gateway.icloud.com}"
+SHADOWTLS_PASSWORD="${SHADOWTLS_PASSWORD:-}"
+ENABLE_NAIVE="$naive_save"
+NAIVE_PORT="${NAIVE_PORT:-8446}"
+NAIVE_DOMAIN="${NAIVE_DOMAIN:-}"
+NAIVE_USER="${NAIVE_USER:-user}"
+NAIVE_PASS="${NAIVE_PASS:-}"
+ENABLE_ZAPRET="$zapret_save"
+ZAPRET_QNUM="${ZAPRET_QNUM:-200}"
+ZAPRET_DESYNC="${ZAPRET_DESYNC:-split2}"
+ZAPRET_FOOLING="${ZAPRET_FOOLING:-md5sig,badseq}"
+ENABLE_WSTUNNEL="$wstunnel_save"
+WSTUNNEL_DOMAIN="${WSTUNNEL_DOMAIN:-}"
+WSTUNNEL_PREFIX="${WSTUNNEL_PREFIX:-/wstunnel}"
+WSTUNNEL_PORT="${WSTUNNEL_PORT:-8080}"
+WSTUNNEL_SECRET="${WSTUNNEL_SECRET:-}"
+
+ENABLE_HOST_SECURITY="$host_security_save"
+SSH_PORT="${SSH_PORT:-${SSH_ACTIVE_PORT:-22}}"
+ENABLE_FAIL2BAN="$fail2ban_save"
+DISABLE_PASSWORD_AUTH="$disable_pwd_save"
+SSH_PUBLIC_KEY="${SSH_PUBLIC_KEY:-}"
+FORCE_CLOSE_OLD_SSH="$force_close_old_save"
+
 LAST_COMPLETED_STEP="${LAST_COMPLETED_STEP:-0}"
 EOF_SAVE
     chmod 600 "$save_path" 2>/dev/null || true

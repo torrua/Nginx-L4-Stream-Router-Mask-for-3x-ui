@@ -28,6 +28,12 @@ if ! should_skip_step 6; then
     # Определение поддержки директив HTTP/2 в установленной версии Nginx
     determine_nginx_http2_mode
 
+    wstunnel_badbot_bypass=""
+    if is_true "${ENABLE_WSTUNNEL:-0}" && [ -n "${WSTUNNEL_PREFIX:-}" ]; then
+        wstunnel_clean_prefix="${WSTUNNEL_PREFIX%/}"
+        wstunnel_badbot_bypass="        ~^1:[01]:${wstunnel_clean_prefix}/ 0;"$'\n'
+    fi
+
     # 1. Глобальный файл конфигурации /etc/nginx/nginx.conf
     cat << EOF > /etc/nginx/nginx.conf
 user $NGINX_USER;
@@ -151,7 +157,7 @@ ${HTTP2_HTTP_PARAMS}
         ~^1:[01]:/json/ 0;
         ~^1:[01]:/clash/ 0;
         ~^1:[01]:${XHTTP_STREAM_PATH} 0;
-        ~^1:[01]:/dns-query 0;
+${wstunnel_badbot_bypass}        ~^1:[01]:/dns-query 0;
         ~^1:[01]:/agh/ 0;
         ~(^1:|:1) 1;
         default 0;
@@ -205,8 +211,29 @@ done
 if is_true "${CLASSIC_ENABLED:-0}"; then
     for ext_sni in "${!EXT_SNI_TO_PORT[@]}"; do
         port="${EXT_SNI_TO_PORT[$ext_sni]}"
+        if is_true "${ENABLE_SHADOWTLS:-0}" && [ "$ext_sni" = "${SHADOWTLS_SNI:-gateway.icloud.com}" ]; then
+            continue
+        fi
         STREAM_MAP_RULES+="        ${ext_sni}     reality_backend_${port};"$'\n'
     done
+fi
+
+if is_true "${ENABLE_SHADOWTLS:-0}"; then
+    STREAM_MAP_RULES+="        ${SHADOWTLS_SNI:-gateway.icloud.com}     shadowtls_backend;"$'\n'
+fi
+
+SHADOWTLS_STREAM_BLOCKS=""
+if is_true "${ENABLE_SHADOWTLS:-0}"; then
+    SHADOWTLS_STREAM_BLOCKS="
+upstream shadowtls_backend {
+    server 127.0.0.1:8542;
+}
+
+server {
+    listen 127.0.0.1:8542 proxy_protocol;
+    proxy_pass 127.0.0.1:${SHADOWTLS_PORT:-8543};
+}
+"
 fi
 
 for port in "${ALL_REALITY_PORTS[@]:-}"; do
@@ -214,6 +241,7 @@ for port in "${ALL_REALITY_PORTS[@]:-}"; do
         REALITY_UPSTREAMS+="
     upstream reality_backend_${port} {
         server 127.0.0.1:${port};
+        server unix:/dev/shm/nginx-http.sock backup;
     }
 "
     fi
@@ -262,6 +290,7 @@ upstream nginx_http_backend {
 }
 
 ${REALITY_UPSTREAMS}
+${SHADOWTLS_STREAM_BLOCKS}
 
 server {
     listen 443 backlog=65535 reuseport;
@@ -392,6 +421,27 @@ else
         location / {
             return 404;
         }
+"
+fi
+
+WSTUNNEL_LOCATION_BLOCK=""
+if is_true "${ENABLE_WSTUNNEL:-0}" && [ -n "${WSTUNNEL_PREFIX:-}" ]; then
+    wstunnel_clean_prefix="${WSTUNNEL_PREFIX%/}"
+    WSTUNNEL_LOCATION_BLOCK="
+    # --- ЛОКАЦИЯ: WSTUNNEL (L7 WebSocket Tunnel) ---
+    location ^~ ${wstunnel_clean_prefix}/ {
+        proxy_pass http://127.0.0.1:${WSTUNNEL_PORT:-8080};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection \$connection_upgrade;
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Real-IP \$ak_real_ip;
+        proxy_set_header X-Forwarded-For \$ak_real_ip;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+        proxy_buffering off;
+    }
 "
 fi
 
@@ -581,6 +631,7 @@ server {
         grpc_pass grpc://xray_xhttp_stream;
     }
 
+    $WSTUNNEL_LOCATION_BLOCK
     $AGH_MAIN_LOCATION_BLOCKS
 
     # --- ЛОКАЦИЯ 4: ДЕКОЙ САЙТ / МАСКИРОВКА ---
@@ -651,6 +702,7 @@ server {
     error_page 400 403 404 405 @notfound;
 
     $DECOY_LOCATION_BLOCKS
+    $WSTUNNEL_LOCATION_BLOCK
 
     location ^~ ${PANEL_PATH} {
         proxy_hide_header Content-Security-Policy;

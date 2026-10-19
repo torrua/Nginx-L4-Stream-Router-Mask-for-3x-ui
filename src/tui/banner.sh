@@ -27,6 +27,11 @@ show_help() {
   --web-stack / --no-web-stack Включить / отключить установку комплекса веб-маскировки Nginx + 3X-UI
   --awg-standalone             Включить установку автономного сервера AmneziaWG (awg-mgr)
   --awg-host <HOST/IP>         Домен или IP-адрес для подключения клиентов AmneziaWG (Endpoint)
+  --masque / --no-masque       Включить / отключить MASQUE (RFC 9484 / RFC 9298, :8445/udp)
+  --shadowtls / --no-shadowtls Включить / отключить ShadowTLS v4 + SS-2022 (Nginx Stream SNI)
+  --wstunnel / --no-wstunnel   Включить / отключить Wstunnel over Nginx L7 (HTTPS WebSocket)
+  --zapret / --no-zapret       Включить / отключить Server-Side Zapret nfqws (DPI bypass)
+  --all-protocols              Включить все протоколы (включая стек следующего поколения)
   -r, --resume                 Продолжить установку с последнего незавершенного шага
   --step <N>                   Принудительно начать выполнение с указанного шага (1-8)
   --check, --doctor            Запустить быструю диагностику состояния сервисов и выйти
@@ -203,6 +208,45 @@ AGH_PASS=""
 AGH_CLIENT_ID="home-router"
 # Использовать AdGuard Home как DNS для VPN-клиентов (Xray DNS → 127.0.0.1) [y/n]
 AGH_XRAY_DNS="y"
+
+# --- 9. ПРОТОКОЛЫ СЛЕДУЮЩЕГО ПОКОЛЕНИЯ (NEXT-GEN) ---
+# MASQUE (RFC 9484 / RFC 9298 via Sing-box daemon, HTTP/3 UDP) [y/n]
+ENABLE_MASQUE="n"
+MASQUE_PORT="8445"
+MASQUE_USER="client"
+MASQUE_PASSWORD=""
+
+# ShadowTLS v4 + Shadowsocks-2022 (Маскировка под Apple gateway.icloud.com через Nginx Stream L4) [y/n]
+ENABLE_SHADOWTLS="n"
+SHADOWTLS_PORT="8543"
+SHADOWTLS_SNI="gateway.icloud.com"
+SHADOWTLS_PASSWORD=""
+
+# Wstunnel over Nginx L7 (Туннелирование WebSocket через порт 443 HTTPS с SSL) [y/n]
+ENABLE_WSTUNNEL="n"
+WSTUNNEL_PREFIX="/wstunnel"
+WSTUNNEL_PORT="8080"
+WSTUNNEL_SECRET=""
+
+# Server-Side Zapret nfqws (Десинхронизация DPI ТСПУ через iptables NFQUEUE connbytes 1:6) [y/n]
+ENABLE_ZAPRET="n"
+ZAPRET_QNUM="200"
+ZAPRET_DESYNC="split2"
+ZAPRET_FOOLING="md5sig,badseq"
+
+# --- 10. БЕЗОПАСНОСТЬ ХОСТА (HOST SECURITY & SSH HARDENING) ---
+# Включить настройку безопасности хоста (порт SSH, ключи, защита от брутфорса) [y/n]
+ENABLE_HOST_SECURITY="n"
+# Пользовательский порт SSH (1024-65535 или текущий 22)
+SSH_PORT="22"
+# Установить и настроить Fail2ban для защиты от брутфорса SSH [y/n]
+ENABLE_FAIL2BAN="y"
+# Отключить вход по паролю (PasswordAuthentication no) только при наличии SSH-ключа [y/n]
+DISABLE_PASSWORD_AUTH="n"
+# Публичный ключ SSH для авторизации (например "ssh-ed25519 AAAAC3...").
+SSH_PUBLIC_KEY=""
+# Принудительно закрыть старый порт SSH без подтверждения перехода [y/n]
+FORCE_CLOSE_OLD_SSH="n"
 EOF_CONF
     ok "Шаблон конфигурации успешно сгенерирован: '$target_file'"
 }

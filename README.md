@@ -37,12 +37,18 @@
    * **TUIC v5** (порт `8448/udp`) на базе QUIC 0-RTT с бесшовной миграцией сессий (Connection Migration) при смене сотовых вышек и сетей Wi-Fi.
    * **Shadowsocks 2022** (порт `8388` TCP/UDP, метод `2022-blake3-aes-128-gcm`) с защитой от атак повторного воспроизведения пакетов.
    * **Telegram MTProxy с маскировкой FakeTLS** (порт `8444/tcp`) для прямого подключения в Telegram без сторонних VPN-приложений.
+   * **MASQUE (RFC 9484 / RFC 9298 via Sing-box 1.14+)** (порт `8445/udp`): датаграммное проксирование HTTP/3 с нативной поддержкой в iOS 17+ и macOS 14+.
+   * **ShadowTLS v4 + Shadowsocks-2022** (`udp_over_tcp: true`, порт `8543/tcp`): подлинный TLS Apple (`gateway.icloud.com`) с защитой от активных зондов ТСПУ.
+   * **NaïveProxy + Caddy** (порт `8446/tcp`): сетевой стек Chromium и выпуск SSL через Cloudflare DNS-01 ACME.
+   * **Server-Side Zapret** (`nfqws` с `connbytes 1:6`): серверная десинхронизация DPI ТСПУ без снижения скорости.
+   * **Wstunnel поверх Dokploy Traefik**: туннелирование WireGuard/AmneziaWG через порт `443` Dokploy без конфликтов с Traefik.
 6. **Умный исходящий трафик (Cloudflare WARP Smart Routing):**
    * Запросы к Google, AI-сервисам (ChatGPT, Claude, Gemini) и сайтам с капчей Cloudflare идут через чистый IP Cloudflare WARP (MTU 1280).
    * Видео YouTube и российские сервисы (банки, Госуслуги) идут напрямую с VPS для максимальной скорости и отсутствия блокировок.
 7. **Автоматическая проверка занятости портов (Preflight Inspector):**
    * Автоматически проверяет порты (53, 80/443, 3000 и внутренние порты стека) перед установкой.
    * Если порт 3000 уже занят другими сервисами или контейнерами, скрипт автоматически подберёт свободный порт для AdGuard Home из диапазона 3001–3053.
+   * Поддерживает режим бесконфликтного сосуществования с Dokploy (`DOKPLOY_COEXISTENCE=y`).
 8. **Безопасная настройка UFW, Nginx и защита Anti-Loop:**
    * UFW настраивается без сброса существующих правил (`ufw reset`), полностью сохраняя существующие правила и SSH-доступ администратора.
    * Nginx точечно размещает конфигурации без удаления сторонних сайтов в `sites-enabled/`.
@@ -56,6 +62,7 @@
 | :--- | :--- |
 | 🚀 **[Инструкция для новичков](docs/BEGINNER_GUIDE.md)** | Пошаговый запуск с нуля: аренда VPS и домена, укрепление ОС (`secure-vps.sh`), настройка Nginx (`setup_mask.sh`) и подключение устройств. |
 | ⚙️ **[Техническое описание архитектуры](docs/ARCHITECTURE.md)** | Полная инженерная документация: схема Nginx L4 Stream, ручная настройка инбаундов 3X-UI, правила UFW от сканирования, Anti-Loop порт 9443, тюнинг буферов HTTP/2 xHTTP, диагностика (Health Check) и бэкапы. |
+| 🛡️ **[Протоколы следующего поколения & Dokploy](docs/NEXTGEN_PROTOCOLS_DOKPLOY.md)** | Развертывание MASQUE, ShadowTLS v4, NaïveProxy, Zapret и Wstunnel через Docker Compose с нулевым конфликтом с Dokploy Traefik на портах 80/443. |
 | 🎛️ **[Автонастройка 3X-UI (`configure_3xui.sh`)](#-ручная-пошаговая-установка-для-экспертов)** | Скрипт, который сам создаёт подключения в панели, генерирует клиентские ссылки `:443` через `externalProxy`, настраивает Cloudflare WARP, задает часовой пояс, ежемесячный сброс трафика, защиту от SMTP-спама (порт 25) и блокировку SSRF к локальным службам VPS. |
 | ✍️ **[Редакционная политика](docs/EDITORIAL_POLICY.md)** | Стандарт коммуникации проекта: Tone of Voice, словарь понятных терминов для новичков, запрет пафоса и псевдомаркетинга. |
 | 📝 **[История версий и Release Notes](docs/RELEASE_NOTES_v8.0.2.md)** | Подробные отчеты о релизах: [v8.0.2](docs/RELEASE_NOTES_v8.0.2.md) (TUI Multiselect Fix), [v8.0.1](docs/RELEASE_NOTES_v8.0.1.md) (Hotfix Bash local), [v8.0.0](docs/RELEASE_NOTES_v8.0.0.md), [v7.8.0](docs/RELEASE_NOTES_v7.8.0.md). |

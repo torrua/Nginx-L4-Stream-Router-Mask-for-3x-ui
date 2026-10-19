@@ -134,3 +134,6 @@ def generate_masque_credentials(default_user="client"):
 
 def generate_naiveproxy_credentials(default_user="user"):
     return default_user, secrets.token_urlsafe(16)
+
+def generate_tuic_credentials(default_uuid=None):
+    return default_uuid or str(uuid.uuid4()), secrets.token_urlsafe(16)

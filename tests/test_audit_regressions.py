@@ -1035,6 +1035,268 @@ rm -f "$cache_file"
         ext2 = st2.get("externalProxy", [])
         self.assertEqual(ext2[0].get("sni"), "avito.ru", "externalProxy must keep SNI on reconcile update")
 
+    def test_xhttp_reconcile_preserves_xmux_noSSE_xPadding_and_encryption(self):
+        """Verify that smart_reconcile_inbound preserves xmux, noSSEHeader, xPaddingBytes, and encryption for xHTTP."""
+        reconcile = self.ns["smart_reconcile_inbound"]
+        custom_xmux = {
+            "maxConcurrency": "10",
+            "maxConnections": "5-10",
+            "cMaxReuseTimes": "100-200",
+            "hKeepAlivePeriod": 300,
+            "hMaxRequestTimes": "500",
+            "hMaxReusableSecs": "600"
+        }
+        init_settings = {
+            "clients": [{"id": "test-uuid-1", "flow": "", "email": "Client", "subId": "sub1", "enable": True, "encryption": "existing_enc_key"}],
+            "decryption": "existing_dec_key",
+            "encryption": "existing_enc_key"
+        }
+        init_stream = {
+            "network": "xhttp",
+            "security": "none",
+            "xhttpSettings": {
+                "path": "/custom-path/",
+                "host": "custom.domain.com",
+                "mode": "stream-one",
+                "noSSEHeader": False,
+                "xPaddingBytes": "50-150",
+                "xmux": custom_xmux
+            },
+            "externalProxy": [{"dest": "custom.domain.com", "port": 443, "forceTls": "tls", "sni": "custom.domain.com", "fingerprint": "firefox", "remark": "VLESS xHTTP"}]
+        }
+        ib_id = reconcile(50443, "vless", "in-xhttp-stream", "VLESS xHTTP", init_settings, init_stream, listen="127.0.0.1")
+
+        # Now simulate a reconcile with standard defaults
+        default_settings = {
+            "clients": [{"id": "test-uuid-2", "flow": "", "email": "Client", "subId": "sub2", "enable": True, "encryption": "new_enc_key"}],
+            "decryption": "new_dec_key",
+            "encryption": "new_enc_key"
+        }
+        default_stream = {
+            "network": "xhttp",
+            "security": "none",
+            "xhttpSettings": {
+                "path": "/default-path/",
+                "host": "default.domain.com",
+                "mode": "stream-one",
+                "noSSEHeader": True,
+                "xPaddingBytes": "100-500",
+                "xmux": {
+                    "maxConcurrency": "0",
+                    "maxConnections": "1-3",
+                    "cMaxReuseTimes": "300-600",
+                    "hKeepAlivePeriod": 600,
+                    "hMaxRequestTimes": "1000-2000",
+                    "hMaxReusableSecs": "1200-2400"
+                }
+            },
+            "externalProxy": [{"dest": "default.domain.com", "port": 443, "forceTls": "tls", "sni": "default.domain.com", "fingerprint": "firefox", "remark": "VLESS xHTTP"}]
+        }
+
+        self.ns["unified_email"] = "Client"
+        ib_id2 = reconcile(50443, "vless", "in-xhttp-stream", "VLESS xHTTP", default_settings, default_stream, listen="127.0.0.1")
+        self.assertEqual(ib_id, ib_id2)
+
+        self.cur.execute("SELECT settings, stream_settings FROM inbounds WHERE id = ?", (ib_id,))
+        row = self.cur.fetchone()
+        reconciled_settings = json.loads(row[0])
+        reconciled_stream = json.loads(row[1])
+        reconciled_xh = reconciled_stream["xhttpSettings"]
+
+        # Verify preserved xmux
+        self.assertEqual(reconciled_xh.get("xmux"), custom_xmux, "Custom xmux must be preserved during reconcile")
+        # Verify preserved noSSEHeader
+        self.assertFalse(reconciled_xh.get("noSSEHeader"), "Existing noSSEHeader (False) must be preserved")
+        # Verify preserved xPaddingBytes
+        self.assertEqual(reconciled_xh.get("xPaddingBytes"), "50-150", "Custom xPaddingBytes must be preserved")
+        # Verify preserved decryption & encryption
+        self.assertEqual(reconciled_settings.get("decryption"), "existing_dec_key", "Existing decryption must be preserved")
+        self.assertEqual(reconciled_settings.get("encryption"), "existing_enc_key", "Existing encryption must be preserved")
+        # Verify client receives encryption
+        clients = reconciled_settings.get("clients", [])
+        self.assertTrue(len(clients) > 0)
+        self.assertEqual(clients[0].get("encryption"), "existing_enc_key", "Client in xHTTP must receive encryption key")
+
+    def test_xhttp_templates_and_vlessenc_export_consistency(self):
+        """Verify configure_3xui.sh and update_repair.sh export UNIFIED_VLESS_ENKEY, xPaddingBytes 100-500, xmux, noSSEHeader, firefox."""
+        conf_sh = (ROOT / "configure_3xui.sh").read_text(encoding="utf-8")
+        upd_sh = (ROOT / "update_repair.sh").read_text(encoding="utf-8")
+
+        for text, name in [(conf_sh, "configure_3xui.sh"), (upd_sh, "update_repair.sh")]:
+            self.assertIn('"xPaddingBytes": "100-500"', text, f"xPaddingBytes default '100-500' must be in {name}")
+            self.assertIn('"noSSEHeader": True', text, f"noSSEHeader: True must be in {name}")
+            self.assertIn("UNIFIED_VLESS_ENKEY", text, f"UNIFIED_VLESS_ENKEY must be exported in {name}")
+            self.assertIn("VLESS xHTTP EnKey:", text, f"VLESS xHTTP EnKey: must be written to credentials in {name}")
+            self.assertIn('"xmux": {', text, f"Reference xmux block must be in {name}")
+            self.assertIn('"maxConcurrency": "0"', text, f"xmux maxConcurrency: 0 must be in {name}")
+            self.assertIn('"fingerprint": "firefox"', text, f"fingerprint: 'firefox' must be in {name}")
+
+        # Ensure configure_3xui.sh does not delete /run/3xui_unified_client.env
+        self.assertNotIn('rm -f "$c_env"', conf_sh.split('for c_env in "/run/3xui_unified_client.env"')[1][:200],
+                         "configure_3xui.sh must not delete /run/3xui_unified_client.env")
+
+    def test_nginx_stream_failover_backup_socket(self):
+        """Verify Nginx Stream L4 reality_backend contains failover unix backup socket per docs/ARCHITECTURE.md#L114."""
+        nginx_conf_sh = (ROOT / "src/nginx/config.sh").read_text(encoding="utf-8")
+        setup_mask_sh = (ROOT / "setup_mask.sh").read_text(encoding="utf-8")
+
+        for text, name in [(nginx_conf_sh, "src/nginx/config.sh"), (setup_mask_sh, "setup_mask.sh")]:
+            m = re.search(r'upstream reality_backend_\$\{port\}\s*\{([\s\S]*?\n\s*\})', text)
+            self.assertIsNotNone(m, f"upstream reality_backend_${{port}} must be defined in {name}")
+            body = m.group(1)
+            self.assertIn("server 127.0.0.1:${port};", body, f"Primary backend missing in {name}")
+            self.assertIn("server unix:/dev/shm/nginx-http.sock backup;", body,
+                          f"Failover socket 'server unix:/dev/shm/nginx-http.sock backup;' must be present in {name}")
+
+    def test_xhttp_reconcile_legacy_client_without_encryption_synchronizes_with_inbound(self):
+        """Verify that a legacy client without encryption field gets the preserved inbound encryption key (preventing desync)."""
+        reconcile = self.ns["smart_reconcile_inbound"]
+        init_settings = {
+            "clients": [{"id": "legacy-uuid-1", "flow": "", "email": "Client", "subId": "sub1", "enable": True}],  # Notice NO encryption field
+            "decryption": "preserved_dec_key",
+            "encryption": "preserved_enc_key"
+        }
+        init_stream = {
+            "network": "xhttp",
+            "security": "none",
+            "xhttpSettings": {"path": "/xhttp/", "mode": "stream-one"},
+            "externalProxy": [{"dest": "domain.com", "port": 443, "forceTls": "tls"}]
+        }
+        ib_id = reconcile(50444, "vless", "in-xhttp-stream-2", "VLESS xHTTP Legacy", init_settings, init_stream, listen="127.0.0.1")
+
+        default_settings = {
+            "clients": [{"id": "new-uuid-2", "flow": "", "email": "Client", "subId": "sub2", "enable": True, "encryption": "newly_generated_enc_key"}],
+            "decryption": "newly_generated_dec_key",
+            "encryption": "newly_generated_enc_key"
+        }
+        default_stream = {
+            "network": "xhttp",
+            "security": "none",
+            "xhttpSettings": {"path": "/xhttp/", "mode": "stream-one"},
+            "externalProxy": [{"dest": "domain.com", "port": 443, "forceTls": "tls"}]
+        }
+
+        self.ns["unified_email"] = "Client"
+        ib_id2 = reconcile(50444, "vless", "in-xhttp-stream-2", "VLESS xHTTP Legacy", default_settings, default_stream, listen="127.0.0.1")
+        self.assertEqual(ib_id, ib_id2)
+
+        self.cur.execute("SELECT settings FROM inbounds WHERE id = ?", (ib_id,))
+        reconciled_settings = json.loads(self.cur.fetchone()[0])
+
+        self.assertEqual(reconciled_settings.get("encryption"), "preserved_enc_key", "Inbound encryption must be preserved")
+        clients = reconciled_settings.get("clients", [])
+        self.assertEqual(len(clients), 1)
+        self.assertEqual(clients[0].get("encryption"), "preserved_enc_key",
+                         "Legacy client MUST receive the preserved inbound encryption key to prevent handshake failure")
+
+    def test_reconcile_inbound_dry_run_new_inbound(self):
+        """Verify that smart_reconcile_inbound handles dry_run=True for a new inbound without raising UnboundLocalError."""
+        reconcile = self.ns["smart_reconcile_inbound"]
+        self.ns["dry_run"] = True
+        try:
+            res = reconcile(59999, "vless", "in-dryrun-test", "DryRun Inbound", {"clients": []}, {"network": "tcp"})
+            self.assertIsNone(res, "dry_run on new inbound must return None without UnboundLocalError")
+        finally:
+            self.ns["dry_run"] = False
+
+    def test_generate_tuic_credentials(self):
+        """Verify that generate_tuic_credentials exists and returns valid uuid and password."""
+        from src.xray.keys import generate_tuic_credentials
+        u, p = generate_tuic_credentials()
+        self.assertTrue(bool(re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', u)))
+        self.assertTrue(len(p) >= 16)
+
+    def test_update_repair_python_reconcile_end_to_end(self):
+        """Verify that the embedded Python reconciliation script from update_repair.sh executes cleanly without NameError."""
+        import sys
+        import tempfile
+        import subprocess
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            temp_db = f.name
+
+        try:
+            conn = sqlite3.connect(temp_db)
+            c = conn.cursor()
+            c.execute("CREATE TABLE settings (id INTEGER PRIMARY KEY, key TEXT, value TEXT)")
+            c.execute("""
+                CREATE TABLE inbounds (
+                    id INTEGER PRIMARY KEY, user_id INTEGER, up INTEGER, down INTEGER, total INTEGER,
+                    remark TEXT, enable INTEGER, expiry_time INTEGER, listen TEXT, port INTEGER,
+                    protocol TEXT, settings TEXT, stream_settings TEXT, tag TEXT, sniffing TEXT
+                )
+            """)
+            c.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, password TEXT)")
+            c.execute("INSERT INTO users VALUES (1, 'admin', 'admin')")
+            conn.commit()
+            conn.close()
+
+            upd_text = (ROOT / "update_repair.sh").read_text(encoding="utf-8")
+            marker = "\"$PYTHON_CMD\" - << 'EOF_PYTHON_RECONCILE'"
+            py_start = upd_text.find(marker)
+            self.assertNotEqual(py_start, -1, "Python reconcile block marker must exist in update_repair.sh")
+            py_code = upd_text[py_start + len(marker) + 1:]
+            py_end = py_code.find("EOF_PYTHON_RECONCILE")
+            self.assertNotEqual(py_end, -1, "EOF_PYTHON_RECONCILE must exist")
+            py_code = py_code[:py_end]
+
+            env = os.environ.copy()
+            env["DB_PATH"] = temp_db
+            env["PRIMARY_DOMAIN"] = "example.com"
+            env["DRY_RUN"] = "0"
+
+            res = subprocess.run([sys.executable, "-"], input=py_code, env=env, capture_output=True, text=True, encoding="utf-8")
+            self.assertEqual(res.returncode, 0, f"update_repair.sh Python reconcile failed:\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}")
+        finally:
+            if os.path.exists(temp_db):
+                os.unlink(temp_db)
+
+    def test_configure_3xui_python_config_end_to_end(self):
+        """Verify that the embedded Python config script from configure_3xui.sh executes cleanly without NameError."""
+        import sys
+        import tempfile
+        import subprocess
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            temp_db = f.name
+
+        try:
+            conn = sqlite3.connect(temp_db)
+            c = conn.cursor()
+            c.execute("CREATE TABLE settings (id INTEGER PRIMARY KEY, key TEXT, value TEXT)")
+            c.execute("""
+                CREATE TABLE inbounds (
+                    id INTEGER PRIMARY KEY, user_id INTEGER, up INTEGER, down INTEGER, total INTEGER,
+                    remark TEXT, enable INTEGER, expiry_time INTEGER, listen TEXT, port INTEGER,
+                    protocol TEXT, settings TEXT, stream_settings TEXT, tag TEXT, sniffing TEXT
+                )
+            """)
+            c.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, password TEXT)")
+            c.execute("INSERT INTO users VALUES (1, 'admin', 'admin')")
+            conn.commit()
+            conn.close()
+
+            conf_text = (ROOT / "configure_3xui.sh").read_text(encoding="utf-8")
+            marker = "\"$PYTHON_CMD\" - << 'EOF_PYTHON_CONFIG'"
+            py_start = conf_text.find(marker)
+            self.assertNotEqual(py_start, -1, "Python config block marker must exist in configure_3xui.sh")
+            py_code = conf_text[py_start + len(marker) + 1:]
+            py_end = py_code.find("EOF_PYTHON_CONFIG")
+            self.assertNotEqual(py_end, -1, "EOF_PYTHON_CONFIG must exist")
+            py_code = py_code[:py_end]
+
+            env = os.environ.copy()
+            env["DB_PATH"] = temp_db
+            env["PRIMARY_DOMAIN"] = "example.com"
+            env["DRY_RUN"] = "0"
+
+            res = subprocess.run([sys.executable, "-"], input=py_code, env=env, capture_output=True, text=True, encoding="utf-8")
+            self.assertEqual(res.returncode, 0, f"configure_3xui.sh Python config failed:\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}")
+        finally:
+            if os.path.exists(temp_db):
+                os.unlink(temp_db)
+
+
 
 class TestBashScopeRegressions(unittest.TestCase):
     def test_no_illegal_local_outside_function(self):

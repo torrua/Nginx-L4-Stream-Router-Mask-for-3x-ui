@@ -7821,6 +7821,7 @@ for port in "${ALL_REALITY_PORTS[@]:-}"; do
         REALITY_UPSTREAMS+="
     upstream reality_backend_${port} {
         server 127.0.0.1:${port};
+        server unix:/dev/shm/nginx-http.sock backup;
     }
 "
     fi

@@ -985,6 +985,7 @@ def sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_s
                 if "secret" in clients_cols and client_secret: c_data["secret"] = client_secret
                 if "ad_tag" in clients_cols and client_adtag: c_data["ad_tag"] = client_adtag
                 if "adTag" in clients_cols and client_adtag: c_data["adTag"] = client_adtag
+                if "encryption" in clients_cols and client.get("encryption"): c_data["encryption"] = client["encryption"]
                 if protocol == "amneziawg":
                     if "wg_private_key" in clients_cols and client.get("privateKey"):
                         c_data["wg_private_key"] = client.get("privateKey")
@@ -1014,6 +1015,7 @@ def sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_s
                 if "secret" in clients_cols and client_secret: c_updates["secret"] = client_secret
                 if "ad_tag" in clients_cols and client_adtag: c_updates["ad_tag"] = client_adtag
                 if "adTag" in clients_cols and client_adtag: c_updates["adTag"] = client_adtag
+                if "encryption" in clients_cols and client.get("encryption"): c_updates["encryption"] = client["encryption"]
                 if protocol == "amneziawg":
                     if "wg_private_key" in clients_cols and client.get("privateKey"):
                         c_updates["wg_private_key"] = client.get("privateKey")
@@ -1187,6 +1189,9 @@ def generate_masque_credentials(default_user="client"):
 
 def generate_naiveproxy_credentials(default_user="user"):
     return default_user, secrets.token_urlsafe(16)
+
+def generate_tuic_credentials(default_uuid=None):
+    return default_uuid or str(uuid.uuid4()), secrets.token_urlsafe(16)
 
 # ----------------- 1. Настройки панели и подписок (settings) -----------------
 print("\n[+] Синхронизация системных настроек панели и подписок...")
@@ -1809,9 +1814,11 @@ harvested_tuic_uuid = None
 harvested_tuic_pass = None
 harvested_mtp_secret = None
 harvested_mtp_adtag = None
+harvested_vless_dekey = None
+harvested_vless_enkey = None
 
 if "clients" in all_tables and "email" in clients_cols:
-    cand_cols = ["uuid", "sub_id", "password", "wg_private_key", "wg_public_key", "secret", "ad_tag"]
+    cand_cols = ["uuid", "sub_id", "password", "wg_private_key", "wg_public_key", "secret", "ad_tag", "encryption"]
     avail_cols = [c for c in cand_cols if c in clients_cols]
     if avail_cols:
         col_list = ", ".join(avail_cols)
@@ -1826,6 +1833,7 @@ if "clients" in all_tables and "email" in clients_cols:
             if c_map.get("wg_public_key"): harvested_wg_c_pub = c_map["wg_public_key"]
             if c_map.get("secret"): harvested_mtp_secret = c_map["secret"]
             if c_map.get("ad_tag"): harvested_mtp_adtag = c_map["ad_tag"]
+            if c_map.get("encryption"): harvested_vless_enkey = c_map["encryption"]
 
 harvested_reality_priv = None
 harvested_reality_pub = None
@@ -1870,6 +1878,16 @@ for p, proto, raw_s, raw_st in cur.fetchall():
                     srv_conf = s_obj.get("server", {})
                     if srv_conf.get("headerProtectionKey") and not harvested_wg_hpk:
                         harvested_wg_hpk = srv_conf["headerProtectionKey"]
+    if proto == "vless":
+        if s_obj.get("decryption") and s_obj["decryption"] != "none":
+            if not harvested_vless_dekey: harvested_vless_dekey = s_obj["decryption"]
+            if not harvested_vless_enkey and s_obj.get("encryption"):
+                harvested_vless_enkey = s_obj["encryption"]
+        if not harvested_vless_enkey and c_list:
+            for _c in c_list:
+                if _c.get("encryption"):
+                    harvested_vless_enkey = _c["encryption"]
+                    break
     if proto == "shadowsocks":
         if not harvested_ss_server_pass and s_obj.get("password"):
             harvested_ss_server_pass = s_obj.get("password")
@@ -1965,6 +1983,7 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
         settings_json = json.dumps(target_settings, ensure_ascii=False)
         stream_json = json.dumps(target_stream, ensure_ascii=False)
         sniffing_json = json.dumps({"enabled": True, "destOverride": ["http", "tls", "quic", "fakedns"]})
+        new_inbound_id = None
         if not dry_run:
             cur.execute("""
                 INSERT INTO inbounds (
@@ -2041,6 +2060,10 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
                                 repairs.append("очищен невалидный adTag MTProto")
                             else:
                                 merged_c["adTag"] = ad_cand
+                    elif protocol == "vless" and "xhttpSettings" in target_stream:
+                        enc_cand = ec.get("encryption") or cur_settings.get("encryption") or target_settings.get("encryption")
+                        if enc_cand:
+                            merged_c["encryption"] = enc_cand
                     consolidated_clients.append(merged_c)
                     has_unified = True
                     preserved.append(f"единый клиент '{u_email}'")
@@ -2135,12 +2158,30 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             target_stream["xhttpSettings"]["path"] = cur_xh["path"]
             preserved.append(f"path ({cur_xh['path']})")
         target_stream["xhttpSettings"]["mode"] = "stream-one"
-        if cur_settings.get("decryption"):
+        if cur_settings.get("decryption") and cur_settings["decryption"] != "none":
             target_settings["decryption"] = cur_settings["decryption"]
             preserved.append("decryption xHTTP")
         if cur_settings.get("encryption"):
             target_settings["encryption"] = cur_settings["encryption"]
             preserved.append("encryption xHTTP")
+        elif not target_settings.get("encryption"):
+            for c in cur_settings.get("clients", []):
+                if c.get("encryption"):
+                    target_settings["encryption"] = c["encryption"]
+                    preserved.append("encryption xHTTP (из клиентов)")
+                    break
+        if cur_xh.get("xmux") and isinstance(cur_xh["xmux"], dict):
+            target_stream["xhttpSettings"]["xmux"] = cur_xh["xmux"]
+            preserved.append("xmux xHTTP")
+        if cur_xh.get("noSSEHeader") is not None:
+            target_stream["xhttpSettings"]["noSSEHeader"] = cur_xh["noSSEHeader"]
+            preserved.append("noSSEHeader xHTTP")
+        if cur_xh.get("xPaddingBytes"):
+            target_stream["xhttpSettings"]["xPaddingBytes"] = cur_xh["xPaddingBytes"]
+            preserved.append(f"xPaddingBytes ({cur_xh['xPaddingBytes']})")
+        if target_settings.get("encryption"):
+            for c in target_settings.get("clients", []):
+                c["encryption"] = target_settings["encryption"]
 
     # Г. Проверка и ремонт Hysteria 2
     if protocol == "hysteria":
@@ -2485,17 +2526,23 @@ if enable_classic:
     classic_ib_id = smart_reconcile_inbound(classic_port, "vless", "in-classic-reality", classic_remark, c_set, c_str, listen="127.0.0.1")
 
 # 3. VLESS xHTTP (50443)
-vless_dekey, vless_enkey = generate_vlessenc_keypair()
-if vless_dekey and vless_enkey:
-    x_set = {"clients": [{"id": unified_uuid, "flow": "", "email": unified_email, "subId": unified_sub_id, "enable": True}], "decryption": vless_dekey, "encryption": vless_enkey}
+if harvested_vless_dekey and harvested_vless_enkey:
+    vless_dekey, vless_enkey = harvested_vless_dekey, harvested_vless_enkey
 else:
-    x_set = {"clients": [{"id": unified_uuid, "flow": "", "email": unified_email, "subId": unified_sub_id, "enable": True}], "decryption": "none"}
+    vless_dekey, vless_enkey = generate_vlessenc_keypair()
+
+xhttp_client = {"id": unified_uuid, "flow": "", "email": unified_email, "subId": unified_sub_id, "enable": True}
+if vless_dekey and vless_enkey:
+    xhttp_client["encryption"] = vless_enkey
+    x_set = {"clients": [xhttp_client], "decryption": vless_dekey, "encryption": vless_enkey}
+else:
+    x_set = {"clients": [xhttp_client], "decryption": "none"}
 x_str = {
     "network": "xhttp",
     "xhttpSettings": {
         "path": f"/{xhttp_path.strip('/')}/", "host": domain, "mode": "stream-one",
         "noSSEHeader": True,
-        "xPaddingBytes": "", "xPaddingObfsMode": False, "xPaddingKey": "",
+        "xPaddingBytes": "100-500", "xPaddingObfsMode": False, "xPaddingKey": "",
         "xmux": {
             "maxConcurrency": "0",
             "maxConnections": "1-3",
@@ -2510,6 +2557,23 @@ x_str = {
 }
 xhttp_remark = make_remark("VLESS xHTTP")
 xhttp_ib_id = smart_reconcile_inbound(xhttp_port, "vless", "in-xhttp-stream", xhttp_remark, x_set, x_str, listen="127.0.0.1")
+
+unified_vless_enkey = ""
+cur.execute("SELECT settings FROM inbounds WHERE id = ? OR port = ?", (xhttp_ib_id, xhttp_port))
+_row_xh = cur.fetchone()
+if _row_xh and _row_xh[0]:
+    try:
+        _s_xh = json.loads(_row_xh[0])
+        unified_vless_enkey = _s_xh.get("encryption", "") or ""
+        if not unified_vless_enkey and _s_xh.get("clients"):
+            for _c in _s_xh["clients"]:
+                if _c.get("encryption"):
+                    unified_vless_enkey = _c["encryption"]
+                    break
+    except Exception:
+        pass
+if not unified_vless_enkey:
+    unified_vless_enkey = vless_enkey or ""
 
 # 4. Hysteria 2 (443)
 if enable_hy2:
@@ -2769,6 +2833,8 @@ if not dry_run:
             f.write(f"UNIFIED_UUID='{unified_uuid}'\n")
             f.write(f"UNIFIED_AWG_HPK='{unified_awg_hpk}'\n")
             f.write(f"UNIFIED_AWG_PORT='{awg_v3_port}'\n")
+            if unified_vless_enkey:
+                f.write(f"UNIFIED_VLESS_ENKEY='{unified_vless_enkey}'\n")
             if enable_ss2022:
                 f.write(f"SS2022_URI='{ss2022_uri}'\n")
                 f.write(f"SS2022_PORT='{ss2022_port}'\n")
@@ -3037,6 +3103,7 @@ fi
 # Чтение параметров единого клиента, экспортированных из Python
 UNIFIED_CLIENT_TAG=""
 UNIFIED_SUB_ID=""
+UNIFIED_VLESS_ENKEY=""
 SS2022_URI=""
 TUIC_URI=""
 MTPROTO_TG_URI=""
@@ -3046,7 +3113,7 @@ MTPROTO_BOT_SECRET=""
 for c_env in "/run/3xui_unified_client.env" "/tmp/3xui_unified_client.env"; do
     if [ -f "$c_env" ]; then
         source "$c_env"
-        rm -f "$c_env"
+        break
     fi
 done
 
@@ -3072,6 +3139,9 @@ else
     if [ -n "${UNIFIED_SUB_ID:-}" ]; then
         echo -e "  - ${BOLD}Прямая подписка:${NC}       ${GREEN}https://${PRIMARY_DOMAIN}/${SUB_PATH#/}/${UNIFIED_SUB_ID}${NC}"
         echo -e "  - ${BOLD}Прямая подписка (Clash):${NC} ${GREEN}https://${PRIMARY_DOMAIN}/${SUB_CLASH_PATH#/}/${UNIFIED_SUB_ID}${NC}"
+    fi
+    if [ -n "${UNIFIED_VLESS_ENKEY:-}" ]; then
+        echo -e "  - ${BOLD}VLESS xHTTP EnKey:${NC}     ${YELLOW}${UNIFIED_VLESS_ENKEY}${NC} (ML-KEM-768)"
     fi
     if [ -n "${UNIFIED_AWG_HPK:-}" ]; then
         echo -e "  - ${BOLD}AmneziaWG v3.1 HPK:${NC}     ${YELLOW}${UNIFIED_AWG_HPK}${NC} (UDP :${UNIFIED_AWG_PORT:-8443})"
@@ -3113,6 +3183,7 @@ $([ -n "$INSTALLED_XRAY_VER" ] && echo "Ядро Xray-core:        ${INSTALLED_X
 Канал подписок (Clash): https://${PRIMARY_DOMAIN}/${SUB_CLASH_PATH#/}/
 Прямая ссылка подписки: https://${PRIMARY_DOMAIN}/${SUB_PATH#/}/${UNIFIED_SUB_ID}
 Прямая ссылка (Clash):  https://${PRIMARY_DOMAIN}/${SUB_CLASH_PATH#/}/${UNIFIED_SUB_ID}
+$([ -n "${UNIFIED_VLESS_ENKEY:-}" ] && echo "VLESS xHTTP EnKey:     ${UNIFIED_VLESS_ENKEY} (ML-KEM-768)")
 $([ -n "${UNIFIED_AWG_HPK:-}" ] && echo "AmneziaWG v3.1 HPK:    ${UNIFIED_AWG_HPK} (UDP :${UNIFIED_AWG_PORT:-8443})")
 $([ -n "${SS2022_URI:-}" ] && printf "Shadowsocks 2022:       %s\n" "${SS2022_URI}")
 $([ -n "${TUIC_URI:-}" ] && printf "TUIC v5 (QUIC+BBR):     %s\n" "${TUIC_URI}")

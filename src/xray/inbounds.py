@@ -19,6 +19,7 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
         settings_json = json.dumps(target_settings, ensure_ascii=False)
         stream_json = json.dumps(target_stream, ensure_ascii=False)
         sniffing_json = json.dumps({"enabled": True, "destOverride": ["http", "tls", "quic", "fakedns"]})
+        new_inbound_id = None
         if not dry_run:
             cur.execute("""
                 INSERT INTO inbounds (
@@ -95,6 +96,10 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
                                 repairs.append("очищен невалидный adTag MTProto")
                             else:
                                 merged_c["adTag"] = ad_cand
+                    elif protocol == "vless" and "xhttpSettings" in target_stream:
+                        enc_cand = ec.get("encryption") or cur_settings.get("encryption") or target_settings.get("encryption")
+                        if enc_cand:
+                            merged_c["encryption"] = enc_cand
                     consolidated_clients.append(merged_c)
                     has_unified = True
                     preserved.append(f"единый клиент '{u_email}'")
@@ -189,12 +194,30 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             target_stream["xhttpSettings"]["path"] = cur_xh["path"]
             preserved.append(f"path ({cur_xh['path']})")
         target_stream["xhttpSettings"]["mode"] = "stream-one"
-        if cur_settings.get("decryption"):
+        if cur_settings.get("decryption") and cur_settings["decryption"] != "none":
             target_settings["decryption"] = cur_settings["decryption"]
             preserved.append("decryption xHTTP")
         if cur_settings.get("encryption"):
             target_settings["encryption"] = cur_settings["encryption"]
             preserved.append("encryption xHTTP")
+        elif not target_settings.get("encryption"):
+            for c in cur_settings.get("clients", []):
+                if c.get("encryption"):
+                    target_settings["encryption"] = c["encryption"]
+                    preserved.append("encryption xHTTP (из клиентов)")
+                    break
+        if cur_xh.get("xmux") and isinstance(cur_xh["xmux"], dict):
+            target_stream["xhttpSettings"]["xmux"] = cur_xh["xmux"]
+            preserved.append("xmux xHTTP")
+        if cur_xh.get("noSSEHeader") is not None:
+            target_stream["xhttpSettings"]["noSSEHeader"] = cur_xh["noSSEHeader"]
+            preserved.append("noSSEHeader xHTTP")
+        if cur_xh.get("xPaddingBytes"):
+            target_stream["xhttpSettings"]["xPaddingBytes"] = cur_xh["xPaddingBytes"]
+            preserved.append(f"xPaddingBytes ({cur_xh['xPaddingBytes']})")
+        if target_settings.get("encryption"):
+            for c in target_settings.get("clients", []):
+                c["encryption"] = target_settings["encryption"]
 
     # Г. Проверка и ремонт Hysteria 2
     if protocol == "hysteria":

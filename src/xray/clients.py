@@ -103,6 +103,7 @@ def sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_s
                 if "secret" in clients_cols and client_secret: c_data["secret"] = client_secret
                 if "ad_tag" in clients_cols and client_adtag: c_data["ad_tag"] = client_adtag
                 if "adTag" in clients_cols and client_adtag: c_data["adTag"] = client_adtag
+                if "encryption" in clients_cols and client.get("encryption"): c_data["encryption"] = client["encryption"]
                 if protocol == "amneziawg":
                     if "wg_private_key" in clients_cols and client.get("privateKey"):
                         c_data["wg_private_key"] = client.get("privateKey")
@@ -132,6 +133,7 @@ def sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_s
                 if "secret" in clients_cols and client_secret: c_updates["secret"] = client_secret
                 if "ad_tag" in clients_cols and client_adtag: c_updates["ad_tag"] = client_adtag
                 if "adTag" in clients_cols and client_adtag: c_updates["adTag"] = client_adtag
+                if "encryption" in clients_cols and client.get("encryption"): c_updates["encryption"] = client["encryption"]
                 if protocol == "amneziawg":
                     if "wg_private_key" in clients_cols and client.get("privateKey"):
                         c_updates["wg_private_key"] = client.get("privateKey")

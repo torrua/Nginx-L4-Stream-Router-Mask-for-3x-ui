@@ -855,7 +855,7 @@ if enable_classic:
     smart_reconcile_inbound(classic_port, "vless", "in-classic-reality", "VLESS_CLASSIC", c_set, c_str, listen="127.0.0.1")
 
 # 3. VLESS xHTTP (Stream-One) - сохраняем или генерируем постквантовый ML-KEM-768
-cur.execute("SELECT settings FROM inbounds WHERE port = ?", (xhttp_port,))
+cur.execute("SELECT settings FROM inbounds WHERE port = ? OR tag = 'in-xhttp-stream'", (xhttp_port,))
 row_xh = cur.fetchone()
 prev_xh_dec = "none"
 prev_xh_enc = None
@@ -865,29 +865,59 @@ if row_xh and row_xh[0]:
         if prev_s.get("decryption") and prev_s["decryption"] != "none":
             prev_xh_dec = prev_s["decryption"]
             prev_xh_enc = prev_s.get("encryption")
+            if not prev_xh_enc and prev_s.get("clients"):
+                for _c in prev_s["clients"]:
+                    if _c.get("encryption"):
+                        prev_xh_enc = _c["encryption"]
+                        break
     except Exception:
         pass
 
-if prev_xh_dec != "none":
-    x_set = {"clients": [{"id": def_uuid, "flow": ""}], "decryption": prev_xh_dec}
-    if prev_xh_enc:
-        x_set["encryption"] = prev_xh_enc
+if prev_xh_dec != "none" and prev_xh_enc:
+    c_xh = {"id": def_uuid, "flow": "", "encryption": prev_xh_enc}
+    x_set = {"clients": [c_xh], "decryption": prev_xh_dec, "encryption": prev_xh_enc}
 else:
     vless_dekey, vless_enkey = generate_vlessenc_keypair()
     if vless_dekey and vless_enkey:
-        x_set = {"clients": [{"id": def_uuid, "flow": ""}], "decryption": vless_dekey, "encryption": vless_enkey}
+        x_set = {"clients": [{"id": def_uuid, "flow": "", "encryption": vless_enkey}], "decryption": vless_dekey, "encryption": vless_enkey}
     else:
         x_set = {"clients": [{"id": def_uuid, "flow": ""}], "decryption": "none"}
 x_str = {
     "network": "xhttp",
     "xhttpSettings": {
         "path": f"/{xhttp_path.strip('/')}/", "host": domain, "mode": "stream-one",
-        "xPaddingBytes": "", "xPaddingObfsMode": False, "xPaddingKey": ""
+        "noSSEHeader": True,
+        "xPaddingBytes": "100-500", "xPaddingObfsMode": False, "xPaddingKey": "",
+        "xmux": {
+            "maxConcurrency": "0",
+            "maxConnections": "1-3",
+            "cMaxReuseTimes": "300-600",
+            "hKeepAlivePeriod": 600,
+            "hMaxRequestTimes": "1000-2000",
+            "hMaxReusableSecs": "1200-2400"
+        }
     },
     "security": "none",
-    "externalProxy": [{"dest": domain, "port": 443, "forceTls": "tls", "sni": domain, "fingerprint": "chrome", "alpn": "h2", "remark": "VLESS_XHTTP"}]
+    "externalProxy": [{"dest": domain, "port": 443, "forceTls": "tls", "sni": domain, "fingerprint": "firefox", "alpn": "h2", "remark": "VLESS_XHTTP"}]
 }
 smart_reconcile_inbound(xhttp_port, "vless", "in-xhttp-stream", "VLESS_XHTTP", x_set, x_str, listen="127.0.0.1")
+
+unified_vless_enkey = ""
+cur.execute("SELECT settings FROM inbounds WHERE port = ? OR tag = 'in-xhttp-stream'", (xhttp_port,))
+_row_xh = cur.fetchone()
+if _row_xh and _row_xh[0]:
+    try:
+        _s_xh = json.loads(_row_xh[0])
+        unified_vless_enkey = _s_xh.get("encryption", "") or ""
+        if not unified_vless_enkey and _s_xh.get("clients"):
+            for _c in _s_xh["clients"]:
+                if _c.get("encryption"):
+                    unified_vless_enkey = _c["encryption"]
+                    break
+    except Exception:
+        pass
+if not unified_vless_enkey:
+    unified_vless_enkey = prev_xh_enc or (vless_enkey if 'vless_enkey' in locals() else "") or ""
 
 # 4. Hysteria 2
 if enable_hy2:
@@ -1097,6 +1127,83 @@ if x_iid:
 
 if not dry_run:
     import urllib.parse
+
+    unified_email = os.environ.get("UNIFIED_CLIENT_TAG") or "Client"
+    unified_uuid = def_uuid
+    unified_sub_id = secrets.token_hex(8)
+    unified_awg_hpk = def_wg_hpk
+    ss_method = def_ss_method
+    unified_ss_server_pass = def_ss_server_pass
+    unified_ss_client_pass = def_ss_client_pass
+    unified_tuic_uuid = def_tuic_uuid
+    unified_tuic_pass = def_tuic_pass
+    unified_mtp_secret = def_mtp_secret
+
+    if "clients" in all_tables:
+        try:
+            cur.execute("SELECT uuid, sub_id, email FROM clients LIMIT 1")
+            r_c = cur.fetchone()
+            if r_c:
+                if r_c[0]: unified_uuid = r_c[0]
+                if r_c[1]: unified_sub_id = r_c[1]
+                if r_c[2]: unified_email = r_c[2]
+        except Exception:
+            pass
+
+    try:
+        cur.execute("SELECT settings FROM inbounds WHERE protocol = 'shadowsocks' LIMIT 1")
+        r_ss = cur.fetchone()
+        if r_ss and r_ss[0]:
+            s_ss = json.loads(r_ss[0])
+            ss_method = s_ss.get("method", def_ss_method)
+            if s_ss.get("password"): unified_ss_server_pass = s_ss["password"]
+            c_ss = s_ss.get("clients", [])
+            if c_ss and c_ss[0].get("password"): unified_ss_client_pass = c_ss[0]["password"]
+    except Exception:
+        pass
+
+    try:
+        cur.execute("SELECT settings FROM inbounds WHERE protocol = 'tuic' LIMIT 1")
+        r_tu = cur.fetchone()
+        if r_tu and r_tu[0]:
+            s_tu = json.loads(r_tu[0])
+            c_tu = s_tu.get("clients", [])
+            if c_tu and c_tu[0].get("uuid"): unified_tuic_uuid = c_tu[0]["uuid"]
+            if c_tu and c_tu[0].get("password"): unified_tuic_pass = c_tu[0]["password"]
+    except Exception:
+        pass
+
+    try:
+        cur.execute("SELECT settings FROM inbounds WHERE protocol = 'mtproto' LIMIT 1")
+        r_mt = cur.fetchone()
+        if r_mt and r_mt[0]:
+            s_mt = json.loads(r_mt[0])
+            c_mt = s_mt.get("clients", [])
+            if c_mt and c_mt[0].get("secret"): unified_mtp_secret = c_mt[0]["secret"]
+    except Exception:
+        pass
+
+    try:
+        cur.execute("SELECT settings FROM inbounds WHERE protocol = 'amneziawg' LIMIT 1")
+        r_awg = cur.fetchone()
+        if r_awg and r_awg[0]:
+            s_awg = json.loads(r_awg[0])
+            srv_awg = s_awg.get("server", {})
+            if srv_awg.get("headerProtectionKey"): unified_awg_hpk = srv_awg["headerProtectionKey"]
+    except Exception:
+        pass
+
+    try:
+        cur.execute("SELECT settings FROM inbounds WHERE protocol = 'vless' LIMIT 1")
+        r_vl = cur.fetchone()
+        if r_vl and r_vl[0]:
+            s_vl = json.loads(r_vl[0])
+            c_vl = s_vl.get("clients", [])
+            if c_vl and c_vl[0].get("id"): unified_uuid = c_vl[0]["id"]
+            if c_vl and c_vl[0].get("subId"): unified_sub_id = c_vl[0]["subId"]
+    except Exception:
+        pass
+
     raw_ss_userinfo = f"{ss_method}:{unified_ss_server_pass}:{unified_ss_client_pass}"
     b64_ss_userinfo = base64.urlsafe_b64encode(raw_ss_userinfo.encode("utf-8")).decode("utf-8").rstrip("=")
     ss2022_uri = f"ss://{b64_ss_userinfo}@{domain}:{ss2022_port}#{urllib.parse.quote('Shadowsocks 2022')}"
@@ -1120,6 +1227,8 @@ if not dry_run:
             f.write(f"UNIFIED_UUID='{unified_uuid}'\n")
             f.write(f"UNIFIED_AWG_HPK='{unified_awg_hpk}'\n")
             f.write(f"UNIFIED_AWG_PORT='{awg_v3_port}'\n")
+            if unified_vless_enkey:
+                f.write(f"UNIFIED_VLESS_ENKEY='{unified_vless_enkey}'\n")
             if enable_ss2022 or "shadowsocks" in existing_inbound_protos:
                 f.write(f"SS2022_URI='{ss2022_uri}'\n")
                 f.write(f"SS2022_PORT='{ss2022_port}'\n")
@@ -1187,11 +1296,19 @@ else
     if [ -f "/run/3xui_unified_client.env" ]; then
         . "/run/3xui_unified_client.env" 2>/dev/null || true
     fi
+    [ -n "${UNIFIED_VLESS_ENKEY:-}" ] && echo -e "  - ${BOLD}VLESS xHTTP EnKey:${NC}     ${YELLOW}${UNIFIED_VLESS_ENKEY}${NC} (ML-KEM-768)"
     [ -n "${SS2022_URI:-}" ] && echo -e "  - ${BOLD}Shadowsocks 2022:${NC}    ${CYAN}${SS2022_URI}${NC}"
     [ -n "${TUIC_URI:-}" ] && echo -e "  - ${BOLD}TUIC v5 (QUIC+BBR):${NC}  ${CYAN}${TUIC_URI}${NC}"
     [ -n "${MTPROTO_TG_URI:-}" ] && echo -e "  - ${BOLD}Telegram MTProxy:${NC}    ${CYAN}${MTPROTO_TG_URI}${NC}"
 
     if [ -f "/root/vpn_credentials.txt" ]; then
+        if [ -n "${UNIFIED_VLESS_ENKEY:-}" ]; then
+            if grep -q "VLESS xHTTP EnKey:" /root/vpn_credentials.txt 2>/dev/null; then
+                sed -i -E "s|^VLESS xHTTP EnKey:.*|VLESS xHTTP EnKey:     ${UNIFIED_VLESS_ENKEY} (ML-KEM-768)|" /root/vpn_credentials.txt 2>/dev/null || true
+            else
+                echo "VLESS xHTTP EnKey:     ${UNIFIED_VLESS_ENKEY} (ML-KEM-768)" >> /root/vpn_credentials.txt
+            fi
+        fi
         if [ -n "${SS2022_URI:-}" ] && ! grep -q "Shadowsocks 2022:" /root/vpn_credentials.txt 2>/dev/null; then
             echo "Shadowsocks 2022:       ${SS2022_URI}" >> /root/vpn_credentials.txt
         fi

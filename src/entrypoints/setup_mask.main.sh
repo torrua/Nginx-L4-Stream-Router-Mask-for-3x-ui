@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # ==============================================================================
-# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v8.0.0 Universal
+# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion __VERSION__ Universal
 # Nginx L4 Stream + 3X-UI + Unix Sockets + Native proxy_http_version 2 + 3 Decoys
 # ==============================================================================
 # Архитектура:
@@ -27,7 +27,7 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="v8.0.0"
+SCRIPT_VERSION="__VERSION__"
 
 
 # @include "common/checkpoint.sh"

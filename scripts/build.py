@@ -5,11 +5,18 @@ scripts/build.py - Monolithic Script Bundler for Nginx-L4-Stream-Router-Mask-for
 Assembles modular sources from src/ into standalone root scripts, preserving
 100% compatibility with direct `curl -sSL ... | sudo bash` execution.
 
+Features:
+- Single Source of Truth (SSOT) via VERSION file.
+- Automatic macro substitution: `__VERSION__` (e.g. 'v8.0.0') and `__RAW_VERSION__` ('8.0.0').
+- One-command release bumping via `--bump <version>`.
+
 Usage:
     python scripts/build.py               # Assemble all available targets
     python scripts/build.py --check       # Verify that root files match src/ (exit 1 on drift)
     python scripts/build.py --lint        # Run syntax validation (bash -n and Python AST)
     python scripts/build.py --target NAME # Build only a specific target (e.g. setup_mask.sh)
+    python scripts/build.py --bump 8.1.0  # Bump version, sync docs, and rebuild all targets
+    python scripts/build.py --sync-version# Sync current VERSION to docs and rebuild targets
 """
 
 from __future__ import annotations
@@ -36,6 +43,51 @@ ENTRYPOINTS: dict[str, str] = {
 INCLUDE_PATTERN = re.compile(r"^(\s*)#\s*@include\s+[\"']([^\"']+)[\"']\s*$")
 
 
+def get_version(root_dir: Path = ROOT_DIR) -> str:
+    """Read project version from VERSION file, defaulting to v8.0.0."""
+    ver_file = root_dir / "VERSION"
+    if ver_file.is_file():
+        v = ver_file.read_text(encoding="utf-8").strip()
+        if v:
+            return v if v.startswith("v") else f"v{v}"
+    return "v8.0.0"
+
+
+def sync_version_in_docs(version: str, root_dir: Path = ROOT_DIR) -> list[str]:
+    """Sync version string into README.md and docs/ARCHITECTURE.md."""
+    updated: list[str] = []
+    v_norm = version if version.startswith("v") else f"v{version}"
+
+    # 1. README.md badge
+    readme = root_dir / "README.md"
+    if readme.is_file():
+        content = readme.read_text(encoding="utf-8")
+        new_content = re.sub(
+            r"badge/версия-v[0-9.]+-blue",
+            f"badge/версия-{v_norm}-blue",
+            content,
+        )
+        if new_content != content:
+            readme.write_text(new_content, encoding="utf-8")
+            updated.append("README.md")
+
+    # 2. docs/ARCHITECTURE.md header
+    arch = root_dir / "docs" / "ARCHITECTURE.md"
+    if arch.is_file():
+        content = arch.read_text(encoding="utf-8")
+        new_content = re.sub(
+            r"\(v[0-9.]+\)",
+            f"({v_norm})",
+            content,
+            count=1,
+        )
+        if new_content != content:
+            arch.write_text(new_content, encoding="utf-8")
+            updated.append("docs/ARCHITECTURE.md")
+
+    return updated
+
+
 def resolve_include_path(inc_str: str, current_file: Path, src_dir: Path) -> Path:
     """Resolve an include path relative to current file or src/."""
     if inc_str.startswith("./") or inc_str.startswith("../"):
@@ -50,7 +102,7 @@ def bundle_file(
     src_dir: Path,
     call_stack: list[Path] | None = None,
 ) -> str:
-    """Recursively bundles a file by expanding # @include directives."""
+    """Recursively bundles a file by expanding # @include directives and substituting version macros."""
     if call_stack is None:
         call_stack = []
 
@@ -85,8 +137,15 @@ def bundle_file(
             output_lines.append(line)
 
     call_stack.pop()
-    # Ensure standard trailing newline
-    return "\n".join(output_lines) + "\n"
+    content = "\n".join(output_lines) + "\n"
+
+    # Only perform macro replacement at the top-level bundle entrypoint
+    if not call_stack:
+        ver = get_version(src_dir.parent)
+        raw_ver = ver.lstrip("v")
+        content = content.replace("__VERSION__", ver).replace("__RAW_VERSION__", raw_ver)
+
+    return content
 
 
 def find_bash_executable() -> Path | None:
@@ -216,12 +275,51 @@ def build_all(
     return 0
 
 
+def bump_version(new_version: str, root_dir: Path = ROOT_DIR) -> int:
+    """Update VERSION file, sync documentation, and rebuild all script targets."""
+    v_norm = new_version.strip()
+    if not v_norm.startswith("v"):
+        v_norm = f"v{v_norm}"
+
+    # Validate version format (e.g. v8.0.1, v8.1.0-rc1)
+    if not re.match(r"^v\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?$", v_norm):
+        print(f"Error: Invalid version format '{new_version}'. Expected format like '8.1.0' or 'v8.1.0'.")
+        return 1
+
+    ver_file = root_dir / "VERSION"
+    ver_file.write_text(f"{v_norm}\n", encoding="utf-8")
+    print(f"[VERSION] Updated VERSION file to {v_norm}")
+
+    doc_updates = sync_version_in_docs(v_norm, root_dir)
+    for doc in doc_updates:
+        print(f"[DOCS SYNC] Updated {doc} -> {v_norm}")
+
+    # Rebuild all targets
+    print(f"[BUILD] Rebuilding all targets with {v_norm}...")
+    rc = build_all(check_mode=False, lint_mode=True)
+    if rc == 0:
+        print(f"\n[SUCCESS] Version successfully bumped to {v_norm} across code, docs, and compiled targets.")
+    return rc
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build and assemble monolithic root scripts from src/")
     parser.add_argument("--check", action="store_true", help="Check for drift without modifying files (CI mode)")
     parser.add_argument("--lint", action="store_true", help="Validate bash and embedded python syntax")
     parser.add_argument("--target", type=str, help="Build a specific target script")
+    parser.add_argument("--bump", type=str, metavar="VERSION", help="Bump project version, sync docs, and rebuild all targets")
+    parser.add_argument("--sync-version", action="store_true", help="Sync current VERSION into docs and rebuild targets")
     args = parser.parse_args()
+
+    if args.bump:
+        return bump_version(args.bump)
+
+    if args.sync_version:
+        ver = get_version()
+        doc_updates = sync_version_in_docs(ver)
+        for doc in doc_updates:
+            print(f"[DOCS SYNC] Updated {doc} -> {ver}")
+        return build_all(check_mode=False, lint_mode=args.lint, target_filter=args.target)
 
     return build_all(check_mode=args.check, lint_mode=args.lint, target_filter=args.target)
 

@@ -87,6 +87,37 @@ EOF
         errs_invalid = build.lint_output("test_invalid", invalid_shell)
         self.assertTrue(any("Embedded Python syntax error" in e for e in errs_invalid))
 
+    def test_version_macro_substitution(self):
+        root = Path(self.temp_dir.name)
+        (root / "VERSION").write_text("v9.1.5\n", encoding="utf-8")
+
+        main = self.src_dir / "main.sh"
+        main.write_text('SCRIPT_VERSION="__VERSION__"\nRAW="__RAW_VERSION__"\n', encoding="utf-8")
+
+        result = build.bundle_file(main, self.src_dir)
+        self.assertEqual(result, 'SCRIPT_VERSION="v9.1.5"\nRAW="9.1.5"\n')
+
+    def test_sync_version_in_docs(self):
+        root = Path(self.temp_dir.name)
+        readme = root / "README.md"
+        readme.write_text("[![Версия](https://img.shields.io/badge/версия-v7.0.0-blue)](link)", encoding="utf-8")
+        
+        docs_dir = root / "docs"
+        docs_dir.mkdir(parents=True, exist_ok=True)
+        arch = docs_dir / "ARCHITECTURE.md"
+        arch.write_text("# Архитектура (v7.0.0)\nТекст", encoding="utf-8")
+
+        updated = build.sync_version_in_docs("8.5.0", root)
+        self.assertEqual(len(updated), 2)
+        self.assertIn("v8.5.0", readme.read_text(encoding="utf-8"))
+        self.assertIn("(v8.5.0)", arch.read_text(encoding="utf-8"))
+
+    def test_bump_version_validation(self):
+        root = Path(self.temp_dir.name)
+        rc_bad = build.bump_version("invalid_ver", root)
+        self.assertEqual(rc_bad, 1)
+
 
 if __name__ == "__main__":
     unittest.main()
+

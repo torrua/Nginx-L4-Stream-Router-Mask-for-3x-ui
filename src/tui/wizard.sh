@@ -615,6 +615,22 @@ for item in res:
             ENABLE_ZAPRET=0
         fi
 
+        if [[ "${ENABLE_NAIVE,,}" == "y" || "${ENABLE_NAIVE:-}" == "1" ]]; then
+            ENABLE_NAIVE=1
+            NAIVE_PORT="${NAIVE_PORT:-8446}"
+            NAIVE_USER="${NAIVE_USER:-user}"
+        else
+            ENABLE_NAIVE=0
+        fi
+
+        if [[ "${ENABLE_DNSTT,,}" == "y" || "${ENABLE_DNSTT:-}" == "1" ]]; then
+            ENABLE_DNSTT=1
+            DNSTT_PORT="${DNSTT_PORT:-53053}"
+            ENABLE_SS2022=1
+        else
+            ENABLE_DNSTT=0
+        fi
+
         if is_true "${ENABLE_AWG_V3:-0}" || is_true "${ENABLE_AWG_V2:-0}" || is_true "${ENABLE_AWG_STANDALONE:-0}"; then
             start_amneziawg_preinstall_bg
         fi
@@ -1013,6 +1029,7 @@ for item in res:
             echo -e "     • ${GREEN}Wstunnel (Nginx L7)${NC}: WebSocket туннелирование через порт 443 HTTPS с валидным SSL."
             echo -e "     • ${GREEN}Server-Side Zapret${NC}: десинхронизация DPI ТСПУ прямо на VPS через nfqws connbytes 1:6."
             echo -e "     • ${GREEN}NaïveProxy${NC}: маскировка под Chrome HTTP/2/3 HTTPS (Chromium network stack via Caddy)."
+            echo -e "     • ${GREEN}DNSTT (DoH Tunnel)${NC}: аварийный DNS-туннель через DoH (dnstt-server) для обхода жестких белых списков."
             echo
         fi
 
@@ -1029,6 +1046,7 @@ for item in res:
             "ENABLE_WSTUNNEL"
             "ENABLE_ZAPRET"
             "ENABLE_NAIVE"
+            "ENABLE_DNSTT"
         )
         local proto_labels=(
             "Hysteria 2 (UDP/QUIC Brutal CC, :${HY2_PORT:-443})"
@@ -1042,7 +1060,8 @@ for item in res:
             "ShadowTLS v4 + SS-2022 (Nginx Stream :443 SNI ${SHADOWTLS_SNI:-gateway.icloud.com})"
             "Wstunnel over Nginx L7 (HTTPS WebSocket :443 -> :${WSTUNNEL_PORT:-8080})"
             "Server-Side Zapret (DPI Desync nfqws connbytes 1:6 NFQUEUE 200)"
-            "NaïveProxy (Chromium HTTPS Stack via Caddy, :${NAIVE_PORT:-8446})"
+            "NaïveProxy (Chromium HTTPS Stack via Caddy, Nginx Stream :443 -> :${NAIVE_PORT:-8446})"
+            "DNSTT DoH Tunnel (DNS Tunneling via dnstt-server, :${DNSTT_PORT:-53053}/udp -> SS-2022)"
         )
 
         prompt_multiselect "Выберите протоколы для установки" proto_keys proto_labels || return $?
@@ -1192,15 +1211,32 @@ for item in res:
         if is_true "$ENABLE_NAIVE"; then
             [ -n "${NAIVE_PORT:-}" ] || NAIVE_PORT="8446"
             [ -n "${NAIVE_USER:-}" ] || NAIVE_USER="user"
+            [ -n "${NAIVE_DOMAIN:-}" ] || NAIVE_DOMAIN="naive.${PRIMARY_DOMAIN:-}"
             [ -n "${NAIVE_PASS:-}" ] || NAIVE_PASS="$(python3 -c 'import secrets; print(secrets.token_urlsafe(16))' 2>/dev/null || openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' || echo "nv${RANDOM}")"
             if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
-                prompt_default "  Порт для NaïveProxy" "$NAIVE_PORT" NAIVE_PORT || return $?
+                prompt_default "  Локальный порт для NaïveProxy (Caddy)" "$NAIVE_PORT" NAIVE_PORT || return $?
+                prompt_default "  SNI-домен для NaïveProxy" "$NAIVE_DOMAIN" NAIVE_DOMAIN || return $?
                 prompt_default "  Пользователь для NaïveProxy" "$NAIVE_USER" NAIVE_USER || return $?
             fi
         else
             NAIVE_PORT=""
+            NAIVE_DOMAIN=""
             NAIVE_USER=""
             NAIVE_PASS=""
+        fi
+
+        if is_true "$ENABLE_DNSTT"; then
+            [ -n "${DNSTT_PORT:-}" ] || DNSTT_PORT="53053"
+            [ -n "${DNSTT_DOMAIN:-}" ] || DNSTT_DOMAIN="t.${PRIMARY_DOMAIN:-}"
+            ENABLE_SS2022=1
+            [ -n "${SS2022_PORT:-}" ] || SS2022_PORT="8388"
+            if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+                prompt_default "  UDP-порт для DNSTT-сервера" "$DNSTT_PORT" DNSTT_PORT || return $?
+                prompt_default "  NS/DNS-домен зоны для DNSTT" "$DNSTT_DOMAIN" DNSTT_DOMAIN || return $?
+            fi
+        else
+            DNSTT_PORT=""
+            DNSTT_DOMAIN=""
         fi
 
         rebuild_all_domains

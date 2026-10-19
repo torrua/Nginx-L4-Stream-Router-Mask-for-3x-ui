@@ -122,3 +122,15 @@ def validate_mtproto_secret(secret_hex):
 
 def validate_mtproto_adtag(adtag):
     return bool(isinstance(adtag, str) and re.match(r"^[0-9a-fA-F]{32}$", adtag.strip()))
+
+def generate_shadowtls_password():
+    return secrets.token_urlsafe(16)
+
+def validate_shadowtls_password(pw):
+    return bool(isinstance(pw, str) and len(pw.strip()) >= 8)
+
+def generate_masque_credentials(default_user="client"):
+    return default_user, secrets.token_urlsafe(16)
+
+def generate_naiveproxy_credentials(default_user="user"):
+    return default_user, secrets.token_urlsafe(16)

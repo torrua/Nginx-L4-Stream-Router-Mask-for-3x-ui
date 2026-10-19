@@ -260,6 +260,8 @@ export AWG_PRIMARY_DNS="${AWG_PRIMARY_DNS:-9.9.9.9}"
 export AWG_SECONDARY_DNS="${AWG_SECONDARY_DNS:-76.76.2.0}"
 export ENABLE_SS2022="${ENABLE_SS2022:-n}"
 export SS2022_PORT="${SS2022_PORT:-8388}"
+export ENABLE_SHADOWTLS="${ENABLE_SHADOWTLS:-n}"
+export SHADOWTLS_PORT="${SHADOWTLS_PORT:-8543}"
 export ENABLE_TUIC="${ENABLE_TUIC:-n}"
 export TUIC_PORT="${TUIC_PORT:-8448}"
 export ENABLE_MTPROTO="${ENABLE_MTPROTO:-n}"
@@ -408,6 +410,8 @@ awg_v2_port = int(os.environ.get("AWG_V2_PORT") or "8444")
 
 enable_ss2022 = os.environ.get("ENABLE_SS2022", "n").lower() in ("1", "y", "true")
 ss2022_port = int(os.environ.get("SS2022_PORT") or "8388")
+enable_shadowtls = os.environ.get("ENABLE_SHADOWTLS", "n").lower() in ("1", "y", "true")
+shadowtls_port = int(os.environ.get("SHADOWTLS_PORT") or "8543")
 
 enable_tuic = os.environ.get("ENABLE_TUIC", "n").lower() in ("1", "y", "true")
 tuic_port = int(os.environ.get("TUIC_PORT") or "8448")
@@ -952,10 +956,13 @@ if enable_ss2022 or "shadowsocks" in existing_inbound_protos:
         "network": "tcp,udp",
         "clients": [{"email": "Client", "password": def_ss_client_pass, "enable": True}]
     }
+    ss_ext_proxies = [{"dest": domain, "port": ss2022_port, "forceTls": "none", "remark": "Shadowsocks 2022"}]
+    if enable_shadowtls:
+        ss_ext_proxies.append({"dest": domain, "port": shadowtls_port, "forceTls": "tls", "remark": "ShadowTLS v4 + SS-2022"})
     ss_str = {
-        "network": "tcp",
+        "network": "tcp,udp",
         "security": "none",
-        "externalProxy": [{"dest": domain, "port": ss2022_port, "forceTls": "none", "remark": "Shadowsocks 2022"}]
+        "externalProxy": ss_ext_proxies
     }
     smart_reconcile_inbound(ss2022_port, "shadowsocks", "in-shadowsocks-2022", "Shadowsocks 2022", ss_set, ss_str, listen="0.0.0.0")
 

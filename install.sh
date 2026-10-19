@@ -273,7 +273,10 @@ inspect_port_conflicts() {
 
     # 3. Проверка внешних портов маршрутизации и маскирования (80 и 443 TCP)
     local _web_stack="${ENABLE_WEB_STACK:-y}"
-    if [[ "${_web_stack,,}" == "y" || "${_web_stack}" == "1" || "${_web_stack,,}" == "true" ]]; then
+    local _dokploy_coexist="${DOKPLOY_COEXISTENCE:-n}"
+    if [[ "${_dokploy_coexist,,}" == "y" || "${_dokploy_coexist}" == "1" || "${_dokploy_coexist,,}" == "true" || "${_web_stack,,}" == "dokploy" ]]; then
+        ok "Режим бесконфликтного сосуществования с Dokploy активен: порты 80 и 443 зарезервированы для Traefik (проксирование через WebSocket / Docker Compose)."
+    elif [[ "${_web_stack,,}" == "y" || "${_web_stack}" == "1" || "${_web_stack,,}" == "true" ]]; then
         for p in 80 443; do
             if is_port_in_use "tcp" "$p"; then
                 local w_owner
@@ -346,6 +349,43 @@ inspect_port_conflicts() {
             fi
         else
             ok "Порт $awg_p/udp (AmneziaWG Standalone) свободен."
+        fi
+    fi
+
+    # 6. Проверка портов протоколов следующего поколения (MASQUE, ShadowTLS, NaïveProxy)
+    local _masque_en="${ENABLE_MASQUE:-n}"
+    if [[ "${_masque_en,,}" == "y" || "${_masque_en}" == "1" || "${_masque_en,,}" == "true" ]]; then
+        local m_port="${MASQUE_PORT:-8445}"
+        if is_port_in_use "udp" "$m_port"; then
+            local m_owner
+            m_owner=$(get_port_listener_info "udp" "$m_port")
+            warn "Порт $m_port/udp (MASQUE) занят: ${m_owner:-сторонней службой}."
+        else
+            ok "Порт $m_port/udp (MASQUE HTTP/3 Datagram) свободен."
+        fi
+    fi
+
+    local _stls_en="${ENABLE_SHADOWTLS:-n}"
+    if [[ "${_stls_en,,}" == "y" || "${_stls_en}" == "1" || "${_stls_en,,}" == "true" ]]; then
+        local st_port="${SHADOWTLS_PORT:-8543}"
+        if is_port_in_use "tcp" "$st_port"; then
+            local st_owner
+            st_owner=$(get_port_listener_info "tcp" "$st_port")
+            warn "Порт $st_port/tcp (ShadowTLS v4) занят: ${st_owner:-сторонней службой}."
+        else
+            ok "Порт $st_port/tcp (ShadowTLS v4) свободен."
+        fi
+    fi
+
+    local _naive_en="${ENABLE_NAIVE:-n}"
+    if [[ "${_naive_en,,}" == "y" || "${_naive_en}" == "1" || "${_naive_en,,}" == "true" ]]; then
+        local n_port="${NAIVE_PORT:-8446}"
+        if is_port_in_use "tcp" "$n_port"; then
+            local n_owner
+            n_owner=$(get_port_listener_info "tcp" "$n_port")
+            warn "Порт $n_port/tcp (NaïveProxy) занят: ${n_owner:-сторонней службой}."
+        else
+            ok "Порт $n_port/tcp (NaïveProxy) свободен."
         fi
     fi
 

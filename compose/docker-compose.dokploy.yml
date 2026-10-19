@@ -1,0 +1,98 @@
+# ==============================================================================
+# DOKPLOY NEXT-GEN PROTOCOLS STACK (ZERO-CONFLICT WITH TRAEFIK ON PORTS 80/443)
+# ==============================================================================
+# Этот стек разворачивается непосредственно через Dokploy Compose UI или CLI.
+# Traefik обслуживает стандартные порты 80 и 443. Wstunnel проксируется через Traefik
+# по WebSocket с автоматическим SSL. Остальные протоколы работают на независимых портах.
+
+services:
+  # 1. Wstunnel over Dokploy Traefik (WebSocket / HTTP/3 over port 443)
+  wstunnel-dokploy:
+    image: ghcr.io/erebe/wstunnel:latest
+    container_name: wstunnel-dokploy
+    restart: unless-stopped
+    command:
+      - "server"
+      - "--restrict-to=127.0.0.1:51820,127.0.0.1:8388,127.0.0.1:10443"
+      - "ws://0.0.0.0:8080"
+    networks:
+      - dokploy-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.wstunnel.rule=Host(`${WSTUNNEL_DOMAIN:-wstunnel.yourdomain.online}`)"
+      - "traefik.http.routers.wstunnel.entrypoints=websecure"
+      - "traefik.http.routers.wstunnel.tls=true"
+      - "traefik.http.routers.wstunnel.tls.certresolver=letsencrypt"
+      - "traefik.http.services.wstunnel.loadbalancer.server.port=8080"
+
+  # 2. MASQUE (RFC 9484 / RFC 9298 via Sing-box 1.14+)
+  sing-box-masque:
+    image: ghcr.io/sagernet/sing-box:latest
+    container_name: sing-box-masque
+    restart: unless-stopped
+    ports:
+      - "${MASQUE_PORT:-8445}:${MASQUE_PORT:-8445}/udp"
+    volumes:
+      - ./sing-box-masque/config.json:/etc/sing-box/config.json:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - /etc/ssl/certs:/etc/ssl/certs:ro
+    command: ["run", "-c", "/etc/sing-box/config.json"]
+
+  # 3. ShadowTLS v4 + Shadowsocks-2022
+  shadow-tls:
+    image: ghcr.io/ihciah/shadow-tls:latest
+    container_name: shadow-tls
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - MODE=server
+      - V3=1
+      - LISTEN=0.0.0.0:${SHADOWTLS_PORT:-8543}
+      - SERVER=${SS2022_BACKEND_HOST:-127.0.0.1}:${SS2022_BACKEND_PORT:-8388}
+      - TLS_NAMES=${SHADOWTLS_SNI:-gateway.icloud.com}
+      - PASSWORD=${SHADOWTLS_PASSWORD}
+
+  # 4. NaïveProxy with Caddy (Cloudflare DNS-01 ACME)
+  naiveproxy-caddy:
+    image: caddy:latest
+    container_name: naiveproxy-caddy
+    restart: unless-stopped
+    ports:
+      - "${NAIVE_PORT:-8446}:${NAIVE_PORT:-8446}/tcp"
+      - "${NAIVE_PORT:-8446}:${NAIVE_PORT:-8446}/udp"
+    environment:
+      - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}
+      - NAIVE_DOMAIN=${NAIVE_DOMAIN:-naive.yourdomain.online}
+      - NAIVE_USER=${NAIVE_USER:-user}
+      - NAIVE_PASS=${NAIVE_PASS:-password}
+      - LE_EMAIL=${LE_EMAIL:-admin@yourdomain.online}
+    volumes:
+      - ./naiveproxy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - naive_caddy_data:/data
+      - naive_caddy_config:/config
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+
+  # 5. Server-Side Zapret (nfqws with connbytes 1:6)
+  server-side-zapret:
+    build:
+      context: ./zapret
+      dockerfile: Dockerfile
+    image: local-zapret:latest
+    container_name: server-side-zapret
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    environment:
+      - ZAPRET_QNUM=${ZAPRET_QNUM:-200}
+      - ZAPRET_DESYNC=${ZAPRET_DESYNC:-split2}
+      - ZAPRET_FOOLING=${ZAPRET_FOOLING:-md5sig,badseq}
+
+networks:
+  dokploy-network:
+    external: true
+
+volumes:
+  naive_caddy_data:
+  naive_caddy_config:

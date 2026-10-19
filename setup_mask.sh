@@ -887,6 +887,29 @@ reconstruct_arrays_from_vars() {
     HY2_PORT_HOPPING="${HY2_PORT_HOPPING:-n}"
     AUTO_SETUP_3XUI="${AUTO_SETUP_3XUI:-y}"
     PORT_AGH_WEB="${PORT_AGH_WEB:-3000}"
+
+    # Сосуществование с Dokploy и протоколы следующего поколения
+    _v="${DOKPLOY_COEXISTENCE:-n}"; if is_true "$_v"; then DOKPLOY_COEXISTENCE="y"; else DOKPLOY_COEXISTENCE="n"; fi
+    _v="${ENABLE_MASQUE:-n}"; if is_true "$_v"; then ENABLE_MASQUE=1; else ENABLE_MASQUE=0; fi
+    MASQUE_PORT="${MASQUE_PORT:-8445}"
+    _v="${ENABLE_SHADOWTLS:-n}"; if is_true "$_v"; then ENABLE_SHADOWTLS=1; else ENABLE_SHADOWTLS=0; fi
+    SHADOWTLS_PORT="${SHADOWTLS_PORT:-8543}"
+    SHADOWTLS_SNI="${SHADOWTLS_SNI:-gateway.icloud.com}"
+    SHADOWTLS_PASSWORD="${SHADOWTLS_PASSWORD:-}"
+    _v="${ENABLE_NAIVE:-n}"; if is_true "$_v"; then ENABLE_NAIVE=1; else ENABLE_NAIVE=0; fi
+    NAIVE_PORT="${NAIVE_PORT:-8446}"
+    NAIVE_DOMAIN="${NAIVE_DOMAIN:-}"
+    NAIVE_USER="${NAIVE_USER:-user}"
+    NAIVE_PASS="${NAIVE_PASS:-}"
+    _v="${ENABLE_ZAPRET:-n}"; if is_true "$_v"; then ENABLE_ZAPRET=1; else ENABLE_ZAPRET=0; fi
+    ZAPRET_QNUM="${ZAPRET_QNUM:-200}"
+    ZAPRET_DESYNC="${ZAPRET_DESYNC:-split2}"
+    ZAPRET_FOOLING="${ZAPRET_FOOLING:-md5sig,badseq}"
+    _v="${ENABLE_WSTUNNEL:-n}"; if is_true "$_v"; then ENABLE_WSTUNNEL=1; else ENABLE_WSTUNNEL=0; fi
+    WSTUNNEL_DOMAIN="${WSTUNNEL_DOMAIN:-}"
+    WSTUNNEL_PREFIX="${WSTUNNEL_PREFIX:-/wstunnel}"
+    WSTUNNEL_PORT="${WSTUNNEL_PORT:-8080}"
+    WSTUNNEL_SECRET="${WSTUNNEL_SECRET:-}"
     CF_AUTH_METHOD="${CF_AUTH_METHOD:-1}"
 }
 
@@ -949,6 +972,19 @@ save_session_state() {
     v="${ENABLE_AGH:-n}"; is_true "$v" && agh_save="y"
     local agh_xray_save="n"
     v="${AGH_XRAY_DNS:-n}"; is_true "$v" && agh_xray_save="y"
+
+    local dokploy_coexist_save="n"
+    v="${DOKPLOY_COEXISTENCE:-n}"; is_true "$v" && dokploy_coexist_save="y"
+    local masque_save="n"
+    v="${ENABLE_MASQUE:-n}"; is_true "$v" && masque_save="y"
+    local shadowtls_save="n"
+    v="${ENABLE_SHADOWTLS:-n}"; is_true "$v" && shadowtls_save="y"
+    local naive_save="n"
+    v="${ENABLE_NAIVE:-n}"; is_true "$v" && naive_save="y"
+    local zapret_save="n"
+    v="${ENABLE_ZAPRET:-n}"; is_true "$v" && zapret_save="y"
+    local wstunnel_save="n"
+    v="${ENABLE_WSTUNNEL:-n}"; is_true "$v" && wstunnel_save="y"
 
     local _save_panel_path="${RAW_PATH:-${PANEL_PATH:-my-3x-panel}}"
     _save_panel_path="${_save_panel_path#/}"
@@ -1067,6 +1103,29 @@ BLOCK_SMTP="${BLOCK_SMTP:-true}"
 BLOCK_LAN="${BLOCK_LAN:-true}"
 WEB_LISTEN="${WEB_LISTEN:-127.0.0.1}"
 SUB_LISTEN="${SUB_LISTEN:-127.0.0.1}"
+
+DOKPLOY_COEXISTENCE="$dokploy_coexist_save"
+ENABLE_MASQUE="$masque_save"
+MASQUE_PORT="${MASQUE_PORT:-8445}"
+ENABLE_SHADOWTLS="$shadowtls_save"
+SHADOWTLS_PORT="${SHADOWTLS_PORT:-8543}"
+SHADOWTLS_SNI="${SHADOWTLS_SNI:-gateway.icloud.com}"
+SHADOWTLS_PASSWORD="${SHADOWTLS_PASSWORD:-}"
+ENABLE_NAIVE="$naive_save"
+NAIVE_PORT="${NAIVE_PORT:-8446}"
+NAIVE_DOMAIN="${NAIVE_DOMAIN:-}"
+NAIVE_USER="${NAIVE_USER:-user}"
+NAIVE_PASS="${NAIVE_PASS:-}"
+ENABLE_ZAPRET="$zapret_save"
+ZAPRET_QNUM="${ZAPRET_QNUM:-200}"
+ZAPRET_DESYNC="${ZAPRET_DESYNC:-split2}"
+ZAPRET_FOOLING="${ZAPRET_FOOLING:-md5sig,badseq}"
+ENABLE_WSTUNNEL="$wstunnel_save"
+WSTUNNEL_DOMAIN="${WSTUNNEL_DOMAIN:-}"
+WSTUNNEL_PREFIX="${WSTUNNEL_PREFIX:-/wstunnel}"
+WSTUNNEL_PORT="${WSTUNNEL_PORT:-8080}"
+WSTUNNEL_SECRET="${WSTUNNEL_SECRET:-}"
+
 LAST_COMPLETED_STEP="${LAST_COMPLETED_STEP:-0}"
 EOF_SAVE
     chmod 600 "$save_path" 2>/dev/null || true
@@ -2100,7 +2159,10 @@ inspect_port_conflicts() {
 
     # 3. Проверка внешних портов маршрутизации и маскирования (80 и 443 TCP)
     local _web_stack="${ENABLE_WEB_STACK:-y}"
-    if [[ "${_web_stack,,}" == "y" || "${_web_stack}" == "1" || "${_web_stack,,}" == "true" ]]; then
+    local _dokploy_coexist="${DOKPLOY_COEXISTENCE:-n}"
+    if [[ "${_dokploy_coexist,,}" == "y" || "${_dokploy_coexist}" == "1" || "${_dokploy_coexist,,}" == "true" || "${_web_stack,,}" == "dokploy" ]]; then
+        ok "Режим бесконфликтного сосуществования с Dokploy активен: порты 80 и 443 зарезервированы для Traefik (проксирование через WebSocket / Docker Compose)."
+    elif [[ "${_web_stack,,}" == "y" || "${_web_stack}" == "1" || "${_web_stack,,}" == "true" ]]; then
         for p in 80 443; do
             if is_port_in_use "tcp" "$p"; then
                 local w_owner
@@ -2173,6 +2235,43 @@ inspect_port_conflicts() {
             fi
         else
             ok "Порт $awg_p/udp (AmneziaWG Standalone) свободен."
+        fi
+    fi
+
+    # 6. Проверка портов протоколов следующего поколения (MASQUE, ShadowTLS, NaïveProxy)
+    local _masque_en="${ENABLE_MASQUE:-n}"
+    if [[ "${_masque_en,,}" == "y" || "${_masque_en}" == "1" || "${_masque_en,,}" == "true" ]]; then
+        local m_port="${MASQUE_PORT:-8445}"
+        if is_port_in_use "udp" "$m_port"; then
+            local m_owner
+            m_owner=$(get_port_listener_info "udp" "$m_port")
+            warn "Порт $m_port/udp (MASQUE) занят: ${m_owner:-сторонней службой}."
+        else
+            ok "Порт $m_port/udp (MASQUE HTTP/3 Datagram) свободен."
+        fi
+    fi
+
+    local _stls_en="${ENABLE_SHADOWTLS:-n}"
+    if [[ "${_stls_en,,}" == "y" || "${_stls_en}" == "1" || "${_stls_en,,}" == "true" ]]; then
+        local st_port="${SHADOWTLS_PORT:-8543}"
+        if is_port_in_use "tcp" "$st_port"; then
+            local st_owner
+            st_owner=$(get_port_listener_info "tcp" "$st_port")
+            warn "Порт $st_port/tcp (ShadowTLS v4) занят: ${st_owner:-сторонней службой}."
+        else
+            ok "Порт $st_port/tcp (ShadowTLS v4) свободен."
+        fi
+    fi
+
+    local _naive_en="${ENABLE_NAIVE:-n}"
+    if [[ "${_naive_en,,}" == "y" || "${_naive_en}" == "1" || "${_naive_en,,}" == "true" ]]; then
+        local n_port="${NAIVE_PORT:-8446}"
+        if is_port_in_use "tcp" "$n_port"; then
+            local n_owner
+            n_owner=$(get_port_listener_info "tcp" "$n_port")
+            warn "Порт $n_port/tcp (NaïveProxy) занят: ${n_owner:-сторонней службой}."
+        else
+            ok "Порт $n_port/tcp (NaïveProxy) свободен."
         fi
     fi
 

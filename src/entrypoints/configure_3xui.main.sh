@@ -212,6 +212,10 @@ AWG_V2_PORT="${AWG_V2_PORT:-8444}"
 
 ENABLE_SS2022="${ENABLE_SS2022:-n}"
 SS2022_PORT="${SS2022_PORT:-8388}"
+ENABLE_SHADOWTLS="${ENABLE_SHADOWTLS:-n}"
+SHADOWTLS_PORT="${SHADOWTLS_PORT:-8543}"
+SHADOWTLS_SNI="${SHADOWTLS_SNI:-gateway.icloud.com}"
+SHADOWTLS_PASSWORD="${SHADOWTLS_PASSWORD:-}"
 
 ENABLE_TUIC="${ENABLE_TUIC:-n}"
 TUIC_PORT="${TUIC_PORT:-8448}"
@@ -409,6 +413,10 @@ export AWG_HEADER_PROTECTION_KEY
 export AWG_RANDOM_TRAILERS
 export ENABLE_SS2022
 export SS2022_PORT
+export ENABLE_SHADOWTLS
+export SHADOWTLS_PORT
+export SHADOWTLS_SNI
+export SHADOWTLS_PASSWORD
 export ENABLE_TUIC
 export TUIC_PORT
 export ENABLE_MTPROTO
@@ -563,6 +571,10 @@ awg_random_trailers_env = os.environ.get("AWG_RANDOM_TRAILERS", "false").strip()
 
 enable_ss2022 = os.environ.get("ENABLE_SS2022", "n").lower() in ("1", "y", "true")
 ss2022_port = int(os.environ.get("SS2022_PORT") or "8388")
+enable_shadowtls = os.environ.get("ENABLE_SHADOWTLS", "n").lower() in ("1", "y", "true")
+shadowtls_port = int(os.environ.get("SHADOWTLS_PORT") or "8543")
+shadowtls_sni = (os.environ.get("SHADOWTLS_SNI") or "gateway.icloud.com").strip()
+shadowtls_password = os.environ.get("SHADOWTLS_PASSWORD", "").strip()
 
 enable_tuic = os.environ.get("ENABLE_TUIC", "n").lower() in ("1", "y", "true")
 tuic_port = int(os.environ.get("TUIC_PORT") or "8448")
@@ -1542,10 +1554,13 @@ if enable_ss2022:
             "enable": True
         }]
     }
+    ss_ext_proxies = [{"dest": domain, "port": ss2022_port, "forceTls": "none", "remark": make_remark("Shadowsocks 2022")}]
+    if enable_shadowtls:
+        ss_ext_proxies.append({"dest": domain, "port": shadowtls_port, "forceTls": "tls", "remark": make_remark("ShadowTLS v4 + SS-2022")})
     ss_str = {
-        "network": "tcp",
+        "network": "tcp,udp",
         "security": "none",
-        "externalProxy": [{"dest": domain, "port": ss2022_port, "forceTls": "none", "remark": make_remark("Shadowsocks 2022")}]
+        "externalProxy": ss_ext_proxies
     }
     ss_remark = make_remark("Shadowsocks 2022")
     smart_reconcile_inbound(ss2022_port, "shadowsocks", "in-shadowsocks-2022", ss_remark, ss_set, ss_str, listen="0.0.0.0")

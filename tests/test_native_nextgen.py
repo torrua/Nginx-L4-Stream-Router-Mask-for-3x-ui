@@ -427,6 +427,14 @@ echo "CLI_ENABLE_SS2022: $CLI_ENABLE_SS2022"
         self.assertIn("zapret-server.service", sec_vps_sh)
         self.assertIn("connbytes 1:6", sec_vps_sh)
 
+    def test_naive_service_integrated_in_deploy_services(self):
+        """NaiveProxy service must be defined and called in deploy_native_nextgen_services."""
+        steps_sh = (ROOT / "src/installer/steps.sh").read_text(encoding="utf-8")
+        self.assertIn("setup_naive_service", steps_sh)
+        self.assertIn("caddy-naive.service", steps_sh)
+        self.assertIn("forward_proxy", steps_sh)
+
 
 if __name__ == "__main__":
     unittest.main()
+

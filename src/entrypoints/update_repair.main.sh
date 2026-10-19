@@ -1237,6 +1237,13 @@ if not dry_run:
     zapret_fooling = os.environ.get("ZAPRET_FOOLING", "md5sig,badseq").strip()
     zapret_info = f"Active (NFQUEUE {zapret_qnum}, desync: {zapret_desync}, fooling: {zapret_fooling})"
 
+    enable_naive = os.environ.get("ENABLE_NAIVE", "n").lower() in ("1", "y", "true")
+    naive_port = int(os.environ.get("NAIVE_PORT") or "8446")
+    naive_domain = (os.environ.get("NAIVE_DOMAIN") or domain).strip()
+    naive_user = (os.environ.get("NAIVE_USER") or "user").strip()
+    naive_pass = (os.environ.get("NAIVE_PASS") or "").strip() or unified_ss_client_pass
+    naive_uri = f"naive+https://{naive_user}:{naive_pass}@{naive_domain}:{naive_port}#{urllib.parse.quote('NaïveProxy Chrome')}"
+
     try:
         cur.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     except Exception:
@@ -1279,6 +1286,11 @@ if not dry_run:
                 f.write(f"WSTUNNEL_PORT='{wstunnel_port}'\n")
             if enable_zapret or os.path.exists("/etc/systemd/system/zapret-server.service"):
                 f.write(f"ZAPRET_INFO='{zapret_info}'\n")
+            if enable_naive or os.path.exists("/etc/systemd/system/caddy-naive.service"):
+                f.write(f"NAIVE_URI='{naive_uri}'\n")
+                f.write(f"NAIVE_PORT='{naive_port}'\n")
+                f.write(f"NAIVE_USER='{naive_user}'\n")
+                f.write(f"NAIVE_PASS='{naive_pass}'\n")
         os.umask(old_umask)
         os.chmod(run_file, 0o600)
     except Exception:
@@ -1343,6 +1355,7 @@ else
     [ -n "${SS_SHADOWTLS_URI:-}" ] && echo -e "  - ${BOLD}ShadowTLS + SS-2022:${NC}  ${CYAN}${SS_SHADOWTLS_URI}${NC}"
     [ -n "${WSTUNNEL_CLI:-}" ] && echo -e "  - ${BOLD}Wstunnel CLI:${NC}         ${CYAN}${WSTUNNEL_CLI}${NC}"
     [ -n "${ZAPRET_INFO:-}" ] && echo -e "  - ${BOLD}Server-Side Zapret:${NC}   ${GREEN}${ZAPRET_INFO}${NC}"
+    [ -n "${NAIVE_URI:-}" ] && echo -e "  - ${BOLD}NaïveProxy:${NC}          ${CYAN}${NAIVE_URI}${NC}"
 
     if [ -f "/root/vpn_credentials.txt" ]; then
         if [ -n "${UNIFIED_VLESS_ENKEY:-}" ]; then
@@ -1376,6 +1389,9 @@ else
         fi
         if [ -n "${ZAPRET_INFO:-}" ] && ! grep -q "Server-Side Zapret:" /root/vpn_credentials.txt 2>/dev/null; then
             echo "Server-Side Zapret:      ${ZAPRET_INFO}" >> /root/vpn_credentials.txt
+        fi
+        if [ -n "${NAIVE_URI:-}" ] && ! grep -q "NaïveProxy (Chrome HTTPS):" /root/vpn_credentials.txt 2>/dev/null; then
+            echo "NaïveProxy (Chrome HTTPS): ${NAIVE_URI}" >> /root/vpn_credentials.txt
         fi
     fi
 fi

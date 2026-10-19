@@ -1777,6 +1777,13 @@ zapret_desync = os.environ.get("ZAPRET_DESYNC", "split2").strip()
 zapret_fooling = os.environ.get("ZAPRET_FOOLING", "md5sig,badseq").strip()
 zapret_info = f"Active (NFQUEUE {zapret_qnum}, desync: {zapret_desync}, fooling: {zapret_fooling})"
 
+enable_naive = os.environ.get("ENABLE_NAIVE", "n").lower() in ("1", "y", "true")
+naive_port = int(os.environ.get("NAIVE_PORT") or "8446")
+naive_domain = (os.environ.get("NAIVE_DOMAIN") or domain).strip()
+naive_user = (os.environ.get("NAIVE_USER") or "user").strip()
+naive_pass = (os.environ.get("NAIVE_PASS") or "").strip() or unified_ss_client_pass
+naive_uri = f"naive+https://{naive_user}:{naive_pass}@{naive_domain}:{naive_port}#{urllib.parse.quote(make_remark('NaïveProxy Chrome'))}"
+
 if not dry_run:
     try:
         cur.execute("PRAGMA wal_checkpoint(TRUNCATE)")
@@ -1826,6 +1833,11 @@ if not dry_run:
                 f.write(f"WSTUNNEL_PORT='{wstunnel_port}'\n")
             if enable_zapret:
                 f.write(f"ZAPRET_INFO='{zapret_info}'\n")
+            if enable_naive:
+                f.write(f"NAIVE_URI='{naive_uri}'\n")
+                f.write(f"NAIVE_PORT='{naive_port}'\n")
+                f.write(f"NAIVE_USER='{naive_user}'\n")
+                f.write(f"NAIVE_PASS='{naive_pass}'\n")
         os.umask(old_umask)
         os.chmod(run_file, 0o600)
     except Exception:
@@ -2157,6 +2169,9 @@ else
     if [ -n "${ZAPRET_INFO:-}" ]; then
         echo -e "  - ${BOLD}Server-Side Zapret:${NC}   ${GREEN}${ZAPRET_INFO}${NC}"
     fi
+    if [ -n "${NAIVE_URI:-}" ]; then
+        echo -e "  - ${BOLD}NaïveProxy:${NC}          ${CYAN}${NAIVE_URI}${NC}"
+    fi
     if [[ "${ENABLE_NODE_TOKEN,,}" == "y" || "${ENABLE_NODE_TOKEN:-}" == "1" ]] && [ -n "${NODE_TOKEN:-}" ]; then
         echo -e "  - ${BOLD}3X-UI Node API:${NC}         ${GREEN}${NODE_TOKEN_NAME}${NC} (Host: ${CYAN}${PRIMARY_DOMAIN}:443${NC}, Path: ${CYAN}/${PANEL_PATH#/}/${NC})"
         echo -e "  - ${BOLD}API Bearer Token:${NC}       ${YELLOW}${NODE_TOKEN}${NC}"
@@ -2191,8 +2206,9 @@ $([ -n "${MASQUE_URI:-}" ] && printf "MASQUE (RFC 9484):       %s\n" "${MASQUE_U
 $([ -n "${SHADOWTLS_URI:-}" ] && printf "ShadowTLS v4:            %s\nShadowTLS + SS-2022:     %s\n" "${SHADOWTLS_URI}" "${SS_SHADOWTLS_URI}")
 $([ -n "${WSTUNNEL_CLI:-}" ] && printf "Wstunnel Client CLI:     %s\n" "${WSTUNNEL_CLI}")
 $([ -n "${ZAPRET_INFO:-}" ] && printf "Server-Side Zapret:      %s\n" "${ZAPRET_INFO}")
+$([ -n "${NAIVE_URI:-}" ] && printf "NaïveProxy (Chrome HTTPS): %s\n" "${NAIVE_URI}")
 $([ -n "${NODE_TOKEN:-}" ] && printf "3X-UI Node Token:      %s\nИмя ноды (Node Name):  %s (Host: %s:443, Path: /%s/)\n" "${NODE_TOKEN}" "${NODE_TOKEN_NAME}" "${PRIMARY_DOMAIN}" "${PANEL_PATH#/}")
-(Объединяет все конфигурации: Steal REALITY, Classic REALITY, xHTTP, Hysteria 2, AWG v3, AWG v2, SS-2022, TUIC v5, MTProxy, MASQUE, ShadowTLS, Wstunnel, Zapret)
+(Объединяет все конфигурации: Steal REALITY, Classic REALITY, xHTTP, Hysteria 2, AWG v3, AWG v2, SS-2022, TUIC v5, MTProxy, MASQUE, ShadowTLS, Wstunnel, Zapret, NaïveProxy)
 =====================================================================
 EOF_CRED
         echo -e "  - ${BOLD}Файл с паролями:${NC}        ${CYAN}$CRED_FILE${NC} (chmod 600)"
@@ -2209,6 +2225,9 @@ EOF_CRED
         fi
         if [ -n "${ZAPRET_INFO:-}" ] && ! grep -q "Server-Side Zapret:" "$CRED_FILE" 2>/dev/null; then
             echo "Server-Side Zapret:      ${ZAPRET_INFO}" >> "$CRED_FILE"
+        fi
+        if [ -n "${NAIVE_URI:-}" ] && ! grep -q "NaïveProxy (Chrome HTTPS):" "$CRED_FILE" 2>/dev/null; then
+            echo "NaïveProxy (Chrome HTTPS): ${NAIVE_URI}" >> "$CRED_FILE"
         fi
         echo -e "  - ${BOLD}Файл с паролями:${NC}        ${CYAN}$CRED_FILE${NC} (обновлен, chmod 600)"
     fi

@@ -888,6 +888,27 @@ echo "A=$PROTO_A B=$PROTO_B C=$PROTO_C"
         self.assertEqual(res_multiselect.returncode, 0)
         self.assertIn("A=y B=n C=y", res_multiselect.stdout)
 
+        # 2b. Space-separated numbers
+        res_space = run_shell("""
+set -euo pipefail
+source src/common/colors.sh
+source src/common/logger.sh
+is_true() { local val="${1:-0}"; [[ "$val" == "1" || "${val,,}" == "y" || "${val,,}" == "true" ]]; }
+NON_INTERACTIVE=0
+source src/tui/prompts.sh
+
+p_keys=("PROTO_A" "PROTO_B" "PROTO_C")
+p_labels=("Protocol Alpha" "Protocol Beta" "Protocol Gamma")
+PROTO_A="n"
+PROTO_B="n"
+PROTO_C="n"
+
+prompt_multiselect_numeric "Choose protocols" p_keys p_labels <<< "1 2"
+echo "A=$PROTO_A B=$PROTO_B C=$PROTO_C"
+""")
+        self.assertEqual(res_space.returncode, 0)
+        self.assertIn("A=y B=y C=n", res_space.stdout)
+
         # 3. Multiselect non-interactive auto mode
         res_auto = run_shell("""
 set -euo pipefail

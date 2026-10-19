@@ -980,9 +980,9 @@ for item in res:
         )
         local proto_labels=(
             "Hysteria 2 (UDP/QUIC Brutal CC, :${HY2_PORT:-443})"
-            "AmneziaWG v3.1 (инбаунд 3X-UI с обфускацией DPI, :${AWG_V3_PORT:-8443}/udp)"
-            "AmneziaWG v2.0 (инбаунд 3X-UI для роутеров Keenetic/OpenWrt, :${AWG_V2_PORT:-8444}/udp)"
-            "Автономный сервер AmneziaWG (awg-mgr / системная служба, :${AWG_STANDALONE_PORT:-8445}/udp)"
+            "AmneziaWG v3.1 (инбаунд 3X-UI, :${AWG_V3_PORT:-8443}/udp)"
+            "AmneziaWG v2.0 (роутеры Keenetic/OpenWrt, :${AWG_V2_PORT:-8444}/udp)"
+            "Автономный сервер AmneziaWG (awg-mgr, :${AWG_STANDALONE_PORT:-8445}/udp)"
             "TUIC v5 (QUIC 0-RTT + BBR, :${TUIC_PORT:-8448}/udp)"
             "Shadowsocks 2022 (2022-blake3-aes-256-gcm, :${SS2022_PORT:-8388})"
             "Telegram MTProxy (FakeTLS прямой доступ, :${MTPROTO_PORT:-8444}/tcp)"

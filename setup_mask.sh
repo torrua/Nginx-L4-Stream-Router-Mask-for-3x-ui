@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # ==============================================================================
-# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v8.0.1 Universal
+# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v8.0.2 Universal
 # Nginx L4 Stream + 3X-UI + Unix Sockets + Native proxy_http_version 2 + 3 Decoys
 # ==============================================================================
 # Архитектура:
@@ -27,7 +27,7 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="v8.0.1"
+SCRIPT_VERSION="v8.0.2"
 
 
 # --------------------------- Замеры времени и телеметрия ---------------------------
@@ -457,7 +457,7 @@ generate_config_template() {
     local target_file="${1:-setup_mask.env.example}"
     cat << 'EOF_CONF' > "$target_file"
 # ==============================================================================
-# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v8.0.1 Universal)
+# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v8.0.2 Universal)
 # ==============================================================================
 # Данный файл позволяет выполнять полностью автоматическую установку:
 # ./setup_mask.sh --config setup_mask.env --non-interactive --force
@@ -1271,7 +1271,7 @@ prompt_multiselect_numeric() {
         local input_val=""
         echo -ne "  ${WHITE}${ARROW} Номера через запятую/пробел, 'all' или '0'${prompt_hint}: ${NC}"
         read -r input_val </dev/tty || read -r input_val || true
-        input_val=$(echo "${input_val:-}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+        input_val=$(echo "${input_val:-}" | tr '[:upper:]' '[:lower:]' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 
         if [ "${WIZARD_ALLOW_BACK:-0}" -eq 1 ]; then
             if [[ "$input_val" == "b" || "$input_val" == "back" || "$input_val" == "назад" ]]; then
@@ -1373,7 +1373,7 @@ prompt_multiselect_tui() {
             local num=$((i+1))
             printf "\033[2K  %b[${color}%s${NC}] [%b] %b\n" "$prefix" "$num" "$mark" "${_tui_labels[$i]}"
         done
-        printf "\033[2K  ${DIM}[↑/↓: навигация | Пробел: [X]/[ ] | 1-%d: вкл/выкл | a: все | 0: сброс | Enter: готово]${NC}\n" "$count"
+        printf "\033[2K  ${DIM}[↑/↓: навигация | Пробел: отметка | 1-%d: перекл | a: все | Enter: готово]${NC}\n" "$count"
     }
 
     render_tui_menu
@@ -1396,9 +1396,9 @@ prompt_multiselect_tui() {
         if [ "$key" = $'\x1b' ]; then
             local rest=""
             if [ -c /dev/tty ]; then
-                read -rsn2 -t 0.05 rest </dev/tty 2>/dev/null || rest=""
+                read -rsn2 -t 0.2 rest </dev/tty 2>/dev/null || rest=""
             else
-                read -rsn2 -t 0.05 rest 2>/dev/null || rest=""
+                read -rsn2 -t 0.2 rest 2>/dev/null || rest=""
             fi
             case "$rest" in
                 "[A"|"OA")
@@ -1496,7 +1496,11 @@ prompt_multiselect() {
         return 0
     fi
 
-    if can_use_interactive_tui; then
+    # По умолчанию используем надежный числовой селектор:
+    # 1. 100% стабилен при любых размерах окна терминала и переносе строк
+    # 2. Не зависит от задержек сети и фрагментации пакетов SSH
+    # 3. Поддерживает мгновенный выбор по Enter, список номеров, 'all' и '0'
+    if [ "${ENABLE_TUI_MULTISELECT:-0}" = "1" ] && can_use_interactive_tui; then
         prompt_multiselect_tui "$prompt_text" _ms_keys _ms_labels || return $?
     else
         prompt_multiselect_numeric "$prompt_text" _ms_keys _ms_labels || return $?
@@ -5807,9 +5811,9 @@ for item in res:
         )
         local proto_labels=(
             "Hysteria 2 (UDP/QUIC Brutal CC, :${HY2_PORT:-443})"
-            "AmneziaWG v3.1 (инбаунд 3X-UI с обфускацией DPI, :${AWG_V3_PORT:-8443}/udp)"
-            "AmneziaWG v2.0 (инбаунд 3X-UI для роутеров Keenetic/OpenWrt, :${AWG_V2_PORT:-8444}/udp)"
-            "Автономный сервер AmneziaWG (awg-mgr / системная служба, :${AWG_STANDALONE_PORT:-8445}/udp)"
+            "AmneziaWG v3.1 (инбаунд 3X-UI, :${AWG_V3_PORT:-8443}/udp)"
+            "AmneziaWG v2.0 (роутеры Keenetic/OpenWrt, :${AWG_V2_PORT:-8444}/udp)"
+            "Автономный сервер AmneziaWG (awg-mgr, :${AWG_STANDALONE_PORT:-8445}/udp)"
             "TUIC v5 (QUIC 0-RTT + BBR, :${TUIC_PORT:-8448}/udp)"
             "Shadowsocks 2022 (2022-blake3-aes-256-gcm, :${SS2022_PORT:-8388})"
             "Telegram MTProxy (FakeTLS прямой доступ, :${MTPROTO_PORT:-8444}/tcp)"

@@ -191,7 +191,7 @@ prompt_multiselect_numeric() {
         local input_val=""
         echo -ne "  ${WHITE}${ARROW} Номера через запятую/пробел, 'all' или '0'${prompt_hint}: ${NC}"
         read -r input_val </dev/tty || read -r input_val || true
-        input_val=$(echo "${input_val:-}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+        input_val=$(echo "${input_val:-}" | tr '[:upper:]' '[:lower:]' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 
         if [ "${WIZARD_ALLOW_BACK:-0}" -eq 1 ]; then
             if [[ "$input_val" == "b" || "$input_val" == "back" || "$input_val" == "назад" ]]; then
@@ -293,7 +293,7 @@ prompt_multiselect_tui() {
             local num=$((i+1))
             printf "\033[2K  %b[${color}%s${NC}] [%b] %b\n" "$prefix" "$num" "$mark" "${_tui_labels[$i]}"
         done
-        printf "\033[2K  ${DIM}[↑/↓: навигация | Пробел: [X]/[ ] | 1-%d: вкл/выкл | a: все | 0: сброс | Enter: готово]${NC}\n" "$count"
+        printf "\033[2K  ${DIM}[↑/↓: навигация | Пробел: отметка | 1-%d: перекл | a: все | Enter: готово]${NC}\n" "$count"
     }
 
     render_tui_menu
@@ -316,9 +316,9 @@ prompt_multiselect_tui() {
         if [ "$key" = $'\x1b' ]; then
             local rest=""
             if [ -c /dev/tty ]; then
-                read -rsn2 -t 0.05 rest </dev/tty 2>/dev/null || rest=""
+                read -rsn2 -t 0.2 rest </dev/tty 2>/dev/null || rest=""
             else
-                read -rsn2 -t 0.05 rest 2>/dev/null || rest=""
+                read -rsn2 -t 0.2 rest 2>/dev/null || rest=""
             fi
             case "$rest" in
                 "[A"|"OA")
@@ -416,7 +416,11 @@ prompt_multiselect() {
         return 0
     fi
 
-    if can_use_interactive_tui; then
+    # По умолчанию используем надежный числовой селектор:
+    # 1. 100% стабилен при любых размерах окна терминала и переносе строк
+    # 2. Не зависит от задержек сети и фрагментации пакетов SSH
+    # 3. Поддерживает мгновенный выбор по Enter, список номеров, 'all' и '0'
+    if [ "${ENABLE_TUI_MULTISELECT:-0}" = "1" ] && can_use_interactive_tui; then
         prompt_multiselect_tui "$prompt_text" _ms_keys _ms_labels || return $?
     else
         prompt_multiselect_numeric "$prompt_text" _ms_keys _ms_labels || return $?

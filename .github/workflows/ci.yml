@@ -48,6 +48,9 @@ jobs:
       - name: Verify Build Synchronization & Linting (Drift Check)
         run: python scripts/build.py --check --lint
 
+      - name: Verify Privacy and Security Safety (Zero Leaks Check)
+        run: python scripts/check_safety.py
+
   syntax-and-lint:
     name: Bash Syntax & Version Check
     runs-on: ubuntu-latest

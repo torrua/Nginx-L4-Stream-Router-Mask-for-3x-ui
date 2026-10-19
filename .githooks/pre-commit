@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Git Pre-Commit Hook: Automated Privacy, Secret Leak & Syntax Validation
+# ==============================================================================
+
+set -e
+
+echo "[pre-commit] Running privacy and security safety scanner..."
+python scripts/check_safety.py || {
+    echo "[pre-commit] ERROR: Safety scan failed! Aborting commit to prevent data leak."
+    exit 1
+}
+
+echo "[pre-commit] Checking build synchronization and linting..."
+python scripts/build.py --check --lint || {
+    echo "[pre-commit] ERROR: Build check or lint failed! Aborting commit."
+    exit 1
+}
+
+echo "[pre-commit] All privacy, safety, and build checks passed successfully."
+exit 0

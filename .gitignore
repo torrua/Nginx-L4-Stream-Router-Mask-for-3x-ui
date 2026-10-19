@@ -1,35 +1,193 @@
-# Environment & Session files
+# ==============================================================================
+# .gitignore - Hardened Privacy & Repository Protection Specification
+# Prevents personal credentials, server IPs, database snapshots, private keys,
+# and temporary/scratch scripts from leaking into public repositories.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. Environment, Secrets & Credentials
+# ------------------------------------------------------------------------------
 *.env
-!*.env.example
+*.env.*
+*.env.local
+*.env.production
 setup_mask.env
+!*.env.example
+!setup_mask.env.example
 
-# Backups & Archives
+# Tokens, Credentials & Secret JSON/YAML files
+tokens.json
+credentials.json
+client_secrets.json
+passwords.txt
+*.token
+*.tokens
+*.secret
+*.secrets
+secrets/
+secret/
+
+# SSL/TLS Certificates and Private Keys
+*.pem
+*.key
+*.crt
+*.cer
+*.pfx
+*.p12
+*.csr
+*.ca-bundle
+
+# SSH Keys and Fingerprints
+id_rsa*
+id_ed25519*
+id_ecdsa*
+id_dsa*
+*.id_rsa
+*.id_ed25519
+*.ppk
+known_hosts
+authorized_keys
+
+# ------------------------------------------------------------------------------
+# 2. Backups, Databases & Binary Dumps
+# ------------------------------------------------------------------------------
+backups/
+backup/
+*.bak
+*.backup
+*.old
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.dump
+*.sql
+*.jsonl
+
+# Archives & Compressed bundles
+*.tar
 *.tar.gz
+*.tgz
 *.zip
+*.7z
+*.rar
+*.gz
 
-# Scratch & Temporary files
+# ------------------------------------------------------------------------------
+# 3. Scratch Directories & Temporary Workspaces
+# ------------------------------------------------------------------------------
 scratch/
 .tmp/
-__pycache__/
-*.pyc
+tmp/
+.temp/
+temp/
+scratch_*/
+temp_*/
+tmp_*/
 
-# Local standalone AWG bot files (not part of main repo)
+# Runtime logs & debug output
+*.log
+*.out
+*.err
+*.stdout
+*.stderr
+*.txt.log
+*_output.txt
+*_result.txt
+transcript_*.txt
+
+# ------------------------------------------------------------------------------
+# 4. Root-Level Temporary, Diagnostic & One-Off Scripts
+# (Keeps root clean of ad-hoc diagnostic scripts while preserving tests/ & scripts/)
+# ------------------------------------------------------------------------------
+/scratch_*.py
+/scratch_*.sh
+/check_*.py
+/check_*.sh
+/diagnose_*.py
+/diagnose_*.sh
+/test_*.py
+/test_*.sh
+/inspect_*.py
+/inspect_*.sh
+/restore_*.py
+/restore_*.sh
+/clean_*.py
+/clean_*.sh
+/deploy_*.py
+/deploy_*.sh
+/fix_*.py
+/fix_*.sh
+/sniff_*.py
+/sniff_*.sh
+/query_*.py
+/query_*.sh
+/grab_*.py
+/grab_*.sh
+/grep_*.py
+/grep_*.sh
+/find_*.py
+/find_*.sh
+/view_*.py
+/view_*.sh
+/compare_*.py
+/compare_*.sh
+/convert_*.py
+/convert_*.sh
+/get_*.py
+/get_*.sh
+/setup_*.py
+/run_remote_install.py
+
+# Standalone AWG bot files (not part of main distribution repo)
 /manage_amneziawg.py
 /manage_amneziawg.sh
 .local_awg_backup/
 test_profiles/
 
-# Upstream tracking tools & notes (local only)
+# ------------------------------------------------------------------------------
+# 5. WireGuard & AmneziaWG Client Profiles & Artifacts
+# ------------------------------------------------------------------------------
+*.conf
+*.vpn
+*.wg
+*.awg
+awg-tools/
+extracted_amnezia/
+
+# ------------------------------------------------------------------------------
+# 6. Local-Only Infrastructure Docs & Sync Notes
+# ------------------------------------------------------------------------------
 docs/UPSTREAM_TRACKING.md
 docs/upstream_sync_state.json
 scripts/check_upstream_sync.py
-
-# Local infrastructure & cluster references (local only)
 docs/AWG_BEST_PRACTICES_REFERENCE.md
 docs/AWG_3.1_REFERENCE_SPECIFICATION.md
+docs/*_INTERNAL.md
+docs/*_LOCAL.md
+docs/CLUSTER_*.md
+docs/*cluster*
+docs/*secret*
 
-# Local test & debug artifacts
-awg-tools/
-extracted_amnezia/
-*.conf
-run_remote_install.py
+# ------------------------------------------------------------------------------
+# 7. Python, Testing & IDE Artifacts
+# ------------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.tox/
+
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+.antigravity/

@@ -266,6 +266,24 @@ def build_all(
         print("Run 'python scripts/build.py' to update them.")
         return 1
 
+    if lint_mode:
+        try:
+            try:
+                from check_safety import inspect_repository
+            except ImportError:
+                from scripts.check_safety import inspect_repository
+            s_errs, s_warns = inspect_repository(ROOT_DIR)
+            for w in s_warns:
+                print(f"[SAFETY WARNING] {w}")
+            if s_errs:
+                for err in s_errs:
+                    print(f"[SAFETY ERROR] {err}")
+                has_errors = True
+            else:
+                print("[SAFETY OK] No leaked secrets or forbidden files found in repository.")
+        except Exception as e:
+            print(f"[SAFETY SKIP] Safety check skipped: {e}")
+
     if has_errors:
         return 1
 
@@ -306,10 +324,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Build and assemble monolithic root scripts from src/")
     parser.add_argument("--check", action="store_true", help="Check for drift without modifying files (CI mode)")
     parser.add_argument("--lint", action="store_true", help="Validate bash and embedded python syntax")
+    parser.add_argument("--safety", action="store_true", help="Scan repository for leaked secrets, cluster IPs, and private data")
     parser.add_argument("--target", type=str, help="Build a specific target script")
     parser.add_argument("--bump", type=str, metavar="VERSION", help="Bump project version, sync docs, and rebuild all targets")
     parser.add_argument("--sync-version", action="store_true", help="Sync current VERSION into docs and rebuild targets")
     args = parser.parse_args()
+
+    if args.safety:
+        try:
+            from check_safety import main as safety_main
+        except ImportError:
+            from scripts.check_safety import main as safety_main
+        return safety_main()
 
     if args.bump:
         return bump_version(args.bump)

@@ -352,6 +352,18 @@ inspect_port_conflicts() {
         fi
     fi
 
+    local _dnstt_en="${ENABLE_DNSTT:-n}"
+    if [[ "${_dnstt_en,,}" == "y" || "${_dnstt_en}" == "1" || "${_dnstt_en,,}" == "true" ]]; then
+        local d_port="${DNSTT_PORT:-53053}"
+        if is_port_in_use "udp" "$d_port"; then
+            local d_owner
+            d_owner=$(get_port_listener_info "udp" "$d_port")
+            warn "Порт $d_port/udp (DNSTT DoH Tunnel) занят: ${d_owner:-сторонней службой}."
+        else
+            ok "Порт $d_port/udp (DNSTT DoH Tunnel) свободен."
+        fi
+    fi
+
     echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}\n"
 }
 

@@ -332,6 +332,9 @@ EOF_AWG0
                 warn "Не удалось автоматически сгенерировать первичного клиента client-1. Попробуйте вручную: awg-mgr add <имя>"
             else
                 ok "Первичный профиль администратора создан: $awg_dir/client-1.conf"
+                if [ -f "$awg_dir/client-1.vpnuri" ]; then
+                    ok "Ссылка Amnezia VPN (vpn://): $(head -n 1 "$awg_dir/client-1.vpnuri" | tr -d '[:space:]')"
+                fi
             fi
         fi
     fi

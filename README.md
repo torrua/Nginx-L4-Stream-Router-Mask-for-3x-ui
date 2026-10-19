@@ -6,7 +6,7 @@
 Надёжный персональный VPN на VPS, устойчивый к блокировкам операторов связи.  
 Работает на смартфонах (iOS, Android), компьютерах (Windows, macOS) и роутерах.
 
-[Инструкция для новичков](docs/BEGINNER_GUIDE.md) • [Техническая архитектура](docs/ARCHITECTURE.md) • [Быстрый старт](#-быстрый-старт-установка-в-1-команду)
+[Инструкция для новичков](docs/BEGINNER_GUIDE.md) • [Техническая архитектура](docs/ARCHITECTURE.md) • [Бэклог задач (РФ)](docs/BACKLOG.md) • [Быстрый старт](#-быстрый-старт-установка-в-1-команду)
 
 [![CI](https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/actions/workflows/ci.yml/badge.svg)](https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/actions/workflows/ci.yml)
 [![Версия](https://img.shields.io/badge/версия-v8.1.0-blue)](https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui)

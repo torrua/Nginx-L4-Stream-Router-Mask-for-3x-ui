@@ -203,7 +203,7 @@ for dom in "${ALL_DOMAINS[@]}"; do
     if is_true "${STEAL_ENABLED:-0}" && [ -n "${DOMAIN_TO_PORT[$dom]:-}" ]; then
         port="${DOMAIN_TO_PORT[$dom]}"
         STREAM_MAP_RULES+="        ${dom}     reality_backend_${port};"$'\n'
-    elif is_true "${ENABLE_NAIVE:-0}" && [ -n "${NAIVE_DOMAIN:-}" ] && [ "$dom" = "$NAIVE_DOMAIN" ]; then
+    elif is_true "${ENABLE_NAIVE:-0}" && [ -n "${NAIVE_DOMAIN:-}" ] && [ "$dom" = "$NAIVE_DOMAIN" ] && [ "$dom" != "${PRIMARY_DOMAIN:-}" ]; then
         STREAM_MAP_RULES+="        ${dom}     naive_backend;"$'\n'
     else
         STREAM_MAP_RULES+="        ${dom}     nginx_http_backend;"$'\n'
@@ -224,7 +224,7 @@ if is_true "${ENABLE_SHADOWTLS:-0}"; then
     STREAM_MAP_RULES+="        ${SHADOWTLS_SNI:-gateway.icloud.com}     shadowtls_backend;"$'\n'
 fi
 
-if is_true "${ENABLE_NAIVE:-0}" && [ -n "${NAIVE_DOMAIN:-}" ]; then
+if is_true "${ENABLE_NAIVE:-0}" && [ -n "${NAIVE_DOMAIN:-}" ] && [ "$NAIVE_DOMAIN" != "${PRIMARY_DOMAIN:-}" ]; then
     if [[ ! "$STREAM_MAP_RULES" =~ "$NAIVE_DOMAIN" ]]; then
         STREAM_MAP_RULES+="        ${NAIVE_DOMAIN}     naive_backend;"$'\n'
     fi

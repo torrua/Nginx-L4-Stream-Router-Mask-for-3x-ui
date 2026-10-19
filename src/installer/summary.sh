@@ -46,6 +46,31 @@ save_and_display_summary() {
         . "$client_env" 2>/dev/null || true
     fi
 
+    if [ -z "${DNSTT_PUBKEY:-}" ] && [ -f "/etc/dnstt/server.pub" ]; then
+        DNSTT_PUBKEY=$(head -n 1 "/etc/dnstt/server.pub" 2>/dev/null | tr -d '[:space:]')
+    fi
+    if [ -n "${DNSTT_PUBKEY:-}" ]; then
+        if [ -n "${DNSTT_CLI:-}" ] && [[ "$DNSTT_CLI" == *"-pubkey  "* ]]; then
+            DNSTT_CLI="${DNSTT_CLI/-pubkey  /-pubkey ${DNSTT_PUBKEY} }"
+        elif [ -z "${DNSTT_CLI:-}" ] && [ "${ENABLE_DNSTT:-0}" = "1" ] && [ -n "${DNSTT_DOMAIN:-}" ]; then
+            DNSTT_CLI="dnstt-client -doh https://dns.google/dns-query -pubkey ${DNSTT_PUBKEY} ${DNSTT_DOMAIN} 127.0.0.1:1080"
+        fi
+    fi
+
+    if [ -z "${NAIVE_URI:-}" ] && [ "${ENABLE_NAIVE:-0}" = "1" ] && [ -n "${NAIVE_DOMAIN:-}" ]; then
+        local naive_u="${NAIVE_USER:-user}"
+        local naive_p="${NAIVE_PASS:-}"
+        if [ -z "$naive_p" ] && [ -f "/etc/caddy/Caddyfile" ]; then
+            naive_p=$(grep -E 'basic_auth' -A 1 /etc/caddy/Caddyfile 2>/dev/null | tail -n 1 | awk '{print $1}' | tr -d '[:space:]')
+        fi
+        [ -n "$naive_p" ] && NAIVE_URI="naive+https://${naive_u}:${naive_p}@${NAIVE_DOMAIN}:${NAIVE_PORT:-443}"
+    fi
+
+    local awg_vpnuri=""
+    if [ -f "/root/awg/client-1.vpnuri" ]; then
+        awg_vpnuri=$(head -n 1 "/root/awg/client-1.vpnuri" 2>/dev/null | tr -d '[:space:]')
+    fi
+
     cat <<EOF > "$CREDENTIALS_FILE"
 ====================================================================
  NGINX L4 STREAM ROUTER & 3X-UI — УЧЕТНЫЕ ДАННЫЕ СЕРВЕРА
@@ -67,6 +92,7 @@ SSH Порт:       ${SSH_PORT}
 [ ПРЯМЫЕ ССЫЛКИ НА ПОДПИСКУ КЛИЕНТОВ ]
 $( [ -n "$sub_link" ] && echo "Универсальная подписка (Base64): ${sub_link}" || echo "Универсальная подписка: В панели -> Подключения" )
 $( [ -n "$clash_link" ] && echo "Подписка для Clash / Mihomo:   ${clash_link}" || true )
+$([ -n "$awg_vpnuri" ] && printf "\n[ AMNEZIAWG 3.1 (Официальное приложение Amnezia VPN) ]\nСсылка Amnezia (vpn://): %s\nКонфиг файл (.conf):      /root/awg/client-1.conf\n" "$awg_vpnuri")
 $([ -n "${MASQUE_URI:-}" ] && printf "\n[ MASQUE RFC 9484 (Sing-box) ]\nURI: %s\n" "${MASQUE_URI}")
 $([ -n "${SHADOWTLS_URI:-}" ] && printf "\n[ SHADOWTLS v4 + SS-2022 ]\nShadowTLS URI:        %s\nShadowTLS + SS-2022:  %s\n" "${SHADOWTLS_URI}" "${SS_SHADOWTLS_URI:-}")
 $([ -n "${WSTUNNEL_CLI:-}" ] && printf "\n[ WSTUNNEL (L7 Nginx WebSocket) ]\nClient CLI:           %s\n" "${WSTUNNEL_CLI}")
@@ -76,6 +102,7 @@ $([ -n "${DNSTT_CLI:-}" ] && printf "\n[ DNSTT (DoH DNS Tunneling) ]\nDNSTT Clie
 
 [ НАСТРОЙКА КЛИЕНТОВ ]
 1. Добавьте ссылку на подписку в клиент:
+   - Amnezia VPN (iOS / Android / Desktop)                      -> Ссылка Amnezia (vpn://)
    - Sing-box / v2rayN / v2rayNG / Streisand / FoXray / Nekoray -> Универсальная ссылка
    - Clash Verge Rev / Clash Nyanpasu / Mihomo Party           -> Ссылка Clash
 2. Либо войдите в веб-панель https://${PRIMARY_DOMAIN}/${PANEL_SECRET}/ и скопируйте нужный Inbound.
@@ -107,6 +134,16 @@ print_dashboard() {
             echo -e "    ${CYAN}${ARROW} Clash / Mihomo:${RESET}     ${GREEN}${DASHBOARD_CLASH_LINK}${RESET}"
         fi
         echo ""
+    fi
+    if [ -f "/root/awg/client-1.vpnuri" ]; then
+        local awg_vpnuri
+        awg_vpnuri=$(head -n 1 "/root/awg/client-1.vpnuri" 2>/dev/null | tr -d '[:space:]')
+        if [ -n "$awg_vpnuri" ]; then
+            echo -e "  ${WHITE}${BOLD}AmneziaWG 3.1 (Официальное приложение Amnezia VPN):${RESET}"
+            echo -e "    ${CYAN}${ARROW} Ссылка в 1 клик (vpn://):${RESET} ${GREEN}${awg_vpnuri}${RESET}"
+            echo -e "    ${DIM}• Конфиг файл (.conf):${RESET}    ${CYAN}/root/awg/client-1.conf${RESET}"
+            echo ""
+        fi
     fi
     echo -e "  ${WHITE}${BOLD}Архитектурная защита (L4 Stream Router):${RESET}"
     echo -e "    ${DIM}• Внешний фасад:${RESET}  ${GREEN}443 TCP (Nginx Stream ssl_preread)${RESET}"

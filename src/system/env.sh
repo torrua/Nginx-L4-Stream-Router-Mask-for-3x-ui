@@ -186,7 +186,15 @@ reconstruct_arrays_from_vars() {
     fi
     _v="${ENABLE_NAIVE:-n}"; if is_true "$_v"; then ENABLE_NAIVE=1; else ENABLE_NAIVE=0; fi
     NAIVE_PORT="${NAIVE_PORT:-8446}"
+    if [ "$ENABLE_NAIVE" -eq 1 ] && [ -z "${NAIVE_DOMAIN:-}" ] && [ -n "${PRIMARY_DOMAIN:-}" ]; then
+        NAIVE_DOMAIN="naive.${PRIMARY_DOMAIN}"
+    fi
     NAIVE_DOMAIN="${NAIVE_DOMAIN:-}"
+    if [ "$ENABLE_NAIVE" -eq 1 ] && [ -n "$NAIVE_DOMAIN" ] && [ "$NAIVE_DOMAIN" = "${PRIMARY_DOMAIN:-}" ]; then
+        warn "  Коллизия: NAIVE_DOMAIN '$NAIVE_DOMAIN' совпадает с PRIMARY_DOMAIN!"
+        warn "  Главный домен зарезервирован за веб-маской Nginx. Переключено на 'naive.$PRIMARY_DOMAIN'."
+        NAIVE_DOMAIN="naive.$PRIMARY_DOMAIN"
+    fi
     if [ "$ENABLE_NAIVE" -eq 1 ] && [ -n "$NAIVE_DOMAIN" ]; then
         if [[ ! " ${ALL_DOMAINS[*]} " == *" ${NAIVE_DOMAIN} "* ]]; then
             ALL_DOMAINS+=("$NAIVE_DOMAIN")
@@ -198,6 +206,9 @@ reconstruct_arrays_from_vars() {
     fi
     _v="${ENABLE_DNSTT:-n}"; if is_true "$_v"; then ENABLE_DNSTT=1; else ENABLE_DNSTT=0; fi
     DNSTT_PORT="${DNSTT_PORT:-53053}"
+    if [ "$ENABLE_DNSTT" -eq 1 ] && [ -z "${DNSTT_DOMAIN:-}" ] && [ -n "${PRIMARY_DOMAIN:-}" ]; then
+        DNSTT_DOMAIN="t.${PRIMARY_DOMAIN}"
+    fi
     DNSTT_DOMAIN="${DNSTT_DOMAIN:-}"
     DNSTT_PUBKEY="${DNSTT_PUBKEY:-}"
     if [ "$ENABLE_DNSTT" -eq 1 ]; then

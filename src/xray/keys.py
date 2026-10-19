@@ -137,3 +137,15 @@ def generate_naiveproxy_credentials(default_user="user"):
 
 def generate_tuic_credentials(default_uuid=None):
     return default_uuid or str(uuid.uuid4()), secrets.token_urlsafe(16)
+
+def generate_dnstt_keypair():
+    priv_raw = os.urandom(32)
+    k = clamp(priv_raw)
+    pub_raw = ((x25519(k, 9)) % P).to_bytes(32, "little")
+    return priv_raw.hex(), pub_raw.hex()
+
+def validate_dnstt_pubkey(pubkey):
+    if not isinstance(pubkey, str):
+        return False
+    s = pubkey.strip().lower()
+    return len(s) == 64 and all(c in "0123456789abcdef" for c in s)

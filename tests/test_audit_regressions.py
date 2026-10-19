@@ -193,6 +193,111 @@ PersistentKeepalive = 15
         self.assertEqual(last["allowed_ips"], ["10.0.0.0/8"])
         self.assertEqual(data["hostName"], "203.0.113.5")
 
+    def test_get_client_uri_cached_and_fallback_regeneration(self):
+        """Verify get_client_uri returns cached .vpnuri and regenerates via pure-Python X25519 when missing."""
+        import sys
+        sys.path.insert(0, str((ROOT / "src/awg").resolve()))
+        import manage_amneziawg as mgr
+
+        with tempfile.TemporaryDirectory() as td:
+            tmp_awg = Path(td)
+            orig_awg_dir = mgr.AWG_DIR
+            mgr.AWG_DIR = tmp_awg
+            try:
+                # 1. Non-existent client
+                res_missing = mgr.get_client_uri("nonexistent_client")
+                self.assertFalse(res_missing["ok"])
+                self.assertIn("not found", res_missing["error"])
+
+                # 2. Invalid client name (path traversal rejection)
+                res_invalid = mgr.get_client_uri("../etc/passwd")
+                self.assertFalse(res_invalid["ok"])
+                self.assertIn("Invalid client name", res_invalid["error"])
+
+                # 3. Cached .vpnuri file present
+                test_cached_uri = "vpn://cached_test_uri_string_12345"
+                (tmp_awg / "client-cached.vpnuri").write_text(test_cached_uri, encoding="utf-8")
+                res_cached = mgr.get_client_uri("client-cached")
+                self.assertTrue(res_cached["ok"])
+                self.assertEqual(res_cached["vpnuri"], test_cached_uri)
+                self.assertEqual(res_cached["client"], "client-cached")
+
+                # 4. Fallback regeneration from .conf file when .vpnuri is missing
+                conf_content = """[Interface]
+Address = 10.8.1.5/32
+DNS = 1.1.1.1
+PrivateKey = aGVsbG93b3JsZGhlbGxvd29ybGRoZWxsb3dvcmxkaGVsbG8=
+Jc = 4
+Jmin = 40
+Jmax = 70
+S1 = 16
+S2 = 16
+H1 = 1
+H2 = 2
+
+[Peer]
+PublicKey = aGVsbG93b3JsZGhlbGxvd29ybGRoZWxsb3dvcmxkaGVsbG8=
+AllowedIPs = 0.0.0.0/0
+Endpoint = 198.51.100.1:443
+"""
+                (tmp_awg / "client-regen.conf").write_text(conf_content, encoding="utf-8")
+                res_regen = mgr.get_client_uri("client-regen")
+                self.assertTrue(res_regen["ok"])
+                self.assertTrue(res_regen["vpnuri"].startswith("vpn://"))
+                # File must be generated on disk
+                regen_file = tmp_awg / "client-regen.vpnuri"
+                self.assertTrue(regen_file.exists())
+                self.assertEqual(regen_file.read_text(encoding="utf-8").strip(), res_regen["vpnuri"])
+
+                # Verify decompressed contents of generated Amnezia vpn:// URI
+                import base64, zlib, struct
+                raw = base64.urlsafe_b64decode(res_regen["vpnuri"][6:] + "===")
+                orig_len = struct.unpack(">I", raw[:4])[0]
+                decomp = zlib.decompress(raw[4:])
+                self.assertEqual(len(decomp), orig_len)
+                data = json.loads(decomp)
+                self.assertEqual(data["hostName"], "198.51.100.1")
+                awg_cfg = data["containers"][0]["awg"]
+                self.assertEqual(awg_cfg["Jc"], "4")
+            finally:
+                mgr.AWG_DIR = orig_awg_dir
+
+    def test_manage_amneziawg_cli_uri_raw_mode(self):
+        """Verify CLI 'uri' action with --raw outputs raw vpn:// string without JSON wrapping."""
+        import subprocess
+        import sys
+
+        with tempfile.TemporaryDirectory() as td:
+            tmp_awg = Path(td)
+            expected_uri = "vpn://raw_cli_test_uri_67890"
+            (tmp_awg / "client-cli.vpnuri").write_text(expected_uri, encoding="utf-8")
+
+            env = os.environ.copy()
+            env["AWG_DIR"] = str(tmp_awg)
+
+            # 1. JSON mode (default)
+            res_json = subprocess.run(
+                [sys.executable, str(ROOT / "src/awg/manage_amneziawg.py"), "uri", "client-cli"],
+                env=env, capture_output=True, text=True, check=True
+            )
+            data = json.loads(res_json.stdout)
+            self.assertTrue(data.get("ok"))
+            self.assertEqual(data.get("vpnuri"), expected_uri)
+
+            # 2. Raw mode (--raw)
+            res_raw = subprocess.run(
+                [sys.executable, str(ROOT / "src/awg/manage_amneziawg.py"), "uri", "client-cli", "--raw"],
+                env=env, capture_output=True, text=True, check=True
+            )
+            self.assertEqual(res_raw.stdout.strip(), expected_uri)
+
+            # 3. QR code with --raw mode
+            res_qr_raw = subprocess.run(
+                [sys.executable, str(ROOT / "src/awg/manage_amneziawg.py"), "qr", "client-cli", "--raw"],
+                env=env, capture_output=True, text=True, check=True
+            )
+            self.assertEqual(res_qr_raw.stdout.strip(), expected_uri)
+
 
 class TestDatabaseBackupSafety(unittest.TestCase):
     def setUp(self):

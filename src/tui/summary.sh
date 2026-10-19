@@ -142,6 +142,13 @@ else
         chmod +x "$CONFIG_EXEC" 2>/dev/null || true
     fi
 
+    # Развертывание фоновых служб нового поколения (Zapret, MASQUE, ShadowTLS, Wstunnel, NaïveProxy, DNSTT)
+    # Выполняется ДО configure_3xui.sh, чтобы сгенерированные ключи и пароли попали в сводный отчет клиента
+    if command -v deploy_native_nextgen_services >/dev/null 2>&1; then
+        deploy_native_nextgen_services
+        save_session_state "$SAVED_CONFIG_FILE" >/dev/null 2>&1 || true
+    fi
+
     if [ -f "$CONFIG_EXEC" ]; then
         run_configure_3xui_task() {
             export ENABLE_WARP
@@ -260,11 +267,6 @@ EOF_GEOTMR
         run_with_spinner "Активация таймера еженедельного обновления geosite.dat и geoip.dat" setup_xray_geo_timer_task
     else
         warn "Скрипт configure_3xui.sh не найден. Выполните настройку вручную."
-    fi
-
-    # Развертывание фоновых служб нового поколения (Zapret, MASQUE, ShadowTLS, Wstunnel)
-    if command -v deploy_native_nextgen_services >/dev/null 2>&1; then
-        deploy_native_nextgen_services
     fi
 
     step_finish 7

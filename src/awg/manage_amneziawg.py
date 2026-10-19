@@ -1368,6 +1368,53 @@ def restore_configs(archive_path_str: str):
         "pre_restore_snapshot": pre_snap.get("archive")
     }
 
+def get_client_uri(client_name: str):
+    """Retrieves or regenerates the Amnezia vpn:// URI for a given client."""
+    client_name = client_name.strip()
+    if not is_valid_client_name(client_name):
+        return {"ok": False, "mode": EXEC_MODE, "error": f"Invalid client name '{client_name}'."}
+
+    uri_file = AWG_DIR / f"{client_name}.vpnuri"
+    conf_file = AWG_DIR / f"{client_name}.conf"
+
+    if uri_file.exists():
+        uri = uri_file.read_text(encoding="utf-8").strip()
+        if uri.startswith("vpn://"):
+            return {
+                "ok": True,
+                "mode": EXEC_MODE,
+                "client": client_name,
+                "vpnuri": uri,
+                "vpnuri_file": str(uri_file)
+            }
+
+    if conf_file.exists():
+        conf_content = conf_file.read_text(encoding="utf-8")
+        m_ip = re.search(r"^\s*Address\s*=\s*([^/,\s]+)", conf_content, re.MULTILINE | re.IGNORECASE)
+        m_priv = re.search(r"^\s*PrivateKey\s*=\s*(\S+)", conf_content, re.MULTILINE | re.IGNORECASE)
+        if m_ip and m_priv:
+            c_ip = m_ip.group(1).strip()
+            c_priv = m_priv.group(1).strip()
+            c_pub = curve25519_pubkey(c_priv) or ""
+            uri = encode_amnezia_vpnuri_31(
+                conf_content, c_ip, c_priv, c_pub,
+                description=f"AmneziaWG - {client_name}"
+            )
+            uri_file.write_text(uri, encoding="utf-8")
+            try:
+                uri_file.chmod(0o600)
+            except OSError:
+                pass
+            return {
+                "ok": True,
+                "mode": EXEC_MODE,
+                "client": client_name,
+                "vpnuri": uri,
+                "vpnuri_file": str(uri_file)
+            }
+
+    return {"ok": False, "mode": EXEC_MODE, "error": f"Client '{client_name}' configuration not found in {AWG_DIR}."}
+
 # --- Main Entry Point with Universal JSON Exception Guard ---
 def main():
     action = sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith("-") else "status"
@@ -1385,6 +1432,8 @@ def main():
     custom_allowed_ips = None
     custom_cpa = None
     preset = None
+
+    raw_mode = False
 
     args = sys.argv[1:]
     for arg in args:
@@ -1412,6 +1461,8 @@ def main():
             custom_allowed_ips = arg.split("=", 1)[1].strip()
         elif arg == "--shred-privkey":
             shred_privkey = True
+        elif arg in ("--raw", "-r"):
+            raw_mode = True
         elif arg in ("--qr", "-q"):
             qr_mode = True
         elif arg in ("--i1", "--i1=dns", "--cps"):
@@ -1429,6 +1480,11 @@ def main():
             res = check_status()
         elif action in ("stats", "get-clients", "show", "list"):
             res = get_stats()
+        elif action in ("uri", "vpnuri", "link", "get-uri"):
+            res = get_client_uri(client_name or "client-1")
+            if raw_mode and res.get("ok") and res.get("vpnuri"):
+                print(res["vpnuri"])
+                sys.exit(0)
         elif action == "add":
             res = add_client(
                 client_name or "client-1",
@@ -1461,6 +1517,9 @@ def main():
             res = show_qr(client_name or "client-1")
             if res.get("ok") and res.get("qr_ascii"):
                 print(res["qr_ascii"], file=sys.stderr)
+            if raw_mode and res.get("ok") and res.get("vpnuri"):
+                print(res["vpnuri"])
+                sys.exit(0)
         elif action == "backup":
             res = backup_configs()
         elif action == "restore":

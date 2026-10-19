@@ -422,6 +422,8 @@ show_help() {
   --shadowtls / --no-shadowtls Включить / отключить ShadowTLS v4 + SS-2022 (Nginx Stream SNI)
   --wstunnel / --no-wstunnel   Включить / отключить Wstunnel over Nginx L7 (HTTPS WebSocket)
   --zapret / --no-zapret       Включить / отключить Server-Side Zapret nfqws (DPI bypass)
+  --naive / --no-naive         Включить / отключить NaïveProxy (Caddy with forwardproxy@naive)
+  --dnstt / --no-dnstt         Включить / отключить DNSTT (DoH DNS Tunneling via dnstt-server)
   --all-protocols              Включить все протоколы (включая стек следующего поколения)
   -r, --resume                 Продолжить установку с последнего незавершенного шага
   --step <N>                   Принудительно начать выполнение с указанного шага (1-8)
@@ -967,7 +969,15 @@ reconstruct_arrays_from_vars() {
     fi
     _v="${ENABLE_NAIVE:-n}"; if is_true "$_v"; then ENABLE_NAIVE=1; else ENABLE_NAIVE=0; fi
     NAIVE_PORT="${NAIVE_PORT:-8446}"
+    if [ "$ENABLE_NAIVE" -eq 1 ] && [ -z "${NAIVE_DOMAIN:-}" ] && [ -n "${PRIMARY_DOMAIN:-}" ]; then
+        NAIVE_DOMAIN="naive.${PRIMARY_DOMAIN}"
+    fi
     NAIVE_DOMAIN="${NAIVE_DOMAIN:-}"
+    if [ "$ENABLE_NAIVE" -eq 1 ] && [ -n "$NAIVE_DOMAIN" ] && [ "$NAIVE_DOMAIN" = "${PRIMARY_DOMAIN:-}" ]; then
+        warn "  Коллизия: NAIVE_DOMAIN '$NAIVE_DOMAIN' совпадает с PRIMARY_DOMAIN!"
+        warn "  Главный домен зарезервирован за веб-маской Nginx. Переключено на 'naive.$PRIMARY_DOMAIN'."
+        NAIVE_DOMAIN="naive.$PRIMARY_DOMAIN"
+    fi
     if [ "$ENABLE_NAIVE" -eq 1 ] && [ -n "$NAIVE_DOMAIN" ]; then
         if [[ ! " ${ALL_DOMAINS[*]} " == *" ${NAIVE_DOMAIN} "* ]]; then
             ALL_DOMAINS+=("$NAIVE_DOMAIN")
@@ -979,6 +989,9 @@ reconstruct_arrays_from_vars() {
     fi
     _v="${ENABLE_DNSTT:-n}"; if is_true "$_v"; then ENABLE_DNSTT=1; else ENABLE_DNSTT=0; fi
     DNSTT_PORT="${DNSTT_PORT:-53053}"
+    if [ "$ENABLE_DNSTT" -eq 1 ] && [ -z "${DNSTT_DOMAIN:-}" ] && [ -n "${PRIMARY_DOMAIN:-}" ]; then
+        DNSTT_DOMAIN="t.${PRIMARY_DOMAIN}"
+    fi
     DNSTT_DOMAIN="${DNSTT_DOMAIN:-}"
     DNSTT_PUBKEY="${DNSTT_PUBKEY:-}"
     if [ "$ENABLE_DNSTT" -eq 1 ]; then
@@ -2607,6 +2620,18 @@ inspect_port_conflicts() {
             warn "Порт $n_port/tcp (NaïveProxy) занят: ${n_owner:-сторонней службой}."
         else
             ok "Порт $n_port/tcp (NaïveProxy) свободен."
+        fi
+    fi
+
+    local _dnstt_en="${ENABLE_DNSTT:-n}"
+    if [[ "${_dnstt_en,,}" == "y" || "${_dnstt_en}" == "1" || "${_dnstt_en,,}" == "true" ]]; then
+        local d_port="${DNSTT_PORT:-53053}"
+        if is_port_in_use "udp" "$d_port"; then
+            local d_owner
+            d_owner=$(get_port_listener_info "udp" "$d_port")
+            warn "Порт $d_port/udp (DNSTT DoH Tunnel) занят: ${d_owner:-сторонней службой}."
+        else
+            ok "Порт $d_port/udp (DNSTT DoH Tunnel) свободен."
         fi
     fi
 
@@ -5424,6 +5449,53 @@ def restore_configs(archive_path_str: str):
         "pre_restore_snapshot": pre_snap.get("archive")
     }
 
+def get_client_uri(client_name: str):
+    """Retrieves or regenerates the Amnezia vpn:// URI for a given client."""
+    client_name = client_name.strip()
+    if not is_valid_client_name(client_name):
+        return {"ok": False, "mode": EXEC_MODE, "error": f"Invalid client name '{client_name}'."}
+
+    uri_file = AWG_DIR / f"{client_name}.vpnuri"
+    conf_file = AWG_DIR / f"{client_name}.conf"
+
+    if uri_file.exists():
+        uri = uri_file.read_text(encoding="utf-8").strip()
+        if uri.startswith("vpn://"):
+            return {
+                "ok": True,
+                "mode": EXEC_MODE,
+                "client": client_name,
+                "vpnuri": uri,
+                "vpnuri_file": str(uri_file)
+            }
+
+    if conf_file.exists():
+        conf_content = conf_file.read_text(encoding="utf-8")
+        m_ip = re.search(r"^\s*Address\s*=\s*([^/,\s]+)", conf_content, re.MULTILINE | re.IGNORECASE)
+        m_priv = re.search(r"^\s*PrivateKey\s*=\s*(\S+)", conf_content, re.MULTILINE | re.IGNORECASE)
+        if m_ip and m_priv:
+            c_ip = m_ip.group(1).strip()
+            c_priv = m_priv.group(1).strip()
+            c_pub = curve25519_pubkey(c_priv) or ""
+            uri = encode_amnezia_vpnuri_31(
+                conf_content, c_ip, c_priv, c_pub,
+                description=f"AmneziaWG - {client_name}"
+            )
+            uri_file.write_text(uri, encoding="utf-8")
+            try:
+                uri_file.chmod(0o600)
+            except OSError:
+                pass
+            return {
+                "ok": True,
+                "mode": EXEC_MODE,
+                "client": client_name,
+                "vpnuri": uri,
+                "vpnuri_file": str(uri_file)
+            }
+
+    return {"ok": False, "mode": EXEC_MODE, "error": f"Client '{client_name}' configuration not found in {AWG_DIR}."}
+
 # --- Main Entry Point with Universal JSON Exception Guard ---
 def main():
     action = sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith("-") else "status"
@@ -5441,6 +5513,8 @@ def main():
     custom_allowed_ips = None
     custom_cpa = None
     preset = None
+
+    raw_mode = False
 
     args = sys.argv[1:]
     for arg in args:
@@ -5468,6 +5542,8 @@ def main():
             custom_allowed_ips = arg.split("=", 1)[1].strip()
         elif arg == "--shred-privkey":
             shred_privkey = True
+        elif arg in ("--raw", "-r"):
+            raw_mode = True
         elif arg in ("--qr", "-q"):
             qr_mode = True
         elif arg in ("--i1", "--i1=dns", "--cps"):
@@ -5485,6 +5561,11 @@ def main():
             res = check_status()
         elif action in ("stats", "get-clients", "show", "list"):
             res = get_stats()
+        elif action in ("uri", "vpnuri", "link", "get-uri"):
+            res = get_client_uri(client_name or "client-1")
+            if raw_mode and res.get("ok") and res.get("vpnuri"):
+                print(res["vpnuri"])
+                sys.exit(0)
         elif action == "add":
             res = add_client(
                 client_name or "client-1",
@@ -5517,6 +5598,9 @@ def main():
             res = show_qr(client_name or "client-1")
             if res.get("ok") and res.get("qr_ascii"):
                 print(res["qr_ascii"], file=sys.stderr)
+            if raw_mode and res.get("ok") and res.get("vpnuri"):
+                print(res["vpnuri"])
+                sys.exit(0)
         elif action == "backup":
             res = backup_configs()
         elif action == "restore":
@@ -5751,6 +5835,9 @@ EOF_AWG0
                 warn "Не удалось автоматически сгенерировать первичного клиента client-1. Попробуйте вручную: awg-mgr add <имя>"
             else
                 ok "Первичный профиль администратора создан: $awg_dir/client-1.conf"
+                if [ -f "$awg_dir/client-1.vpnuri" ]; then
+                    ok "Ссылка Amnezia VPN (vpn://): $(head -n 1 "$awg_dir/client-1.vpnuri" | tr -d '[:space:]')"
+                fi
             fi
         fi
     fi
@@ -6304,11 +6391,19 @@ setup_naive_service() {
     if [ ! -x "$caddy_bin" ] && [ -x "${bin_dir}/caddy" ]; then
         caddy_bin="${bin_dir}/caddy"
     fi
+    if [ ! -x "$caddy_bin" ] && command -v caddy-naive >/dev/null 2>&1; then
+        caddy_bin="$(command -v caddy-naive)"
+    fi
+    if [ ! -x "$caddy_bin" ] && command -v caddy >/dev/null 2>&1; then
+        caddy_bin="$(command -v caddy)"
+    fi
 
     if [ ! -x "$caddy_bin" ]; then
         local caddy_tmp="/tmp/caddy_naive_$$"
         mkdir -p "$caddy_tmp"
         local rel_ver="${SCRIPT_VERSION:-v8.1.0}"
+        [[ "$rel_ver" == "v8.1.0" ]] && rel_ver="v8.1.0"
+        [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/caddy-naive-linux-${caddy_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
         if curl -fsSL --connect-timeout 15 "$dl_url" -o "$caddy_tmp/caddy.tar.gz" 2>/dev/null || \
@@ -6334,16 +6429,39 @@ setup_naive_service() {
         naive_pass=$(python3 -c "import secrets; print(secrets.token_urlsafe(16))" 2>/dev/null || openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' || echo "ChangeMeNaive2026")
         NAIVE_PASS="$naive_pass"
     fi
-    local naive_domain="${NAIVE_DOMAIN:-${PRIMARY_DOMAIN:-}}"
+    export NAIVE_PASS="$naive_pass"
+
+    local naive_domain="${NAIVE_DOMAIN:-naive.${PRIMARY_DOMAIN:-}}"
+    if [ -z "$naive_domain" ] || [ "$naive_domain" = "${PRIMARY_DOMAIN:-}" ]; then
+        if [ -n "${PRIMARY_DOMAIN:-}" ]; then
+            naive_domain="naive.${PRIMARY_DOMAIN}"
+        else
+            naive_domain="localhost"
+        fi
+    fi
+    NAIVE_DOMAIN="$naive_domain"
+    export NAIVE_DOMAIN="$naive_domain"
 
     mkdir -p /etc/caddy /etc/naiveproxy /var/www/html 2>/dev/null || true
-    local tls_directive="tls internal"
-    local cert_domain="${PRIMARY_DOMAIN:-${DOMAIN:-${naive_domain}}}"
-    if [ -n "$cert_domain" ] && [ -f "/etc/letsencrypt/live/${cert_domain}/fullchain.pem" ] && [ -f "/etc/letsencrypt/live/${cert_domain}/privkey.pem" ]; then
-        tls_directive="tls /etc/letsencrypt/live/${cert_domain}/fullchain.pem /etc/letsencrypt/live/${cert_domain}/privkey.pem"
-    elif [ -n "${PRIMARY_DOMAIN:-}" ] && [ -f "/etc/letsencrypt/live/${PRIMARY_DOMAIN}/fullchain.pem" ] && [ -f "/etc/letsencrypt/live/${PRIMARY_DOMAIN}/privkey.pem" ]; then
-        tls_directive="tls /etc/letsencrypt/live/${PRIMARY_DOMAIN}/fullchain.pem /etc/letsencrypt/live/${PRIMARY_DOMAIN}/privkey.pem"
+    if [ ! -f /var/www/html/index.html ]; then
+        echo "<!DOCTYPE html><html><head><title>Welcome</title></head><body><h1>Welcome to Nginx Stream Mask</h1></body></html>" > /var/www/html/index.html 2>/dev/null || true
     fi
+
+    local tls_directive="tls internal"
+    local cert_candidates=()
+    [ -n "$naive_domain" ] && [ "$naive_domain" != "localhost" ] && cert_candidates+=("$naive_domain")
+    [ -n "${PRIMARY_DOMAIN:-}" ] && cert_candidates+=("${PRIMARY_DOMAIN}")
+    [ -n "${DOMAIN:-}" ] && cert_candidates+=("${DOMAIN}")
+
+    for c_dom in "${cert_candidates[@]}"; do
+        if [ -f "/etc/letsencrypt/live/${c_dom}/fullchain.pem" ] && [ -f "/etc/letsencrypt/live/${c_dom}/privkey.pem" ]; then
+            tls_directive="tls /etc/letsencrypt/live/${c_dom}/fullchain.pem /etc/letsencrypt/live/${c_dom}/privkey.pem"
+            break
+        elif [ -f "/etc/ssl/acme/${c_dom}/fullchain.pem" ] && [ -f "/etc/ssl/acme/${c_dom}/privkey.pem" ]; then
+            tls_directive="tls /etc/ssl/acme/${c_dom}/fullchain.pem /etc/ssl/acme/${c_dom}/privkey.pem"
+            break
+        fi
+    done
 
     cat << EOF > /etc/caddy/Caddyfile
 {
@@ -6412,10 +6530,17 @@ setup_dnstt_service() {
     local bin_dir="${LOCAL_BIN_DIR:-/usr/local/bin}"
     [ -d "$bin_dir" ] || mkdir -p "$bin_dir" 2>/dev/null || true
 
-    if [ ! -x "${bin_dir}/dnstt-server" ]; then
+    local dnstt_bin="${bin_dir}/dnstt-server"
+    if [ ! -x "$dnstt_bin" ] && command -v dnstt-server >/dev/null 2>&1; then
+        dnstt_bin="$(command -v dnstt-server)"
+    fi
+
+    if [ ! -x "$dnstt_bin" ]; then
         local dnstt_tmp="/tmp/dnstt_$$"
         mkdir -p "$dnstt_tmp"
         local rel_ver="${SCRIPT_VERSION:-v8.1.0}"
+        [[ "$rel_ver" == "v8.1.0" ]] && rel_ver="v8.1.0"
+        [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/dnstt-server-linux-${dnstt_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
         if curl -fsSL --connect-timeout 15 "$dl_url" -o "$dnstt_tmp/dnstt.tar.gz" 2>/dev/null || \
@@ -6424,6 +6549,7 @@ setup_dnstt_service() {
             if [ -f "$dnstt_tmp/dnstt-server" ]; then
                 cp "$dnstt_tmp/dnstt-server" "${bin_dir}/dnstt-server"
                 chmod +x "${bin_dir}/dnstt-server"
+                dnstt_bin="${bin_dir}/dnstt-server"
             fi
         fi
         rm -rf "$dnstt_tmp" 2>/dev/null || true
@@ -6437,17 +6563,47 @@ setup_dnstt_service() {
     chmod 700 /etc/dnstt 2>/dev/null || true
 
     if [ ! -f /etc/dnstt/server.key ] || [ ! -f /etc/dnstt/server.pub ]; then
-        if [ -x "${bin_dir}/dnstt-server" ]; then
-            ${bin_dir}/dnstt-server -gen-key -privkey-file /etc/dnstt/server.key -pubkey-file /etc/dnstt/server.pub 2>/dev/null || true
+        if [ -x "$dnstt_bin" ]; then
+            "$dnstt_bin" -gen-key -privkey-file /etc/dnstt/server.key -pubkey-file /etc/dnstt/server.pub 2>/dev/null || true
         fi
         if [ ! -f /etc/dnstt/server.key ] || [ ! -f /etc/dnstt/server.pub ]; then
-            head /dev/urandom 2>/dev/null | tr -dc 0-9a-f | head -c 64 > /etc/dnstt/server.key 2>/dev/null || echo "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" > /etc/dnstt/server.key
-            head /dev/urandom 2>/dev/null | tr -dc 0-9a-f | head -c 64 > /etc/dnstt/server.pub 2>/dev/null || echo "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210" > /etc/dnstt/server.pub
+            python3 -c "
+import os
+P = 2**255 - 19
+A24 = 121665
+def clamp(k_bytes):
+    b = bytearray(k_bytes)
+    b[0] &= 248
+    b[31] &= 127
+    b[31] |= 64
+    return int.from_bytes(b, 'little')
+def x25519(k, u=9):
+    x1, x2, z2, x3, z3 = u, 1, 0, u, 1
+    for i in range(254, -1, -1):
+        bit = (k >> i) & 1
+        if bit: x2, x3 = x3, x2; z2, z3 = z3, z2
+        A = (x2 + z2) % P; AA = (A * A) % P; B = (x2 - z2) % P; BB = (B * B) % P; E = (AA - BB) % P
+        C = (x3 + z3) % P; D = (x3 - z3) % P; DA = (D * A) % P; CB = (C * B) % P
+        x3 = pow(DA + CB, 2, P); z3 = (x1 * pow(DA - CB, 2, P)) % P; x2 = (AA * BB) % P; z2 = (E * (AA + A24 * E)) % P
+        if bit: x2, x3 = x3, x2; z2, z3 = z3, z2
+    return (x2 * pow(z2, P - 2, P)) % P
+raw_priv = os.urandom(32)
+k = clamp(raw_priv)
+pub = ((x25519(k, 9)) % P).to_bytes(32, 'little').hex()
+with open('/etc/dnstt/server.key', 'w') as kf:
+    kf.write(raw_priv.hex() + '\n')
+with open('/etc/dnstt/server.pub', 'w') as pf:
+    pf.write(pub + '\n')
+" 2>/dev/null || {
+                head /dev/urandom 2>/dev/null | tr -dc 0-9a-f | head -c 64 > /etc/dnstt/server.key 2>/dev/null || echo "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" > /etc/dnstt/server.key
+                head /dev/urandom 2>/dev/null | tr -dc 0-9a-f | head -c 64 > /etc/dnstt/server.pub 2>/dev/null || echo "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210" > /etc/dnstt/server.pub
+            }
         fi
         chmod 600 /etc/dnstt/server.key /etc/dnstt/server.pub 2>/dev/null || true
     fi
 
     DNSTT_PUBKEY="$(cat /etc/dnstt/server.pub 2>/dev/null | tr -d '[:space:]')"
+    export DNSTT_PUBKEY
 
     mkdir -p /etc/systemd/system
     cat << EOF > /etc/systemd/system/dnstt-server.service
@@ -6457,7 +6613,7 @@ After=network.target network-online.target
 
 [Service]
 Type=simple
-ExecStart=${bin_dir}/dnstt-server -udp 0.0.0.0:${dnstt_port} -privkey-file /etc/dnstt/server.key ${dnstt_domain} 127.0.0.1:${ss_backend_port}
+ExecStart=${dnstt_bin} -udp 0.0.0.0:${dnstt_port} -privkey-file /etc/dnstt/server.key ${dnstt_domain} 127.0.0.1:${ss_backend_port}
 Restart=always
 RestartSec=3s
 LimitNOFILE=65535
@@ -6469,11 +6625,11 @@ EOF
     if command -v systemctl >/dev/null 2>&1; then
         systemctl daemon-reload 2>/dev/null || true
         systemctl enable dnstt-server >/dev/null 2>&1 || true
-        if [ -x "${bin_dir}/dnstt-server" ]; then
+        if [ -x "$dnstt_bin" ]; then
             systemctl restart dnstt-server 2>/dev/null || true
             ok "Служба DNSTT активирована (порт ${dnstt_port}/udp, домен: ${dnstt_domain})."
         else
-            warn "Бинарник ${bin_dir}/dnstt-server не найден, запуск dnstt-server отложен."
+            warn "Бинарник ${dnstt_bin} не найден, запуск dnstt-server отложен."
         fi
     fi
 }
@@ -6500,6 +6656,10 @@ deploy_native_nextgen_services() {
 }
 
 step_configure_inbounds() {
+    # 1. Развертывание сервисов нового поколения (Zapret, MASQUE, ShadowTLS, Wstunnel, NaïveProxy, DNSTT)
+    # Выполняется ДО configure_3xui.sh, чтобы сгенерированные ключи и пароли попали в сводный отчет клиента
+    deploy_native_nextgen_services
+
     cd /root/nginx_mask_setup
     if [ -f "./configure_3xui.sh" ]; then
         export ADMIN_USERNAME="$PANEL_USER"
@@ -6509,13 +6669,19 @@ step_configure_inbounds() {
         export SUB_PATH="/$SUB_SECRET/"
         export SUB_TITLE="${SUB_TITLE:-}"
         export XHTTP_STREAM_PATH="/$XHTTP_SECRET/"
+        export ENABLE_NAIVE="${ENABLE_NAIVE:-0}"
+        export NAIVE_PORT="${NAIVE_PORT:-8446}"
+        export NAIVE_DOMAIN="${NAIVE_DOMAIN:-}"
+        export NAIVE_USER="${NAIVE_USER:-user}"
+        export NAIVE_PASS="${NAIVE_PASS:-}"
+        export ENABLE_DNSTT="${ENABLE_DNSTT:-0}"
+        export DNSTT_PORT="${DNSTT_PORT:-53053}"
+        export DNSTT_DOMAIN="${DNSTT_DOMAIN:-}"
+        export DNSTT_PUBKEY="${DNSTT_PUBKEY:-}"
         local cfg_arg=()
         [ -f "/root/nginx_mask_setup/setup_mask.env" ] && cfg_arg=(--config "/root/nginx_mask_setup/setup_mask.env")
         bash ./configure_3xui.sh --non-interactive --domain "$PRIMARY_DOMAIN" "${cfg_arg[@]}" || true
     fi
-    
-    # Развертывание сервисов нового поколения (Zapret, MASQUE, ShadowTLS, Wstunnel)
-    deploy_native_nextgen_services
 
     # Ensure Nginx is reloaded and active
     nginx -t >/dev/null 2>&1 && systemctl reload nginx || systemctl restart nginx
@@ -6905,6 +7071,11 @@ else
         if is_true "${ENABLE_AGH:-0}" && [ "${AGH_MODE:-1}" = "2" ] && [ -n "${AGH_DOMAIN:-}" ]; then
             if [[ ! " ${ALL_DOMAINS[*]} " == *" ${AGH_DOMAIN} "* ]]; then
                 ALL_DOMAINS+=("$AGH_DOMAIN")
+            fi
+        fi
+        if is_true "${ENABLE_NAIVE:-0}" && [ -n "${NAIVE_DOMAIN:-}" ]; then
+            if [[ ! " ${ALL_DOMAINS[*]} " == *" ${NAIVE_DOMAIN} "* ]]; then
+                ALL_DOMAINS+=("$NAIVE_DOMAIN")
             fi
         fi
         for extra_d in "${EXTRA_DOMAINS_USER[@]:-}"; do
@@ -9755,7 +9926,7 @@ for dom in "${ALL_DOMAINS[@]}"; do
     if is_true "${STEAL_ENABLED:-0}" && [ -n "${DOMAIN_TO_PORT[$dom]:-}" ]; then
         port="${DOMAIN_TO_PORT[$dom]}"
         STREAM_MAP_RULES+="        ${dom}     reality_backend_${port};"$'\n'
-    elif is_true "${ENABLE_NAIVE:-0}" && [ -n "${NAIVE_DOMAIN:-}" ] && [ "$dom" = "$NAIVE_DOMAIN" ]; then
+    elif is_true "${ENABLE_NAIVE:-0}" && [ -n "${NAIVE_DOMAIN:-}" ] && [ "$dom" = "$NAIVE_DOMAIN" ] && [ "$dom" != "${PRIMARY_DOMAIN:-}" ]; then
         STREAM_MAP_RULES+="        ${dom}     naive_backend;"$'\n'
     else
         STREAM_MAP_RULES+="        ${dom}     nginx_http_backend;"$'\n'
@@ -9776,7 +9947,7 @@ if is_true "${ENABLE_SHADOWTLS:-0}"; then
     STREAM_MAP_RULES+="        ${SHADOWTLS_SNI:-gateway.icloud.com}     shadowtls_backend;"$'\n'
 fi
 
-if is_true "${ENABLE_NAIVE:-0}" && [ -n "${NAIVE_DOMAIN:-}" ]; then
+if is_true "${ENABLE_NAIVE:-0}" && [ -n "${NAIVE_DOMAIN:-}" ] && [ "$NAIVE_DOMAIN" != "${PRIMARY_DOMAIN:-}" ]; then
     if [[ ! "$STREAM_MAP_RULES" =~ "$NAIVE_DOMAIN" ]]; then
         STREAM_MAP_RULES+="        ${NAIVE_DOMAIN}     naive_backend;"$'\n'
     fi
@@ -10682,6 +10853,13 @@ else
         chmod +x "$CONFIG_EXEC" 2>/dev/null || true
     fi
 
+    # Развертывание фоновых служб нового поколения (Zapret, MASQUE, ShadowTLS, Wstunnel, NaïveProxy, DNSTT)
+    # Выполняется ДО configure_3xui.sh, чтобы сгенерированные ключи и пароли попали в сводный отчет клиента
+    if command -v deploy_native_nextgen_services >/dev/null 2>&1; then
+        deploy_native_nextgen_services
+        save_session_state "$SAVED_CONFIG_FILE" >/dev/null 2>&1 || true
+    fi
+
     if [ -f "$CONFIG_EXEC" ]; then
         run_configure_3xui_task() {
             export ENABLE_WARP
@@ -10800,11 +10978,6 @@ EOF_GEOTMR
         run_with_spinner "Активация таймера еженедельного обновления geosite.dat и geoip.dat" setup_xray_geo_timer_task
     else
         warn "Скрипт configure_3xui.sh не найден. Выполните настройку вручную."
-    fi
-
-    # Развертывание фоновых служб нового поколения (Zapret, MASQUE, ShadowTLS, Wstunnel)
-    if command -v deploy_native_nextgen_services >/dev/null 2>&1; then
-        deploy_native_nextgen_services
     fi
 
     step_finish 7
@@ -11148,8 +11321,12 @@ fi
         echo -e "${YELLOW}СЕРВЕРНЫЙ КОНТРОЛЛЕР AMNEZIAWG (awg-mgr):${NC}"
         echo -e "  - ${YELLOW}Утилита управления:${NC}      ${GREEN}awg-mgr${NC} (или ${GREEN}awg-cli${NC})"
         echo -e "  - ${YELLOW}Первичный конфиг админа:${NC} ${CYAN}/root/awg/client-1.conf${NC}"
+        if [ -f "/root/awg/client-1.vpnuri" ]; then
+            echo -e "  - ${YELLOW}Ссылка Amnezia (vpn://):${NC} ${GREEN}$(head -n 1 /root/awg/client-1.vpnuri 2>/dev/null | tr -d '[:space:]')${NC}"
+        fi
         echo -e "  - ${YELLOW}Основные команды CLI:${NC}"
-        echo -e "    * Создать клиента:   ${CYAN}awg-mgr add <имя> [--expires=30d] [--dns=quad9|cloudflare|adguard|local]${NC}"
+        echo -e "    * Создать клиента:   ${CYAN}awg-mgr add <имя> [--preset=stealth|fast|base] [--expires=30d]${NC}"
+        echo -e "    * Ссылка Amnezia:    ${CYAN}awg-mgr uri <имя>${NC}"
         echo -e "    * Показать список:   ${CYAN}awg-mgr list${NC}"
         echo -e "    * QR-код в терминал: ${CYAN}awg-mgr qr <имя>${NC}"
         echo -e "    * Удалить клиента:   ${CYAN}awg-mgr remove <имя>${NC}"
@@ -11252,10 +11429,14 @@ else
     echo -e "  - ${YELLOW}Внешний UDP-порт:${NC}          ${WHITE}${AWG_STANDALONE_PORT:-8445}/udp${NC}"
     echo -e "  - ${YELLOW}Хост подключения (Endpoint):${NC} ${CYAN}${AWG_SERVER_HOST:-${WAN_IP:-127.0.0.1}}:${AWG_STANDALONE_PORT:-8445}${NC}"
     echo -e "  - ${YELLOW}Первичный конфиг админа:${NC}     ${CYAN}/root/awg/client-1.conf${NC}"
+    if [ -f "/root/awg/client-1.vpnuri" ]; then
+        echo -e "  - ${YELLOW}Ссылка Amnezia (vpn://):${NC}     ${GREEN}$(head -n 1 /root/awg/client-1.vpnuri 2>/dev/null | tr -d '[:space:]')${NC}"
+    fi
     echo -e "  - ${YELLOW}Утилита управления:${NC}          ${GREEN}awg-mgr${NC} (или ${GREEN}awg-cli${NC})"
     echo
     echo -e "  ${YELLOW}Команды управления клиентами:${NC}"
-    echo -e "    * Создать нового клиента:   ${CYAN}awg-mgr add <имя> [--expires=30d] [--dns=quad9|cloudflare|adguard]${NC}"
+    echo -e "    * Создать нового клиента:   ${CYAN}awg-mgr add <имя> [--preset=stealth|fast|base] [--expires=30d]${NC}"
+    echo -e "    * Получить ссылку vpn://:   ${CYAN}awg-mgr uri <имя>${NC}"
     echo -e "    * Список всех клиентов:     ${CYAN}awg-mgr list${NC}"
     echo -e "    * Показать QR-код клиента:  ${CYAN}awg-mgr qr <имя>${NC}"
     echo -e "    * Отозвать / удалить:       ${CYAN}awg-mgr remove <имя>${NC}"

@@ -382,6 +382,11 @@ else
                 ALL_DOMAINS+=("$AGH_DOMAIN")
             fi
         fi
+        if is_true "${ENABLE_NAIVE:-0}" && [ -n "${NAIVE_DOMAIN:-}" ]; then
+            if [[ ! " ${ALL_DOMAINS[*]} " == *" ${NAIVE_DOMAIN} "* ]]; then
+                ALL_DOMAINS+=("$NAIVE_DOMAIN")
+            fi
+        fi
         for extra_d in "${EXTRA_DOMAINS_USER[@]:-}"; do
             if [[ -n "$extra_d" && ! " ${ALL_DOMAINS[*]} " == *" ${extra_d} "* ]]; then
                 ALL_DOMAINS+=("$extra_d")

@@ -642,6 +642,90 @@ echo "CLI_ENABLE_DNSTT: $CLI_ENABLE_DNSTT"
         self.assertIn("dnstt-server.service", steps_sh)
         self.assertIn("deploy_native_nextgen_services", steps_sh)
 
+    def test_dnstt_curve25519_keypair_generation(self):
+        """Pure Python Curve25519 helper generates valid 64-hex keypairs."""
+        from src.xray.keys import generate_dnstt_keypair, validate_dnstt_pubkey
+        priv, pub = generate_dnstt_keypair()
+        self.assertEqual(len(priv), 64)
+        self.assertEqual(len(pub), 64)
+        self.assertTrue(validate_dnstt_pubkey(pub))
+        self.assertFalse(validate_dnstt_pubkey("invalid_short_key"))
+        self.assertFalse(validate_dnstt_pubkey("g" * 64))
+
+    def test_rebuild_all_domains_includes_naive_domain(self):
+        """rebuild_all_domains in src/tui/wizard.sh must include NAIVE_DOMAIN when ENABLE_NAIVE=1."""
+        res = run_shell(r"""
+set -euo pipefail
+PRIMARY_DOMAIN="example.com"
+ENABLE_NAIVE=1
+NAIVE_DOMAIN="naive.example.com"
+ADD_WWW="n"
+STEAL_DOMAINS=()
+EXTRA_DOMAINS_USER=()
+ALL_DOMAINS=()
+is_true() { local val="${1:-0}"; [[ "$val" == "1" || "${val,,}" == "y" || "${val,,}" == "true" ]]; }
+eval "$(sed -n '/rebuild_all_domains() {/,/^    }/p' src/tui/wizard.sh)"
+rebuild_all_domains
+echo "DOMAINS:${ALL_DOMAINS[*]}"
+""")
+        self.assertEqual(res.returncode, 0, f"Script failed: {res.stderr}")
+        self.assertIn("naive.example.com", res.stdout)
+
+    def test_setup_naive_service_prioritizes_subdomain_certificate(self):
+        """setup_naive_service must choose naive_domain cert before PRIMARY_DOMAIN cert."""
+        res = run_shell("""
+set -euo pipefail
+log(){ :; }; ok(){ :; }; warn(){ :; }; die(){ exit 1; };
+MOCK_ROOT=$(mktemp -d)
+mkdir -p "$MOCK_ROOT/etc/letsencrypt/live/naive.example.com"
+mkdir -p "$MOCK_ROOT/etc/letsencrypt/live/example.com"
+touch "$MOCK_ROOT/etc/letsencrypt/live/naive.example.com/fullchain.pem" "$MOCK_ROOT/etc/letsencrypt/live/naive.example.com/privkey.pem"
+touch "$MOCK_ROOT/etc/letsencrypt/live/example.com/fullchain.pem" "$MOCK_ROOT/etc/letsencrypt/live/example.com/privkey.pem"
+mkdir -p "$MOCK_ROOT/etc/caddy" "$MOCK_ROOT/etc/systemd/system" "$MOCK_ROOT/var/www/html" "$MOCK_ROOT/usr/local/bin"
+touch "$MOCK_ROOT/usr/local/bin/caddy-naive"
+chmod +x "$MOCK_ROOT/usr/local/bin/caddy-naive"
+export LOCAL_BIN_DIR="$MOCK_ROOT/usr/local/bin"
+systemctl(){ :; }
+
+PRIMARY_DOMAIN="example.com"
+NAIVE_DOMAIN="naive.example.com"
+NAIVE_PORT=8446
+NAIVE_USER="user"
+NAIVE_PASS="pass"
+
+source src/installer/steps.sh
+eval "$(declare -f setup_naive_service | sed "s|/etc/caddy|$MOCK_ROOT/etc/caddy|g" | sed "s|/etc/naiveproxy|$MOCK_ROOT/etc/caddy|g" | sed "s|/var/www/html|$MOCK_ROOT/var/www/html|g" | sed "s|/etc/systemd/system|$MOCK_ROOT/etc/systemd/system|g" | sed "s|/etc/letsencrypt|$MOCK_ROOT/etc/letsencrypt|g")"
+setup_naive_service
+cat "$MOCK_ROOT/etc/caddy/Caddyfile"
+rm -rf "$MOCK_ROOT"
+""")
+        self.assertEqual(res.returncode, 0, f"Script failed: {res.stderr}")
+        self.assertIn("live/naive.example.com/fullchain.pem", res.stdout)
+        self.assertNotIn("live/example.com/fullchain.pem", res.stdout)
+
+    def test_preflight_inspects_dnstt_port(self):
+        """inspect_port_conflicts in src/common/preflight.sh checks DNSTT UDP port."""
+        preflight_sh = (ROOT / "src/common/preflight.sh").read_text(encoding="utf-8")
+        self.assertIn("DNSTT_PORT", preflight_sh)
+        self.assertIn("DNSTT DoH Tunnel", preflight_sh)
+
+    def test_step_configure_inbounds_deploys_services_before_configure_3xui(self):
+        """deploy_native_nextgen_services must run before configure_3xui.sh to export credentials."""
+        steps_sh = (ROOT / "src/installer/steps.sh").read_text(encoding="utf-8")
+        summary_sh = (ROOT / "src/tui/summary.sh").read_text(encoding="utf-8")
+        inbounds_body = steps_sh.split("step_configure_inbounds()")[1]
+        idx_deploy = inbounds_body.find("deploy_native_nextgen_services")
+        idx_conf = inbounds_body.find("./configure_3xui.sh")
+        self.assertNotEqual(idx_deploy, -1)
+        self.assertNotEqual(idx_conf, -1)
+        self.assertLess(idx_deploy, idx_conf)
+
+        sum_deploy = summary_sh.find("deploy_native_nextgen_services")
+        sum_conf = summary_sh.find('bash "$CONFIG_EXEC"')
+        self.assertNotEqual(sum_deploy, -1)
+        self.assertNotEqual(sum_conf, -1)
+        self.assertLess(sum_deploy, sum_conf)
+
 
 if __name__ == "__main__":
     unittest.main()

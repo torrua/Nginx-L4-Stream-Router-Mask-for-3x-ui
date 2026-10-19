@@ -31,6 +31,8 @@ show_help() {
   --shadowtls / --no-shadowtls Включить / отключить ShadowTLS v4 + SS-2022 (Nginx Stream SNI)
   --wstunnel / --no-wstunnel   Включить / отключить Wstunnel over Nginx L7 (HTTPS WebSocket)
   --zapret / --no-zapret       Включить / отключить Server-Side Zapret nfqws (DPI bypass)
+  --naive / --no-naive         Включить / отключить NaïveProxy (Caddy with forwardproxy@naive)
+  --dnstt / --no-dnstt         Включить / отключить DNSTT (DoH DNS Tunneling via dnstt-server)
   --all-protocols              Включить все протоколы (включая стек следующего поколения)
   -r, --resume                 Продолжить установку с последнего незавершенного шага
   --step <N>                   Принудительно начать выполнение с указанного шага (1-8)

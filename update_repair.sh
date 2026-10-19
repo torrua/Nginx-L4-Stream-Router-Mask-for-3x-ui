@@ -895,6 +895,18 @@ def generate_naiveproxy_credentials(default_user="user"):
 def generate_tuic_credentials(default_uuid=None):
     return default_uuid or str(uuid.uuid4()), secrets.token_urlsafe(16)
 
+def generate_dnstt_keypair():
+    priv_raw = os.urandom(32)
+    k = clamp(priv_raw)
+    pub_raw = ((x25519(k, 9)) % P).to_bytes(32, "little")
+    return priv_raw.hex(), pub_raw.hex()
+
+def validate_dnstt_pubkey(pubkey):
+    if not isinstance(pubkey, str):
+        return False
+    s = pubkey.strip().lower()
+    return len(s) == 64 and all(c in "0123456789abcdef" for c in s)
+
 # --- 1. СИНХРОНИЗАЦИЯ НАСТРОЕК СИСТЕМЫ (SETTINGS) ---
 print("\n[+] Проверка системных настроек панели и подписок...")
 
@@ -2204,7 +2216,21 @@ if not dry_run:
     naive_port = int(os.environ.get("NAIVE_PORT") or "8446")
     naive_domain = (os.environ.get("NAIVE_DOMAIN") or (f"naive.{domain}" if domain else "localhost")).strip()
     naive_user = (os.environ.get("NAIVE_USER") or "user").strip()
-    naive_pass = (os.environ.get("NAIVE_PASS") or "").strip() or unified_ss_client_pass
+    naive_pass = (os.environ.get("NAIVE_PASS") or "").strip()
+    if not naive_pass and os.path.isfile("/etc/caddy/Caddyfile"):
+        try:
+            with open("/etc/caddy/Caddyfile", "r") as cf:
+                for cline in cf:
+                    if "basic_auth" in cline:
+                        cparts = cline.strip().split()
+                        if len(cparts) >= 3:
+                            naive_user = cparts[1]
+                            naive_pass = cparts[2]
+                            break
+        except Exception:
+            pass
+    if not naive_pass:
+        naive_pass = unified_ss_client_pass
     naive_uri = f"naive+https://{naive_user}:{naive_pass}@{naive_domain}:443#{urllib.parse.quote('NaïveProxy')}"
 
     enable_dnstt = os.environ.get("ENABLE_DNSTT", "n").lower() in ("1", "y", "true")
@@ -2215,6 +2241,35 @@ if not dry_run:
         try:
             with open("/etc/dnstt/server.pub", "r") as pf:
                 dnstt_pubkey = pf.read().strip()
+        except Exception:
+            pass
+    if not dnstt_pubkey and enable_dnstt and not dry_run:
+        try:
+            _P = 2**255 - 19
+            def _clamp(kb):
+                b = bytearray(kb)
+                b[0] &= 248; b[31] &= 127; b[31] |= 64
+                return int.from_bytes(b, "little")
+            def _x25519(k, u=9):
+                x1, x2, z2, x3, z3 = u, 1, 0, u, 1
+                for i in range(254, -1, -1):
+                    bit = (k >> i) & 1
+                    if bit: x2, x3 = x3, x2; z2, z3 = z3, z2
+                    A = (x2 + z2) % _P; AA = (A * A) % _P; B = (x2 - z2) % _P; BB = (B * B) % _P; E = (AA - BB) % _P
+                    x3 = ((x2 * x3 - z2 * z3)**2) % _P; z3 = (x1 * ((x2 * z3 - z2 * x3)**2)) % _P
+                    x2 = (AA * BB) % _P; z2 = (E * (AA + ((121665 * E) % _P))) % _P
+                    if bit: x2, x3 = x3, x2; z2, z3 = z3, z2
+                return (x2 * pow(z2, _P - 2, _P)) % _P
+            _raw_priv = os.urandom(32)
+            _k = _clamp(_raw_priv)
+            dnstt_pubkey = ((_x25519(_k, 9)) % _P).to_bytes(32, "little").hex()
+            os.makedirs("/etc/dnstt", exist_ok=True)
+            with open("/etc/dnstt/server.key", "w") as kf:
+                kf.write(_raw_priv.hex() + "\n")
+            with open("/etc/dnstt/server.pub", "w") as pf:
+                pf.write(dnstt_pubkey + "\n")
+            os.chmod("/etc/dnstt/server.key", 0o600)
+            os.chmod("/etc/dnstt/server.pub", 0o600)
         except Exception:
             pass
     dnstt_cli = f"dnstt-client -doh https://dns.google/dns-query -pubkey {dnstt_pubkey} {dnstt_domain} 127.0.0.1:1080"
@@ -2323,8 +2378,20 @@ else
     echo -e "  - ${BOLD}Вход в панель 3X-UI:${NC}    ${CYAN}https://${PRIMARY_DOMAIN:-домен}/${PANEL_PATH:-my-3x-panel}/${NC}"
     echo -e "  - ${BOLD}Ссылка на подписку:${NC}     ${CYAN}https://${PRIMARY_DOMAIN:-домен}/${SUB_PATH:-my-post-key}/${NC}"
     echo -e "  - ${BOLD}Ссылка (Clash):${NC}         ${CYAN}https://${PRIMARY_DOMAIN:-домен}/${SUB_CLASH_PATH:-${SUB_PATH:-my-post-key}/clash}/${NC}"
-    if [ -f "/run/3xui_unified_client.env" ]; then
-        . "/run/3xui_unified_client.env" 2>/dev/null || true
+    for c_env in "/run/3xui_unified_client.env" "/tmp/3xui_unified_client.env"; do
+        if [ -f "$c_env" ]; then
+            source "$c_env" 2>/dev/null || true
+            break
+        fi
+    done
+
+    if [ -z "${DNSTT_PUBKEY:-}" ] && [ -f "/etc/dnstt/server.pub" ]; then
+        DNSTT_PUBKEY="$(cat /etc/dnstt/server.pub 2>/dev/null | tr -d '[:space:]')"
+    fi
+    if [ -n "${DNSTT_PUBKEY:-}" ]; then
+        if [ -n "${DNSTT_CLI:-}" ] && [[ "$DNSTT_CLI" == *"-pubkey  "* ]]; then
+            DNSTT_CLI="${DNSTT_CLI/-pubkey  /-pubkey ${DNSTT_PUBKEY} }"
+        fi
     fi
     [ -n "${UNIFIED_VLESS_ENKEY:-}" ] && echo -e "  - ${BOLD}VLESS xHTTP EnKey:${NC}     ${YELLOW}${UNIFIED_VLESS_ENKEY}${NC} (ML-KEM-768)"
     [ -n "${SS2022_URI:-}" ] && echo -e "  - ${BOLD}Shadowsocks 2022:${NC}    ${CYAN}${SS2022_URI}${NC}"

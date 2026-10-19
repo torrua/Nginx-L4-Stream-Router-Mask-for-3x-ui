@@ -68,6 +68,68 @@ determine_nginx_http2_mode() {
     fi
 }
 
+detect_active_ssh_port() {
+    local active_port=""
+    if [ -n "${SSH_CONNECTION:-}" ]; then
+        active_port=$(echo "$SSH_CONNECTION" | awk '{print $4}')
+    fi
+    if [ -z "$active_port" ] || ! [[ "$active_port" =~ ^[0-9]+$ ]]; then
+        active_port=$(ss -tlnp 2>/dev/null | grep -E 'sshd|ssh' | grep -vE '127\.0\.0\.1|::1' | awk '{print $4}' | awk -F: '{print $NF}' | sort -n | tail -n1 || echo "")
+    fi
+    if [ -z "$active_port" ] || ! [[ "$active_port" =~ ^[0-9]+$ ]]; then
+        active_port="22"
+    fi
+    echo "$active_port"
+}
+
+get_ssh_service_name() {
+    if systemctl list-unit-files 2>/dev/null | grep -q "^sshd\.service"; then
+        echo "sshd"
+    else
+        echo "ssh"
+    fi
+}
+
+get_wan_ip() {
+    if [ -n "${WAN_IP:-}" ]; then
+        echo "$WAN_IP"
+        return 0
+    fi
+    local cache_file="/run/setup_mask_wan_ip"
+    if [ ! -d /run ] || ! touch /run/.test_w 2>/dev/null; then
+        cache_file="/tmp/setup_mask_wan_ip"
+    else
+        rm -f /run/.test_w 2>/dev/null || true
+    fi
+
+    if [ -f "$cache_file" ]; then
+        local cached
+        cached=$(cat "$cache_file" 2>/dev/null | tr -d '[:space:]' || true)
+        if [ -n "$cached" ] && [[ "$cached" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            WAN_IP="$cached"
+            echo "$WAN_IP"
+            return 0
+        fi
+    fi
+
+    local ip_val=""
+    ip_val=$(curl -s4 --connect-timeout 3 icanhazip.com 2>/dev/null \
+          || curl -s4 --connect-timeout 3 api.ipify.org 2>/dev/null \
+          || curl -s4 --connect-timeout 3 ifconfig.me 2>/dev/null || true)
+    ip_val=$(echo "$ip_val" | tr -d '[:space:]')
+
+    if [ -z "$ip_val" ] || ! [[ "$ip_val" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        ip_val=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}' | head -n1 || echo "")
+    fi
+
+    if [ -n "$ip_val" ]; then
+        WAN_IP="$ip_val"
+        echo "$WAN_IP" > "$cache_file" 2>/dev/null || true
+    fi
+    echo "${WAN_IP:-127.0.0.1}"
+}
+
+
 get_port_listener_info() {
     local proto="$1"
     local port="$2"
@@ -106,11 +168,12 @@ is_port_in_use() {
         local flag="-t"
         [ "$proto" = "udp" ] && flag="-u"
         netstat -l -n "$flag" 2>/dev/null | grep -qE ":${port}\b" && return 0
-    elif timeout 1 bash -c "</dev/$proto/127.0.0.1/$port" 2>/dev/null; then
+    elif [ "$proto" = "tcp" ] && timeout 1 bash -c "</dev/tcp/127.0.0.1/$port" 2>/dev/null; then
         return 0
     fi
     return 1
 }
+
 
 inspect_port_conflicts() {
     echo ""
@@ -169,62 +232,82 @@ inspect_port_conflicts() {
     fi
 
     # 3. Проверка внешних портов маршрутизации и маскирования (80 и 443 TCP)
-    for p in 80 443; do
-        if is_port_in_use "tcp" "$p"; then
-            local w_owner
-            w_owner=$(get_port_listener_info "tcp" "$p")
-            if echo "$w_owner" | grep -qi "nginx"; then
-                ok "Порт $p слушает Nginx (будет переконфигурирован в единый L4/L7 роутер маскирования)."
+    local _web_stack="${ENABLE_WEB_STACK:-y}"
+    if [[ "${_web_stack,,}" == "y" || "${_web_stack}" == "1" || "${_web_stack,,}" == "true" ]]; then
+        for p in 80 443; do
+            if is_port_in_use "tcp" "$p"; then
+                local w_owner
+                w_owner=$(get_port_listener_info "tcp" "$p")
+                if echo "$w_owner" | grep -qi "nginx"; then
+                    ok "Порт $p слушает Nginx (будет переконфигурирован в единый L4/L7 роутер маскирования)."
+                else
+                    die "Порт $p занят сторонним процессом: ${w_owner:-не Nginx}. Для сквозного TLS/HTTP маскирования требуется порт $p."
+                fi
             else
-                die "Порт $p занят сторонним процессом: ${w_owner:-не Nginx}. Для сквозного TLS/HTTP маскирования требуется порт $p."
+                ok "Порт $p (Веб / Маскирование) свободен."
             fi
-        else
-            ok "Порт $p (Веб / Маскирование) свободен."
-        fi
-    done
+        done
 
-    # 3.1. Проверка существующих сторонних сайтов на прямой listen 443
-    local conflicting_vhosts=()
-    for vf in /etc/nginx/sites-enabled/* /etc/nginx/conf.d/*.conf; do
-        [ -f "$vf" ] || continue
-        local b_name
-        b_name=$(basename "$vf")
-        case "$b_name" in
-            default|default.conf|01-main.conf|02-*.conf|03-adguard.conf|vpn_mask.conf)
-                continue
-                ;;
-        esac
-        if grep -Eq 'listen[[:space:]]+([^;]*:)?443' "$vf" 2>/dev/null; then
-            if ! grep -q 'listen[[:space:]]+unix:' "$vf" 2>/dev/null; then
-                conflicting_vhosts+=("$b_name")
+        # 3.1. Проверка существующих сторонних сайтов на прямой listen 443
+        local conflicting_vhosts=()
+        for vf in /etc/nginx/sites-enabled/* /etc/nginx/conf.d/*.conf; do
+            [ -f "$vf" ] || continue
+            local b_name
+            b_name=$(basename "$vf")
+            case "$b_name" in
+                default|default.conf|01-main.conf|02-*.conf|03-adguard.conf|vpn_mask.conf)
+                    continue
+                    ;;
+            esac
+            if grep -Eq 'listen[[:space:]]+([^;]*:)?443' "$vf" 2>/dev/null; then
+                if ! grep -q 'listen[[:space:]]+unix:' "$vf" 2>/dev/null; then
+                    conflicting_vhosts+=("$b_name")
+                fi
             fi
+        done
+        if [ ${#conflicting_vhosts[@]} -gt 0 ]; then
+            warn "Обнаружены существующие vhost с прямым слушанием порта 443: ${conflicting_vhosts[*]}"
+            warn "Nginx Stream роутер использует порт 443. Такие vhost должны быть адаптированы под сокет unix:/dev/shm/nginx-http.sock."
         fi
-    done
-    if [ ${#conflicting_vhosts[@]} -gt 0 ]; then
-        warn "Обнаружены существующие vhost с прямым слушанием порта 443: ${conflicting_vhosts[*]}"
-        warn "Nginx Stream роутер использует порт 443. Такие vhost должны быть адаптированы под сокет unix:/dev/shm/nginx-http.sock."
+
+        # 4. Проверка внутренних служебных портов стека
+        local internal_ports=()
+        [ -n "${PANEL_PORT:-}" ] && internal_ports+=("Панель 3X-UI:$PANEL_PORT")
+        [ -n "${SUB_PORT:-}" ] && internal_ports+=("Канал подписок:$SUB_PORT")
+        [ -n "${XHTTP_STREAM_PORT:-}" ] && internal_ports+=("xHTTP стрим:$XHTTP_STREAM_PORT")
+        [ -n "${REALITY_FALLBACK_PORT:-}" ] && internal_ports+=("REALITY Fallback:$REALITY_FALLBACK_PORT")
+
+        for item in "${internal_ports[@]}"; do
+            local s_name="${item%%:*}"
+            local s_port="${item##*:}"
+            if is_port_in_use "tcp" "$s_port"; then
+                local p_owner
+                p_owner=$(get_port_listener_info "tcp" "$s_port")
+                if echo "$p_owner" | grep -qiE "x-ui|xray|nginx"; then
+                    ok "Внутренний порт $s_port ($s_name) занят собственным сервисом ($p_owner) — готов к реконфигурации."
+                else
+                    warn "Внутренний порт $s_port ($s_name) занят сторонним процессом: ${p_owner:-неизвестно}. Возможен конфликт."
+                fi
+            fi
+        done
     fi
 
-    # 4. Проверка внутренних служебных портов стека
-    local internal_ports=()
-    [ -n "${PANEL_PORT:-}" ] && internal_ports+=("Панель 3X-UI:$PANEL_PORT")
-    [ -n "${SUB_PORT:-}" ] && internal_ports+=("Канал подписок:$SUB_PORT")
-    [ -n "${XHTTP_STREAM_PORT:-}" ] && internal_ports+=("xHTTP стрим:$XHTTP_STREAM_PORT")
-    [ -n "${REALITY_FALLBACK_PORT:-}" ] && internal_ports+=("REALITY Fallback:$REALITY_FALLBACK_PORT")
-
-    for item in "${internal_ports[@]}"; do
-        local s_name="${item%%:*}"
-        local s_port="${item##*:}"
-        if is_port_in_use "tcp" "$s_port"; then
-            local p_owner
-            p_owner=$(get_port_listener_info "tcp" "$s_port")
-            if echo "$p_owner" | grep -qiE "x-ui|xray|nginx"; then
-                ok "Внутренний порт $s_port ($s_name) занят собственным сервисом ($p_owner) — готов к реконфигурации."
+    # 5. Проверка порта автономного AmneziaWG (UDP)
+    local _awg_sa="${ENABLE_AWG_STANDALONE:-0}"
+    if [[ "${_awg_sa,,}" == "y" || "${_awg_sa}" == "1" || "${_awg_sa,,}" == "true" ]]; then
+        local awg_p="${AWG_STANDALONE_PORT:-8445}"
+        if is_port_in_use "udp" "$awg_p"; then
+            local awg_owner
+            awg_owner=$(get_port_listener_info "udp" "$awg_p")
+            if echo "$awg_owner" | grep -qiE "amnezia|wireguard"; then
+                ok "UDP-порт $awg_p (AmneziaWG) занят собственной службой ($awg_owner)."
             else
-                warn "Внутренний порт $s_port ($s_name) занят сторонним процессом: ${p_owner:-неизвестно}. Возможен конфликт."
+                warn "UDP-порт $awg_p (AmneziaWG) занят сторонним процессом: ${awg_owner:-неизвестно}. Возможен конфликт."
             fi
+        else
+            ok "Порт $awg_p/udp (AmneziaWG Standalone) свободен."
         fi
-    done
+    fi
 
     echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}\n"
 }

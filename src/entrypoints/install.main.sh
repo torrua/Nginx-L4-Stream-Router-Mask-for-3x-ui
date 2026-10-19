@@ -7,63 +7,16 @@
 # Exit on severe unhandled errors
 set -o pipefail
 
-SCRIPT_VERSION="v7.8.0"
+SCRIPT_VERSION="v8.0.0"
 
 # Защита от аварийного обрыва SSH-сессии при установке
 trap 'echo -e "\n[!] Внимание: получен сигнал SIGHUP, процесс установки продолжается в фоне..." >> "${INSTALL_LOG:-/var/log/nginx_mask_install.log}" 2>&1' SIGHUP
 
-detect_active_ssh_port() {
-    local active_port=""
-    if [ -n "${SSH_CONNECTION:-}" ]; then
-        active_port=$(echo "$SSH_CONNECTION" | awk '{print $4}')
-    fi
-    if [ -z "$active_port" ] || ! [[ "$active_port" =~ ^[0-9]+$ ]]; then
-        active_port=$(ss -tlnp 2>/dev/null | grep -E 'sshd|ssh' | grep -vE '127\.0\.0\.1|::1' | awk '{print $4}' | awk -F: '{print $NF}' | sort -n | tail -n1 || echo "")
-    fi
-    if [ -z "$active_port" ] || ! [[ "$active_port" =~ ^[0-9]+$ ]]; then
-        active_port="22"
-    fi
-    echo "$active_port"
-}
+# @include "common/colors.sh"
+# @include "common/logger.sh"
+# @include "common/preflight.sh"
+# @include "system/sysctl.sh"
 
-get_ssh_service_name() {
-    if systemctl list-unit-files 2>/dev/null | grep -q "^sshd\.service"; then
-        echo "sshd"
-    else
-        echo "ssh"
-    fi
-}
-
-
-# --- Color Palette & Typography ---
-BOLD=$'\033[1m'
-DIM=$'\033[2m'
-RESET=$'\033[0m'
-
-RED=$'\033[0;31m'
-GREEN=$'\033[0;32m'
-YELLOW=$'\033[0;33m'
-BLUE=$'\033[0;34m'
-MAGENTA=$'\033[0;35m'
-CYAN=$'\033[0;36m'
-WHITE=$'\033[1;37m'
-
-BG_BLUE=$'\033[44m'
-BG_GREEN=$'\033[42m'
-
-# --- Symbols ---
-CHECK="✔"
-CROSS="✖"
-ARROW="➜"
-INFO="ℹ"
-STAR="★"
-LOCK="🔒"
-SHIELD="🛡"
-
-die() {
-    echo -e "  ${RED}${CROSS} $*${RESET}" >&2
-    exit 1
-}
 
 # --- Global Paths & Logs ---
 INSTALL_LOG="/var/log/nginx_mask_install.log"
@@ -100,66 +53,8 @@ clear_banner() {
     check_for_script_updates
 }
 
-# Spinner function for background processes
-# Usage: run_with_spinner "Task description" bash_function_or_command
-run_with_spinner() {
-    local task_name="$1"
-    shift
-    local cmd=("$@")
-    
-    # Run command in background and redirect output to log
-    "${cmd[@]}" >> "$INSTALL_LOG" 2>&1 &
-    local pid=$!
-    local exit_code=0
-    
-    if [ ! -t 1 ]; then
-        echo -e "  ${CYAN}*${RESET}  ${WHITE}${task_name}...${RESET}"
-        wait "$pid"
-        exit_code=$?
-    else
-        # Spinner glyphs
-        local spin_chars=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
-        local delay=0.08
-        
-        # Hide cursor
-        tput civis 2>/dev/null || echo -ne "\033[?25l"
-        
-        local i=0
-        while kill -0 "$pid" 2>/dev/null; do
-            i=$(( (i + 1) % 10 ))
-            printf "\r  ${CYAN}${spin_chars[$i]}${RESET}  ${WHITE}%-52s${RESET}" "$task_name..."
-            sleep "$delay"
-        done
-        
-        wait "$pid"
-        exit_code=$?
-        
-        # Show cursor
-        tput cnorm 2>/dev/null || echo -ne "\033[?25h"
-    fi
-    
-    if [ $exit_code -eq 0 ]; then
-        if [ ! -t 1 ]; then
-            printf "  ${GREEN}${CHECK}${RESET}  ${WHITE}%-52s${RESET} ${GREEN}[DONE]${RESET}\n" "$task_name"
-        else
-            printf "\r  ${GREEN}${CHECK}${RESET}  ${WHITE}%-52s${RESET} ${GREEN}[DONE]${RESET}\n" "$task_name"
-        fi
-        return 0
-    else
-        if [ ! -t 1 ]; then
-            printf "  ${RED}${CROSS}${RESET}  ${WHITE}%-52s${RESET} ${RED}[FAILED]${RESET}\n" "$task_name"
-        else
-            printf "\r  ${RED}${CROSS}${RESET}  ${WHITE}%-52s${RESET} ${RED}[FAILED]${RESET}\n" "$task_name"
-        fi
-        echo -e "\n  ${RED}${BOLD}Ошибка при выполнении:${RESET} ${YELLOW}$task_name${RESET}"
-        echo -e "  ${DIM}Подробности записаны в лог:${RESET} ${WHITE}$INSTALL_LOG${RESET}"
-        echo -e "  ${DIM}Последние строки лога:${RESET}"
-        echo -e "${RED}────────────────────────────────────────────────────────────${RESET}"
-        tail -n 12 "$INSTALL_LOG" | sed 's/^/    /'
-        echo -e "${RED}────────────────────────────────────────────────────────────${RESET}"
-        exit 1
-    fi
-}
+# @include "common/spinner.sh"
+
 
 # Step Progress Header
 print_step() {

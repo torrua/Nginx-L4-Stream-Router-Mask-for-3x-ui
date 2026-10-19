@@ -4,8 +4,20 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
     
     if not row:
         # Инбаунд отсутствует -> создаем под ключ
-        settings_json = json.dumps(default_settings, ensure_ascii=False)
-        stream_json = json.dumps(default_stream, ensure_ascii=False)
+        target_settings = json.loads(json.dumps(default_settings))
+        target_stream = json.loads(json.dumps(default_stream))
+        if protocol == "mtproto" and "preferIp" not in target_settings:
+            target_settings["preferIp"] = "prefer-ipv4"
+        if "externalProxy" in target_stream and isinstance(target_stream["externalProxy"], list) and len(target_stream["externalProxy"]) > 0:
+            if protocol in ("shadowsocks", "mtproto", "amneziawg"):
+                target_stream["externalProxy"][0]["forceTls"] = "none"
+            elif protocol == "vless" and "realitySettings" in target_stream:
+                target_stream["externalProxy"][0]["forceTls"] = "same"
+            elif "forceTls" not in target_stream["externalProxy"][0]:
+                target_stream["externalProxy"][0]["forceTls"] = "tls"
+
+        settings_json = json.dumps(target_settings, ensure_ascii=False)
+        stream_json = json.dumps(target_stream, ensure_ascii=False)
         sniffing_json = json.dumps({"enabled": True, "destOverride": ["http", "tls", "quic", "fakedns"]})
         if not dry_run:
             cur.execute("""
@@ -16,11 +28,11 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             """, (admin_id, remark, listen, port, protocol, settings_json, stream_json, tag, sniffing_json))
             new_inbound_id = cur.lastrowid
             if "sync_inbound_clients" in globals():
-                sync_inbound_clients(new_inbound_id, protocol, remark, default_settings, default_stream)
-                settings_json = json.dumps(default_settings, ensure_ascii=False)
+                sync_inbound_clients(new_inbound_id, protocol, remark, target_settings, target_stream)
+                settings_json = json.dumps(target_settings, ensure_ascii=False)
                 cur.execute("UPDATE inbounds SET settings = ? WHERE id = ?", (settings_json, new_inbound_id))
         print(f"  [СОЗДАНО] Отсутствующий инбаунд: {remark} ({protocol.upper()} на порту {port}) добавлен и зарегистрирован в реестре клиентов.")
-        return
+        return new_inbound_id
 
     inbound_id, raw_s, raw_st, proto, cur_tag, cur_remark, cur_listen, cur_enable = row
     cur_enable = 1 if cur_enable is None else cur_enable
@@ -62,6 +74,27 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
                     for limit_field in ["totalGB", "expiryTime", "limitIp", "tgId", "reset", "resetDay", "resetMax", "enable"]:
                         if limit_field in ec:
                             merged_c[limit_field] = ec[limit_field]
+                    if protocol == "shadowsocks" and ec.get("password"):
+                        if "validate_ss2022_key" in globals() and validate_ss2022_key(ec["password"], target_settings.get("method", "2022-blake3-aes-256-gcm")):
+                            merged_c["password"] = ec["password"]
+                        else:
+                            repairs.append("исправлен невалидный ключ единого клиента SS-2022")
+                    elif protocol == "tuic":
+                        if ec.get("uuid"): merged_c["uuid"] = ec["uuid"]
+                        if ec.get("password"): merged_c["password"] = ec["password"]
+                    elif protocol == "mtproto":
+                        if ec.get("secret"):
+                            if "validate_mtproto_secret" not in globals() or validate_mtproto_secret(ec["secret"]):
+                                merged_c["secret"] = ec["secret"]
+                            else:
+                                repairs.append("исправлен невалидный FakeTLS секрет MTProto единого клиента")
+                        if ec.get("adTag") or ec.get("ad_tag"):
+                            ad_cand = ec.get("adTag") or ec.get("ad_tag")
+                            if "validate_mtproto_adtag" in globals() and not validate_mtproto_adtag(ad_cand):
+                                merged_c["adTag"] = ""
+                                repairs.append("очищен невалидный adTag MTProto")
+                            else:
+                                merged_c["adTag"] = ad_cand
                     consolidated_clients.append(merged_c)
                     has_unified = True
                     preserved.append(f"единый клиент '{u_email}'")
@@ -125,23 +158,27 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             preserved.append(f"SNI ({','.join(old_snis)})")
 
         # Строгая гарантия параметров VLESS REALITY (маскировка под свой сайт: Nginx Fallback + Xver=1 + target)
-        if port == steal_port or tag == "in-steal-reality" or cur_tag == "in-steal-reality":
-            fallback_dest = f"127.0.0.1:{reality_fallback_port}"
+        s_port = globals().get("steal_port", 45443)
+        rf_port = globals().get("reality_fallback_port", 9443)
+        if port == s_port or tag == "in-steal-reality" or cur_tag == "in-steal-reality":
+            fallback_dest = f"127.0.0.1:{rf_port}"
             if not target_stream["realitySettings"].get("dest") or target_stream["realitySettings"]["dest"] != fallback_dest:
                 target_stream["realitySettings"]["dest"] = fallback_dest
                 repairs.append(f"установлен dest: {fallback_dest} (Nginx SSL Fallback, защита от сброса)")
             else:
-                preserved.append(f"anti-loop dest {reality_fallback_port}")
+                preserved.append(f"anti-loop dest {rf_port}")
             target_stream["realitySettings"]["target"] = fallback_dest
             if target_stream["realitySettings"].get("xver") != 1:
                 target_stream["realitySettings"]["xver"] = 1
                 repairs.append("установлен xver: 1 (Proxy Protocol для Nginx Anti-Loop)")
 
         # Строгая гарантия параметров VLESS REALITY (маскировка под внешние сервисы: xver=0, dest: 443, target: 443)
-        if port == classic_port or tag == "in-classic-reality" or cur_tag == "in-classic-reality":
+        c_port = globals().get("classic_port", 46443)
+        c_sni = globals().get("classic_sni", "avito.ru")
+        if port == c_port or tag == "in-classic-reality" or cur_tag == "in-classic-reality":
             if not target_stream["realitySettings"].get("dest"):
-                target_stream["realitySettings"]["dest"] = f"{classic_sni}:443"
-                repairs.append(f"восстановлен пустой dest -> {classic_sni}:443")
+                target_stream["realitySettings"]["dest"] = f"{c_sni}:443"
+                repairs.append(f"восстановлен пустой dest -> {c_sni}:443")
             target_stream["realitySettings"]["target"] = target_stream["realitySettings"]["dest"]
             target_stream["realitySettings"]["xver"] = 0
 
@@ -276,28 +313,164 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
                 target_settings["server"]["jmax"] = 70
                 repairs.append("исправлены нечисловые Jmin/Jmax -> Jmin=40, Jmax=70")
 
-    # Е. Проверка и сохранение externalProxy (:443 и кастомных хостов узлов)
+    # Е. Проверка и ремонт Shadowsocks 2022
+    if protocol == "shadowsocks":
+        ss_method = cur_settings.get("method") or target_settings.get("method", "2022-blake3-aes-256-gcm")
+        target_settings["method"] = ss_method
+        target_settings["network"] = "tcp,udp"
+
+        # Валидация / сохранение серверного пароля (PSK)
+        cur_srv_pwd = cur_settings.get("password")
+        if cur_srv_pwd and "validate_ss2022_key" in globals() and validate_ss2022_key(cur_srv_pwd, ss_method):
+            target_settings["password"] = cur_srv_pwd
+            preserved.append("серверный ключ SS-2022")
+        elif "generate_ss2022_key" in globals():
+            target_settings["password"] = generate_ss2022_key(ss_method)
+            repairs.append("сгенерирован валидный серверный ключ SS-2022 (исправлена ошибка длины)")
+
+        # Аудит клиентов: валидация ключей и очистка устаревшего поля 'method'
+        c_repaired = False
+        method_removed = False
+        for c in target_settings.get("clients", []):
+            if "method" in c:
+                c.pop("method", None)
+                method_removed = True
+            c_pwd = c.get("password")
+            if not c_pwd or ("validate_ss2022_key" in globals() and not validate_ss2022_key(c_pwd, ss_method)):
+                if "generate_ss2022_key" in globals():
+                    c["password"] = generate_ss2022_key(ss_method)
+                    c_repaired = True
+        if method_removed:
+            repairs.append("удалено устаревшее поле client.method")
+        if c_repaired:
+            repairs.append("исправлен невалидный ключ клиента SS-2022")
+        elif not any("невалидный ключ" in r for r in repairs):
+            preserved.append("ключи клиентов SS-2022")
+
+    # Ж. Проверка и ремонт TUIC v5
+    if protocol == "tuic":
+        tuic_cert = cur_settings.get("certificate") or target_settings.get("certificate") or globals().get("ssl_cert") or ""
+        tuic_key = cur_settings.get("private_key") or target_settings.get("private_key") or globals().get("ssl_key") or ""
+        if cur_settings.get("certificate") and cur_settings.get("private_key"):
+            target_settings["certificate"] = tuic_cert
+            target_settings["private_key"] = tuic_key
+            preserved.append("SSL-сертификаты TUIC")
+        else:
+            target_settings["certificate"] = tuic_cert
+            target_settings["private_key"] = tuic_key
+            repairs.append("добавлены пути сертификатов в settings TUIC")
+
+        target_settings["congestion_control"] = cur_settings.get("congestion_control") or target_settings.get("congestion_control", "bbr")
+        target_settings["alpn"] = cur_settings.get("alpn") or target_settings.get("alpn", ["h3", "spdy/3.1"])
+        for tuic_opt in ["udp_relay_mode", "zero_rtt_handshake", "max_idle_time", "authentication_timeout", "max_udp_relay_packet_size", "sni"]:
+            if tuic_opt in cur_settings:
+                target_settings[tuic_opt] = cur_settings[tuic_opt]
+        if cur_settings.get("congestion_control"):
+            preserved.append(f"congestion_control ({target_settings['congestion_control']})")
+        if cur_settings.get("alpn"):
+            preserved.append(f"alpn ({target_settings['alpn']})")
+
+        target_stream["network"] = "quic"
+        target_stream["security"] = "tls"
+
+    # З. Проверка и ремонт Telegram MTProxy (FakeTLS)
+    if protocol == "mtproto":
+        root_cleaned = False
+        for obsolete_field in ["secret", "adTag", "ad_tag"]:
+            if obsolete_field in cur_settings or obsolete_field in target_settings:
+                target_settings.pop(obsolete_field, None)
+                root_cleaned = True
+        if root_cleaned:
+            repairs.append("очищены устаревшие корневые поля secret/adTag в settings MTProto")
+
+        if cur_settings.get("domainFronting"):
+            target_settings["domainFronting"] = cur_settings["domainFronting"]
+            preserved.append("domainFronting MTProto")
+
+        target_settings["preferIp"] = cur_settings.get("preferIp") or target_settings.get("preferIp") or "prefer-ipv4"
+        if target_settings.get("preferIp") == "prefer-ipv4":
+            preserved.append("preferIp (prefer-ipv4)")
+
+        mtp_faketls = globals().get("mtproto_faketls_domain") or target_settings.get("domainFronting", {}).get("ip") or "gateway.icloud.com"
+        for c in target_settings.get("clients", []):
+            c_sec = c.get("secret")
+            if not c_sec or ("validate_mtproto_secret" in globals() and not validate_mtproto_secret(c_sec)):
+                if "generate_mtproto_secret" in globals():
+                    c["secret"] = generate_mtproto_secret(mtp_faketls)
+                    repairs.append("исправлен/сгенерирован FakeTLS секрет MTProto")
+            else:
+                preserved.append("секрет FakeTLS MTProto")
+            c_ad = c.get("adTag") or c.get("ad_tag")
+            if c_ad:
+                if "validate_mtproto_adtag" in globals() and not validate_mtproto_adtag(c_ad):
+                    c["adTag"] = ""
+                    c.pop("ad_tag", None)
+                    repairs.append("очищен невалидный adTag MTProto")
+                else:
+                    c["adTag"] = c_ad
+                    c.pop("ad_tag", None)
+                    preserved.append("промо-тег adTag MTProto")
+
+    # И. Проверка и сохранение externalProxy (:443, SNI и кастомных хостов узлов)
     cur_ext = cur_stream.get("externalProxy", [])
     expected_ext_port = 443 if protocol in ("vless", "hysteria") and port != hy2_port else (hy2_port if protocol == "hysteria" else port)
 
+    def_ext = default_stream.get("externalProxy", [])
+    def_dest = def_ext[0].get("dest") if (def_ext and isinstance(def_ext, list) and def_ext[0].get("dest")) else domain
+    def_sni = def_ext[0].get("sni", "") if (def_ext and isinstance(def_ext, list) and def_ext[0].get("sni")) else ""
+
     # Сохраняем кастомный хост узла (dest), если он был настроен и не равен localhost
-    target_dest = domain
+    target_dest = def_dest
     if cur_ext and len(cur_ext) > 0 and cur_ext[0].get("dest"):
         ext_dest = str(cur_ext[0]["dest"]).strip()
         if ext_dest and ext_dest not in ("127.0.0.1", "localhost", "0.0.0.0"):
             target_dest = ext_dest
-            if ext_dest != domain:
+            if ext_dest != domain and ext_dest != def_dest:
                 preserved.append(f"кастомный хост узла ({ext_dest})")
 
-    if not cur_ext or cur_ext[0].get("port") != expected_ext_port or cur_ext[0].get("dest") != target_dest or cur_ext[0].get("remark") != final_remark:
-        force_tls_val = "same" if protocol == "vless" and "realitySettings" in target_stream else "tls"
-        target_stream["externalProxy"] = [{
-            "dest": target_dest,
-            "port": expected_ext_port,
-            "forceTls": force_tls_val,
-            "remark": final_remark
-        }]
-        repairs.append(f"исправлен externalProxy -> {target_dest}:{expected_ext_port}")
+    # Сохраняем SNI для externalProxy (критично для VLESS REALITY и маршрутизации Nginx Stream L4)
+    target_sni = def_sni
+    if cur_ext and len(cur_ext) > 0 and cur_ext[0].get("sni"):
+        ext_sni = str(cur_ext[0]["sni"]).strip()
+        if ext_sni:
+            target_sni = ext_sni
+            if target_sni != def_sni:
+                preserved.append(f"кастомный externalProxy SNI ({ext_sni})")
+
+    if protocol in ("shadowsocks", "mtproto", "amneziawg"):
+        force_tls_val = "none"
+    elif protocol == "vless" and "realitySettings" in target_stream:
+        force_tls_val = "same"
+    else:
+        force_tls_val = "tls"
+
+    ext_entry = {
+        "dest": target_dest,
+        "port": expected_ext_port,
+        "forceTls": force_tls_val,
+        "remark": final_remark
+    }
+    if target_sni:
+        ext_entry["sni"] = target_sni
+    if def_ext and isinstance(def_ext, list):
+        if def_ext[0].get("fingerprint"):
+            ext_entry["fingerprint"] = def_ext[0]["fingerprint"]
+        if def_ext[0].get("alpn"):
+            ext_entry["alpn"] = def_ext[0]["alpn"]
+
+    needs_ext_repair = (
+        not cur_ext
+        or cur_ext[0].get("port") != expected_ext_port
+        or cur_ext[0].get("dest") != target_dest
+        or cur_ext[0].get("remark") != final_remark
+        or cur_ext[0].get("forceTls") != force_tls_val
+        or (target_sni and cur_ext[0].get("sni") != target_sni)
+    )
+
+    if needs_ext_repair:
+        target_stream["externalProxy"] = [ext_entry]
+        sni_desc = f", sni: {target_sni}" if target_sni else ""
+        repairs.append(f"исправлен externalProxy -> {target_dest}:{expected_ext_port}{sni_desc}")
     else:
         target_stream["externalProxy"] = cur_ext
         preserved.append(f"externalProxy :{expected_ext_port}")
@@ -324,3 +497,4 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
     if preserved:
         status_str += f"\n    -> Сохранено: {', '.join(preserved)}"
     print(status_str)
+    return inbound_id

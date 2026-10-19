@@ -247,7 +247,7 @@ export STEAL_PORT="${STEAL_PORT:-45443}"
 export STEAL_DOMAINS="${STEAL_DOMAINS:-}"
 export ENABLE_CLASSIC="${ENABLE_CLASSIC:-y}"
 export CLASSIC_PORT="${CLASSIC_PORT:-46443}"
-export CLASSIC_SNI="${CLASSIC_SNI:-gateway.icloud.com}"
+export CLASSIC_SNI="${CLASSIC_SNI:-avito.ru}"
 export ENABLE_HY2="${ENABLE_HY2:-y}"
 export HY2_PORT="${HY2_PORT:-443}"
 export ENABLE_AWG_V3="${ENABLE_AWG_V3:-y}"
@@ -258,6 +258,14 @@ export ENABLE_AWG_V2="${ENABLE_AWG_V2:-n}"
 export AWG_V2_PORT="${AWG_V2_PORT:-8444}"
 export AWG_PRIMARY_DNS="${AWG_PRIMARY_DNS:-9.9.9.9}"
 export AWG_SECONDARY_DNS="${AWG_SECONDARY_DNS:-76.76.2.0}"
+export ENABLE_SS2022="${ENABLE_SS2022:-n}"
+export SS2022_PORT="${SS2022_PORT:-8388}"
+export ENABLE_TUIC="${ENABLE_TUIC:-n}"
+export TUIC_PORT="${TUIC_PORT:-8448}"
+export ENABLE_MTPROTO="${ENABLE_MTPROTO:-n}"
+export MTPROTO_PORT="${MTPROTO_PORT:-8444}"
+export MTPROTO_FAKETLS_DOMAIN="${MTPROTO_FAKETLS_DOMAIN:-gateway.icloud.com}"
+export MTPROTO_ADTAG="${MTPROTO_ADTAG:-}"
 export SSL_ENGINE_CHOICE="${SSL_ENGINE_CHOICE:-1}"
 
 # Определение системного часового пояса
@@ -382,8 +390,8 @@ reality_fallback_port = int(os.environ.get("REALITY_FALLBACK_PORT") or "9443")
 
 enable_classic = os.environ.get("ENABLE_CLASSIC", "y").lower() in ("1", "y", "true")
 classic_port = int(os.environ.get("CLASSIC_PORT") or "46443")
-classic_sni = os.environ.get("CLASSIC_SNI") or "gateway.icloud.com"
-classic_sni = classic_sni.split()[0] if classic_sni.strip() else "gateway.icloud.com"
+classic_sni = os.environ.get("CLASSIC_SNI") or "avito.ru"
+classic_sni = classic_sni.split()[0] if classic_sni.strip() else "avito.ru"
 
 enable_hy2 = os.environ.get("ENABLE_HY2", "y").lower() in ("1", "y", "true")
 hy2_port = int(os.environ.get("HY2_PORT") or "443")
@@ -397,6 +405,17 @@ awg_secondary_dns = os.environ.get("AWG_SECONDARY_DNS") or "76.76.2.0"
 
 enable_awg_v2 = os.environ.get("ENABLE_AWG_V2", "n").lower() in ("1", "y", "true")
 awg_v2_port = int(os.environ.get("AWG_V2_PORT") or "8444")
+
+enable_ss2022 = os.environ.get("ENABLE_SS2022", "n").lower() in ("1", "y", "true")
+ss2022_port = int(os.environ.get("SS2022_PORT") or "8388")
+
+enable_tuic = os.environ.get("ENABLE_TUIC", "n").lower() in ("1", "y", "true")
+tuic_port = int(os.environ.get("TUIC_PORT") or "8448")
+
+enable_mtproto = os.environ.get("ENABLE_MTPROTO", "n").lower() in ("1", "y", "true")
+mtproto_port = int(os.environ.get("MTPROTO_PORT") or "8444")
+mtproto_faketls_domain = (os.environ.get("MTPROTO_FAKETLS_DOMAIN") or "gateway.icloud.com").strip()
+mtproto_adtag = os.environ.get("MTPROTO_ADTAG", "").strip()
 
 ssl_engine = os.environ.get("SSL_ENGINE_CHOICE", "1")
 if ssl_engine == "1":
@@ -414,6 +433,22 @@ admin_id = user_row[0] if user_row else 1
 # Curve25519 helper (RFC 7748) для валидации и починки ключей
 P = 2**255 - 19
 A24 = 121665
+
+# Инспекция существующих таблиц и колонок для гарантированной синхронизации клиентов
+cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
+all_tables = set(r[0] for r in cur.fetchall())
+
+def get_table_columns(tbl):
+    if tbl not in all_tables:
+        return set()
+    cur.execute(f"PRAGMA table_info({tbl})")
+    return set(r[1] for r in cur.fetchall())
+
+client_traffics_cols = get_table_columns("client_traffics")
+clients_cols = get_table_columns("clients")
+client_inbounds_cols = get_table_columns("client_inbounds")
+
+# @include "xray/clients.py"
 
 # @include "xray/keys.py"
 
@@ -771,38 +806,47 @@ def_hy2_pass = secrets.token_hex(12)
 def_wg_s_priv, def_wg_s_pub = generate_wg_keypair()
 def_wg_c_priv, def_wg_c_pub = generate_wg_keypair()
 def_wg_hpk = awg_hpk_env or base64.b64encode(secrets.token_bytes(32)).decode()
+def_ss_method = "2022-blake3-aes-256-gcm"
+def_ss_server_pass = generate_ss2022_key(def_ss_method)
+def_ss_client_pass = generate_ss2022_key(def_ss_method)
+def_tuic_uuid, _ = generate_tuic_credentials()
+def_tuic_pass = def_ss_client_pass
+def_mtp_secret = generate_mtproto_secret(mtproto_faketls_domain)
+
+cur.execute("SELECT port, protocol FROM inbounds")
+existing_inbound_protos = {r[1] for r in cur.fetchall()}
 
 # 1. VLESS REALITY (маскировка под свой сайт)
 if enable_steal:
-    s_set = {"clients": [{"id": def_uuid, "flow": "xtls-rprx-vision"}], "decryption": "none"}
+    s_set = {"clients": [{"id": def_uuid, "flow": "xtls-rprx-vision"}], "decryption": "none", "testseed": [900, 500, 900, 256]}
     s_str = {
         "network": "tcp",
         "tcpSettings": {"acceptProxyProtocol": True, "header": {"type": "none"}},
         "security": "reality",
         "realitySettings": {
             "show": False, "xver": 1, "dest": f"127.0.0.1:{reality_fallback_port}", "target": f"127.0.0.1:{reality_fallback_port}",
-            "serverNames": [steal_dom], "privateKey": def_reality_priv,
+            "serverNames": [steal_dom], "privateKey": def_reality_priv, "minClientVer": "1.0.0",
             "shortIds": def_reality_sids,
-            "settings": {"publicKey": def_reality_pub, "fingerprint": "chrome", "spiderX": "/"}
+            "settings": {"publicKey": def_reality_pub, "fingerprint": "firefox", "serverName": steal_dom, "spiderX": "/"}
         },
-        "externalProxy": [{"dest": domain, "port": 443, "forceTls": "same", "remark": "VLESS_STEAL"}]
+        "externalProxy": [{"dest": domain, "port": 443, "forceTls": "same", "sni": steal_dom, "fingerprint": "firefox", "remark": "VLESS_STEAL"}]
     }
     smart_reconcile_inbound(steal_port, "vless", "in-steal-reality", "VLESS_STEAL", s_set, s_str, listen="127.0.0.1")
 
 # 2. VLESS REALITY (маскировка под внешние сервисы)
 if enable_classic:
-    c_set = {"clients": [{"id": def_uuid, "flow": "xtls-rprx-vision"}], "decryption": "none"}
+    c_set = {"clients": [{"id": def_uuid, "flow": "xtls-rprx-vision"}], "decryption": "none", "testseed": [900, 500, 900, 256]}
     c_str = {
         "network": "tcp",
         "tcpSettings": {"acceptProxyProtocol": True, "header": {"type": "none"}},
         "security": "reality",
         "realitySettings": {
             "show": False, "xver": 0, "dest": f"{classic_sni}:443", "target": f"{classic_sni}:443",
-            "serverNames": [classic_sni], "privateKey": def_reality_priv,
+            "serverNames": [classic_sni], "privateKey": def_reality_priv, "minClientVer": "1.0.0",
             "shortIds": def_reality_sids,
-            "settings": {"publicKey": def_reality_pub, "fingerprint": "chrome", "spiderX": "/"}
+            "settings": {"publicKey": def_reality_pub, "fingerprint": "firefox", "serverName": classic_sni, "spiderX": "/"}
         },
-        "externalProxy": [{"dest": domain, "port": 443, "forceTls": "same", "remark": "VLESS_CLASSIC"}]
+        "externalProxy": [{"dest": domain, "port": 443, "forceTls": "same", "sni": classic_sni, "fingerprint": "firefox", "remark": "VLESS_CLASSIC"}]
     }
     smart_reconcile_inbound(classic_port, "vless", "in-classic-reality", "VLESS_CLASSIC", c_set, c_str, listen="127.0.0.1")
 
@@ -900,12 +944,191 @@ if enable_awg_v2:
     a2_str = {"externalProxy": [{"dest": domain, "port": awg_v2_port, "remark": "AmneziaWG v2.0"}]}
     smart_reconcile_inbound(awg_v2_port, "amneziawg", "in-awg-v2-legacy", "AmneziaWG v2.0", a2_set, a2_str, listen="0.0.0.0")
 
+# 7. Shadowsocks 2022
+if enable_ss2022 or "shadowsocks" in existing_inbound_protos:
+    ss_set = {
+        "method": def_ss_method,
+        "password": def_ss_server_pass,
+        "network": "tcp,udp",
+        "clients": [{"email": "Client", "password": def_ss_client_pass, "enable": True}]
+    }
+    ss_str = {
+        "network": "tcp",
+        "security": "none",
+        "externalProxy": [{"dest": domain, "port": ss2022_port, "forceTls": "none", "remark": "Shadowsocks 2022"}]
+    }
+    smart_reconcile_inbound(ss2022_port, "shadowsocks", "in-shadowsocks-2022", "Shadowsocks 2022", ss_set, ss_str, listen="0.0.0.0")
+
+# 8. TUIC v5
+if enable_tuic or "tuic" in existing_inbound_protos:
+    tuic_set = {
+        "certificate": ssl_cert,
+        "private_key": ssl_key,
+        "congestion_control": "bbr",
+        "alpn": ["h3", "spdy/3.1"],
+        "udp_relay_mode": "native",
+        "zero_rtt_handshake": False,
+        "max_idle_time": 15,
+        "authentication_timeout": 3,
+        "max_udp_relay_packet_size": 1500,
+        "sni": domain,
+        "clients": [{"uuid": def_tuic_uuid, "password": def_tuic_pass, "email": "Client", "enable": True}]
+    }
+    tuic_str = {
+        "network": "quic",
+        "security": "tls",
+        "externalProxy": [{"dest": domain, "port": tuic_port, "forceTls": "tls", "remark": "TUIC v5"}]
+    }
+    smart_reconcile_inbound(tuic_port, "tuic", "in-tuic-v5", "TUIC v5", tuic_set, tuic_str, listen="0.0.0.0")
+
+# 9. Telegram MTProxy FakeTLS
+if enable_mtproto or "mtproto" in existing_inbound_protos:
+    mtp_set = {
+        "preferIp": "prefer-ipv4",
+        "domainFronting": {"ip": mtproto_faketls_domain, "port": 443, "proxyProtocol": False},
+        "clients": [{"email": "Client", "secret": def_mtp_secret, "adTag": mtproto_adtag, "enable": True}]
+    }
+    mtp_str = {
+        "network": "tcp",
+        "security": "none",
+        "externalProxy": [{"dest": domain, "port": mtproto_port, "forceTls": "none", "remark": "Telegram MTProxy"}]
+    }
+    smart_reconcile_inbound(mtproto_port, "mtproto", "in-mtproto-faketls", "Telegram MTProxy", mtp_set, mtp_str, listen="0.0.0.0")
+
+# --- Синхронизация реестра Hosts для персональных подписок 3X-UI ---
+cur.execute("""
+    CREATE TABLE IF NOT EXISTS hosts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_id TEXT DEFAULT '',
+        inbound_id INTEGER NOT NULL DEFAULT 0,
+        sort_order INTEGER DEFAULT 0,
+        remark TEXT DEFAULT '',
+        address TEXT DEFAULT '',
+        port INTEGER DEFAULT 443,
+        security TEXT DEFAULT 'same',
+        sni TEXT DEFAULT '',
+        host_header TEXT DEFAULT '',
+        path TEXT DEFAULT '',
+        alpn TEXT DEFAULT '',
+        fingerprint TEXT DEFAULT '',
+        allow_insecure INTEGER DEFAULT 0,
+        is_disabled INTEGER DEFAULT 0,
+        is_hidden INTEGER DEFAULT 0,
+        tags TEXT DEFAULT '',
+        ech_config_list TEXT DEFAULT '',
+        mux_params TEXT DEFAULT '',
+        sockopt_params TEXT DEFAULT '',
+        final_mask TEXT DEFAULT '',
+        exclude_from_sub_types TEXT DEFAULT ''
+    )
+""")
+cur.execute("PRAGMA table_info(hosts)")
+active_host_cols = {r[1] for r in cur.fetchall()}
+
+def sync_host_entry(ib_id, host_remark, addr, host_port, sec, host_sni="", host_path="", host_alpn="", host_fp="firefox", sort_order=0):
+    if ib_id is None:
+        return
+    cur.execute("SELECT id, remark FROM hosts WHERE inbound_id = ?", (ib_id,))
+    h_row = cur.fetchone()
+    if h_row:
+        h_id, existing_rem = h_row
+        final_h_remark = existing_rem if (existing_rem and existing_rem.strip()) else host_remark
+        if not dry_run:
+            cur.execute("""
+                UPDATE hosts
+                SET address = ?, port = ?, security = ?, sni = ?, path = ?, alpn = ?, fingerprint = ?, sort_order = ?, remark = ?
+                WHERE id = ?
+            """, (addr, host_port, sec, host_sni, host_path, host_alpn, host_fp, sort_order, final_h_remark, h_id))
+    else:
+        gid = str(uuid.uuid4())
+        col_candidates = {
+            "group_id": gid, "groupId": gid,
+            "inbound_id": ib_id, "inboundId": ib_id,
+            "sort_order": sort_order, "sortOrder": sort_order,
+            "remark": host_remark, "address": addr, "port": host_port, "security": sec,
+            "sni": host_sni, "host_header": "", "hostHeader": "", "path": host_path,
+            "alpn": host_alpn, "fingerprint": host_fp, "allow_insecure": 0, "allowInsecure": 0,
+            "is_disabled": 0, "isDisabled": 0, "is_hidden": 0, "isHidden": 0,
+            "tags": "", "ech_config_list": "", "mux_params": "", "sockopt_params": "",
+            "final_mask": "", "exclude_from_sub_types": ""
+        }
+        insert_data = {k: v for k, v in col_candidates.items() if k in active_host_cols}
+        keys = list(insert_data.keys())
+        vals = [insert_data[k] for k in keys]
+        placeholders = ",".join(["?"] * len(keys))
+        if not dry_run:
+            cur.execute(f"INSERT INTO hosts ({','.join(keys)}) VALUES ({placeholders})", vals)
+
+def lookup_inbound_id(tag_val, port_val):
+    cur.execute("SELECT id FROM inbounds WHERE tag = ? OR port = ?", (tag_val, port_val))
+    r = cur.fetchone()
+    return r[0] if r else None
+
+if enable_steal:
+    s_iid = lookup_inbound_id("in-steal-reality", steal_port)
+    if s_iid:
+        cur.execute("SELECT remark FROM inbounds WHERE id = ?", (s_iid,))
+        r_rem = cur.fetchone()
+        s_rem = r_rem[0] if r_rem and r_rem[0] else "VLESS Steal"
+        sync_host_entry(s_iid, s_rem, domain, 443, "same", host_sni=steal_dom, host_fp="firefox", sort_order=1)
+
+if enable_classic:
+    c_iid = lookup_inbound_id("in-classic-reality", classic_port)
+    if c_iid:
+        cur.execute("SELECT remark FROM inbounds WHERE id = ?", (c_iid,))
+        r_rem = cur.fetchone()
+        c_rem = r_rem[0] if r_rem and r_rem[0] else "VLESS Classic"
+        sync_host_entry(c_iid, c_rem, domain, 443, "same", host_sni=classic_sni, host_fp="firefox", sort_order=1)
+
+x_iid = lookup_inbound_id("in-xhttp-stream", xhttp_port)
+if x_iid:
+    cur.execute("SELECT remark FROM inbounds WHERE id = ?", (x_iid,))
+    r_rem = cur.fetchone()
+    x_rem = r_rem[0] if r_rem and r_rem[0] else "VLESS xHTTP"
+    sync_host_entry(x_iid, x_rem, domain, 443, "tls", host_sni=domain, host_path=f"/{xhttp_path.strip('/')}/", host_alpn=json.dumps(["h2"]), host_fp="firefox", sort_order=2)
+
+
 if not dry_run:
+    import urllib.parse
+    raw_ss_userinfo = f"{ss_method}:{unified_ss_server_pass}:{unified_ss_client_pass}"
+    b64_ss_userinfo = base64.urlsafe_b64encode(raw_ss_userinfo.encode("utf-8")).decode("utf-8").rstrip("=")
+    ss2022_uri = f"ss://{b64_ss_userinfo}@{domain}:{ss2022_port}#{urllib.parse.quote('Shadowsocks 2022')}"
+    tuic_uri = f"tuic://{unified_tuic_uuid}:{unified_tuic_pass}@{domain}:{tuic_port}?congestion_control=bbr&alpn=h3&udp_relay_mode=native&sni={domain}#{urllib.parse.quote('TUIC v5')}"
+    mtproto_tg_uri = f"tg://proxy?server={domain}&port={mtproto_port}&secret={unified_mtp_secret}"
+    mtproto_https_uri = f"https://t.me/proxy?server={domain}&port={mtproto_port}&secret={unified_mtp_secret}"
+    mtproto_bot_secret = unified_mtp_secret[2:34] if len(unified_mtp_secret) >= 34 else unified_mtp_secret
+
     try:
         cur.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     except Exception:
         pass
     conn.commit()
+
+    try:
+        run_file = "/run/3xui_unified_client.env" if os.path.isdir("/run") else "/tmp/3xui_unified_client.env"
+        old_umask = os.umask(0o077)
+        with open(run_file, "w") as f:
+            f.write(f"UNIFIED_CLIENT_TAG='{unified_email}'\n")
+            f.write(f"UNIFIED_SUB_ID='{unified_sub_id}'\n")
+            f.write(f"UNIFIED_UUID='{unified_uuid}'\n")
+            f.write(f"UNIFIED_AWG_HPK='{unified_awg_hpk}'\n")
+            f.write(f"UNIFIED_AWG_PORT='{awg_v3_port}'\n")
+            if enable_ss2022 or "shadowsocks" in existing_inbound_protos:
+                f.write(f"SS2022_URI='{ss2022_uri}'\n")
+                f.write(f"SS2022_PORT='{ss2022_port}'\n")
+            if enable_tuic or "tuic" in existing_inbound_protos:
+                f.write(f"TUIC_URI='{tuic_uri}'\n")
+                f.write(f"TUIC_PORT='{tuic_port}'\n")
+            if enable_mtproto or "mtproto" in existing_inbound_protos:
+                f.write(f"MTPROTO_TG_URI='{mtproto_tg_uri}'\n")
+                f.write(f"MTPROTO_HTTPS_URI='{mtproto_https_uri}'\n")
+                f.write(f"MTPROTO_SECRET='{unified_mtp_secret}'\n")
+                f.write(f"MTPROTO_BOT_SECRET='{mtproto_bot_secret}'\n")
+                f.write(f"MTPROTO_PORT='{mtproto_port}'\n")
+        os.umask(old_umask)
+        os.chmod(run_file, 0o600)
+    except Exception:
+        pass
 
 conn.close()
 EOF_PYTHON_RECONCILE
@@ -954,6 +1177,27 @@ else
     echo -e "  - ${BOLD}Вход в панель 3X-UI:${NC}    ${CYAN}https://${PRIMARY_DOMAIN:-домен}/${PANEL_PATH:-my-3x-panel}/${NC}"
     echo -e "  - ${BOLD}Ссылка на подписку:${NC}     ${CYAN}https://${PRIMARY_DOMAIN:-домен}/${SUB_PATH:-my-post-key}/${NC}"
     echo -e "  - ${BOLD}Ссылка (Clash):${NC}         ${CYAN}https://${PRIMARY_DOMAIN:-домен}/${SUB_CLASH_PATH:-${SUB_PATH:-my-post-key}/clash}/${NC}"
+    if [ -f "/run/3xui_unified_client.env" ]; then
+        . "/run/3xui_unified_client.env" 2>/dev/null || true
+    fi
+    [ -n "${SS2022_URI:-}" ] && echo -e "  - ${BOLD}Shadowsocks 2022:${NC}    ${CYAN}${SS2022_URI}${NC}"
+    [ -n "${TUIC_URI:-}" ] && echo -e "  - ${BOLD}TUIC v5 (QUIC+BBR):${NC}  ${CYAN}${TUIC_URI}${NC}"
+    [ -n "${MTPROTO_TG_URI:-}" ] && echo -e "  - ${BOLD}Telegram MTProxy:${NC}    ${CYAN}${MTPROTO_TG_URI}${NC}"
+
+    if [ -f "/root/vpn_credentials.txt" ]; then
+        if [ -n "${SS2022_URI:-}" ] && ! grep -q "Shadowsocks 2022:" /root/vpn_credentials.txt 2>/dev/null; then
+            echo "Shadowsocks 2022:       ${SS2022_URI}" >> /root/vpn_credentials.txt
+        fi
+        if [ -n "${TUIC_URI:-}" ] && ! grep -q "TUIC v5" /root/vpn_credentials.txt 2>/dev/null; then
+            echo "TUIC v5 (QUIC+BBR):     ${TUIC_URI}" >> /root/vpn_credentials.txt
+        fi
+        if [ -n "${MTPROTO_TG_URI:-}" ] && ! grep -q "Telegram MTProxy" /root/vpn_credentials.txt 2>/dev/null; then
+            echo "Telegram MTProxy (Клиент): ${MTPROTO_TG_URI}" >> /root/vpn_credentials.txt
+            echo "MTProxy Web Link:          ${MTPROTO_HTTPS_URI:-}" >> /root/vpn_credentials.txt
+            echo "MTProxy FakeTLS Secret:    ${MTPROTO_SECRET:-}" >> /root/vpn_credentials.txt
+            [ -n "${MTPROTO_BOT_SECRET:-}" ] && echo "MTProxy Key для @MTProxybot: ${MTPROTO_BOT_SECRET}" >> /root/vpn_credentials.txt
+        fi
+    fi
 fi
 echo -e "${GREEN}=====================================================================${NC}"
 echo

@@ -299,6 +299,39 @@ def ensure_backend_networking():
         run_cmd("iptables -t mangle -C FORWARD -o awg0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || iptables -t mangle -A FORWARD -o awg0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true")
         run_cmd("iptables -t mangle -C FORWARD -i awg0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || iptables -t mangle -A FORWARD -i awg0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true")
 
+P = 2**255 - 19
+def clamp(k_bytes):
+    b = bytearray(k_bytes)
+    b[0] &= 248; b[31] &= 127; b[31] |= 64
+    return int.from_bytes(b, "little")
+
+def x25519(k, u=9):
+    x1, x2, z2, x3, z3 = u, 1, 0, u, 1
+    for i in range(254, -1, -1):
+        bit = (k >> i) & 1
+        if bit: x2, x3 = x3, x2; z2, z3 = z3, z2
+        A = (x2 + z2) % P; AA = (A * A) % P; B = (x2 - z2) % P; BB = (B * B) % P
+        E = (AA - BB) % P; C = (x3 + z3) % P; D = (x3 - z3) % P
+        x3 = pow(D * A + C * B, 2, P); z3 = (x1 * pow(D * A - C * B, 2, P)) % P
+        x2 = (AA * BB) % P; z2 = (E * (AA + 121665 * E)) % P
+        if bit: x2, x3 = x3, x2; z2, z3 = z3, z2
+    return (x2 * pow(z2, P - 2, P)) % P
+
+def curve25519_pubkey(priv_b64):
+    try:
+        raw_priv = base64.b64decode(priv_b64)
+        k = clamp(raw_priv)
+        pub_raw = x25519(k, 9).to_bytes(32, "little")
+        return base64.b64encode(pub_raw).decode()
+    except Exception:
+        return None
+
+def generate_wg_keypair():
+    priv_raw = os.urandom(32)
+    k = clamp(priv_raw)
+    pub_raw = x25519(k, 9).to_bytes(32, "little")
+    return base64.b64encode(priv_raw).decode(), base64.b64encode(pub_raw).decode()
+
 def get_server_pubkey():
     for cand_path in [
         "/opt/amnezia/awg/wireguard_server_public_key.key",
@@ -322,7 +355,11 @@ def get_server_pubkey():
             stdout, _, rc = run_cmd("awg pubkey 2>/dev/null || wg pubkey 2>/dev/null", input_data=priv)
         if rc == 0 and stdout:
             return stdout
+        derived = curve25519_pubkey(priv)
+        if derived:
+            return derived
     raise RuntimeError("Server public key not found in AmneziaWG configuration")
+
 
 def get_server_psk():
     for cand_path in [
@@ -516,7 +553,7 @@ PersistentKeepalive = {PERSISTENT_KEEPALIVE}
     if CPA:
         last_config_dict["ContentPaddingAddition"] = CPA
 
-    container_id = CONTAINER or "amnezia-awg2"
+    container_id = CONTAINER or "amnezia-awg"
     awg_dict = {
         "DisableCookies": DISABLE_COOKIES,
         "H1": H1, "H2": H2, "H3": H3, "H4": H4,
@@ -741,6 +778,7 @@ def add_client(
     custom_mtu: str | None = None,
     custom_keepalive: str | None = None,
     custom_allowed_ips: str | None = None,
+    custom_cpa: str | None = None,
     preset: str | None = None
 ):
     if not is_valid_client_name(client_name):
@@ -760,6 +798,8 @@ def add_client(
                 custom_jmax = "70"
             if custom_mtu is None:
                 custom_mtu = "1280"
+            if custom_cpa is None:
+                custom_cpa = "16-64"
         elif p_clean in ("fast", "gaming", "game", "home", "router", "direct"):
             if custom_i1 is None:
                 custom_i1 = ""
@@ -820,10 +860,14 @@ def add_client(
             pub_out, _, _ = run_cmd(f"docker exec -i {CONTAINER} awg pubkey", check=True, input_data=client_priv)
             client_pub = pub_out.strip()
         else:
-            priv_out, _, _ = run_cmd("awg genkey 2>/dev/null || wg genkey 2>/dev/null", check=True)
-            client_priv = priv_out.strip()
-            pub_out, _, _ = run_cmd("awg pubkey 2>/dev/null || wg pubkey 2>/dev/null", check=True, input_data=client_priv)
-            client_pub = pub_out.strip()
+            try:
+                priv_out, _, _ = run_cmd("awg genkey 2>/dev/null || wg genkey 2>/dev/null", check=True)
+                client_priv = priv_out.strip()
+                pub_out, _, _ = run_cmd("awg pubkey 2>/dev/null || wg pubkey 2>/dev/null", check=True, input_data=client_priv)
+                client_pub = pub_out.strip()
+            except Exception:
+                client_priv, client_pub = generate_wg_keypair()
+
 
         server_psk = get_server_psk()
         server_pub = get_server_pubkey()
@@ -905,6 +949,9 @@ def add_client(
             conf_lines.append(f"I4 = {I4}")
         if I5:
             conf_lines.append(f"I5 = {I5}")
+        target_cpa = custom_cpa if custom_cpa is not None else CPA
+        if target_cpa:
+            conf_lines.append(f"ContentPaddingAddition = {target_cpa}")
         if HEADER_PROTECTION_KEY:
             conf_lines.append(f"HeaderProtectionKey = {HEADER_PROTECTION_KEY}")
         if REKEY_AFTER_TIME:
@@ -1336,6 +1383,7 @@ def main():
     custom_mtu = None
     custom_keepalive = None
     custom_allowed_ips = None
+    custom_cpa = None
     preset = None
 
     args = sys.argv[1:]
@@ -1348,6 +1396,10 @@ def main():
             preset = arg.split("=", 1)[1].strip()
         elif arg.startswith("--mtu="):
             custom_mtu = arg.split("=", 1)[1].strip()
+        elif arg.startswith("--cpa=") or arg.startswith("--content-padding="):
+            custom_cpa = arg.split("=", 1)[1].strip()
+        elif arg in ("--no-cpa", "--without-cpa"):
+            custom_cpa = ""
         elif arg.startswith("--jc="):
             custom_jc = arg.split("=", 1)[1].strip()
         elif arg.startswith("--jmin="):
@@ -1390,6 +1442,7 @@ def main():
                 custom_mtu=custom_mtu,
                 custom_keepalive=custom_keepalive,
                 custom_allowed_ips=custom_allowed_ips,
+                custom_cpa=custom_cpa,
                 preset=preset
             )
             if qr_mode and res.get("ok"):

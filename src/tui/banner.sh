@@ -24,6 +24,9 @@ show_help() {
   -c, --config <FILE>          Загрузить параметры из конфигурационного файла (.env)
   -y, --yes, --non-interactive Запуск в неинтерактивном режиме (без вопросов пользователю)
   -d, --domain <DOMAIN>        Указать основной домен (PRIMARY_DOMAIN)
+  --web-stack / --no-web-stack Включить / отключить установку комплекса веб-маскировки Nginx + 3X-UI
+  --awg-standalone             Включить установку автономного сервера AmneziaWG (awg-mgr)
+  --awg-host <HOST/IP>         Домен или IP-адрес для подключения клиентов AmneziaWG (Endpoint)
   -r, --resume                 Продолжить установку с последнего незавершенного шага
   --step <N>                   Принудительно начать выполнение с указанного шага (1-8)
   --check, --doctor            Запустить быструю диагностику состояния сервисов и выйти
@@ -63,7 +66,7 @@ generate_config_template() {
     local target_file="${1:-setup_mask.env.example}"
     cat << 'EOF_CONF' > "$target_file"
 # ==============================================================================
-# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v7.8.0 Universal)
+# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v8.0.0 Universal)
 # ==============================================================================
 # Данный файл позволяет выполнять полностью автоматическую установку:
 # ./setup_mask.sh --config setup_mask.env --non-interactive --force
@@ -107,8 +110,8 @@ STEAL_DOMAINS="cdn.yourdomain.online"
 # Сценарий 2: VLESS REALITY (маскировка под популярные внешние сервисы) [y/n]
 ENABLE_CLASSIC="y"
 CLASSIC_PORT="46443"
-# Внешние доверенные адреса маскировки (через пробел, например: "gateway.icloud.com")
-CLASSIC_SNI="gateway.icloud.com"
+# Внешние доверенные адреса маскировки (через пробел, например: "avito.ru")
+CLASSIC_SNI="avito.ru"
 
 # --- 3. ВНУТРЕННИЕ ПОРТЫ И ПУТИ 3X-UI И xHTTP ---
 PANEL_PORT="10443"

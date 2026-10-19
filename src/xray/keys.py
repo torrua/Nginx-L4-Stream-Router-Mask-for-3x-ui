@@ -1,3 +1,10 @@
+import base64
+import os
+import re
+import secrets
+import subprocess
+import uuid
+
 # Curve25519 helper (RFC 7748) для генерации, валидации и починки ключей
 P = 2**255 - 19
 A24 = 121665
@@ -84,3 +91,34 @@ def generate_vlessenc_keypair():
         except Exception:
             pass
     return None, None
+
+def generate_ss2022_key(method="2022-blake3-aes-256-gcm"):
+    raw_len = 16 if "128" in method else 32
+    return base64.b64encode(os.urandom(raw_len)).decode()
+
+def validate_ss2022_key(key_b64, method="2022-blake3-aes-256-gcm"):
+    try:
+        if not isinstance(key_b64, str) or not key_b64.strip():
+            return False
+        k = key_b64.strip().replace('-', '+').replace('_', '/')
+        padding = "=" * ((4 - len(k) % 4) % 4)
+        raw = base64.b64decode(k + padding, validate=True)
+        expected_len = 16 if "128" in method else 32
+        return len(raw) == expected_len
+    except Exception:
+        return False
+
+def generate_mtproto_secret(fake_tls_domain="gateway.icloud.com"):
+    domain = fake_tls_domain.strip().lower() if fake_tls_domain else "gateway.icloud.com"
+    token = secrets.token_hex(16)
+    domain_hex = domain.encode("utf-8").hex()
+    return f"ee{token}{domain_hex}"
+
+def validate_mtproto_secret(secret_hex):
+    if not isinstance(secret_hex, str):
+        return False
+    s = secret_hex.strip().lower()
+    return s.startswith("ee") and len(s) >= 38 and all(c in "0123456789abcdef" for c in s[2:])
+
+def validate_mtproto_adtag(adtag):
+    return bool(isinstance(adtag, str) and re.match(r"^[0-9a-fA-F]{32}$", adtag.strip()))

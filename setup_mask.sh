@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # ==============================================================================
-# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v7.8.0 Universal
+# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v8.0.0 Universal
 # Nginx L4 Stream + 3X-UI + Unix Sockets + Native proxy_http_version 2 + 3 Decoys
 # ==============================================================================
 # Архитектура:
@@ -27,7 +27,7 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="v7.8.0"
+SCRIPT_VERSION="v8.0.0"
 
 
 # --------------------------- Замеры времени и телеметрия ---------------------------
@@ -206,35 +206,48 @@ step_finish() {
 
 
 
-# --------------------------- Цвета и UI-движок ---------------------------
-GREEN=$'\033[0;32m'
-CYAN=$'\033[0;36m'
+_TUI_BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo "")"
+[ -f "$_TUI_BASE_DIR/../common/colors.sh" ] && . "$_TUI_BASE_DIR/../common/colors.sh" 2>/dev/null || true
+[ -f "$_TUI_BASE_DIR/../common/logger.sh" ] && . "$_TUI_BASE_DIR/../common/logger.sh" 2>/dev/null || true
+[ -f "$_TUI_BASE_DIR/../common/spinner.sh" ] && . "$_TUI_BASE_DIR/../common/spinner.sh" 2>/dev/null || true
+
+# Terminal Colors & Styles
 RED=$'\033[0;31m'
+GREEN=$'\033[0;32m'
 YELLOW=$'\033[1;33m'
 BLUE=$'\033[0;34m'
 MAGENTA=$'\033[0;35m'
+CYAN=$'\033[0;36m'
 WHITE=$'\033[1;37m'
 DIM=$'\033[2m'
 BOLD=$'\033[1m'
 NC=$'\033[0m'
+RESET=$'\033[0m'
 
+# Status Symbols
 CHECK="✔"
 CROSS="✖"
 ARROW="➜"
 STAR="★"
-
+INFO="ℹ"
+LOCK="🔒"
+SHIELD="🛡"
+# Standard Logging Functions
 log()  { echo -e "  ${CYAN}[+]${NC} $*"; }
-ok()   { echo -e "  ${GREEN}${CHECK}${NC} $*"; }
+ok()   { echo -e "  ${GREEN}${CHECK:-✔}${NC} $*"; }
 warn() { echo -e "  ${YELLOW}[!]${NC} $*"; }
-die()  { echo -e "  ${RED}${CROSS} $*${NC}" >&2; exit 1; }
+die()  { echo -e "  ${RED}${CROSS:-✖} $*${NC}" >&2; exit 1; }
+# Interactive Terminal Spinner & Task Runner
+# Supports:
+#   - Animated spinner in interactive TTY
+#   - Plain output in non-interactive / CI / piped runs
+#   - DEBUG_MODE=1 passthrough (full stdout/stderr in real-time)
+#   - Interactive failure recovery menu (Retry / Skip / Abort)
 
-# Анимированный спиннер для фоновых операций
-# При DEBUG_MODE=1: отключает спиннер, выполняет команды напрямую (весь вывод виден)
-# При ошибке: выводит полный лог и вызывает меню повтора (Retry / Skip / Abort)
 run_with_spinner() {
     local task_name="$1"
     shift
-    local log_file="${SETUP_MASK_LOG:-/tmp/setup_mask_cmd.log}"
+    local log_file="${SETUP_MASK_LOG:-${INSTALL_LOG:-${SPINNER_LOG_FILE:-/tmp/cmd_spinner.log}}}"
 
     while true; do
         local exit_code=0
@@ -256,7 +269,7 @@ run_with_spinner() {
             [ "$_prev_e" -eq 1 ] && set -e
             if [ $exit_code -eq 0 ]; then
                 echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
-                echo -e "  ${GREEN}${CHECK}${NC}  ${WHITE}$task_name${NC} ${GREEN}[ГОТОВО]${NC}\n"
+                echo -e "  ${GREEN}${CHECK:-✔}${NC}  ${WHITE}$task_name${NC} ${GREEN}[ГОТОВО]${NC}\n"
                 return 0
             else
                 echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
@@ -274,7 +287,7 @@ run_with_spinner() {
                 ( eval "$*" ) >> "$log_file" 2>&1 &
             fi
             local pid=$!
-            
+
             if [ ! -t 1 ]; then
                 echo -e "  ${CYAN}*${NC}  ${WHITE}${task_name}...${NC}"
                 wait "$pid"
@@ -294,17 +307,17 @@ run_with_spinner() {
 
             if [ $exit_code -eq 0 ]; then
                 if [ ! -t 1 ]; then
-                    printf "  ${GREEN}${CHECK}${NC}  ${WHITE}%-54s${NC} ${GREEN}[ГОТОВО]${NC}\n" "$task_name"
+                    printf "  ${GREEN}${CHECK:-✔}${NC}  ${WHITE}%-54s${NC} ${GREEN}[ГОТОВО]${NC}\n" "$task_name"
                 else
-                    printf "\r  ${GREEN}${CHECK}${NC}  ${WHITE}%-54s${NC} ${GREEN}[ГОТОВО]${NC}\n" "$task_name"
+                    printf "\r  ${GREEN}${CHECK:-✔}${NC}  ${WHITE}%-54s${NC} ${GREEN}[ГОТОВО]${NC}\n" "$task_name"
                 fi
                 return 0
             fi
 
             if [ ! -t 1 ]; then
-                printf "  ${RED}${CROSS}${NC}  ${WHITE}%-54s${NC} ${RED}[ОШИБКА]${NC}\n" "$task_name"
+                printf "  ${RED}${CROSS:-✖}${NC}  ${WHITE}%-54s${NC} ${RED}[ОШИБКА]${NC}\n" "$task_name"
             else
-                printf "\r  ${RED}${CROSS}${NC}  ${WHITE}%-54s${NC} ${RED}[ОШИБКА]${NC}\n" "$task_name"
+                printf "\r  ${RED}${CROSS:-✖}${NC}  ${WHITE}%-54s${NC} ${RED}[ОШИБКА]${NC}\n" "$task_name"
             fi
             echo -e "\n  ${RED}${BOLD}Полный лог ошибки:${NC}"
             echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
@@ -314,7 +327,7 @@ run_with_spinner() {
         fi
 
         # ── Интерактивная обработка сбоя (Retry / Skip / Abort) ──
-        if [ "${NON_INTERACTIVE:-0}" -eq 0 ]; then
+        if [ "${NON_INTERACTIVE:-0}" -eq 0 ] && [ -t 1 ]; then
             echo -e "  ${YELLOW}${BOLD}Действия при сбое:${NC}"
             echo -e "    ${CYAN}${BOLD}[1] Повторить попытку (Retry)${NC} — после исправления причин (напр. DNS)"
             echo -e "    ${YELLOW}[2] Пропустить этот шаг и продолжить (Skip)${NC}"
@@ -331,7 +344,7 @@ run_with_spinner() {
                     die "Шаг завершился с ошибкой (exit $exit_code): $task_name"
                     ;;
                 *)
-                    echo -e "  ${CYAN}${ARROW} Повторная попытка: $task_name...${NC}\n"
+                    echo -e "  ${CYAN}${ARROW:-➜} Повторная попытка: $task_name...${NC}\n"
                     continue
                     ;;
             esac
@@ -340,6 +353,7 @@ run_with_spinner() {
         fi
     done
 }
+
 
 # Прогресс-бар шагов
 print_step_bar() {
@@ -375,7 +389,6 @@ check_for_script_updates() {
     fi
 }
 
-
 print_mask_banner() {
     clear 2>/dev/null || true
     echo -e "  ${CYAN}${BOLD}🛡️   Nginx Stream Router для 3X-UI [${SCRIPT_VERSION}]${NC}"
@@ -402,6 +415,9 @@ show_help() {
   -c, --config <FILE>          Загрузить параметры из конфигурационного файла (.env)
   -y, --yes, --non-interactive Запуск в неинтерактивном режиме (без вопросов пользователю)
   -d, --domain <DOMAIN>        Указать основной домен (PRIMARY_DOMAIN)
+  --web-stack / --no-web-stack Включить / отключить установку комплекса веб-маскировки Nginx + 3X-UI
+  --awg-standalone             Включить установку автономного сервера AmneziaWG (awg-mgr)
+  --awg-host <HOST/IP>         Домен или IP-адрес для подключения клиентов AmneziaWG (Endpoint)
   -r, --resume                 Продолжить установку с последнего незавершенного шага
   --step <N>                   Принудительно начать выполнение с указанного шага (1-8)
   --check, --doctor            Запустить быструю диагностику состояния сервисов и выйти
@@ -441,7 +457,7 @@ generate_config_template() {
     local target_file="${1:-setup_mask.env.example}"
     cat << 'EOF_CONF' > "$target_file"
 # ==============================================================================
-# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v7.8.0 Universal)
+# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v8.0.0 Universal)
 # ==============================================================================
 # Данный файл позволяет выполнять полностью автоматическую установку:
 # ./setup_mask.sh --config setup_mask.env --non-interactive --force
@@ -485,8 +501,8 @@ STEAL_DOMAINS="cdn.yourdomain.online"
 # Сценарий 2: VLESS REALITY (маскировка под популярные внешние сервисы) [y/n]
 ENABLE_CLASSIC="y"
 CLASSIC_PORT="46443"
-# Внешние доверенные адреса маскировки (через пробел, например: "gateway.icloud.com")
-CLASSIC_SNI="gateway.icloud.com"
+# Внешние доверенные адреса маскировки (через пробел, например: "avito.ru")
+CLASSIC_SNI="avito.ru"
 
 # --- 3. ВНУТРЕННИЕ ПОРТЫ И ПУТИ 3X-UI И xHTTP ---
 PANEL_PORT="10443"
@@ -761,7 +777,7 @@ reconstruct_arrays_from_vars() {
     if [[ "${v_cls,,}" == "y" || "$v_cls" == "1" ]]; then
         CLASSIC_ENABLED=1
         CLASSIC_PORTS_LIST=(${CLASSIC_PORT:-46443})
-        local classic_raw="${CLASSIC_SNI:-gateway.icloud.com}"
+        local classic_raw="${CLASSIC_SNI:-avito.ru}"
         EXT_SNI_LIST=()
         for cs in ${classic_raw//,/ }; do
             cs=$(echo "$cs" | tr -d '[:space:]')
@@ -771,8 +787,8 @@ reconstruct_arrays_from_vars() {
             fi
         done
         [ ${#EXT_SNI_TO_PORT[@]} -gt 0 ] || {
-            EXT_SNI_LIST=("gateway.icloud.com")
-            EXT_SNI_TO_PORT["gateway.icloud.com"]="${CLASSIC_PORTS_LIST[0]}"
+            EXT_SNI_LIST=("avito.ru")
+            EXT_SNI_TO_PORT["avito.ru"]="${CLASSIC_PORTS_LIST[0]}"
         }
     else
         CLASSIC_ENABLED=0
@@ -827,6 +843,8 @@ reconstruct_arrays_from_vars() {
 
     # Нормализация логических переменных (1/0 и y/n)
     local _v
+    _v="${ENABLE_WEB_STACK:-y}"; if is_true "$_v"; then ENABLE_WEB_STACK=1; else ENABLE_WEB_STACK=0; fi
+    AWG_SERVER_HOST="${AWG_SERVER_HOST:-}"
     _v="${ENABLE_STEAL:-${STEAL_ENABLED:-y}}"; if is_true "$_v"; then ENABLE_STEAL="y"; STEAL_ENABLED=1; else ENABLE_STEAL="n"; STEAL_ENABLED=0; fi
     _v="${ENABLE_CLASSIC:-${CLASSIC_ENABLED:-y}}"; if is_true "$_v"; then ENABLE_CLASSIC="y"; CLASSIC_ENABLED=1; else ENABLE_CLASSIC="n"; CLASSIC_ENABLED=0; fi
     _v="${ENABLE_HY2:-n}"
@@ -842,6 +860,16 @@ reconstruct_arrays_from_vars() {
     fi
     _v="${ENABLE_AWG_V3:-n}"; if is_true "$_v"; then ENABLE_AWG_V3=1; else ENABLE_AWG_V3=0; fi
     _v="${ENABLE_AWG_V2:-n}"; if is_true "$_v"; then ENABLE_AWG_V2=1; else ENABLE_AWG_V2=0; fi
+    _v="${ENABLE_AWG_STANDALONE:-n}"; if is_true "$_v"; then ENABLE_AWG_STANDALONE=1; else ENABLE_AWG_STANDALONE=0; fi
+    AWG_STANDALONE_PORT="${AWG_STANDALONE_PORT:-8445}"
+    _v="${ENABLE_SS2022:-n}"; if is_true "$_v"; then ENABLE_SS2022=1; else ENABLE_SS2022=0; fi
+    SS2022_PORT="${SS2022_PORT:-8388}"
+    _v="${ENABLE_TUIC:-n}"; if is_true "$_v"; then ENABLE_TUIC=1; else ENABLE_TUIC=0; fi
+    TUIC_PORT="${TUIC_PORT:-8448}"
+    _v="${ENABLE_MTPROTO:-n}"; if is_true "$_v"; then ENABLE_MTPROTO=1; else ENABLE_MTPROTO=0; fi
+    MTPROTO_PORT="${MTPROTO_PORT:-8444}"
+    MTPROTO_FAKETLS_DOMAIN="${MTPROTO_FAKETLS_DOMAIN:-gateway.icloud.com}"
+    MTPROTO_ADTAG="${MTPROTO_ADTAG:-}"
     _v="${ENABLE_AGH:-n}"
     if is_true "$_v"; then
         ENABLE_AGH=1
@@ -891,6 +919,8 @@ save_session_state() {
     umask 077
 
     local v=""
+    local web_stack_save="n"
+    v="${ENABLE_WEB_STACK:-y}"; is_true "$v" && web_stack_save="y"
     local steal_save="n"
     v="${ENABLE_STEAL:-${STEAL_ENABLED:-n}}"; is_true "$v" && steal_save="y"
     local classic_save="n"
@@ -901,6 +931,14 @@ save_session_state() {
     v="${ENABLE_AWG_V3:-n}"; is_true "$v" && awg_v3_save="y"
     local awg_v2_save="n"
     v="${ENABLE_AWG_V2:-n}"; is_true "$v" && awg_v2_save="y"
+    local awg_standalone_save="n"
+    v="${ENABLE_AWG_STANDALONE:-n}"; is_true "$v" && awg_standalone_save="y"
+    local ss2022_save="n"
+    v="${ENABLE_SS2022:-n}"; is_true "$v" && ss2022_save="y"
+    local tuic_save="n"
+    v="${ENABLE_TUIC:-n}"; is_true "$v" && tuic_save="y"
+    local mtproto_save="n"
+    v="${ENABLE_MTPROTO:-n}"; is_true "$v" && mtproto_save="y"
     local auto_setup_3xui_save="n"
     v="${AUTO_SETUP_3XUI:-n}"; is_true "$v" && auto_setup_3xui_save="y"
     local node_token_save="n"
@@ -937,6 +975,7 @@ save_session_state() {
 # АВТОМАТИЧЕСКИ СОХРАНЕННАЯ КОНФИГУРАЦИЯ СЕССИИ
 # Для перезапуска без вопросов: ./setup_mask.sh --config $save_path --non-interactive
 # ==============================================================================
+ENABLE_WEB_STACK="$web_stack_save"
 PRIMARY_DOMAIN="${PRIMARY_DOMAIN:-}"
 ADD_WWW="${ADD_WWW:-y}"
 EXTRA_SSL_DOMAINS="${EXTRA_SSL_DOMAINS:-}"
@@ -982,6 +1021,21 @@ AWG_RANDOM_TRAILERS="${AWG_RANDOM_TRAILERS:-false}"
 
 ENABLE_AWG_V2="$awg_v2_save"
 AWG_V2_PORT="${AWG_V2_PORT:-8444}"
+
+ENABLE_AWG_STANDALONE="$awg_standalone_save"
+AWG_STANDALONE_PORT="${AWG_STANDALONE_PORT:-8445}"
+AWG_SERVER_HOST="${AWG_SERVER_HOST:-}"
+
+ENABLE_SS2022="$ss2022_save"
+SS2022_PORT="${SS2022_PORT:-8388}"
+
+ENABLE_TUIC="$tuic_save"
+TUIC_PORT="${TUIC_PORT:-8448}"
+
+ENABLE_MTPROTO="$mtproto_save"
+MTPROTO_PORT="${MTPROTO_PORT:-8444}"
+MTPROTO_FAKETLS_DOMAIN="${MTPROTO_FAKETLS_DOMAIN:-gateway.icloud.com}"
+MTPROTO_ADTAG="${MTPROTO_ADTAG:-}"
 
 AWG_PRIMARY_DNS="${AWG_PRIMARY_DNS:-9.9.9.9}"
 AWG_SECONDARY_DNS="${AWG_SECONDARY_DNS:-76.76.2.0}"
@@ -1159,6 +1213,296 @@ validate_path_segment() {
     fi
 }
 
+can_use_interactive_tui() {
+    [ "${NON_INTERACTIVE:-0}" -eq 1 ] && return 1
+    [ -t 1 ] || return 1
+    ([ -t 0 ] || [ -c /dev/tty ]) || return 1
+    local term="${TERM:-dumb}"
+    [ "$term" != "dumb" ] && [ -n "$term" ] || return 1
+    if command -v tput >/dev/null 2>&1; then
+        tput cuu1 >/dev/null 2>&1 || return 1
+    fi
+    return 0
+}
+
+prompt_multiselect_numeric() {
+    local prompt_text="$1"
+    local -n _num_keys="$2"
+    local -n _num_labels="$3"
+    local count="${#_num_keys[@]}"
+
+    echo ""
+    echo -e "  ${WHITE}${BOLD}${prompt_text}:${NC}"
+    echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}"
+
+    local sel=()
+    local def_indices=()
+    for ((i=0; i<count; i++)); do
+        local k="${_num_keys[$i]}"
+        if is_true "${!k:-n}"; then
+            sel[i]=1
+            def_indices+=("$((i+1))")
+        else
+            sel[i]=0
+        fi
+    done
+
+    for ((i=0; i<count; i++)); do
+        local mark=" "
+        [ "${sel[$i]}" -eq 1 ] && mark="${GREEN}✔${NC}"
+        local num=$((i+1))
+        echo -e "    ${CYAN}[$num]${NC} [${mark}] ${_num_labels[$i]}"
+    done
+    echo ""
+
+    local def_str=""
+    if [ "${#def_indices[@]}" -gt 0 ]; then
+        def_str=$(IFS=,; echo "${def_indices[*]}")
+    else
+        def_str="0"
+    fi
+
+    local prompt_hint=" [${GREEN}${def_str}${NC}]"
+    if [ "${WIZARD_ALLOW_BACK:-0}" -eq 1 ]; then
+        prompt_hint="${prompt_hint} ${DIM}(b - назад)${NC}"
+    fi
+
+    while true; do
+        local input_val=""
+        echo -ne "  ${WHITE}${ARROW} Номера через запятую/пробел, 'all' или '0'${prompt_hint}: ${NC}"
+        read -r input_val </dev/tty || read -r input_val || true
+        input_val=$(echo "${input_val:-}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+
+        if [ "${WIZARD_ALLOW_BACK:-0}" -eq 1 ]; then
+            if [[ "$input_val" == "b" || "$input_val" == "back" || "$input_val" == "назад" ]]; then
+                return 10
+            fi
+        fi
+
+        if [ -z "$input_val" ]; then
+            break
+        fi
+
+        if [[ "$input_val" == "all" || "$input_val" == "a" || "$input_val" == "все" ]]; then
+            for ((i=0; i<count; i++)); do sel[i]=1; done
+            break
+        elif [[ "$input_val" == "0" || "$input_val" == "none" || "$input_val" == "нет" ]]; then
+            for ((i=0; i<count; i++)); do sel[i]=0; done
+            break
+        fi
+
+        local valid=1
+        local new_sel=()
+        for ((i=0; i<count; i++)); do new_sel[i]=0; done
+
+        IFS=', ' read -ra tokens <<< "${input_val//,/ }"
+        for tok in "${tokens[@]}"; do
+            [ -z "$tok" ] && continue
+            if [[ "$tok" =~ ^[0-9]+$ ]] && [ "$tok" -ge 1 ] && [ "$tok" -le "$count" ]; then
+                new_sel[$((tok-1))]=1
+            else
+                warn "  Некорректный номер: '$tok'. Введите числа от 1 до $count."
+                valid=0
+                break
+            fi
+        done
+
+        if [ "$valid" -eq 1 ]; then
+            for ((i=0; i<count; i++)); do sel[i]="${new_sel[$i]}"; done
+            break
+        fi
+    done
+
+    local chosen=()
+    for ((i=0; i<count; i++)); do
+        local k="${_num_keys[$i]}"
+        if [ "${sel[$i]}" -eq 1 ]; then
+            printf -v "$k" '%s' "y"
+            declare -g "$k=y" 2>/dev/null || true
+            chosen+=("${_num_labels[$i]%% (*}")
+        else
+            printf -v "$k" '%s' "n"
+            declare -g "$k=n" 2>/dev/null || true
+        fi
+    done
+
+    if [ "${#chosen[@]}" -gt 0 ]; then
+        ok "Выбрано: $(IFS=,; echo "${chosen[*]}")"
+    else
+        log "Все протоколы из списка отключены."
+    fi
+    return 0
+}
+
+prompt_multiselect_tui() {
+    local prompt_text="$1"
+    local -n _tui_keys="$2"
+    local -n _tui_labels="$3"
+    local count="${#_tui_keys[@]}"
+
+    local sel=()
+    for ((i=0; i<count; i++)); do
+        local k="${_tui_keys[$i]}"
+        if is_true "${!k:-n}"; then
+            sel[i]=1
+        else
+            sel[i]=0
+        fi
+    done
+
+    echo ""
+    echo -e "  ${WHITE}${BOLD}${prompt_text}:${NC}"
+    echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}"
+
+    local cursor=0
+    local total_lines=$((count + 1))
+
+    tput civis 2>/dev/null || printf '\033[?25l'
+    trap 'tput cnorm 2>/dev/null || printf "\033[?25h"; exit 130' INT TERM
+
+    render_tui_menu() {
+        for ((i=0; i<count; i++)); do
+            local mark=" "
+            [ "${sel[$i]}" -eq 1 ] && mark="${GREEN}✔${NC}"
+            local prefix="  "
+            local color="${WHITE}"
+            if [ "$i" -eq "$cursor" ]; then
+                prefix="${CYAN}${ARROW}${NC} "
+                color="${CYAN}${BOLD}"
+            fi
+            local num=$((i+1))
+            printf "\033[2K  %b[${color}%s${NC}] [%b] %b\n" "$prefix" "$num" "$mark" "${_tui_labels[$i]}"
+        done
+        printf "\033[2K  ${DIM}[↑/↓: навигация | Пробел: [X]/[ ] | 1-%d: вкл/выкл | a: все | 0: сброс | Enter: готово]${NC}\n" "$count"
+    }
+
+    render_tui_menu
+
+    while true; do
+        local key=""
+        if [ -c /dev/tty ]; then
+            IFS= read -rsn1 key </dev/tty || key="ERR"
+        else
+            IFS= read -rsn1 key || key="ERR"
+        fi
+
+        if [ "$key" = "ERR" ]; then
+            tput cnorm 2>/dev/null || printf '\033[?25h'
+            trap - INT TERM
+            prompt_multiselect_numeric "$prompt_text" _tui_keys _tui_labels
+            return $?
+        fi
+
+        if [ "$key" = $'\x1b' ]; then
+            local rest=""
+            if [ -c /dev/tty ]; then
+                read -rsn2 -t 0.05 rest </dev/tty 2>/dev/null || rest=""
+            else
+                read -rsn2 -t 0.05 rest 2>/dev/null || rest=""
+            fi
+            case "$rest" in
+                "[A"|"OA")
+                    cursor=$(( (cursor - 1 + count) % count ))
+                    ;;
+                "[B"|"OB")
+                    cursor=$(( (cursor + 1) % count ))
+                    ;;
+            esac
+        elif [[ "$key" == "k" || "$key" == "K" ]]; then
+            cursor=$(( (cursor - 1 + count) % count ))
+        elif [[ "$key" == "j" || "$key" == "J" ]]; then
+            cursor=$(( (cursor + 1) % count ))
+        elif [ "$key" = " " ]; then
+            if [ "${sel[$cursor]}" -eq 1 ]; then
+                sel[$cursor]=0
+            else
+                sel[$cursor]=1
+            fi
+        elif [[ "$key" =~ ^[1-9]$ ]] && [ "$key" -le "$count" ]; then
+            local idx=$((key - 1))
+            if [ "${sel[$idx]}" -eq 1 ]; then
+                sel[$idx]=0
+            else
+                sel[$idx]=1
+            fi
+        elif [[ "$key" == "a" || "$key" == "A" ]]; then
+            for ((i=0; i<count; i++)); do sel[i]=1; done
+        elif [[ "$key" == "0" || "$key" == "n" || "$key" == "N" ]]; then
+            for ((i=0; i<count; i++)); do sel[i]=0; done
+        elif [ -z "$key" ]; then
+            break
+        elif [[ "$key" == "b" || "$key" == "B" ]]; then
+            if [ "${WIZARD_ALLOW_BACK:-0}" -eq 1 ]; then
+                tput cnorm 2>/dev/null || printf '\033[?25h'
+                trap - INT TERM
+                printf "\033[%dA\r" "$total_lines"
+                for ((i=0; i<total_lines; i++)); do printf "\033[2K\n"; done
+                printf "\033[%dA\r" "$total_lines"
+                return 10
+            fi
+        elif [ "$key" = "?" ]; then
+            tput cnorm 2>/dev/null || printf '\033[?25h'
+            trap - INT TERM
+            printf "\033[%dA\r" "$total_lines"
+            for ((i=0; i<total_lines; i++)); do printf "\033[2K\n"; done
+            printf "\033[%dA\r" "$total_lines"
+            prompt_multiselect_numeric "$prompt_text" _tui_keys _tui_labels
+            return $?
+        fi
+
+        printf "\033[%dA\r" "$total_lines"
+        render_tui_menu
+    done
+
+    tput cnorm 2>/dev/null || printf '\033[?25h'
+    trap - INT TERM
+
+    printf "\033[%dA\r" "$total_lines"
+    for ((i=0; i<total_lines; i++)); do
+        printf "\033[2K\n"
+    done
+    printf "\033[%dA\r" "$total_lines"
+
+    local chosen=()
+    for ((i=0; i<count; i++)); do
+        local k="${_tui_keys[$i]}"
+        if [ "${sel[$i]}" -eq 1 ]; then
+            printf -v "$k" '%s' "y"
+            declare -g "$k=y" 2>/dev/null || true
+            chosen+=("${_tui_labels[$i]%% (*}")
+        else
+            printf -v "$k" '%s' "n"
+            declare -g "$k=n" 2>/dev/null || true
+        fi
+    done
+
+    if [ "${#chosen[@]}" -gt 0 ]; then
+        ok "Выбрано: $(IFS=,; echo "${chosen[*]}")"
+    else
+        log "Все протоколы из списка отключены."
+    fi
+    return 0
+}
+
+prompt_multiselect() {
+    local prompt_text="$1"
+    local -n _ms_keys="$2"
+    local -n _ms_labels="$3"
+
+    if [ "${NON_INTERACTIVE:-0}" -eq 1 ]; then
+        for _k in "${_ms_keys[@]}"; do
+            log "Выбор $_k: ${GREEN}${!_k:-n}${NC} (авто)"
+        done
+        return 0
+    fi
+
+    if can_use_interactive_tui; then
+        prompt_multiselect_tui "$prompt_text" _ms_keys _ms_labels || return $?
+    else
+        prompt_multiselect_numeric "$prompt_text" _ms_keys _ms_labels || return $?
+    fi
+}
+
 # ----------------- Обработка аргументов командной строки -----------------
 CONFIG_FILE=""
 NON_INTERACTIVE=${NON_INTERACTIVE:-0}
@@ -1181,6 +1525,22 @@ CLI_XHTTP_STREAM_PATH=""
 CLI_ADMIN_USERNAME=""
 CLI_ADMIN_PASSWORD=""
 CLI_ENABLE_HY2=""
+CLI_ENABLE_AWG_V3=""
+CLI_AWG_V3_PORT=""
+CLI_ENABLE_AWG_V2=""
+CLI_AWG_V2_PORT=""
+CLI_ENABLE_AWG_STANDALONE=""
+CLI_AWG_STANDALONE_PORT=""
+CLI_ENABLE_SS2022=""
+CLI_SS2022_PORT=""
+CLI_ENABLE_TUIC=""
+CLI_TUIC_PORT=""
+CLI_ENABLE_MTPROTO=""
+CLI_MTPROTO_PORT=""
+CLI_MTPROTO_FAKETLS_DOMAIN=""
+CLI_MTPROTO_ADTAG=""
+CLI_ENABLE_WEB_STACK=""
+CLI_AWG_SERVER_HOST=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -1223,6 +1583,130 @@ while [[ $# -gt 0 ]]; do
             ENABLE_HY2="n"
             CLI_ENABLE_HY2="n"
             shift
+            ;;
+        --awg-v3|--enable-awg-v3)
+            ENABLE_AWG_V3="y"
+            CLI_ENABLE_AWG_V3="y"
+            shift
+            ;;
+        --no-awg-v3|--disable-awg-v3)
+            ENABLE_AWG_V3="n"
+            CLI_ENABLE_AWG_V3="n"
+            shift
+            ;;
+        --awg-v3-port)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: порт AmneziaWG v3."
+            AWG_V3_PORT="$2"
+            CLI_AWG_V3_PORT="$2"
+            shift 2
+            ;;
+        --awg-v2|--enable-awg-v2)
+            ENABLE_AWG_V2="y"
+            CLI_ENABLE_AWG_V2="y"
+            shift
+            ;;
+        --no-awg-v2|--disable-awg-v2)
+            ENABLE_AWG_V2="n"
+            CLI_ENABLE_AWG_V2="n"
+            shift
+            ;;
+        --awg-v2-port)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: порт AmneziaWG v2."
+            AWG_V2_PORT="$2"
+            CLI_AWG_V2_PORT="$2"
+            shift 2
+            ;;
+        --awg-standalone|--enable-awg-standalone)
+            ENABLE_AWG_STANDALONE="y"
+            CLI_ENABLE_AWG_STANDALONE="y"
+            shift
+            ;;
+        --no-awg-standalone|--disable-awg-standalone)
+            ENABLE_AWG_STANDALONE="n"
+            CLI_ENABLE_AWG_STANDALONE="n"
+            shift
+            ;;
+        --awg-standalone-port)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: порт автономного AmneziaWG."
+            AWG_STANDALONE_PORT="$2"
+            CLI_AWG_STANDALONE_PORT="$2"
+            shift 2
+            ;;
+        --awg-host)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: хост/IP для подключения клиентов AmneziaWG."
+            AWG_SERVER_HOST="$2"
+            CLI_AWG_SERVER_HOST="$2"
+            shift 2
+            ;;
+        --web-stack|--enable-web-stack)
+            ENABLE_WEB_STACK="y"
+            CLI_ENABLE_WEB_STACK="y"
+            shift
+            ;;
+        --no-web-stack|--disable-web-stack)
+            ENABLE_WEB_STACK="n"
+            CLI_ENABLE_WEB_STACK="n"
+            shift
+            ;;
+        --ss2022|--enable-ss2022)
+            ENABLE_SS2022="y"
+            CLI_ENABLE_SS2022="y"
+            shift
+            ;;
+        --no-ss2022|--disable-ss2022)
+            ENABLE_SS2022="n"
+            CLI_ENABLE_SS2022="n"
+            shift
+            ;;
+        --ss2022-port)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: порт Shadowsocks 2022."
+            SS2022_PORT="$2"
+            CLI_SS2022_PORT="$2"
+            shift 2
+            ;;
+        --tuic|--enable-tuic)
+            ENABLE_TUIC="y"
+            CLI_ENABLE_TUIC="y"
+            shift
+            ;;
+        --no-tuic|--disable-tuic)
+            ENABLE_TUIC="n"
+            CLI_ENABLE_TUIC="n"
+            shift
+            ;;
+        --tuic-port)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: порт TUIC."
+            TUIC_PORT="$2"
+            CLI_TUIC_PORT="$2"
+            shift 2
+            ;;
+        --mtproto|--enable-mtproto)
+            ENABLE_MTPROTO="y"
+            CLI_ENABLE_MTPROTO="y"
+            shift
+            ;;
+        --no-mtproto|--disable-mtproto)
+            ENABLE_MTPROTO="n"
+            CLI_ENABLE_MTPROTO="n"
+            shift
+            ;;
+        --mtproto-port)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: порт MTProxy."
+            MTPROTO_PORT="$2"
+            CLI_MTPROTO_PORT="$2"
+            shift 2
+            ;;
+        --mtproto-domain)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: FakeTLS домен MTProxy."
+            MTPROTO_FAKETLS_DOMAIN="$2"
+            CLI_MTPROTO_FAKETLS_DOMAIN="$2"
+            shift 2
+            ;;
+        --mtproto-adtag)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: промо-тег adTag."
+            MTPROTO_ADTAG="$2"
+            CLI_MTPROTO_ADTAG="$2"
+            shift 2
             ;;
         -m|--email)
             [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: email."
@@ -1356,6 +1840,22 @@ fi
 [ -n "${CLI_ADMIN_USERNAME:-}" ] && ADMIN_USERNAME="$CLI_ADMIN_USERNAME"
 [ -n "${CLI_ADMIN_PASSWORD:-}" ] && ADMIN_PASSWORD="$CLI_ADMIN_PASSWORD"
 [ -n "${CLI_ENABLE_HY2:-}" ]      && ENABLE_HY2="$CLI_ENABLE_HY2"
+[ -n "${CLI_ENABLE_AWG_V3:-}" ]   && ENABLE_AWG_V3="$CLI_ENABLE_AWG_V3"
+[ -n "${CLI_AWG_V3_PORT:-}" ]     && AWG_V3_PORT="$CLI_AWG_V3_PORT"
+[ -n "${CLI_ENABLE_AWG_V2:-}" ]   && ENABLE_AWG_V2="$CLI_ENABLE_AWG_V2"
+[ -n "${CLI_AWG_V2_PORT:-}" ]     && AWG_V2_PORT="$CLI_AWG_V2_PORT"
+[ -n "${CLI_ENABLE_AWG_STANDALONE:-}" ] && ENABLE_AWG_STANDALONE="$CLI_ENABLE_AWG_STANDALONE"
+[ -n "${CLI_AWG_STANDALONE_PORT:-}" ] && AWG_STANDALONE_PORT="$CLI_AWG_STANDALONE_PORT"
+[ -n "${CLI_ENABLE_SS2022:-}" ]   && ENABLE_SS2022="$CLI_ENABLE_SS2022"
+[ -n "${CLI_SS2022_PORT:-}" ]     && SS2022_PORT="$CLI_SS2022_PORT"
+[ -n "${CLI_ENABLE_TUIC:-}" ]     && ENABLE_TUIC="$CLI_ENABLE_TUIC"
+[ -n "${CLI_TUIC_PORT:-}" ]       && TUIC_PORT="$CLI_TUIC_PORT"
+[ -n "${CLI_ENABLE_MTPROTO:-}" ]  && ENABLE_MTPROTO="$CLI_ENABLE_MTPROTO"
+[ -n "${CLI_MTPROTO_PORT:-}" ]    && MTPROTO_PORT="$CLI_MTPROTO_PORT"
+[ -n "${CLI_MTPROTO_FAKETLS_DOMAIN:-}" ] && MTPROTO_FAKETLS_DOMAIN="$CLI_MTPROTO_FAKETLS_DOMAIN"
+[ -n "${CLI_MTPROTO_ADTAG:-}" ]   && MTPROTO_ADTAG="$CLI_MTPROTO_ADTAG"
+[ -n "${CLI_ENABLE_WEB_STACK:-}" ] && ENABLE_WEB_STACK="$CLI_ENABLE_WEB_STACK"
+[ -n "${CLI_AWG_SERVER_HOST:-}" ]  && AWG_SERVER_HOST="$CLI_AWG_SERVER_HOST"
 
 # Сессия всегда сохраняется в setup_mask.env в текущей папке или рядом со скриптом
 SAVED_CONFIG_FILE="${CONFIG_FILE:-./setup_mask.env}"
@@ -1431,6 +1931,68 @@ determine_nginx_http2_mode() {
     fi
 }
 
+detect_active_ssh_port() {
+    local active_port=""
+    if [ -n "${SSH_CONNECTION:-}" ]; then
+        active_port=$(echo "$SSH_CONNECTION" | awk '{print $4}')
+    fi
+    if [ -z "$active_port" ] || ! [[ "$active_port" =~ ^[0-9]+$ ]]; then
+        active_port=$(ss -tlnp 2>/dev/null | grep -E 'sshd|ssh' | grep -vE '127\.0\.0\.1|::1' | awk '{print $4}' | awk -F: '{print $NF}' | sort -n | tail -n1 || echo "")
+    fi
+    if [ -z "$active_port" ] || ! [[ "$active_port" =~ ^[0-9]+$ ]]; then
+        active_port="22"
+    fi
+    echo "$active_port"
+}
+
+get_ssh_service_name() {
+    if systemctl list-unit-files 2>/dev/null | grep -q "^sshd\.service"; then
+        echo "sshd"
+    else
+        echo "ssh"
+    fi
+}
+
+get_wan_ip() {
+    if [ -n "${WAN_IP:-}" ]; then
+        echo "$WAN_IP"
+        return 0
+    fi
+    local cache_file="/run/setup_mask_wan_ip"
+    if [ ! -d /run ] || ! touch /run/.test_w 2>/dev/null; then
+        cache_file="/tmp/setup_mask_wan_ip"
+    else
+        rm -f /run/.test_w 2>/dev/null || true
+    fi
+
+    if [ -f "$cache_file" ]; then
+        local cached
+        cached=$(cat "$cache_file" 2>/dev/null | tr -d '[:space:]' || true)
+        if [ -n "$cached" ] && [[ "$cached" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            WAN_IP="$cached"
+            echo "$WAN_IP"
+            return 0
+        fi
+    fi
+
+    local ip_val=""
+    ip_val=$(curl -s4 --connect-timeout 3 icanhazip.com 2>/dev/null \
+          || curl -s4 --connect-timeout 3 api.ipify.org 2>/dev/null \
+          || curl -s4 --connect-timeout 3 ifconfig.me 2>/dev/null || true)
+    ip_val=$(echo "$ip_val" | tr -d '[:space:]')
+
+    if [ -z "$ip_val" ] || ! [[ "$ip_val" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        ip_val=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}' | head -n1 || echo "")
+    fi
+
+    if [ -n "$ip_val" ]; then
+        WAN_IP="$ip_val"
+        echo "$WAN_IP" > "$cache_file" 2>/dev/null || true
+    fi
+    echo "${WAN_IP:-127.0.0.1}"
+}
+
+
 get_port_listener_info() {
     local proto="$1"
     local port="$2"
@@ -1469,11 +2031,12 @@ is_port_in_use() {
         local flag="-t"
         [ "$proto" = "udp" ] && flag="-u"
         netstat -l -n "$flag" 2>/dev/null | grep -qE ":${port}\b" && return 0
-    elif timeout 1 bash -c "</dev/$proto/127.0.0.1/$port" 2>/dev/null; then
+    elif [ "$proto" = "tcp" ] && timeout 1 bash -c "</dev/tcp/127.0.0.1/$port" 2>/dev/null; then
         return 0
     fi
     return 1
 }
+
 
 inspect_port_conflicts() {
     echo ""
@@ -1532,62 +2095,82 @@ inspect_port_conflicts() {
     fi
 
     # 3. Проверка внешних портов маршрутизации и маскирования (80 и 443 TCP)
-    for p in 80 443; do
-        if is_port_in_use "tcp" "$p"; then
-            local w_owner
-            w_owner=$(get_port_listener_info "tcp" "$p")
-            if echo "$w_owner" | grep -qi "nginx"; then
-                ok "Порт $p слушает Nginx (будет переконфигурирован в единый L4/L7 роутер маскирования)."
+    local _web_stack="${ENABLE_WEB_STACK:-y}"
+    if [[ "${_web_stack,,}" == "y" || "${_web_stack}" == "1" || "${_web_stack,,}" == "true" ]]; then
+        for p in 80 443; do
+            if is_port_in_use "tcp" "$p"; then
+                local w_owner
+                w_owner=$(get_port_listener_info "tcp" "$p")
+                if echo "$w_owner" | grep -qi "nginx"; then
+                    ok "Порт $p слушает Nginx (будет переконфигурирован в единый L4/L7 роутер маскирования)."
+                else
+                    die "Порт $p занят сторонним процессом: ${w_owner:-не Nginx}. Для сквозного TLS/HTTP маскирования требуется порт $p."
+                fi
             else
-                die "Порт $p занят сторонним процессом: ${w_owner:-не Nginx}. Для сквозного TLS/HTTP маскирования требуется порт $p."
+                ok "Порт $p (Веб / Маскирование) свободен."
             fi
-        else
-            ok "Порт $p (Веб / Маскирование) свободен."
-        fi
-    done
+        done
 
-    # 3.1. Проверка существующих сторонних сайтов на прямой listen 443
-    local conflicting_vhosts=()
-    for vf in /etc/nginx/sites-enabled/* /etc/nginx/conf.d/*.conf; do
-        [ -f "$vf" ] || continue
-        local b_name
-        b_name=$(basename "$vf")
-        case "$b_name" in
-            default|default.conf|01-main.conf|02-*.conf|03-adguard.conf|vpn_mask.conf)
-                continue
-                ;;
-        esac
-        if grep -Eq 'listen[[:space:]]+([^;]*:)?443' "$vf" 2>/dev/null; then
-            if ! grep -q 'listen[[:space:]]+unix:' "$vf" 2>/dev/null; then
-                conflicting_vhosts+=("$b_name")
+        # 3.1. Проверка существующих сторонних сайтов на прямой listen 443
+        local conflicting_vhosts=()
+        for vf in /etc/nginx/sites-enabled/* /etc/nginx/conf.d/*.conf; do
+            [ -f "$vf" ] || continue
+            local b_name
+            b_name=$(basename "$vf")
+            case "$b_name" in
+                default|default.conf|01-main.conf|02-*.conf|03-adguard.conf|vpn_mask.conf)
+                    continue
+                    ;;
+            esac
+            if grep -Eq 'listen[[:space:]]+([^;]*:)?443' "$vf" 2>/dev/null; then
+                if ! grep -q 'listen[[:space:]]+unix:' "$vf" 2>/dev/null; then
+                    conflicting_vhosts+=("$b_name")
+                fi
             fi
+        done
+        if [ ${#conflicting_vhosts[@]} -gt 0 ]; then
+            warn "Обнаружены существующие vhost с прямым слушанием порта 443: ${conflicting_vhosts[*]}"
+            warn "Nginx Stream роутер использует порт 443. Такие vhost должны быть адаптированы под сокет unix:/dev/shm/nginx-http.sock."
         fi
-    done
-    if [ ${#conflicting_vhosts[@]} -gt 0 ]; then
-        warn "Обнаружены существующие vhost с прямым слушанием порта 443: ${conflicting_vhosts[*]}"
-        warn "Nginx Stream роутер использует порт 443. Такие vhost должны быть адаптированы под сокет unix:/dev/shm/nginx-http.sock."
+
+        # 4. Проверка внутренних служебных портов стека
+        local internal_ports=()
+        [ -n "${PANEL_PORT:-}" ] && internal_ports+=("Панель 3X-UI:$PANEL_PORT")
+        [ -n "${SUB_PORT:-}" ] && internal_ports+=("Канал подписок:$SUB_PORT")
+        [ -n "${XHTTP_STREAM_PORT:-}" ] && internal_ports+=("xHTTP стрим:$XHTTP_STREAM_PORT")
+        [ -n "${REALITY_FALLBACK_PORT:-}" ] && internal_ports+=("REALITY Fallback:$REALITY_FALLBACK_PORT")
+
+        for item in "${internal_ports[@]}"; do
+            local s_name="${item%%:*}"
+            local s_port="${item##*:}"
+            if is_port_in_use "tcp" "$s_port"; then
+                local p_owner
+                p_owner=$(get_port_listener_info "tcp" "$s_port")
+                if echo "$p_owner" | grep -qiE "x-ui|xray|nginx"; then
+                    ok "Внутренний порт $s_port ($s_name) занят собственным сервисом ($p_owner) — готов к реконфигурации."
+                else
+                    warn "Внутренний порт $s_port ($s_name) занят сторонним процессом: ${p_owner:-неизвестно}. Возможен конфликт."
+                fi
+            fi
+        done
     fi
 
-    # 4. Проверка внутренних служебных портов стека
-    local internal_ports=()
-    [ -n "${PANEL_PORT:-}" ] && internal_ports+=("Панель 3X-UI:$PANEL_PORT")
-    [ -n "${SUB_PORT:-}" ] && internal_ports+=("Канал подписок:$SUB_PORT")
-    [ -n "${XHTTP_STREAM_PORT:-}" ] && internal_ports+=("xHTTP стрим:$XHTTP_STREAM_PORT")
-    [ -n "${REALITY_FALLBACK_PORT:-}" ] && internal_ports+=("REALITY Fallback:$REALITY_FALLBACK_PORT")
-
-    for item in "${internal_ports[@]}"; do
-        local s_name="${item%%:*}"
-        local s_port="${item##*:}"
-        if is_port_in_use "tcp" "$s_port"; then
-            local p_owner
-            p_owner=$(get_port_listener_info "tcp" "$s_port")
-            if echo "$p_owner" | grep -qiE "x-ui|xray|nginx"; then
-                ok "Внутренний порт $s_port ($s_name) занят собственным сервисом ($p_owner) — готов к реконфигурации."
+    # 5. Проверка порта автономного AmneziaWG (UDP)
+    local _awg_sa="${ENABLE_AWG_STANDALONE:-0}"
+    if [[ "${_awg_sa,,}" == "y" || "${_awg_sa}" == "1" || "${_awg_sa,,}" == "true" ]]; then
+        local awg_p="${AWG_STANDALONE_PORT:-8445}"
+        if is_port_in_use "udp" "$awg_p"; then
+            local awg_owner
+            awg_owner=$(get_port_listener_info "udp" "$awg_p")
+            if echo "$awg_owner" | grep -qiE "amnezia|wireguard"; then
+                ok "UDP-порт $awg_p (AmneziaWG) занят собственной службой ($awg_owner)."
             else
-                warn "Внутренний порт $s_port ($s_name) занят сторонним процессом: ${p_owner:-неизвестно}. Возможен конфликт."
+                warn "UDP-порт $awg_p (AmneziaWG) занят сторонним процессом: ${awg_owner:-неизвестно}. Возможен конфликт."
             fi
+        else
+            ok "Порт $awg_p/udp (AmneziaWG Standalone) свободен."
         fi
-    done
+    fi
 
     echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}\n"
 }
@@ -2025,6 +2608,11 @@ EOF
 
     sysctl --system >/dev/null 2>&1 || true
 
+    # Оптимизация резолвера gai.conf (приоритет IPv4 для исключения таймаутов mtg/Go QUIC)
+    if [ -f /etc/gai.conf ]; then
+        sed -i 's/#precedence ::ffff:0:0\/96  100/precedence ::ffff:0:0\/96  100/' /etc/gai.conf 2>/dev/null || true
+    fi
+
     # Хранение системных логов journald в RAM (Storage=volatile, без записи на диск)
     mkdir -p /etc/systemd/journald.conf.d/
     cat << 'EOF' > /etc/systemd/journald.conf.d/00-volatile.conf
@@ -2320,33 +2908,46 @@ start_background_preinstall() {
             _t2_end=$(date +%s)
             echo $(( _t2_end - _t2_start )) > /tmp/setup_mask_bg_duration_2.time
 
-            # 3. Nginx Mainline
-            local _t3_start
-            _t3_start=$(date +%s)
-            setup_nginx_mainline
-            local _t3_end
-            _t3_end=$(date +%s)
-            echo $(( _t3_end - _t3_start )) > /tmp/setup_mask_bg_duration_3.time
+            # Компоненты веб-стека (Nginx Mainline + 3X-UI) устанавливаются ТОЛЬКО если включен веб-стек
+            if is_true "${ENABLE_WEB_STACK:-y}"; then
+                # 3. Nginx Mainline
+                local _t3_start
+                _t3_start=$(date +%s)
+                setup_nginx_mainline
+                local _t3_end
+                _t3_end=$(date +%s)
+                echo $(( _t3_end - _t3_start )) > /tmp/setup_mask_bg_duration_3.time
 
-            # 4. Ядро 3X-UI (если ещё не установлено)
-            if ! command -v x-ui >/dev/null 2>&1 && [ ! -f /etc/x-ui/x-ui.db ] && [ ! -f /usr/local/x-ui/bin/x-ui.db ]; then
-                local _tx_start
-                _tx_start=$(date +%s)
-                curl -Ls --connect-timeout 15 https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh -o /tmp/install_3xui.sh 2>/dev/null
-                printf "n\n" | bash /tmp/install_3xui.sh || true
-                local _tx_end
-                _tx_end=$(date +%s)
-                echo $(( _tx_end - _tx_start )) > /tmp/setup_mask_bg_duration_xui.time
+                # 4. Ядро 3X-UI (если ещё не установлено)
+                if ! command -v x-ui >/dev/null 2>&1 && [ ! -f /etc/x-ui/x-ui.db ] && [ ! -f /usr/local/x-ui/bin/x-ui.db ]; then
+                    local _tx_start
+                    _tx_start=$(date +%s)
+                    curl -Ls --connect-timeout 15 https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh -o /tmp/install_3xui.sh 2>/dev/null
+                    printf "n\n" | bash /tmp/install_3xui.sh || true
+                    local _tx_end
+                    _tx_end=$(date +%s)
+                    echo $(( _tx_end - _tx_start )) > /tmp/setup_mask_bg_duration_xui.time
+                fi
             fi
         } >> "$log_file" 2>&1 &
         BG_PREINSTALL_PID=$!
-        echo -e "  ${CYAN}⚡ [Фоновая подготовка]${NC} ${DIM}Установка Nginx, 3X-UI и сетевого стека запущена параллельно...${NC}\n"
+        if is_true "${ENABLE_WEB_STACK:-y}"; then
+            echo -e "  ${CYAN}⚡ [Фоновая подготовка]${NC} ${DIM}Установка Nginx, 3X-UI и сетевого стека запущена параллельно...${NC}\n"
+        else
+            echo -e "  ${CYAN}⚡ [Фоновая подготовка]${NC} ${DIM}Установка базовых утилит и сетевого стека запущена параллельно...${NC}\n"
+        fi
     fi
 }
 
 sync_background_preinstall() {
     if [ -n "${BG_PREINSTALL_PID:-}" ]; then
         local log_file="/tmp/setup_mask_preinstall.log"
+        local task_desc="Доустановка компонентов в фоне (Nginx, 3X-UI)..."
+        local task_done="Фоновая подготовка пакетов (Nginx, 3X-UI, BBR)"
+        if ! is_true "${ENABLE_WEB_STACK:-y}"; then
+            task_desc="Доустановка базовых пакетов и сетевого стека в фоне..."
+            task_done="Фоновая подготовка пакетов (BBR, утилиты)"
+        fi
         if kill -0 "$BG_PREINSTALL_PID" 2>/dev/null; then
             local spin_chars=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
             local delay=0.08
@@ -2354,14 +2955,14 @@ sync_background_preinstall() {
             tput civis 2>/dev/null || echo -ne "\033[?25l"
             while kill -0 "$BG_PREINSTALL_PID" 2>/dev/null; do
                 i=$(( (i + 1) % 10 ))
-                printf "\r  ${CYAN}${spin_chars[$i]}${NC}  ${WHITE}%-54s${NC}" "Доустановка компонентов в фоне (Nginx, 3X-UI)..."
+                printf "\r  ${CYAN}${spin_chars[$i]}${NC}  ${WHITE}%-54s${NC}" "$task_desc"
                 sleep "$delay"
             done
             wait "$BG_PREINSTALL_PID"
             local exit_code=$?
             tput cnorm 2>/dev/null || echo -ne "\033[?25h"
             if [ $exit_code -eq 0 ]; then
-                printf "\r  ${GREEN}${CHECK}${NC}  ${WHITE}%-54s${NC} ${GREEN}[ГОТОВО]${NC}\n" "Фоновая подготовка пакетов (Nginx, 3X-UI, BBR)"
+                printf "\r  ${GREEN}${CHECK}${NC}  ${WHITE}%-54s${NC} ${GREEN}[ГОТОВО]${NC}\n" "$task_done"
                 PREINSTALL_COMPLETED=1
             else
                 printf "\r  ${RED}${CROSS}${NC}  ${WHITE}%-54s${NC} ${RED}[ОШИБКА]${NC}\n" "Фоновая подготовка пакетов"
@@ -2372,7 +2973,7 @@ sync_background_preinstall() {
             wait "$BG_PREINSTALL_PID"
             local exit_code=$?
             if [ $exit_code -eq 0 ]; then
-                echo -e "  ${GREEN}${CHECK}${NC}  ${WHITE}Базовые пакеты (Nginx, 3X-UI, BBR) уже подготовлены в фоне${NC} ${GREEN}[ГОТОВО]${NC}"
+                echo -e "  ${GREEN}${CHECK}${NC}  ${WHITE}${task_done} уже завершена${NC} ${GREEN}[ГОТОВО]${NC}"
                 PREINSTALL_COMPLETED=1
             else
                 echo -e "  ${RED}${CROSS}${NC}  ${WHITE}Ошибка при фоновой подготовке пакетов${NC}"
@@ -2823,6 +3424,39 @@ def ensure_backend_networking():
         run_cmd("iptables -t mangle -C FORWARD -o awg0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || iptables -t mangle -A FORWARD -o awg0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true")
         run_cmd("iptables -t mangle -C FORWARD -i awg0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || iptables -t mangle -A FORWARD -i awg0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true")
 
+P = 2**255 - 19
+def clamp(k_bytes):
+    b = bytearray(k_bytes)
+    b[0] &= 248; b[31] &= 127; b[31] |= 64
+    return int.from_bytes(b, "little")
+
+def x25519(k, u=9):
+    x1, x2, z2, x3, z3 = u, 1, 0, u, 1
+    for i in range(254, -1, -1):
+        bit = (k >> i) & 1
+        if bit: x2, x3 = x3, x2; z2, z3 = z3, z2
+        A = (x2 + z2) % P; AA = (A * A) % P; B = (x2 - z2) % P; BB = (B * B) % P
+        E = (AA - BB) % P; C = (x3 + z3) % P; D = (x3 - z3) % P
+        x3 = pow(D * A + C * B, 2, P); z3 = (x1 * pow(D * A - C * B, 2, P)) % P
+        x2 = (AA * BB) % P; z2 = (E * (AA + 121665 * E)) % P
+        if bit: x2, x3 = x3, x2; z2, z3 = z3, z2
+    return (x2 * pow(z2, P - 2, P)) % P
+
+def curve25519_pubkey(priv_b64):
+    try:
+        raw_priv = base64.b64decode(priv_b64)
+        k = clamp(raw_priv)
+        pub_raw = x25519(k, 9).to_bytes(32, "little")
+        return base64.b64encode(pub_raw).decode()
+    except Exception:
+        return None
+
+def generate_wg_keypair():
+    priv_raw = os.urandom(32)
+    k = clamp(priv_raw)
+    pub_raw = x25519(k, 9).to_bytes(32, "little")
+    return base64.b64encode(priv_raw).decode(), base64.b64encode(pub_raw).decode()
+
 def get_server_pubkey():
     for cand_path in [
         "/opt/amnezia/awg/wireguard_server_public_key.key",
@@ -2846,7 +3480,11 @@ def get_server_pubkey():
             stdout, _, rc = run_cmd("awg pubkey 2>/dev/null || wg pubkey 2>/dev/null", input_data=priv)
         if rc == 0 and stdout:
             return stdout
+        derived = curve25519_pubkey(priv)
+        if derived:
+            return derived
     raise RuntimeError("Server public key not found in AmneziaWG configuration")
+
 
 def get_server_psk():
     for cand_path in [
@@ -3040,7 +3678,7 @@ PersistentKeepalive = {PERSISTENT_KEEPALIVE}
     if CPA:
         last_config_dict["ContentPaddingAddition"] = CPA
 
-    container_id = CONTAINER or "amnezia-awg2"
+    container_id = CONTAINER or "amnezia-awg"
     awg_dict = {
         "DisableCookies": DISABLE_COOKIES,
         "H1": H1, "H2": H2, "H3": H3, "H4": H4,
@@ -3265,6 +3903,7 @@ def add_client(
     custom_mtu: str | None = None,
     custom_keepalive: str | None = None,
     custom_allowed_ips: str | None = None,
+    custom_cpa: str | None = None,
     preset: str | None = None
 ):
     if not is_valid_client_name(client_name):
@@ -3284,6 +3923,8 @@ def add_client(
                 custom_jmax = "70"
             if custom_mtu is None:
                 custom_mtu = "1280"
+            if custom_cpa is None:
+                custom_cpa = "16-64"
         elif p_clean in ("fast", "gaming", "game", "home", "router", "direct"):
             if custom_i1 is None:
                 custom_i1 = ""
@@ -3344,10 +3985,14 @@ def add_client(
             pub_out, _, _ = run_cmd(f"docker exec -i {CONTAINER} awg pubkey", check=True, input_data=client_priv)
             client_pub = pub_out.strip()
         else:
-            priv_out, _, _ = run_cmd("awg genkey 2>/dev/null || wg genkey 2>/dev/null", check=True)
-            client_priv = priv_out.strip()
-            pub_out, _, _ = run_cmd("awg pubkey 2>/dev/null || wg pubkey 2>/dev/null", check=True, input_data=client_priv)
-            client_pub = pub_out.strip()
+            try:
+                priv_out, _, _ = run_cmd("awg genkey 2>/dev/null || wg genkey 2>/dev/null", check=True)
+                client_priv = priv_out.strip()
+                pub_out, _, _ = run_cmd("awg pubkey 2>/dev/null || wg pubkey 2>/dev/null", check=True, input_data=client_priv)
+                client_pub = pub_out.strip()
+            except Exception:
+                client_priv, client_pub = generate_wg_keypair()
+
 
         server_psk = get_server_psk()
         server_pub = get_server_pubkey()
@@ -3429,6 +4074,9 @@ def add_client(
             conf_lines.append(f"I4 = {I4}")
         if I5:
             conf_lines.append(f"I5 = {I5}")
+        target_cpa = custom_cpa if custom_cpa is not None else CPA
+        if target_cpa:
+            conf_lines.append(f"ContentPaddingAddition = {target_cpa}")
         if HEADER_PROTECTION_KEY:
             conf_lines.append(f"HeaderProtectionKey = {HEADER_PROTECTION_KEY}")
         if REKEY_AFTER_TIME:
@@ -3860,6 +4508,7 @@ def main():
     custom_mtu = None
     custom_keepalive = None
     custom_allowed_ips = None
+    custom_cpa = None
     preset = None
 
     args = sys.argv[1:]
@@ -3872,6 +4521,10 @@ def main():
             preset = arg.split("=", 1)[1].strip()
         elif arg.startswith("--mtu="):
             custom_mtu = arg.split("=", 1)[1].strip()
+        elif arg.startswith("--cpa=") or arg.startswith("--content-padding="):
+            custom_cpa = arg.split("=", 1)[1].strip()
+        elif arg in ("--no-cpa", "--without-cpa"):
+            custom_cpa = ""
         elif arg.startswith("--jc="):
             custom_jc = arg.split("=", 1)[1].strip()
         elif arg.startswith("--jmin="):
@@ -3914,6 +4567,7 @@ def main():
                 custom_mtu=custom_mtu,
                 custom_keepalive=custom_keepalive,
                 custom_allowed_ips=custom_allowed_ips,
+                custom_cpa=custom_cpa,
                 preset=preset
             )
             if qr_mode and res.get("ok"):
@@ -3974,21 +4628,7 @@ EOF_AWG_PY
     fi
     chmod 750 "$awg_dir/manage_amneziawg.py"
 
-    # Запись скрипта-лаунчера
-    cat << 'EOF_AWG_SH' > "$awg_dir/manage_amneziawg.sh"
-#!/usr/bin/env bash
-set -euo pipefail
-AWG_DIR="${AWG_DIR:-/root/awg}"
-PYTHON_BIN="$(command -v python3 2>/dev/null || echo /usr/bin/python3)"
-exec "$PYTHON_BIN" "$AWG_DIR/manage_amneziawg.py" "$@"
-EOF_AWG_SH
-    chmod 755 "$awg_dir/manage_amneziawg.sh"
-
-    # Создание глобальных симлинков для удобного управления из консоли
-    ln -sf "$awg_dir/manage_amneziawg.sh" /usr/local/bin/awg-mgr 2>/dev/null || true
-    ln -sf "$awg_dir/manage_amneziawg.sh" /usr/local/bin/awg-cli 2>/dev/null || true
-
-    # Настройка правил файрвола UFW
+    # Настройка порта и хоста
     local awg_port="${AWG_SERVER_PORT:-${AWG_STANDALONE_PORT:-}}"
     if [ -z "$awg_port" ]; then
         if [ "${AWG_V3_PORT:-}" = "8443" ] && [[ "${ENABLE_AWG_V3:-}" == "1" || "${ENABLE_AWG_V3,,}" == "y" ]]; then
@@ -3997,6 +4637,25 @@ EOF_AWG_SH
             awg_port="8443"
         fi
     fi
+    local awg_host="${AWG_SERVER_HOST:-${SERVER_PUBLIC_HOST:-}}"
+
+    # Запись скрипта-лаунчера
+    cat << EOF_AWG_SH > "$awg_dir/manage_amneziawg.sh"
+#!/usr/bin/env bash
+set -euo pipefail
+AWG_DIR="\${AWG_DIR:-/root/awg}"
+PYTHON_BIN="\$(command -v python3 2>/dev/null || echo /usr/bin/python3)"
+[ -n "${awg_host}" ] && export SERVER_PUBLIC_HOST="\${SERVER_PUBLIC_HOST:-${awg_host}}"
+[ -n "${awg_port}" ] && export SERVER_PORT="\${SERVER_PORT:-${awg_port}}"
+exec "\$PYTHON_BIN" "\$AWG_DIR/manage_amneziawg.py" "\$@"
+EOF_AWG_SH
+    chmod 755 "$awg_dir/manage_amneziawg.sh"
+
+    # Создание глобальных симлинков для удобного управления из консоли
+    ln -sf "$awg_dir/manage_amneziawg.sh" /usr/local/bin/awg-mgr 2>/dev/null || true
+    ln -sf "$awg_dir/manage_amneziawg.sh" /usr/local/bin/awg-cli 2>/dev/null || true
+
+    # Настройка правил файрвола UFW
     if command -v ufw >/dev/null 2>&1; then
         ufw allow "${awg_port}/udp" comment "AmneziaWG Server Engine" >/dev/null 2>&1 || true
     fi
@@ -4146,13 +4805,17 @@ EOF_AWG0
         fi
     fi
 
-    # 4. Создание первого административного клиента, если таблица клиентов пуста и client-1.conf не существует
     if [ -f "$awg_dir/client-1.conf" ]; then
+        if [ -n "${AWG_SERVER_HOST:-}" ]; then
+            sed -i "s|^Endpoint = .*|Endpoint = ${AWG_SERVER_HOST}:${awg_port}|" "$awg_dir/client-1.conf" 2>/dev/null || true
+        fi
         ok "Существующий профиль администратора сохранен: $awg_dir/client-1.conf"
     else
         local client_count=$(/root/awg/manage_amneziawg.sh status 2>/dev/null | grep -o '"total": [0-9]*' | awk '{print $2}' || echo "0")
         if [ "$client_count" = "0" ] || [ -z "$client_count" ]; then
             log "Создание первичного профиля администратора (client-1)..."
+            export SERVER_PUBLIC_HOST="${AWG_SERVER_HOST:-${SERVER_PUBLIC_HOST:-}}"
+            export SERVER_PORT="${awg_port}"
             if ! /root/awg/manage_amneziawg.sh add client-1 >/dev/null 2>&1; then
                 warn "Не удалось автоматически сгенерировать первичного клиента client-1. Попробуйте вручную: awg-mgr add <имя>"
             else
@@ -4211,13 +4874,74 @@ if [ "$SKIP_INTERVIEW" -eq 1 ]; then
         SSL_BASE_DIR="/etc/ssl/acme"
     fi
 else
+    run_standalone_awg_wizard() {
+        echo ""
+        echo -e "  ${GREEN}${STAR} ${BOLD}Настройка автономного сервера AmneziaWG (awg-mgr)${NC}"
+        echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}"
+        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+            echo -e "  ${CYAN}💡 Подключение клиентов (Endpoint):${NC}"
+            echo -e "     Вы можете использовать как IP-адрес сервера, так и ваше доменное имя."
+            echo -e "     ${GREEN}SSL-сертификаты НЕ требуются:${NC} WireGuard/AmneziaWG работает по UDP"
+            echo -e "     и шифрует трафик ключами Curve25519. Достаточно обычной A-записи домена на IP сервера."
+            echo ""
+        fi
+
+        local def_host="${AWG_SERVER_HOST:-${PRIMARY_DOMAIN:-$(get_wan_ip)}}"
+        prompt_default "Домен или IP-адрес сервера для подключения клиентов (Endpoint)" "$def_host" AWG_SERVER_HOST
+
+        local def_port="${AWG_STANDALONE_PORT:-8445}"
+        prompt_default "Внешний UDP-порт для сервера AmneziaWG" "$def_port" AWG_STANDALONE_PORT
+
+        prompt_default "Основной DNS для клиентов AmneziaWG" "${AWG_PRIMARY_DNS:-9.9.9.9}" AWG_PRIMARY_DNS
+        prompt_default "Резервный DNS для клиентов AmneziaWG" "${AWG_SECONDARY_DNS:-76.76.2.0}" AWG_SECONDARY_DNS
+
+        ENABLE_AWG_STANDALONE=1
+        ENABLE_WEB_STACK=0
+
+        echo ""
+        echo -e "  ${YELLOW}━━━ Подтверждение параметров AmneziaWG ━━━${NC}"
+        echo -e "    ${DIM}• Хост / Домен (Endpoint):${NC} ${GREEN}${BOLD}${AWG_SERVER_HOST}${NC}"
+        echo -e "    ${DIM}• Внешний UDP-порт:${NC}        ${WHITE}${BOLD}${AWG_STANDALONE_PORT}/udp${NC}"
+        echo -e "    ${DIM}• Клиентская подсеть:${NC}      ${WHITE}10.8.0.0/22 (до 1022 клиентов)${NC}"
+        echo -e "    ${DIM}• DNS-серверы:${NC}             ${WHITE}${AWG_PRIMARY_DNS}, ${AWG_SECONDARY_DNS}${NC}"
+        echo -e "    ${DIM}• Профиль обфускации:${NC}      ${WHITE}AmneziaWG 3.1 (Jc=4, Jmin=40, Jmax=70, S1-S4=16, H1-H4)${NC}"
+        echo -e "    ${DIM}• Служба на хосте:${NC}         ${GREEN}awg-quick@awg0${NC}"
+        echo -e "    ${DIM}• Утилита управления:${NC}      ${GREEN}awg-mgr${NC} (CLI)"
+        echo ""
+
+        while true; do
+            local choice=""
+            echo -ne "  ${WHITE}${ARROW} Начать установку? [${GREEN}Enter = начать${WHITE}, q = отмена]: ${NC}"
+            read -r choice </dev/tty || read -r choice || true
+            choice=$(echo "${choice:-}" | tr -d '[:space:]')
+            if [ -z "$choice" ] || [[ "${choice,,}" == "y" ]] || [[ "${choice,,}" == "yes" ]]; then
+                save_session_state "$SAVED_CONFIG_FILE" >/dev/null 2>&1 || true
+                return 0
+            fi
+            if [[ "${choice,,}" == "q" || "${choice,,}" == "quit" || "${choice,,}" == "exit" ]]; then
+                die "Установка отменена пользователем."
+            fi
+            warn "  Некорректный ввод. Нажмите Enter для старта или 'q' для выхода."
+        done
+    }
+
     if [ "$NON_INTERACTIVE" -eq 0 ]; then
-        start_background_preinstall
         START_AT_REVIEW=0
-        if [ -n "${PRIMARY_DOMAIN:-}" ]; then
+        local has_saved_config=0
+        if is_true "${ENABLE_WEB_STACK:-y}" && [ -n "${PRIMARY_DOMAIN:-}" ]; then
+            has_saved_config=1
+        elif ! is_true "${ENABLE_WEB_STACK:-y}" && [ -n "${AWG_SERVER_HOST:-}" ]; then
+            has_saved_config=1
+        fi
+
+        if [ "$has_saved_config" -eq 1 ]; then
             echo
             echo -e "  ${YELLOW}${BOLD}Обнаружена сохраненная конфигурация предыдущей сессии!${NC}"
-            echo -e "    ${DIM}• Домен:${NC} ${GREEN}${PRIMARY_DOMAIN}${NC}  ${DIM}• Префикс сервера:${NC} ${WHITE}${SERVER_PREFIX:-Server}${NC}"
+            if is_true "${ENABLE_WEB_STACK:-y}"; then
+                echo -e "    ${DIM}• Домен:${NC} ${GREEN}${PRIMARY_DOMAIN}${NC}  ${DIM}• Префикс сервера:${NC} ${WHITE}${SERVER_PREFIX:-Server}${NC}"
+            else
+                echo -e "    ${DIM}• Режим:${NC} ${CYAN}Только автономный AmneziaWG${NC}  ${DIM}• Хост (Endpoint):${NC} ${GREEN}${AWG_SERVER_HOST:-$WAN_IP}${NC}"
+            fi
             echo
             echo -e "    ${CYAN}${BOLD}[1] Перейти сразу к экрану подтверждения (Review) и установке${NC} (Рекомендуется)"
             echo -e "    ${GREEN}[2] Пошагово проверить/изменить параметры${NC} (ранее выбранные значения будут по умолчанию)"
@@ -4237,6 +4961,10 @@ else
                     PRIMARY_DOMAIN=""
                     SERVER_PREFIX=""
                     ADD_WWW=""
+                    ENABLE_WEB_STACK=""
+                    ENABLE_AWG_STANDALONE=""
+                    AWG_STANDALONE_PORT=""
+                    AWG_SERVER_HOST=""
                     ENABLE_STEAL=""
                     ENABLE_CLASSIC=""
                     ENABLE_HY2=""
@@ -4265,7 +4993,43 @@ else
             esac
         fi
 
-        if [ -z "${PRIMARY_DOMAIN:-}" ] && [ "$EXPRESS_MODE" -eq 0 ] && [ "$EXPERT_MODE" -eq 0 ]; then
+        if [ "$START_AT_REVIEW" -eq 0 ]; then
+            echo
+            echo -e "  ${WHITE}${BOLD}Шаг 0: Выбор компонентов для установки:${NC}\n"
+            echo -e "  ${CYAN}${BOLD}[1] Комплекс веб-маскировки Nginx + панель 3X-UI${NC}"
+            echo -e "      ${DIM}• VLESS REALITY, VLESS xHTTP, Trojan, Hysteria 2, инбаунды 3X-UI${NC}"
+            echo -e "      ${DIM}• Автоматический выпуск SSL (Let's Encrypt / Cloudflare), веб-маскировка${NC}"
+            prompt_yes_no "  Установить комплекс веб-маскировки Nginx + 3X-UI?" "${ENABLE_WEB_STACK:-y}" ENABLE_WEB_STACK
+            echo
+            echo -e "  ${CYAN}${BOLD}[2] Автономный сервер AmneziaWG (awg-mgr)${NC}"
+            echo -e "      ${DIM}• Работает как системная служба ядра Linux (awg-quick@awg0)${NC}"
+            echo -e "      ${DIM}• Управление клиентами через CLI: awg-mgr add/list/qr/remove${NC}"
+            echo -e "      ${DIM}• Защита от блокировок по протоколу AmneziaWG (Junk packets, S1-S4, H1-H4)${NC}"
+            prompt_yes_no "  Установить автономный сервер AmneziaWG (awg-mgr)?" "${ENABLE_AWG_STANDALONE:-y}" ENABLE_AWG_STANDALONE
+
+            while ! is_true "${ENABLE_WEB_STACK:-y}" && ! is_true "${ENABLE_AWG_STANDALONE:-y}"; do
+                echo
+                warn "Не выбран ни один компонент для установки! Выберите хотя бы один сервис."
+                prompt_yes_no "  Установить комплекс веб-маскировки Nginx + 3X-UI?" "y" ENABLE_WEB_STACK
+                prompt_yes_no "  Установить автономный сервер AmneziaWG (awg-mgr)?" "y" ENABLE_AWG_STANDALONE
+            done
+        fi
+
+        # Запуск фоновой пред-установки с учетом выбранных компонентов
+        start_background_preinstall
+        if is_true "${ENABLE_AWG_STANDALONE:-0}"; then
+            start_amneziawg_preinstall_bg
+        fi
+
+        if ! is_true "${ENABLE_WEB_STACK:-y}"; then
+            # Сценарий только автономного сервера AmneziaWG
+            EXPRESS_MODE=0
+            EXPERT_MODE=0
+            run_standalone_awg_wizard
+            SKIP_WIZARD_STEPS=1
+        fi
+
+        if [ "${SKIP_WIZARD_STEPS:-0}" -eq 0 ] && [ -z "${PRIMARY_DOMAIN:-}" ] && [ "$EXPRESS_MODE" -eq 0 ] && [ "$EXPERT_MODE" -eq 0 ]; then
             echo -e "  ${WHITE}${BOLD}Выберите режим настройки:${NC}\n"
             echo -e "    ${CYAN}${BOLD}[1] Экспресс-установка (Рекомендуется)${NC} — Настройка в 2 вопроса"
             echo -e "        ${DIM}• Ввод только домена и email для Let's Encrypt.${NC}"
@@ -4291,7 +5055,10 @@ else
         fi
     fi
 
-if [ "$EXPRESS_MODE" -eq 1 ]; then
+if [ "${SKIP_WIZARD_STEPS:-0}" -eq 1 ]; then
+    rebuild_all_domains
+    sync_reality_ports
+elif [ "$EXPRESS_MODE" -eq 1 ]; then
     echo ""
     echo -e "  ${GREEN}${STAR} ${BOLD}Включен режим: Экспресс-установка${NC}"
     echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}"
@@ -4322,7 +5089,7 @@ if [ "$EXPRESS_MODE" -eq 1 ]; then
     STEAL_DOMAINS=("cdn.$PRIMARY_DOMAIN")
     ENABLE_CLASSIC="y"
     CLASSIC_PORT="46443"
-    CLASSIC_SNI_LIST=("gateway.icloud.com")
+    CLASSIC_SNI_LIST=("avito.ru")
     PANEL_PORT="${PANEL_PORT:-10443}"
     ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
     ADMIN_PASSWORD="${ADMIN_PASSWORD:-$(head -c 128 /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 12 || echo "Admin1234567")}"
@@ -4352,6 +5119,14 @@ if [ "$EXPRESS_MODE" -eq 1 ]; then
     AWG_V3_PORT="8443"
     ENABLE_AWG_V2="0"
     AWG_V2_PORT=""
+    if is_true "${ENABLE_AWG_STANDALONE:-n}"; then
+        ENABLE_AWG_STANDALONE=1
+        AWG_STANDALONE_PORT="${AWG_STANDALONE_PORT:-8445}"
+        AWG_SERVER_HOST="${AWG_SERVER_HOST:-$PRIMARY_DOMAIN}"
+    else
+        ENABLE_AWG_STANDALONE=0
+        AWG_STANDALONE_PORT=""
+    fi
     DECOY_MODE="1"
     SSL_ENGINE_CHOICE="1"
     AUTO_SETUP_3XUI="y"
@@ -4382,15 +5157,17 @@ if [ "$EXPRESS_MODE" -eq 1 ]; then
     ALL_DOMAINS+=("cdn.$PRIMARY_DOMAIN")
     DOMAIN_TO_PORT["cdn.$PRIMARY_DOMAIN"]="$STEAL_PORT"
     
-    ALL_EXT_SNIS=("gateway.icloud.com")
-    EXT_SNI_TO_PORT["gateway.icloud.com"]="$CLASSIC_PORT"
+    ALL_EXT_SNIS=("avito.ru")
+    EXT_SNI_TO_PORT["avito.ru"]="$CLASSIC_PORT"
     
     echo -e "  ${GREEN}${CHECK} Экспресс-параметры применены:${NC}"
     echo -e "    ${DIM}• Домен:${NC}          ${WHITE}${BOLD}$PRIMARY_DOMAIN${NC}"
     echo -e "    ${DIM}• REALITY (свой сайт):${NC}  ${WHITE}cdn.$PRIMARY_DOMAIN -> 127.0.0.1:$STEAL_PORT${NC}"
-    echo -e "    ${DIM}• REALITY (внешний):${NC}    ${WHITE}gateway.icloud.com -> 127.0.0.1:$CLASSIC_PORT${NC}"
+    echo -e "    ${DIM}• REALITY (внешний):${NC}    ${WHITE}avito.ru -> 127.0.0.1:$CLASSIC_PORT${NC}"
     echo -e "    ${DIM}• VLESS xHTTP:${NC}    ${WHITE}$XHTTP_STREAM_PATH -> 127.0.0.1:$XHTTP_STREAM_PORT${NC}"
-    echo -e "    ${DIM}• UDP Стек:${NC}       ${WHITE}Hysteria 2 (:443), AWG v3 (:8443)${NC}"
+    local udp_stack_summary="Hysteria 2 (:443), AWG v3 (:8443)"
+    is_true "${ENABLE_AWG_STANDALONE:-0}" && udp_stack_summary="${udp_stack_summary}, Standalone (:8445)"
+    echo -e "    ${DIM}• UDP Стек:${NC}       ${WHITE}${udp_stack_summary}${NC}"
     echo -e "    ${DIM}• Cloudflare WARP:${NC} ${WHITE}Активирован (Google, Gemini, AI / YouTube direct)${NC}"
     echo -e "    ${DIM}• Веб-маска:${NC}      ${WHITE}DataSphere Analytics${NC}"
     echo ""
@@ -4458,7 +5235,8 @@ else
 import ssl, socket, time, concurrent.futures
 
 CANDIDATES = [
-    'gateway.icloud.com',
+    'avito.ru',
+    'www.avito.ru',
     'dl.google.com',
     'www.apple.com',
     'itunes.apple.com',
@@ -4497,9 +5275,15 @@ for item in res:
     }
 
     run_non_interactive_setup() {
-        [ -n "${PRIMARY_DOMAIN:-}" ] || die "Ошибка: PRIMARY_DOMAIN не задан в конфигурации или аргументах!"
-        [[ "$PRIMARY_DOMAIN" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]] || die "Некорректный формат доменного имени: $PRIMARY_DOMAIN"
-        ok "Основной домен (из конфигурации): $PRIMARY_DOMAIN"
+        if is_true "${ENABLE_WEB_STACK:-y}"; then
+            [ -n "${PRIMARY_DOMAIN:-}" ] || die "Ошибка: PRIMARY_DOMAIN не задан в конфигурации или аргументах!"
+            [[ "$PRIMARY_DOMAIN" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]] || die "Некорректный формат доменного имени: $PRIMARY_DOMAIN"
+            ok "Основной домен (из конфигурации): $PRIMARY_DOMAIN"
+        else
+            ok "Режим установки: Только автономный сервер AmneziaWG (веб-стек Nginx/3X-UI отключен)."
+            [ -n "${AWG_SERVER_HOST:-}" ] || AWG_SERVER_HOST="$(get_wan_ip)"
+            ok "Хост подключения AmneziaWG (Endpoint): $AWG_SERVER_HOST"
+        fi
 
         SERVER_PREFIX="${SERVER_PREFIX:-$(hostname -s 2>/dev/null || echo "Server")}"
         [[ "$SERVER_PREFIX" =~ ^(localhost|ubuntu|debian|centos|vps.*)$ ]] && SERVER_PREFIX="Server"
@@ -4529,7 +5313,7 @@ for item in res:
             CLASSIC_ENABLED=1
             local c_port="${CLASSIC_PORT:-46443}"
             CLASSIC_PORTS_LIST+=("$c_port")
-            local classic_sni_list="${CLASSIC_SNI:-gateway.icloud.com}"
+            local classic_sni_list="${CLASSIC_SNI:-avito.ru}"
             EXT_SNI_LIST=()
             for ext_sni in $classic_sni_list; do
                 [[ "$ext_sni" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]] || continue
@@ -4594,6 +5378,36 @@ for item in res:
             ENABLE_AWG_V2=0
         fi
 
+        if [[ "${ENABLE_AWG_STANDALONE,,}" == "y" || "${ENABLE_AWG_STANDALONE:-}" == "1" ]]; then
+            ENABLE_AWG_STANDALONE=1
+            AWG_STANDALONE_PORT="${AWG_STANDALONE_PORT:-8445}"
+        else
+            ENABLE_AWG_STANDALONE=0
+        fi
+
+        if [[ "${ENABLE_SS2022,,}" == "y" || "${ENABLE_SS2022:-}" == "1" ]]; then
+            ENABLE_SS2022=1
+            SS2022_PORT="${SS2022_PORT:-8388}"
+        else
+            ENABLE_SS2022=0
+        fi
+
+        if [[ "${ENABLE_TUIC,,}" == "y" || "${ENABLE_TUIC:-}" == "1" ]]; then
+            ENABLE_TUIC=1
+            TUIC_PORT="${TUIC_PORT:-8448}"
+        else
+            ENABLE_TUIC=0
+        fi
+
+        if [[ "${ENABLE_MTPROTO,,}" == "y" || "${ENABLE_MTPROTO:-}" == "1" ]]; then
+            ENABLE_MTPROTO=1
+            MTPROTO_PORT="${MTPROTO_PORT:-8444}"
+            MTPROTO_FAKETLS_DOMAIN="${MTPROTO_FAKETLS_DOMAIN:-gateway.icloud.com}"
+            MTPROTO_ADTAG="${MTPROTO_ADTAG:-}"
+        else
+            ENABLE_MTPROTO=0
+        fi
+
         if is_true "${ENABLE_AWG_V3:-0}" || is_true "${ENABLE_AWG_V2:-0}" || is_true "${ENABLE_AWG_STANDALONE:-0}"; then
             start_amneziawg_preinstall_bg
         fi
@@ -4655,7 +5469,7 @@ for item in res:
 
     q_step_domain() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 1/13: Конфигурация главного сайта (домена) ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 1/12: Конфигурация главного сайта (домена) ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Ваш основной домен (например, ${BOLD}yourdomain.online${NC})."
             echo -e "     На нем будет работать веб-маска (декой-сайт), панель 3X-UI,"
@@ -4703,7 +5517,7 @@ for item in res:
 
     q_step_steal() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 2/13: Настройка VLESS REALITY (маскировка под свой сайт) ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 2/12: Настройка VLESS REALITY (маскировка под свой сайт) ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Режим REALITY, маскирующийся под ${BOLD}собственный поддомен${NC} (напр. cdn.$PRIMARY_DOMAIN)."
             echo -e "     ${GREEN}Преимущество:${NC} Трафик выглядит как обычный просмотр вашего сайта."
@@ -4779,7 +5593,7 @@ for item in res:
 
     q_step_classic() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 3/13: Настройка VLESS REALITY (маскировка под популярные сервисы) ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 3/12: Настройка VLESS REALITY (маскировка под популярные сервисы) ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Режим REALITY, маскирующийся под ${BOLD}известные сервисы${NC} (Apple, Microsoft, Samsung)."
             echo -e "     ${GREEN}Преимущество:${NC} Даже если ваш собственный домен окажется недоступен, это подключение продолжит"
@@ -4815,8 +5629,8 @@ for item in res:
             fi
 
             if [ "${#scanned_snis[@]}" -eq 0 ]; then
-                scanned_snis=("gateway.icloud.com" "dl.google.com" "www.apple.com" "www.samsung.com" "www.nvidia.com" "www.microsoft.com")
-                scanned_lats=("fast" "fast" "fast" "fast" "fast" "fast")
+                scanned_snis=("avito.ru" "www.avito.ru" "dl.google.com" "www.apple.com" "www.samsung.com" "www.nvidia.com" "www.microsoft.com")
+                scanned_lats=("fast" "fast" "fast" "fast" "fast" "fast" "fast")
             fi
 
             local default_classic_sni="${CLASSIC_SNI:-${scanned_snis[0]}}"
@@ -4883,7 +5697,7 @@ for item in res:
 
     q_step_ports() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 4/13: Настройка путей и внутренних портов (3X-UI и VLESS xHTTP) ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 4/12: Настройка путей и внутренних портов (3X-UI и VLESS xHTTP) ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Внутренние порты и секретные URI-пути для веб-панели 3X-UI,"
             echo -e "     сервера подписок для клиентов и инбаунда VLESS xHTTP (HTTP/2 Stream-One)."
@@ -4967,42 +5781,126 @@ for item in res:
         return 0
     }
 
-    q_step_hy2() {
+    q_step_protocols() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 5/13: Настройка протокола Hysteria 2 (UDP) ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 5/12: Выбор протоколов и транспортов (VPN / Прокси) ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
-            echo -e "  ${CYAN}💡 Что это:${NC} Сверхбыстрый протокол на базе QUIC/UDP с алгоритмом Brutal."
-            echo -e "     Обеспечивает максимальную скорость стриминга и загрузки даже на плохом"
-            echo -e "     мобильном интернете (LTE/5G) с потерей пакетов до 20-30%."
+            echo -e "  ${CYAN}💡 Что это:${NC} Выберите протоколы подключения, которые будут развернуты на сервере."
+            echo -e "     • ${GREEN}Hysteria 2${NC}: сверхбыстрый QUIC/UDP протокол с BBR Brutal для стриминга и мобильного интернета."
+            echo -e "     • ${GREEN}AmneziaWG v3.1${NC}: защита от блокировок ТСПУ/DPI с обфускацией пакетов (внутри 3X-UI)."
+            echo -e "     • ${GREEN}AmneziaWG v2.0${NC}: совместимость со старыми роутерами (Keenetic, OpenWrt)."
+            echo -e "     • ${GREEN}Автономный AmneziaWG${NC}: независимый сервис ядра Linux (awg-quick@awg0, утилита awg-mgr)."
+            echo -e "     • ${GREEN}TUIC v5${NC}: 0-RTT рукопожатие на чистом QUIC для мгновенного отклика."
+            echo -e "     • ${GREEN}Shadowsocks 2022${NC}: устойчивый к зондированию шифрованный протокол."
+            echo -e "     • ${GREEN}Telegram MTProxy${NC}: прямой доступ для клиентов Telegram без дополнительных VPN-приложений."
             echo
         fi
 
-        prompt_yes_no "Установить и настроить Hysteria 2?" "${ENABLE_HY2:-y}" ENABLE_HY2 || return $?
+        local proto_keys=(
+            "ENABLE_HY2"
+            "ENABLE_AWG_V3"
+            "ENABLE_AWG_V2"
+            "ENABLE_AWG_STANDALONE"
+            "ENABLE_TUIC"
+            "ENABLE_SS2022"
+            "ENABLE_MTPROTO"
+        )
+        local proto_labels=(
+            "Hysteria 2 (UDP/QUIC Brutal CC, :${HY2_PORT:-443})"
+            "AmneziaWG v3.1 (инбаунд 3X-UI с обфускацией DPI, :${AWG_V3_PORT:-8443}/udp)"
+            "AmneziaWG v2.0 (инбаунд 3X-UI для роутеров Keenetic/OpenWrt, :${AWG_V2_PORT:-8444}/udp)"
+            "Автономный сервер AmneziaWG (awg-mgr / системная служба, :${AWG_STANDALONE_PORT:-8445}/udp)"
+            "TUIC v5 (QUIC 0-RTT + BBR, :${TUIC_PORT:-8448}/udp)"
+            "Shadowsocks 2022 (2022-blake3-aes-256-gcm, :${SS2022_PORT:-8388})"
+            "Telegram MTProxy (FakeTLS прямой доступ, :${MTPROTO_PORT:-8444}/tcp)"
+        )
 
-        if [[ "${ENABLE_HY2,,}" == "y" || "${ENABLE_HY2:-}" == "1" ]]; then
-            ENABLE_HY2=1
-            prompt_default "  Внешний UDP-порт для Hysteria 2" "${HY2_PORT:-443}" HY2_PORT || return $?
-            prompt_default "  Домен/поддомен для подключения Hysteria 2" "${HY2_DOMAIN:-$PRIMARY_DOMAIN}" HY2_DOMAIN || return $?
-            HY2_DOMAIN=$(echo "$HY2_DOMAIN" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+        prompt_multiselect "Выберите протоколы для установки" proto_keys proto_labels || return $?
 
-            [ "${SHOW_TIPS:-y}" = "y" ] && echo -e "  ${DIM}• Port Hopping позволяет клиентам скакать по портам для обхода шейпинга операторов,${NC}"
-            [ "${SHOW_TIPS:-y}" = "y" ] && echo -e "    ${DIM}но делает диапазон 20000-50000 видимым в сетевых сканерах (Censys/Shodan).${NC}"
-            prompt_yes_no "  Включить Port Hopping для Hysteria 2 (UDP 20000:50000)?" "${HY2_PORT_HOPPING:-n}" HY2_PORT_HOPPING || return $?
-            if [[ "${HY2_PORT_HOPPING,,}" == "y" || "${HY2_PORT_HOPPING:-}" == "1" ]]; then
-                HY2_PORT_HOPPING="y"
-                prompt_default "  Диапазон портов Port Hopping" "${HY2_PORT_HOPPING_RANGE:-20000:50000}" HY2_PORT_HOPPING_RANGE || return $?
-                ok "Port Hopping активирован для диапазона UDP ${HY2_PORT_HOPPING_RANGE}."
-            else
-                HY2_PORT_HOPPING="n"
-                log "Port Hopping отключен (чистый стелс на едином порту ${HY2_PORT}/udp)."
+        # Установка портов по умолчанию и опрос кастомных параметров в экспертном режиме
+        if is_true "$ENABLE_HY2"; then
+            [ -n "${HY2_PORT:-}" ] || HY2_PORT="443"
+            [ -n "${HY2_DOMAIN:-}" ] || HY2_DOMAIN="$PRIMARY_DOMAIN"
+            HY2_PORT_HOPPING="${HY2_PORT_HOPPING:-n}"
+            HY2_PORT_HOPPING_RANGE="${HY2_PORT_HOPPING_RANGE:-20000:50000}"
+            if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+                prompt_default "  UDP-порт для Hysteria 2" "$HY2_PORT" HY2_PORT || return $?
+                prompt_default "  Домен/поддомен для Hysteria 2" "$HY2_DOMAIN" HY2_DOMAIN || return $?
+                prompt_yes_no "  Включить Port Hopping для Hysteria 2 (UDP 20000:50000)?" "$HY2_PORT_HOPPING" HY2_PORT_HOPPING || return $?
+                if is_true "$HY2_PORT_HOPPING"; then
+                    prompt_default "  Диапазон портов Port Hopping" "$HY2_PORT_HOPPING_RANGE" HY2_PORT_HOPPING_RANGE || return $?
+                fi
             fi
-            ok "Hysteria 2 активирована на порту ${HY2_PORT}/udp (домен: ${HY2_DOMAIN})"
         else
-            ENABLE_HY2=0
             HY2_PORT=""
             HY2_DOMAIN=""
             HY2_PORT_HOPPING="n"
-            log "Hysteria 2 отключена."
+        fi
+
+        if is_true "$ENABLE_AWG_V3"; then
+            [ -n "${AWG_V3_PORT:-}" ] || AWG_V3_PORT="8443"
+            if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+                prompt_default "  UDP-порт для AmneziaWG v3.1 (3X-UI)" "$AWG_V3_PORT" AWG_V3_PORT || return $?
+            fi
+        else
+            AWG_V3_PORT=""
+        fi
+
+        if is_true "$ENABLE_AWG_V2"; then
+            [ -n "${AWG_V2_PORT:-}" ] || AWG_V2_PORT="8444"
+            if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+                prompt_default "  UDP-порт для AmneziaWG v2.0 (3X-UI)" "$AWG_V2_PORT" AWG_V2_PORT || return $?
+            fi
+        else
+            AWG_V2_PORT=""
+        fi
+
+        if is_true "$ENABLE_AWG_STANDALONE"; then
+            [ -n "${AWG_STANDALONE_PORT:-}" ] || AWG_STANDALONE_PORT="8445"
+            [ -n "${AWG_SERVER_HOST:-}" ] || AWG_SERVER_HOST="${PRIMARY_DOMAIN:-$WAN_IP}"
+            if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+                prompt_default "  UDP-порт для автономного AmneziaWG" "$AWG_STANDALONE_PORT" AWG_STANDALONE_PORT || return $?
+                prompt_default "  Хост/IP для подключения клиентов AmneziaWG" "$AWG_SERVER_HOST" AWG_SERVER_HOST || return $?
+            fi
+        else
+            AWG_STANDALONE_PORT=""
+        fi
+
+        if is_true "$ENABLE_AWG_V3" || is_true "$ENABLE_AWG_V2" || is_true "$ENABLE_AWG_STANDALONE"; then
+            start_amneziawg_preinstall_bg
+        fi
+
+        if is_true "$ENABLE_TUIC"; then
+            [ -n "${TUIC_PORT:-}" ] || TUIC_PORT="8448"
+            if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+                prompt_default "  UDP-порт для TUIC v5" "$TUIC_PORT" TUIC_PORT || return $?
+            fi
+        else
+            TUIC_PORT=""
+        fi
+
+        if is_true "$ENABLE_SS2022"; then
+            [ -n "${SS2022_PORT:-}" ] || SS2022_PORT="8388"
+            if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+                prompt_default "  Порт для Shadowsocks 2022 (TCP/UDP)" "$SS2022_PORT" SS2022_PORT || return $?
+            fi
+        else
+            SS2022_PORT=""
+        fi
+
+        if is_true "$ENABLE_MTPROTO"; then
+            [ -n "${MTPROTO_PORT:-}" ] || MTPROTO_PORT="8444"
+            [ -n "${MTPROTO_FAKETLS_DOMAIN:-}" ] || MTPROTO_FAKETLS_DOMAIN="gateway.icloud.com"
+            MTPROTO_ADTAG="${MTPROTO_ADTAG:-}"
+            if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+                prompt_default "  TCP-порт для Telegram MTProxy" "$MTPROTO_PORT" MTPROTO_PORT || return $?
+                prompt_default "  FakeTLS домен маскировки для MTProxy" "$MTPROTO_FAKETLS_DOMAIN" MTPROTO_FAKETLS_DOMAIN || return $?
+                prompt_default "  Спонсорский promo-тег adTag (опционально, 32 hex)" "$MTPROTO_ADTAG" MTPROTO_ADTAG || return $?
+            fi
+        else
+            MTPROTO_PORT=""
+            MTPROTO_FAKETLS_DOMAIN=""
+            MTPROTO_ADTAG=""
         fi
 
         rebuild_all_domains
@@ -5010,55 +5908,48 @@ for item in res:
     }
 
     q_step_awg_v3() {
-        echo
-        echo -e "${YELLOW}━━━ Шаг 6/13: Настройка протокола AmneziaWG v3.1 ━━━${NC}"
-        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
-            echo -e "  ${CYAN}💡 Что это:${NC} Усовершенствованный WireGuard с обфускацией пакетов (Junk/Init/Resp)."
-            echo -e "     Специально разработан для обхода ТСПУ/DPI в России. Трафик выглядит как случайный шум."
-            echo
-        fi
-
-        prompt_yes_no "Установить и настроить AmneziaWG v3.1?" "${ENABLE_AWG_V3:-y}" ENABLE_AWG_V3 || return $?
-        if [[ "${ENABLE_AWG_V3,,}" == "y" || "${ENABLE_AWG_V3:-}" == "1" ]]; then
+        prompt_yes_no "Установить и настроить AmneziaWG v3.1 (инбаунд 3X-UI)?" "${ENABLE_AWG_V3:-y}" ENABLE_AWG_V3 || return $?
+        if is_true "${ENABLE_AWG_V3:-y}"; then
             ENABLE_AWG_V3=1
             start_amneziawg_preinstall_bg
-            prompt_default "  Внешний UDP-порт для AmneziaWG v3.1" "${AWG_V3_PORT:-8443}" AWG_V3_PORT || return $?
-            ok "AmneziaWG v3.1 активирована на порту ${AWG_V3_PORT}/udp"
+            prompt_default "  Внешний UDP-порт для AmneziaWG v3.1 (3X-UI)" "${AWG_V3_PORT:-8443}" AWG_V3_PORT || return $?
         else
             ENABLE_AWG_V3=0
             AWG_V3_PORT=""
-            log "AmneziaWG v3.1 отключена."
         fi
         return 0
     }
 
     q_step_awg_v2() {
-        echo
-        echo -e "${YELLOW}━━━ Шаг 7/13: Настройка протокола AmneziaWG v2.0 / Legacy ━━━${NC}"
-        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
-            echo -e "  ${CYAN}💡 Что это:${NC} Классическая версия AmneziaWG (заголовки H1-H4)."
-            echo -e "     ${GREEN}Зачем нужна:${NC} Для совместимости со старыми роутерами (Keenetic, OpenWrt)"
-            echo -e "     и клиентами, которые еще не обновились до версии 3.1."
-            echo
-        fi
-
-        prompt_yes_no "Установить и настроить AmneziaWG v2.0 / Legacy?" "${ENABLE_AWG_V2:-n}" ENABLE_AWG_V2 || return $?
-        if [[ "${ENABLE_AWG_V2,,}" == "y" || "${ENABLE_AWG_V2:-}" == "1" ]]; then
+        prompt_yes_no "Установить и настроить AmneziaWG v2.0 / Legacy (инбаунд 3X-UI)?" "${ENABLE_AWG_V2:-n}" ENABLE_AWG_V2 || return $?
+        if is_true "${ENABLE_AWG_V2:-y}"; then
             ENABLE_AWG_V2=1
             start_amneziawg_preinstall_bg
-            prompt_default "  Внешний UDP-порт для AmneziaWG v2.0" "${AWG_V2_PORT:-8444}" AWG_V2_PORT || return $?
-            ok "AmneziaWG v2.0 активирована на порту ${AWG_V2_PORT}/udp"
+            prompt_default "  Внешний UDP-порт для AmneziaWG v2.0 (3X-UI)" "${AWG_V2_PORT:-8444}" AWG_V2_PORT || return $?
         else
             ENABLE_AWG_V2=0
             AWG_V2_PORT=""
-            log "AmneziaWG v2.0 отключена."
+        fi
+        return 0
+    }
+
+    q_step_awg_standalone() {
+        prompt_yes_no "Установить автономный сервер AmneziaWG (awg-mgr / системная служба на хосте)?" "${ENABLE_AWG_STANDALONE:-n}" ENABLE_AWG_STANDALONE || return $?
+        if is_true "${ENABLE_AWG_STANDALONE:-y}"; then
+            ENABLE_AWG_STANDALONE=1
+            start_amneziawg_preinstall_bg
+            prompt_default "  Внешний UDP-порт для автономного сервера AmneziaWG" "${AWG_STANDALONE_PORT:-8445}" AWG_STANDALONE_PORT || return $?
+            prompt_default "  Домен или IP-адрес для подключения клиентов (Endpoint)" "${AWG_SERVER_HOST:-${PRIMARY_DOMAIN:-$WAN_IP}}" AWG_SERVER_HOST || return $?
+        else
+            ENABLE_AWG_STANDALONE=0
+            AWG_STANDALONE_PORT=""
         fi
         return 0
     }
 
     q_step_agh() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 8/13: Настройка приватного AdGuard Home DoH + Split-DNS ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 6/12: Настройка приватного AdGuard Home DoH + Split-DNS ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Приватный шифрованный DNS (DNS-over-HTTPS) с защитой от рекламы и трекеров."
             echo -e "     ${GREEN}Split-DNS:${NC} Запросы к российским сайтам (.ru, банки, Госуслуги) направляются"
@@ -5077,7 +5968,6 @@ for item in res:
             echo -e "    ${GREEN}2)${NC} На отдельном поддомене (dns.${PRIMARY_DOMAIN})"
             [ "${SHOW_TIPS:-y}" = "y" ] && echo -e "       ${DIM}— Требуется A-запись у регистратора, полная изоляция DNS${NC}"
             echo
-
             prompt_default "  Ваш выбор (1 или 2)" "${AGH_MODE:-1}" AGH_MODE || return $?
             if [ "$AGH_MODE" = "2" ]; then
                 prompt_default "  Поддомен для AdGuard Home DoH" "${AGH_DOMAIN:-dns.$PRIMARY_DOMAIN}" AGH_DOMAIN || return $?
@@ -5105,7 +5995,7 @@ for item in res:
 
     q_step_decoy() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 9/13: Выбор темы для сайта-маскировки (Decoy Site) ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 7/12: Выбор темы для сайта-маскировки (Decoy Site) ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Веб-сайт, который отображается в браузере при обращении к вашему домену."
             echo -e "     Защищает сервер от выявления цензорами, активными сканерами и сетевыми ботами."
@@ -5138,7 +6028,7 @@ for item in res:
 
     q_step_ssl_domains() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 10/13: Реестр SSL-сертификатов и дополнительные домены ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 8/12: Реестр SSL-сертификатов и дополнительные домены ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Список доменов, для которых будут автоматически получены SSL-сертификаты."
             echo -e "  ${DIM}Следующие домены уже включены автоматически из предыдущих шагов:${NC}"
@@ -5176,7 +6066,7 @@ for item in res:
 
     q_step_ssl_engine() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 11/13: Выбор метода выпуска SSL-сертификатов ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 9/12: Выбор метода выпуска SSL-сертификатов ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Способ валидации владения доменом для Let's Encrypt."
             echo -e "    ${GREEN}[1] Классический Certbot (HTTP-01, Рекомендуется)${NC}"
@@ -5218,7 +6108,7 @@ for item in res:
 
     q_step_3xui_auto() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 12/13: Автоматическая настройка базы данных панели 3X-UI ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 10/12: Автоматическая настройка базы данных панели 3X-UI ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Автоматическое создание подключений (REALITY со своим сайтом, внешними сервисами, xHTTP)"
             echo -e "     в базе данных панели 3X-UI, а также настройка секретных путей и подписок."
@@ -5263,7 +6153,7 @@ for item in res:
 
     q_step_warp() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 13/13: Исходящий туннель Cloudflare WARP ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 11/12: Исходящий туннель Cloudflare WARP ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Исходящий WireGuard туннель от вашего VPS в сеть Cloudflare."
             echo -e "     ${GREEN}Преимущество:${NC} Полностью избавляет от капч Google/Cloudflare и разблокирует"
@@ -5311,21 +6201,41 @@ for item in res:
         echo -e "  ${CYAN}[4]${NC} ${BOLD}Внутренние порты:${NC}     Панель :${WHITE}$PANEL_PORT${NC} (${DIM}$PANEL_PATH${NC}), Подписки :${WHITE}$SUB_PORT${NC} (${DIM}$SUB_PATH, Clash: $SUB_CLASH_PATH${NC}), xHTTP :${WHITE}$XHTTP_STREAM_PORT${NC}"
         echo -e "      ${DIM}Доступ в 3X-UI:${NC}       Логин: ${WHITE}$ADMIN_USERNAME${NC}, Пароль: ${YELLOW}$ADMIN_PASSWORD${NC}"
 
+        echo -e "  ${CYAN}[5]${NC} ${BOLD}Протоколы VPN/Прокси:${NC}"
         local hy2_status="${RED}Отключена${NC}"
         if is_true "${ENABLE_HY2:-0}"; then
             local hop_str=""
             [ "$HY2_PORT_HOPPING" = "y" ] && hop_str=" + Hopping $HY2_PORT_HOPPING_RANGE"
             hy2_status="${GREEN}Включена${NC} (:${HY2_PORT}/udp, ${HY2_DOMAIN}${hop_str})"
         fi
-        echo -e "  ${CYAN}[5]${NC} ${BOLD}Hysteria 2 (UDP):${NC}     $hy2_status"
+        echo -e "      ${DIM}• Hysteria 2:${NC}           $hy2_status"
 
         local awg3_status="${RED}Отключен${NC}"
         is_true "${ENABLE_AWG_V3:-0}" && awg3_status="${GREEN}Включен${NC} (:${AWG_V3_PORT}/udp)"
-        echo -e "  ${CYAN}[6]${NC} ${BOLD}AmneziaWG v3.1:${NC}       $awg3_status"
+        echo -e "      ${DIM}• AmneziaWG v3.1 (3X-UI):${NC} $awg3_status"
 
         local awg2_status="${RED}Отключен${NC}"
         is_true "${ENABLE_AWG_V2:-0}" && awg2_status="${GREEN}Включен${NC} (:${AWG_V2_PORT}/udp)"
-        echo -e "  ${CYAN}[7]${NC} ${BOLD}AmneziaWG v2.0:${NC}       $awg2_status"
+        echo -e "      ${DIM}• AmneziaWG v2.0 (3X-UI):${NC} $awg2_status"
+
+        local awg_sa_status="${RED}Отключен${NC}"
+        if is_true "${ENABLE_AWG_STANDALONE:-0}"; then
+            local host_disp="${AWG_SERVER_HOST:-${PRIMARY_DOMAIN:-$WAN_IP}}"
+            awg_sa_status="${GREEN}Включен${NC} (:${AWG_STANDALONE_PORT:-8445}/udp, Endpoint: ${host_disp}, awg-mgr)"
+        fi
+        echo -e "      ${DIM}• Автономный AmneziaWG:${NC}   $awg_sa_status"
+
+        local ss_status="${RED}Отключен${NC}"
+        is_true "${ENABLE_SS2022:-0}" && ss_status="${GREEN}Включен${NC} (:${SS2022_PORT:-8388})"
+        echo -e "      ${DIM}• Shadowsocks 2022:${NC}     $ss_status"
+
+        local tuic_status="${RED}Отключен${NC}"
+        is_true "${ENABLE_TUIC:-0}" && tuic_status="${GREEN}Включен${NC} (:${TUIC_PORT:-8448}/udp)"
+        echo -e "      ${DIM}• TUIC v5 (QUIC):${NC}       $tuic_status"
+
+        local mtp_status="${RED}Отключен${NC}"
+        is_true "${ENABLE_MTPROTO:-0}" && mtp_status="${GREEN}Включен${NC} (:${MTPROTO_PORT:-8444}/tcp, FakeTLS: ${MTPROTO_FAKETLS_DOMAIN:-gateway.icloud.com})"
+        echo -e "      ${DIM}• Telegram MTProxy:${NC}     $mtp_status"
 
         local agh_status="${RED}Отключен${NC}"
         if is_true "${ENABLE_AGH:-0}"; then
@@ -5333,34 +6243,34 @@ for item in res:
             [ "$AGH_MODE" = "2" ] && m_desc="Поддомен $AGH_DOMAIN"
             agh_status="${GREEN}Включен${NC} (Режим: $m_desc, ClientID: $AGH_CLIENT_ID)"
         fi
-        echo -e "  ${CYAN}[8]${NC} ${BOLD}AdGuard Home DoH:${NC}     $agh_status"
+        echo -e "  ${CYAN}[6]${NC} ${BOLD}AdGuard Home DoH:${NC}     $agh_status"
 
         local decoy_name="DataSphere Analytics"
         [ "$DECOY_MODE" = "2" ] && decoy_name="CosmosCloud NextGen"
         [ "$DECOY_MODE" = "3" ] && decoy_name="Стандартная заглушка Nginx"
-        echo -e "  ${CYAN}[9]${NC} ${BOLD}Тема маскировки:${NC}      ${WHITE}$decoy_name${NC}"
+        echo -e "  ${CYAN}[7]${NC} ${BOLD}Тема маскировки:${NC}      ${WHITE}$decoy_name${NC}"
 
-        echo -e "  ${CYAN}[10]${NC} ${BOLD}SSL-домены (${#ALL_DOMAINS[@]}):${NC}   ${WHITE}${ALL_DOMAINS[*]}${NC}"
+        echo -e "  ${CYAN}[8]${NC} ${BOLD}SSL-домены (${#ALL_DOMAINS[@]}):${NC}   ${WHITE}${ALL_DOMAINS[*]}${NC}"
 
         local ssl_name="Certbot (HTTP-01)"
         [ "$SSL_ENGINE_CHOICE" = "2" ] && ssl_name="acme.sh + Cloudflare DNS-01"
-        echo -e "  ${CYAN}[11]${NC} ${BOLD}Метод выпуска SSL:${NC}    ${WHITE}$ssl_name${NC}"
+        echo -e "  ${CYAN}[9]${NC} ${BOLD}Метод выпуска SSL:${NC}    ${WHITE}$ssl_name${NC}"
 
         local auto_3xui_str="${GREEN}Да${NC}"
         is_true "${AUTO_SETUP_3XUI:-y}" || auto_3xui_str="${RED}Нет${NC}"
         if is_true "${ENABLE_NODE_TOKEN:-n}"; then
             auto_3xui_str="${auto_3xui_str} ${DIM}(+ Node Token: ${WHITE}${NODE_TOKEN_NAME}${DIM})${NC}"
         fi
-        echo -e "  ${CYAN}[12]${NC} ${BOLD}3X-UI автонастройка:${NC}  $auto_3xui_str"
+        echo -e "  ${CYAN}[10]${NC} ${BOLD}3X-UI автонастройка:${NC}  $auto_3xui_str"
 
         local warp_status="${RED}Отключен${NC}"
         is_true "${ENABLE_WARP:-n}" && warp_status="${GREEN}Включен${NC} (WireGuard MTU: 1280)"
-        echo -e "  ${CYAN}[13]${NC} ${BOLD}Cloudflare WARP:${NC}      $warp_status"
+        echo -e "  ${CYAN}[11]${NC} ${BOLD}Cloudflare WARP:${NC}      $warp_status"
 
         echo
         echo -e "${YELLOW}════════════════════════════════════════════════════════════════════════════════${NC}"
         echo -e "  ${GREEN}[Enter]${NC} или ${GREEN}[y]${NC}  ${BOLD}Начать установку с выбранными параметрами${NC}"
-        echo -e "  ${CYAN}[1 - 13]${NC}        ${BOLD}Изменить соответствующий раздел конфигурации${NC}"
+        echo -e "  ${CYAN}[1 - 11]${NC}        ${BOLD}Изменить соответствующий раздел конфигурации${NC}"
         echo -e "  ${RED}[q]${NC}             ${BOLD}Отмена и выход${NC}"
         echo -e "${YELLOW}════════════════════════════════════════════════════════════════════════════════${NC}"
         echo
@@ -5383,11 +6293,11 @@ for item in res:
                 die "Установка отменена пользователем."
             fi
 
-            if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le 13 ]; then
+            if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le 11 ]; then
                 return $((100 + choice))
             fi
 
-            warn "  Некорректный ввод. Нажмите Enter для старта, номер [1-13] для изменения или 'q' для выхода."
+            warn "  Некорректный ввод. Нажмите Enter для старта, номер [1-11] для изменения или 'q' для выхода."
         done
     }
 
@@ -5413,13 +6323,13 @@ for item in res:
 
         WIZARD_ALLOW_BACK=1
         if [ "${START_AT_REVIEW:-0}" -eq 1 ]; then
-            CURRENT_STEP=14
+            CURRENT_STEP=12
             EDITING_FROM_REVIEW=0
         else
             CURRENT_STEP=1
             EDITING_FROM_REVIEW=0
         fi
-        TOTAL_STEPS=14
+        TOTAL_STEPS=12
 
         while [ "$CURRENT_STEP" -le "$TOTAL_STEPS" ]; do
             res=0
@@ -5428,22 +6338,20 @@ for item in res:
                 2) q_step_steal || res=$? ;;
                 3) q_step_classic || res=$? ;;
                 4) q_step_ports || res=$? ;;
-                5) q_step_hy2 || res=$? ;;
-                6) q_step_awg_v3 || res=$? ;;
-                7) q_step_awg_v2 || res=$? ;;
-                8) q_step_agh || res=$? ;;
-                9) q_step_decoy || res=$? ;;
-                10) q_step_ssl_domains || res=$? ;;
-                11) q_step_ssl_engine || res=$? ;;
-                12) q_step_3xui_auto || res=$? ;;
-                13) q_step_warp || res=$? ;;
-                14) q_step_review || res=$? ;;
+                5) q_step_protocols || res=$? ;;
+                6) q_step_agh || res=$? ;;
+                7) q_step_decoy || res=$? ;;
+                8) q_step_ssl_domains || res=$? ;;
+                9) q_step_ssl_engine || res=$? ;;
+                10) q_step_3xui_auto || res=$? ;;
+                11) q_step_warp || res=$? ;;
+                12) q_step_review || res=$? ;;
             esac
 
             if [ "$res" -eq 10 ]; then
                 # Запрос перехода назад
                 if [ "$EDITING_FROM_REVIEW" -eq 1 ]; then
-                    CURRENT_STEP=14
+                    CURRENT_STEP=12
                     EDITING_FROM_REVIEW=0
                 elif [ "$CURRENT_STEP" -gt 1 ]; then
                     CURRENT_STEP=$((CURRENT_STEP - 1))
@@ -5463,15 +6371,15 @@ for item in res:
                         warn "Вы уже на первом шаге."
                     fi
                 fi
-            elif [ "$res" -ge 101 ] && [ "$res" -le 113 ]; then
+            elif [ "$res" -ge 101 ] && [ "$res" -le 111 ]; then
                 # Переход к конкретному шагу из экрана Review
                 CURRENT_STEP=$((res - 100))
                 EDITING_FROM_REVIEW=1
             elif [ "$res" -eq 0 ]; then
-                if [ "$CURRENT_STEP" -eq 14 ]; then
+                if [ "$CURRENT_STEP" -eq 12 ]; then
                     break
                 elif [ "$EDITING_FROM_REVIEW" -eq 1 ]; then
-                    CURRENT_STEP=14
+                    CURRENT_STEP=12
                     EDITING_FROM_REVIEW=0
                 else
                     CURRENT_STEP=$((CURRENT_STEP + 1))
@@ -5482,94 +6390,97 @@ for item in res:
         done
         WIZARD_ALLOW_BACK=0
 
+
         rebuild_all_domains
         sync_reality_ports
     fi
 fi
 fi
 
-# Определение системного каталога для хранения SSL
-if [ "$SSL_ENGINE_CHOICE" = "1" ]; then
-    SSL_BASE_DIR="/etc/letsencrypt/live"
-else
-    SSL_BASE_DIR="/etc/ssl/acme"
-fi
+if is_true "${ENABLE_WEB_STACK:-y}"; then
+    # Определение системного каталога для хранения SSL
+    if [ "$SSL_ENGINE_CHOICE" = "1" ]; then
+        SSL_BASE_DIR="/etc/letsencrypt/live"
+    else
+        SSL_BASE_DIR="/etc/ssl/acme"
+    fi
 
-# Проверка DNS-записей
-log "Проверка A-записей для всех собственных доменов..."
-WAN_IP=$(curl -s4 --connect-timeout 4 icanhazip.com || curl -s4 --connect-timeout 4 api.ipify.org || curl -s4 --connect-timeout 4 ifconfig.me || echo "")
-if [ -n "$WAN_IP" ]; then
-    valid_domains=()
-    for dom in "${ALL_DOMAINS[@]}"; do
-        resolved_ip=$(dig +short "$dom" @1.1.1.1 2>/dev/null | tail -n1 || echo "")
-        if [ -z "$resolved_ip" ]; then
-            resolved_ip=$(getent ahosts "$dom" 2>/dev/null | awk '{print $1}' | head -n1 || echo "")
-        fi
+    # Проверка DNS-записей
+    log "Проверка A-записей для всех собственных доменов..."
+    WAN_IP=$(get_wan_ip)
+    if [ -n "$WAN_IP" ]; then
+        valid_domains=()
+        for dom in "${ALL_DOMAINS[@]}"; do
+            resolved_ip=$(dig +short "$dom" @1.1.1.1 2>/dev/null | tail -n1 || echo "")
+            if [ -z "$resolved_ip" ]; then
+                resolved_ip=$(getent ahosts "$dom" 2>/dev/null | awk '{print $1}' | head -n1 || echo "")
+            fi
 
-        local_dns_ok=0
-        if [ -z "$resolved_ip" ]; then
-            warn "Домен $dom не разрешается в IP-адрес. Проверьте DNS A-запись."
-        elif [ "$resolved_ip" != "$WAN_IP" ]; then
-            warn "Несовпадение IP: $dom указывает на $resolved_ip, IP сервера: $WAN_IP."
-        else
-            ok "DNS проверен: $dom -> $WAN_IP"
-            valid_domains+=("$dom")
-            local_dns_ok=1
-        fi
-
-        if [ "$local_dns_ok" -eq 0 ]; then
-            if [ "$NON_INTERACTIVE" -eq 1 ]; then
-                if [ "$FORCE_DNS" -eq 1 ]; then
-                    warn "Внимание: несовпадение DNS проигнорировано (флаг --force / FORCE_DNS=1)."
-                    valid_domains+=("$dom")
-                elif [ "$dom" = "$PRIMARY_DOMAIN" ]; then
-                    die "Критическая ошибка: Главный домен $dom не указывает на $WAN_IP. Укажите -f / --force или настройте A-запись в DNS."
-                else
-                    warn "Внимание: Дополнительный домен '$dom' не указывает на IP сервера ($WAN_IP) и временно исключен из текущей установки."
-                    new_steal=()
-                    for sd in "${STEAL_DOMAINS[@]:-}"; do
-                        [ "$sd" != "$dom" ] && new_steal+=("$sd")
-                    done
-                    STEAL_DOMAINS=("${new_steal[@]:-}")
-                    unset "DOMAIN_TO_PORT[$dom]" 2>/dev/null || true
-                fi
-            elif [ "$dom" = "$PRIMARY_DOMAIN" ]; then
-                read -rp "  [!] Основной домен $dom не совпадает с IP сервера ($WAN_IP). Продолжить выпуск SSL? [y/N]: " dns_ans </dev/tty || read -r dns_ans || true
-                if [[ "${dns_ans,,}" == "y" ]]; then
-                    valid_domains+=("$dom")
-                else
-                    die "Установка отменена пользователем."
-                fi
+            local_dns_ok=0
+            if [ -z "$resolved_ip" ]; then
+                warn "Домен $dom не разрешается в IP-адрес. Проверьте DNS A-запись."
+            elif [ "$resolved_ip" != "$WAN_IP" ]; then
+                warn "Несовпадение IP: $dom указывает на $resolved_ip, IP сервера: $WAN_IP."
             else
-                echo -e "  ${YELLOW}${BOLD}Внимание:${NC} домен '${WHITE}$dom${NC}' не направлен на IP этого сервера (${WHITE}$WAN_IP${NC})."
-                echo -e "  ${DIM}Если продолжить, Let's Encrypt Certbot завершится с фатальной ошибкой (NXDOMAIN).${NC}"
-                echo -e "    ${CYAN}${BOLD}[1] Исключить '$dom' из установки и продолжить${NC} (Рекомендуется)"
-                echo -e "    ${YELLOW}[2] Всё равно попытаться выпустить SSL${NC} (если DNS только что обновлен)"
-                echo -e "    ${RED}[3] Прервать установку${NC}"
-                read -rp "  Ваш выбор [1/2/3] (по умолчанию: 1): " dns_choice </dev/tty || read -r dns_choice || dns_choice="1"
-                dns_choice=$(echo "${dns_choice:-1}" | tr -d '[:space:]')
-                case "$dns_choice" in
-                    2)
-                        warn "Попытка выпуска SSL для '$dom' будет выполнена."
+                ok "DNS проверен: $dom -> $WAN_IP"
+                valid_domains+=("$dom")
+                local_dns_ok=1
+            fi
+
+            if [ "$local_dns_ok" -eq 0 ]; then
+                if [ "$NON_INTERACTIVE" -eq 1 ]; then
+                    if [ "$FORCE_DNS" -eq 1 ]; then
+                        warn "Внимание: несовпадение DNS проигнорировано (флаг --force / FORCE_DNS=1)."
                         valid_domains+=("$dom")
-                        ;;
-                    3)
-                        die "Установка отменена пользователем для настройки DNS."
-                        ;;
-                    *)
-                        warn "Домен '$dom' исключен из текущей установки."
+                    elif [ "$dom" = "$PRIMARY_DOMAIN" ]; then
+                        die "Критическая ошибка: Главный домен $dom не указывает на $WAN_IP. Укажите -f / --force или настройте A-запись в DNS."
+                    else
+                        warn "Внимание: Дополнительный домен '$dom' не указывает на IP сервера ($WAN_IP) и временно исключен из текущей установки."
                         new_steal=()
                         for sd in "${STEAL_DOMAINS[@]:-}"; do
                             [ "$sd" != "$dom" ] && new_steal+=("$sd")
                         done
                         STEAL_DOMAINS=("${new_steal[@]:-}")
                         unset "DOMAIN_TO_PORT[$dom]" 2>/dev/null || true
-                        ;;
-                esac
+                    fi
+                elif [ "$dom" = "$PRIMARY_DOMAIN" ]; then
+                    read -rp "  [!] Основной домен $dom не совпадает с IP сервера ($WAN_IP). Продолжить выпуск SSL? [y/N]: " dns_ans </dev/tty || read -r dns_ans || true
+                    if [[ "${dns_ans,,}" == "y" ]]; then
+                        valid_domains+=("$dom")
+                    else
+                        die "Установка отменена пользователем."
+                    fi
+                else
+                    echo -e "  ${YELLOW}${BOLD}Внимание:${NC} домен '${WHITE}$dom${NC}' не направлен на IP этого сервера (${WHITE}$WAN_IP${NC})."
+                    echo -e "  ${DIM}Если продолжить, Let's Encrypt Certbot завершится с фатальной ошибкой (NXDOMAIN).${NC}"
+                    echo -e "    ${CYAN}${BOLD}[1] Исключить '$dom' из установки и продолжить${NC} (Рекомендуется)"
+                    echo -e "    ${YELLOW}[2] Всё равно попытаться выпустить SSL${NC} (если DNS только что обновлен)"
+                    echo -e "    ${RED}[3] Прервать установку${NC}"
+                    read -rp "  Ваш выбор [1/2/3] (по умолчанию: 1): " dns_choice </dev/tty || read -r dns_choice || dns_choice="1"
+                    dns_choice=$(echo "${dns_choice:-1}" | tr -d '[:space:]')
+                    case "$dns_choice" in
+                        2)
+                            warn "Попытка выпуска SSL для '$dom' будет выполнена."
+                            valid_domains+=("$dom")
+                            ;;
+                        3)
+                            die "Установка отменена пользователем для настройки DNS."
+                            ;;
+                        *)
+                            warn "Домен '$dom' исключен из текущей установки."
+                            new_steal=()
+                            for sd in "${STEAL_DOMAINS[@]:-}"; do
+                                [ "$sd" != "$dom" ] && new_steal+=("$sd")
+                            done
+                            STEAL_DOMAINS=("${new_steal[@]:-}")
+                            unset "DOMAIN_TO_PORT[$dom]" 2>/dev/null || true
+                            ;;
+                    esac
+                fi
             fi
-        fi
-    done
-    ALL_DOMAINS=("${valid_domains[@]}")
+        done
+        ALL_DOMAINS=("${valid_domains[@]}")
+    fi
 fi
 
 # Сохраняем состояние сессии в файл конфигурации для защиты от обрыва SSH или повторного вызова
@@ -5579,10 +6490,15 @@ save_session_state "$SAVED_CONFIG_FILE"
 # =============================================================
 #  ФАЗА УСТАНОВКИ И РАЗВЕРТЫВАНИЯ СИСТЕМЫ
 # =============================================================
-if [[ "${ENABLE_AGH,,}" == "y" || "${ENABLE_AGH:-}" == "1" ]]; then
-    TOTAL_STEPS=8
+if is_true "${ENABLE_WEB_STACK:-y}"; then
+    if [[ "${ENABLE_AGH,,}" == "y" || "${ENABLE_AGH:-}" == "1" ]]; then
+        TOTAL_STEPS=8
+    else
+        TOTAL_STEPS=7
+    fi
 else
-    TOTAL_STEPS=7
+    TOTAL_STEPS=3
+    STEP_NAMES[3]="Развертывание автономного сервера AmneziaWG (awg-mgr)"
 fi
 
 # Ожидание фоновой пред-установки (если была запущена параллельно с опросом)
@@ -5613,63 +6529,64 @@ if ! should_skip_step 2; then
     step_finish 2
 fi
 
-# --- Шаг 3: Установка Nginx Mainline ---
-if ! should_skip_step 3; then
-    step_begin 3
-    if [ "$PREINSTALL_COMPLETED" -eq 1 ]; then
-        ok "Репозиторий nginx.org подключен, Nginx Mainline установлен [В фоне]"
-    else
-        run_with_spinner "Подключение репозитория nginx.org и установка Nginx" setup_nginx_mainline || die "Ошибка установки Nginx Mainline."
+if is_true "${ENABLE_WEB_STACK:-y}"; then
+    # --- Шаг 3: Установка Nginx Mainline ---
+    if ! should_skip_step 3; then
+        step_begin 3
+        if [ "$PREINSTALL_COMPLETED" -eq 1 ]; then
+            ok "Репозиторий nginx.org подключен, Nginx Mainline установлен [В фоне]"
+        else
+            run_with_spinner "Подключение репозитория nginx.org и установка Nginx" setup_nginx_mainline || die "Ошибка установки Nginx Mainline."
+        fi
+        step_finish 3
     fi
-    step_finish 3
-fi
 
-NGINX_USER="nginx"
-if ! id -u nginx >/dev/null 2>&1; then
-    NGINX_USER="www-data"
-fi
+    NGINX_USER="nginx"
+    if ! id -u nginx >/dev/null 2>&1; then
+        NGINX_USER="www-data"
+    fi
 
-mkdir -p /etc/systemd/system/nginx.service.d
-cat << 'EOF' > /etc/systemd/system/nginx.service.d/override.conf
+    mkdir -p /etc/systemd/system/nginx.service.d
+    cat << 'EOF' > /etc/systemd/system/nginx.service.d/override.conf
 [Service]
 LimitNOFILE=524288
 LimitNPROC=524288
 EOF
 
-systemctl daemon-reload
+    systemctl daemon-reload
 
-log "Инициализация файловой структуры веб-сервера..."
-WEBROOT="/var/www/html"
-mkdir -p "$WEBROOT/.well-known/acme-challenge"
-mkdir -p /var/cache/nginx/img_cache
-mkdir -p /var/cache/nginx/html_cache
-mkdir -p /var/cache/nginx/video_cache
-mkdir -p /var/www/mirror
-mkdir -p /var/www/proxy_temp
-mkdir -p /etc/nginx/stream.d
-mkdir -p /etc/nginx/conf.d
+    log "Инициализация файловой структуры веб-сервера..."
+    WEBROOT="/var/www/html"
+    mkdir -p "$WEBROOT/.well-known/acme-challenge"
+    mkdir -p /var/cache/nginx/img_cache
+    mkdir -p /var/cache/nginx/html_cache
+    mkdir -p /var/cache/nginx/video_cache
+    mkdir -p /var/www/mirror
+    mkdir -p /var/www/proxy_temp
+    mkdir -p /etc/nginx/stream.d
+    mkdir -p /etc/nginx/conf.d
 
-chown -R "$NGINX_USER:$NGINX_USER" "$WEBROOT" /var/cache/nginx /var/www/mirror /var/www/proxy_temp
-chmod 755 "$WEBROOT" /var/cache/nginx /var/www/mirror /var/www/proxy_temp
+    chown -R "$NGINX_USER:$NGINX_USER" "$WEBROOT" /var/cache/nginx /var/www/mirror /var/www/proxy_temp
+    chmod 755 "$WEBROOT" /var/cache/nginx /var/www/mirror /var/www/proxy_temp
 
-# Стартовый HTTP-сервер для верификации ACME (создается только если Шаг 4 выполняется)
-if [ "$SSL_ENGINE_CHOICE" = "1" ] && [ "${RESUME_STEP:-1}" -le 4 ]; then
-    NGINX_80_SERVER_NAMES="${ALL_DOMAINS[*]}"
+    # Стартовый HTTP-сервер для верификации ACME (создается только если Шаг 4 выполняется)
+    if [ "$SSL_ENGINE_CHOICE" = "1" ] && [ "${RESUME_STEP:-1}" -le 4 ]; then
+        NGINX_80_SERVER_NAMES="${ALL_DOMAINS[*]}"
 
-    # Останавливаем конкурирующие веб-сервисы, если они были предустановлены
-    systemctl stop apache2 2>/dev/null || true
-    systemctl disable apache2 2>/dev/null || true
+        # Останавливаем конкурирующие веб-сервисы, если они были предустановлены
+        systemctl stop apache2 2>/dev/null || true
+        systemctl disable apache2 2>/dev/null || true
 
-    # Удаляем дефолтные конфигурации сайтов с [::]:80, которые приводят к сбою запуска при выключенном IPv6
-    rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-available/default /etc/nginx/conf.d/default.conf 2>/dev/null || true
-    mkdir -p /etc/nginx/sites-enabled /etc/nginx/conf.d /etc/nginx/modules-enabled "$WEBROOT/.well-known/acme-challenge" 2>/dev/null || true
-    chown -R "$NGINX_USER:$NGINX_USER" "$WEBROOT" 2>/dev/null || true
+        # Удаляем дефолтные конфигурации сайтов с [::]:80, которые приводят к сбою запуска при выключенном IPv6
+        rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-available/default /etc/nginx/conf.d/default.conf 2>/dev/null || true
+        mkdir -p /etc/nginx/sites-enabled /etc/nginx/conf.d /etc/nginx/modules-enabled "$WEBROOT/.well-known/acme-challenge" 2>/dev/null || true
+        chown -R "$NGINX_USER:$NGINX_USER" "$WEBROOT" 2>/dev/null || true
 
-    # Удаляем директивы listen [::]: из существующих файлов conf.d
-    sed -i '/\[::\]/d' /etc/nginx/conf.d/*.conf 2>/dev/null || true
+        # Удаляем директивы listen [::]: из существующих файлов conf.d
+        sed -i '/\[::\]/d' /etc/nginx/conf.d/*.conf 2>/dev/null || true
 
-    log "Создание стартового HTTP-сервера для верификации ACME..."
-    cat << EOF > "/etc/nginx/conf.d/00-acme.conf"
+        log "Создание стартового HTTP-сервера для верификации ACME..."
+        cat << EOF > "/etc/nginx/conf.d/00-acme.conf"
 server {
     listen 80;
     server_name $NGINX_80_SERVER_NAMES;
@@ -5682,66 +6599,66 @@ server {
 }
 EOF
 
-    if ! nginx -t >/dev/null 2>&1; then
-        warn "Сбой проверки начальной конфигурации Nginx. Проверка на ошибки ISA или бинарника..."
-        setup_nginx_mainline
         if ! nginx -t >/dev/null 2>&1; then
-            nginx -t
-            die "Ошибка синтаксиса начальной конфигурации Nginx."
+            warn "Сбой проверки начальной конфигурации Nginx. Проверка на ошибки ISA или бинарника..."
+            setup_nginx_mainline
+            if ! nginx -t >/dev/null 2>&1; then
+                nginx -t
+                die "Ошибка синтаксиса начальной конфигурации Nginx."
+            fi
         fi
+        systemctl restart nginx >/dev/null 2>&1 || systemctl start nginx >/dev/null 2>&1
     fi
-    systemctl restart nginx >/dev/null 2>&1 || systemctl start nginx >/dev/null 2>&1
-fi
 
-# =============================================================
-#  ВЫПУСК SSL-СЕРТИФИКАТОВ (CERTBOT ИЛИ ACME.SH)
-# =============================================================
-if ! should_skip_step 4; then
-    step_begin 4
+    # =============================================================
+    #  ВЫПУСК SSL-СЕРТИФИКАТОВ (CERTBOT ИЛИ ACME.SH)
+    # =============================================================
+    if ! should_skip_step 4; then
+        step_begin 4
 
-    # Обеспечиваем доступность портов 80 и 443 для ACME HTTP-01 проверки
-    command -v ufw >/dev/null 2>&1 && ufw allow 80/tcp >/dev/null 2>&1 || true
-    command -v ufw >/dev/null 2>&1 && ufw allow 443/tcp >/dev/null 2>&1 || true
-    command -v iptables >/dev/null 2>&1 && iptables -I INPUT -p tcp --dport 80 -j ACCEPT >/dev/null 2>&1 || true
-    command -v iptables >/dev/null 2>&1 && iptables -I INPUT -p tcp --dport 443 -j ACCEPT >/dev/null 2>&1 || true
+        # Обеспечиваем доступность портов 80 и 443 для ACME HTTP-01 проверки
+        command -v ufw >/dev/null 2>&1 && ufw allow 80/tcp >/dev/null 2>&1 || true
+        command -v ufw >/dev/null 2>&1 && ufw allow 443/tcp >/dev/null 2>&1 || true
+        command -v iptables >/dev/null 2>&1 && iptables -I INPUT -p tcp --dport 80 -j ACCEPT >/dev/null 2>&1 || true
+        command -v iptables >/dev/null 2>&1 && iptables -I INPUT -p tcp --dport 443 -j ACCEPT >/dev/null 2>&1 || true
 
-    if [ "$SSL_ENGINE_CHOICE" = "1" ]; then
-        run_with_spinner "Инициализация подсистемы Certbot (APT / Snap)" install_certbot_package || die "Ошибка установки Certbot."
+        if [ "$SSL_ENGINE_CHOICE" = "1" ]; then
+            run_with_spinner "Инициализация подсистемы Certbot (APT / Snap)" install_certbot_package || die "Ошибка установки Certbot."
 
-        mkdir -p /etc/letsencrypt
-        if [ -n "$LE_EMAIL" ]; then
-            cat << EOF > /etc/letsencrypt/cli.ini
+            mkdir -p /etc/letsencrypt
+            if [ -n "$LE_EMAIL" ]; then
+                cat << EOF > /etc/letsencrypt/cli.ini
 email = $LE_EMAIL
 agree-tos = true
 non-interactive = true
 EOF
-        else
-            cat << EOF > /etc/letsencrypt/cli.ini
+            else
+                cat << EOF > /etc/letsencrypt/cli.ini
 register-unsafely-without-email = true
 agree-tos = true
 non-interactive = true
 EOF
-        fi
-
-        for dom in "${ALL_DOMAINS[@]}"; do
-            if run_with_spinner "Выпуск SSL для домена $dom (HTTP-01)" obtain_cert "$dom"; then
-                :
-            else
-                warn "Не удалось выпустить сертификат для $dom."
             fi
-            # Защитный fallback: создаем самоподписанный сертификат, если боевой не был получен
-            if [ ! -f "/etc/letsencrypt/live/$dom/fullchain.pem" ] || [ ! -f "/etc/letsencrypt/live/$dom/privkey.pem" ]; then
-                warn "Генерация временного самоподписанного сертификата для $dom (для запуска веб-сервера)..."
-                mkdir -p "/etc/letsencrypt/live/$dom"
-                openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-                    -keyout "/etc/letsencrypt/live/$dom/privkey.pem" \
-                    -out "/etc/letsencrypt/live/$dom/fullchain.pem" \
-                    -subj "/CN=$dom" >/dev/null 2>&1 || true
-            fi
-        done
 
-        mkdir -p /etc/letsencrypt/renewal-hooks/deploy/
-        cat << 'EOF' > /etc/letsencrypt/renewal-hooks/deploy/nginx-reload.sh
+            for dom in "${ALL_DOMAINS[@]}"; do
+                if run_with_spinner "Выпуск SSL для домена $dom (HTTP-01)" obtain_cert "$dom"; then
+                    :
+                else
+                    warn "Не удалось выпустить сертификат для $dom."
+                fi
+                # Защитный fallback: создаем самоподписанный сертификат, если боевой не был получен
+                if [ ! -f "/etc/letsencrypt/live/$dom/fullchain.pem" ] || [ ! -f "/etc/letsencrypt/live/$dom/privkey.pem" ]; then
+                    warn "Генерация временного самоподписанного сертификата для $dom (для запуска веб-сервера)..."
+                    mkdir -p "/etc/letsencrypt/live/$dom"
+                    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+                        -keyout "/etc/letsencrypt/live/$dom/privkey.pem" \
+                        -out "/etc/letsencrypt/live/$dom/fullchain.pem" \
+                        -subj "/CN=$dom" >/dev/null 2>&1 || true
+                fi
+            done
+
+            mkdir -p /etc/letsencrypt/renewal-hooks/deploy/
+            cat << 'EOF' > /etc/letsencrypt/renewal-hooks/deploy/nginx-reload.sh
 #!/bin/bash
 chmod 755 /etc/letsencrypt /etc/letsencrypt/live 2>/dev/null || true
 chmod 700 /etc/letsencrypt/archive 2>/dev/null || true
@@ -5751,68 +6668,67 @@ chmod 600 /etc/letsencrypt/live/*/privkey*.pem 2>/dev/null || true
 chmod 600 /etc/letsencrypt/archive/*/privkey*.pem 2>/dev/null || true
 systemctl reload nginx
 EOF
-        chmod +x /etc/letsencrypt/renewal-hooks/deploy/nginx-reload.sh
+            chmod +x /etc/letsencrypt/renewal-hooks/deploy/nginx-reload.sh
 
-    else
-        run_with_spinner "Инициализация подсистемы acme.sh" install_acmesh || die "Ошибка установки acme.sh."
-        _ACME="${HOME:-/root}/.acme.sh/acme.sh"
-
-        if [ "$CF_AUTH_METHOD" = "1" ]; then
-            export CF_Token="$CF_Token"
-            [ -n "${CF_Account_ID:-}" ] && export CF_Account_ID="$CF_Account_ID"
         else
-            export CF_Email="$CF_Email"
-            export CF_Key="$CF_Key"
+            run_with_spinner "Инициализация подсистемы acme.sh" install_acmesh || die "Ошибка установки acme.sh."
+            _ACME="${HOME:-/root}/.acme.sh/acme.sh"
+
+            if [ "$CF_AUTH_METHOD" = "1" ]; then
+                export CF_Token="$CF_Token"
+                [ -n "${CF_Account_ID:-}" ] && export CF_Account_ID="$CF_Account_ID"
+            else
+                export CF_Email="$CF_Email"
+                export CF_Key="$CF_Key"
+            fi
+
+            mkdir -p /etc/ssl/acme
+            chmod 755 /etc/ssl /etc/ssl/acme
+
+            for dom in "${ALL_DOMAINS[@]}"; do
+                if run_with_spinner "Выпуск SSL для домена $dom через Cloudflare DNS-01" obtain_cf_cert "$dom"; then
+                    :
+                else
+                    warn "Ошибка при выпуске сертификата для $dom."
+                fi
+                # Защитный fallback: создаем самоподписанный сертификат, если боевой не был получен
+                if [ ! -f "/etc/ssl/acme/$dom/fullchain.pem" ] || [ ! -f "/etc/ssl/acme/$dom/privkey.pem" ]; then
+                    warn "Генерация временного самоподписанного сертификата для $dom (для запуска веб-сервера)..."
+                    mkdir -p "/etc/ssl/acme/$dom"
+                    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+                        -keyout "/etc/ssl/acme/$dom/privkey.pem" \
+                        -out "/etc/ssl/acme/$dom/fullchain.pem" \
+                        -subj "/CN=$dom" >/dev/null 2>&1 || true
+                fi
+            done
         fi
 
-        mkdir -p /etc/ssl/acme
-        chmod 755 /etc/ssl /etc/ssl/acme
+        # Настройка строгих прав доступа на каталоги SSL для чтения Nginx (изоляция приватных ключей)
+        if [ "$SSL_ENGINE_CHOICE" = "1" ]; then
+            chmod 755 /etc/letsencrypt /etc/letsencrypt/live 2>/dev/null || true
+            chmod 700 /etc/letsencrypt/archive 2>/dev/null || true
+            for dom in "${ALL_DOMAINS[@]}"; do
+                if [ -d "/etc/letsencrypt/live/$dom" ]; then
+                    chmod 755 "/etc/letsencrypt/live/$dom" 2>/dev/null || true
+                    chmod 644 /etc/letsencrypt/live/"$dom"/*.pem 2>/dev/null || true
+                    chmod 600 /etc/letsencrypt/live/"$dom"/privkey*.pem 2>/dev/null || true
+                    chmod 600 /etc/letsencrypt/archive/"$dom"/privkey*.pem 2>/dev/null || true
+                fi
+            done
+        else
+            chmod 750 /etc/ssl/acme 2>/dev/null || true
+            chown -R root:www-data /etc/ssl/acme 2>/dev/null || true
+            for dom in "${ALL_DOMAINS[@]}"; do
+                if [ -d "/etc/ssl/acme/$dom" ]; then
+                    chmod 750 "/etc/ssl/acme/$dom" 2>/dev/null || true
+                    chmod 640 /etc/ssl/acme/"$dom"/*.pem 2>/dev/null || true
+                    chmod 600 /etc/ssl/acme/"$dom"/privkey*.pem 2>/dev/null || true
+                fi
+            done
+        fi
 
-        for dom in "${ALL_DOMAINS[@]}"; do
-            if run_with_spinner "Выпуск SSL для домена $dom через Cloudflare DNS-01" obtain_cf_cert "$dom"; then
-                :
-            else
-                warn "Ошибка при выпуске сертификата для $dom."
-            fi
-            # Защитный fallback: создаем самоподписанный сертификат, если боевой не был получен
-            if [ ! -f "/etc/ssl/acme/$dom/fullchain.pem" ] || [ ! -f "/etc/ssl/acme/$dom/privkey.pem" ]; then
-                warn "Генерация временного самоподписанного сертификата для $dom (для запуска веб-сервера)..."
-                mkdir -p "/etc/ssl/acme/$dom"
-                openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-                    -keyout "/etc/ssl/acme/$dom/privkey.pem" \
-                    -out "/etc/ssl/acme/$dom/fullchain.pem" \
-                    -subj "/CN=$dom" >/dev/null 2>&1 || true
-            fi
-        done
+        step_finish 4
     fi
-
-    # Настройка строгих прав доступа на каталоги SSL для чтения Nginx (изоляция приватных ключей)
-    if [ "$SSL_ENGINE_CHOICE" = "1" ]; then
-        chmod 755 /etc/letsencrypt /etc/letsencrypt/live 2>/dev/null || true
-        chmod 700 /etc/letsencrypt/archive 2>/dev/null || true
-        for dom in "${ALL_DOMAINS[@]}"; do
-            if [ -d "/etc/letsencrypt/live/$dom" ]; then
-                chmod 755 "/etc/letsencrypt/live/$dom" 2>/dev/null || true
-                chmod 644 /etc/letsencrypt/live/"$dom"/*.pem 2>/dev/null || true
-                chmod 600 /etc/letsencrypt/live/"$dom"/privkey*.pem 2>/dev/null || true
-                chmod 600 /etc/letsencrypt/archive/"$dom"/privkey*.pem 2>/dev/null || true
-            fi
-        done
-    else
-        chmod 750 /etc/ssl/acme 2>/dev/null || true
-        chown -R root:www-data /etc/ssl/acme 2>/dev/null || true
-        for dom in "${ALL_DOMAINS[@]}"; do
-            if [ -d "/etc/ssl/acme/$dom" ]; then
-                chmod 750 "/etc/ssl/acme/$dom" 2>/dev/null || true
-                chmod 640 /etc/ssl/acme/"$dom"/*.pem 2>/dev/null || true
-                chmod 600 /etc/ssl/acme/"$dom"/privkey*.pem 2>/dev/null || true
-            fi
-        done
-    fi
-
-    step_finish 4
-fi
-
 
 # =============================================================
 #  ГЕНЕРАЦИЯ ВЫБРАННОЙ ВЕБ-МАСКИ
@@ -7518,6 +8434,18 @@ fi
 if [[ "${ENABLE_AWG_V2:-}" == "1" || "${ENABLE_AWG_V2,,}" == "y" ]] && [ -n "${AWG_V2_PORT:-}" ]; then
     UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${AWG_V2_PORT}/udp"
 fi
+if [[ "${ENABLE_AWG_STANDALONE:-}" == "1" || "${ENABLE_AWG_STANDALONE,,}" == "y" ]] && [ -n "${AWG_STANDALONE_PORT:-}" ]; then
+    UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${AWG_STANDALONE_PORT}/udp"
+fi
+if [[ "${ENABLE_SS2022:-}" == "1" || "${ENABLE_SS2022,,}" == "y" ]] && [ -n "${SS2022_PORT:-}" ]; then
+    UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${SS2022_PORT}/tcp && ufw allow ${SS2022_PORT}/udp"
+fi
+if [[ "${ENABLE_TUIC:-}" == "1" || "${ENABLE_TUIC,,}" == "y" ]] && [ -n "${TUIC_PORT:-}" ]; then
+    UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${TUIC_PORT}/udp"
+fi
+if [[ "${ENABLE_MTPROTO:-}" == "1" || "${ENABLE_MTPROTO,,}" == "y" ]] && [ -n "${MTPROTO_PORT:-}" ]; then
+    UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${MTPROTO_PORT}/tcp"
+fi
 
 SSL_CERT_REPORT=""
 for dom in "${ALL_DOMAINS[@]}"; do
@@ -7638,6 +8566,14 @@ else
             export AWG_SUBNET_IP
             export AWG_SUBNET_CIDR
             export AWG_RANDOM_TRAILERS
+            export ENABLE_SS2022
+            export SS2022_PORT
+            export ENABLE_TUIC
+            export TUIC_PORT
+            export ENABLE_MTPROTO
+            export MTPROTO_PORT
+            export MTPROTO_FAKETLS_DOMAIN
+            export MTPROTO_ADTAG
             bash "$CONFIG_EXEC" --config "$SAVED_CONFIG_FILE" -y
         }
         run_with_spinner "Автоматическая настройка базы 3X-UI и создание инбаундов" run_configure_3xui_task || die "Ошибка настройки базы 3X-UI."
@@ -8018,102 +8954,152 @@ echo -e "    * Переключатели: ${CYAN}RandomTrailers:${NC} ${RED}В�
 echo
 fi
 
-if [[ "${ENABLE_AWG_V3:-}" == "1" || "${ENABLE_AWG_V3,,}" == "y" ]] || \
-   [[ "${ENABLE_AWG_V2:-}" == "1" || "${ENABLE_AWG_V2,,}" == "y" ]] || \
-   [[ "${ENABLE_AWG_STANDALONE:-}" == "1" || "${ENABLE_AWG_STANDALONE,,}" == "y" ]]; then
-    setup_amneziawg_controller
-    deploy_amneziawg_backend
-fi
+    if [[ "${ENABLE_AWG_V3:-}" == "1" || "${ENABLE_AWG_V3,,}" == "y" ]] || \
+       [[ "${ENABLE_AWG_V2:-}" == "1" || "${ENABLE_AWG_V2,,}" == "y" ]] || \
+       [[ "${ENABLE_AWG_STANDALONE:-}" == "1" || "${ENABLE_AWG_STANDALONE,,}" == "y" ]]; then
+        ensure_amneziawg_installed
+    fi
 
-if [[ "${ENABLE_AWG_V2:-}" == "1" || "${ENABLE_AWG_V2,,}" == "y" ]] && [ -n "${AWG_V2_PORT:-}" ]; then
-echo -e "${YELLOW}ШАГ 6: Инбаунд AmneziaWG v2.0 / Legacy (UDP $AWG_V2_PORT):${NC}"
-echo -e "  - ${YELLOW}Вкладка «Основное»:${NC} Протокол: ${GREEN}amneziawg / wireguard${NC} | Адрес: ${GREEN}0.0.0.0${NC} | Порт: ${GREEN}$AWG_V2_PORT${NC} (UDP)"
-echo -e "  - ${YELLOW}Вкладка «Параметры AWG» (Для роутеров Keenetic / OpenWrt и старых клиентов):${NC}"
-echo -e "    * ${CYAN}H1-H4 (Строки):${NC} ${GREEN}\"149419586\", \"878791997\", \"1251051976\", \"1657628296\"${NC}"
-echo -e "    * ${CYAN}HeaderProtectionKey:${NC} ${RED}ПУСТО (Выключено)${NC}"
-echo -e "    * ${CYAN}Смещения (>= 12):${NC} ${GREEN}S1 = 16, S2 = 20, S3 = 24, S4 = 16${NC}"
-echo -e "    * ${CYAN}Junk packets:${NC} ${GREEN}Jc = 2, Jmin = 20, Jmax = 50${NC} | ${CYAN}MTU:${NC} ${GREEN}1280${NC}"
-echo
-fi
+    if [[ "${ENABLE_AWG_STANDALONE:-}" == "1" || "${ENABLE_AWG_STANDALONE,,}" == "y" ]]; then
+        setup_amneziawg_controller
+        deploy_amneziawg_backend
+    fi
 
-if [[ "${ENABLE_AWG_V3:-}" == "1" || "${ENABLE_AWG_V3,,}" == "y" ]] || \
-   [[ "${ENABLE_AWG_V2:-}" == "1" || "${ENABLE_AWG_V2,,}" == "y" ]] || \
-   [[ "${ENABLE_AWG_STANDALONE:-}" == "1" || "${ENABLE_AWG_STANDALONE,,}" == "y" ]]; then
-echo -e "${YELLOW}СЕРВЕРНЫЙ КОНТРОЛЛЕР AMNEZIAWG (awg-mgr):${NC}"
-echo -e "  - ${YELLOW}Утилита управления:${NC}      ${GREEN}awg-mgr${NC} (или ${GREEN}awg-cli${NC})"
-echo -e "  - ${YELLOW}Первичный конфиг админа:${NC} ${CYAN}/root/awg/client-1.conf${NC}"
-echo -e "  - ${YELLOW}Основные команды CLI:${NC}"
-echo -e "    * Создать клиента:   ${CYAN}awg-mgr add <имя> [--expires=30d] [--dns=quad9|cloudflare|adguard|local]${NC}"
-echo -e "    * Показать список:   ${CYAN}awg-mgr list${NC}"
-echo -e "    * QR-код в терминал: ${CYAN}awg-mgr qr <имя>${NC}"
-echo -e "    * Удалить клиента:   ${CYAN}awg-mgr remove <имя>${NC}"
-echo -e "    * Резервная копия:   ${CYAN}awg-mgr backup${NC} / ${CYAN}awg-mgr restore <файл>${NC}"
-echo -e "    * Очистка истекших:  ${CYAN}awg-mgr purge-expired${NC} (также настроен в cron)"
-echo
-fi
+    if [[ "${ENABLE_AWG_V2:-}" == "1" || "${ENABLE_AWG_V2,,}" == "y" ]] && [ -n "${AWG_V2_PORT:-}" ]; then
+        echo -e "${YELLOW}ШАГ 6: Инбаунд AmneziaWG v2.0 / Legacy (UDP $AWG_V2_PORT):${NC}"
+        echo -e "  - ${YELLOW}Вкладка «Основное»:${NC} Протокол: ${GREEN}amneziawg / wireguard${NC} | Адрес: ${GREEN}0.0.0.0${NC} | Порт: ${GREEN}$AWG_V2_PORT${NC} (UDP)"
+        echo -e "  - ${YELLOW}Вкладка «Параметры AWG» (Для роутеров Keenetic / OpenWrt и старых клиентов):${NC}"
+        echo -e "    * ${CYAN}H1-H4 (Строки):${NC} ${GREEN}\"149419586\", \"878791997\", \"1251051976\", \"1657628296\"${NC}"
+        echo -e "    * ${CYAN}HeaderProtectionKey:${NC} ${RED}ПУСТО (Выключено)${NC}"
+        echo -e "    * ${CYAN}Смещения (>= 12):${NC} ${GREEN}S1 = 16, S2 = 20, S3 = 24, S4 = 16${NC}"
+        echo -e "    * ${CYAN}Junk packets:${NC} ${GREEN}Jc = 2, Jmin = 20, Jmax = 50${NC} | ${CYAN}MTU:${NC} ${GREEN}1280${NC}"
+        echo
+    fi
 
-echo -e "${YELLOW}ШАГ 7: Настройки Клиента и Подписок в 3X-UI:${NC}"
-echo -e "  - ${YELLOW}В карточке Клиента (Клиенты -> Учетные данные):${NC}"
-echo -e "    * Для инбаунда REALITY: Flow: выбрать ${GREEN}xtls-rprx-vision${NC}"
-echo -e "    * Для инбаунда xHTTP: Flow: строго ${RED}пусто (none)${NC} | Decryption: ключ ${GREEN}vlessenc${NC}"
-echo -e "  - ${YELLOW}Настройки подписок (Панель -> Подписка):${NC}"
-echo -e "    * Subscription Port: ${GREEN}$SUB_PORT${NC} | Subscription Path: ${GREEN}$SUB_PATH${NC}"
-echo -e "    * Subscription URL: ${CYAN}https://${PRIMARY_DOMAIN}${SUB_PATH}${NC}"
-echo -e "    * Subscription URL (JSON): ${CYAN}https://${PRIMARY_DOMAIN}${SUB_JSON_PATH}${NC}"
-echo -e "    * Subscription URL (Clash): ${CYAN}https://${PRIMARY_DOMAIN}${SUB_CLASH_PATH}${NC}"
-echo -e "  - ${YELLOW}В разделе «Хосты» (Hosts) добавьте 2 правила:${NC}"
-echo -e "    1) ${BOLD}MAIN_SAME_443:${NC} Инбаунды: ${CYAN}REALITY + Hysteria 2${NC} -> Порт: ${GREEN}443${NC} | Безопасность: ${GREEN}same${NC}"
-echo -e "    2) ${BOLD}XHTTP_TLS_443:${NC} Инбаунд: ${CYAN}${SERVER_PREFIX} (VLESS xHTTP)${NC} -> Порт: ${GREEN}443${NC} | Безопасность: ${GREEN}tls${NC} (SNI: ${CYAN}$PRIMARY_DOMAIN${NC})"
+    if [[ "${ENABLE_AWG_STANDALONE:-}" == "1" || "${ENABLE_AWG_STANDALONE,,}" == "y" ]]; then
+        echo -e "${YELLOW}СЕРВЕРНЫЙ КОНТРОЛЛЕР AMNEZIAWG (awg-mgr):${NC}"
+        echo -e "  - ${YELLOW}Утилита управления:${NC}      ${GREEN}awg-mgr${NC} (или ${GREEN}awg-cli${NC})"
+        echo -e "  - ${YELLOW}Первичный конфиг админа:${NC} ${CYAN}/root/awg/client-1.conf${NC}"
+        echo -e "  - ${YELLOW}Основные команды CLI:${NC}"
+        echo -e "    * Создать клиента:   ${CYAN}awg-mgr add <имя> [--expires=30d] [--dns=quad9|cloudflare|adguard|local]${NC}"
+        echo -e "    * Показать список:   ${CYAN}awg-mgr list${NC}"
+        echo -e "    * QR-код в терминал: ${CYAN}awg-mgr qr <имя>${NC}"
+        echo -e "    * Удалить клиента:   ${CYAN}awg-mgr remove <имя>${NC}"
+        echo -e "    * Резервная копия:   ${CYAN}awg-mgr backup${NC} / ${CYAN}awg-mgr restore <файл>${NC}"
+        echo -e "    * Очистка истекших:  ${CYAN}awg-mgr purge-expired${NC} (также настроен в cron)"
+        echo
 
-if [[ "${ENABLE_AGH,,}" == "y" || "${ENABLE_AGH:-}" == "1" ]]; then
-    local_agh_panel_url=""
-    local_agh_doh_url=""
-    local_server_ip="${WAN_IP:-$(curl -s4 --connect-timeout 3 icanhazip.com 2>/dev/null || echo "IP_СЕРВЕРА")}"
+        if [ -f "/root/awg/client-1.conf" ] && command -v /root/awg/manage_amneziawg.sh >/dev/null 2>&1; then
+            echo -e "  ${WHITE}${BOLD}QR-код для подключения первого клиента (client-1):${NC}"
+            /root/awg/manage_amneziawg.sh qr client-1 2>/dev/null || true
+            echo
+        fi
+    fi
 
-    if [ "${AGH_MODE:-1}" = "2" ] && [ -n "${AGH_DOMAIN:-}" ]; then
-        local_agh_panel_url="https://${AGH_DOMAIN}/"
-        local_agh_doh_url="https://${AGH_DOMAIN}/dns-query/${AGH_CLIENT_ID}"
-    else
-        local_agh_panel_url="http://127.0.0.1:${PORT_AGH_WEB:-3000} (доступ через SSH-туннель: ssh -L ${PORT_AGH_WEB:-3000}:127.0.0.1:${PORT_AGH_WEB:-3000} user@${local_server_ip})"
-        local_agh_doh_url="https://${PRIMARY_DOMAIN}/dns-query/${AGH_CLIENT_ID}"
+    echo -e "${YELLOW}ШАГ 7: Настройки Клиента и Подписок в 3X-UI:${NC}"
+    echo -e "  - ${YELLOW}В карточке Клиента (Клиенты -> Учетные данные):${NC}"
+    echo -e "    * Для инбаунда REALITY: Flow: выбрать ${GREEN}xtls-rprx-vision${NC}"
+    echo -e "    * Для инбаунда xHTTP: Flow: строго ${RED}пусто (none)${NC} | Decryption: ключ ${GREEN}vlessenc${NC}"
+    echo -e "  - ${YELLOW}Настройки подписок (Панель -> Подписка):${NC}"
+    echo -e "    * Subscription Port: ${GREEN}$SUB_PORT${NC} | Subscription Path: ${GREEN}$SUB_PATH${NC}"
+    echo -e "    * Subscription URL: ${CYAN}https://${PRIMARY_DOMAIN}${SUB_PATH}${NC}"
+    echo -e "    * Subscription URL (JSON): ${CYAN}https://${PRIMARY_DOMAIN}${SUB_JSON_PATH}${NC}"
+    echo -e "    * Subscription URL (Clash): ${CYAN}https://${PRIMARY_DOMAIN}${SUB_CLASH_PATH}${NC}"
+    echo -e "  - ${YELLOW}В разделе «Хосты» (Hosts) добавьте 2 правила:${NC}"
+    echo -e "    1) ${BOLD}MAIN_SAME_443:${NC} Инбаунды: ${CYAN}REALITY + Hysteria 2${NC} -> Порт: ${GREEN}443${NC} | Безопасность: ${GREEN}same${NC}"
+    echo -e "    2) ${BOLD}XHTTP_TLS_443:${NC} Инбаунд: ${CYAN}${SERVER_PREFIX} (VLESS xHTTP)${NC} -> Порт: ${GREEN}443${NC} | Безопасность: ${GREEN}tls${NC} (SNI: ${CYAN}$PRIMARY_DOMAIN${NC})"
+
+    if [[ "${ENABLE_AGH,,}" == "y" || "${ENABLE_AGH:-}" == "1" ]]; then
+        local_agh_panel_url=""
+        local_agh_doh_url=""
+        local_server_ip="${WAN_IP:-$(get_wan_ip)}"
+
+        if [ "${AGH_MODE:-1}" = "2" ] && [ -n "${AGH_DOMAIN:-}" ]; then
+            local_agh_panel_url="https://${AGH_DOMAIN}/"
+            local_agh_doh_url="https://${AGH_DOMAIN}/dns-query/${AGH_CLIENT_ID}"
+        else
+            local_agh_panel_url="http://127.0.0.1:${PORT_AGH_WEB:-3000} (доступ через SSH-туннель: ssh -L ${PORT_AGH_WEB:-3000}:127.0.0.1:${PORT_AGH_WEB:-3000} user@${local_server_ip})"
+            local_agh_doh_url="https://${PRIMARY_DOMAIN}/dns-query/${AGH_CLIENT_ID}"
+        fi
+
+        echo
+        echo -e "${YELLOW}ШАГ 8: Приватный AdGuard Home DoH + Split-DNS:${NC}"
+        echo -e "  - ${YELLOW}Веб-панель:${NC}          ${CYAN}${local_agh_panel_url}${NC}"
+        echo -e "  - ${YELLOW}Логин / Пароль:${NC}      ${GREEN}${AGH_USER}${NC} / ${GREEN}${AGH_PASS}${NC}"
+        echo -e "  - ${YELLOW}URL DoH для роутера:${NC} ${GREEN}${local_agh_doh_url}${NC}"
+        echo -e "  - ${YELLOW}Split-DNS зоны:${NC}      ${CYAN}.ru, .рф, .su, .kz, .by${NC} → ${GREEN}Яндекс DNS (77.88.8.8)${NC}"
+        echo -e "  - ${YELLOW}Блокировка рекламы:${NC}  ${GREEN}OISD Small (активен, автообновление каждые 24ч)${NC}"
+        echo -e "  - ${YELLOW}Upstream DNS:${NC}        ${CYAN}Control D (p2 Ads/Malware), Google H3, Cloudflare, DoQ${NC}"
+        if [[ "${AGH_XRAY_DNS,,}" == "y" || "${AGH_XRAY_DNS:-}" == "1" ]]; then
+            echo -e "  - ${YELLOW}Интеграция с Xray:${NC}   ${GREEN}127.0.0.1 (Все VPN-клиенты фильтруются через AGH)${NC}"
+        fi
+        echo
+        echo -e "  ${YELLOW}Инструкция по настройке роутера (Keenetic):${NC}"
+        echo -e "    1. Сетевые правила -> Интернет-фильтры -> Настройка DNS (вкладка DNS-серверы)"
+        echo -e "    2. Добавить DNS-сервер -> IP-адрес: ${CYAN}${local_server_ip}${NC}"
+        echo -e "    3. URL DoH: ${CYAN}${local_agh_doh_url}${NC}"
+        echo
+        echo -e "  ${YELLOW}Инструкция по настройке OpenWrt (Podkop / https-dns-proxy):${NC}"
+        echo -e "    1. Services -> HTTPS DNS Proxy -> Добавить upstream"
+        echo -e "    2. Custom URL: ${CYAN}${local_agh_doh_url}${NC}"
+    fi
+
+    if [[ "${ENABLE_NODE_TOKEN,,}" == "y" || "${ENABLE_NODE_TOKEN:-}" == "1" ]]; then
+        echo
+        echo -e "${YELLOW}ПОДКЛЮЧЕНИЕ СЕРВЕРА КАК УЗЛА (3X-UI NODE):${NC}"
+        echo -e "  - ${YELLOW}Имя узла (Node Name):${NC}       ${GREEN}${NODE_TOKEN_NAME}${NC}"
+        echo -e "  - ${YELLOW}Адрес хоста (Host):${NC}         ${CYAN}${PRIMARY_DOMAIN}${NC}"
+        echo -e "  - ${YELLOW}Порт (Port):${NC}                ${GREEN}443${NC} (HTTPS через Nginx L4/L7 маскировку)"
+        echo -e "  - ${YELLOW}Базовый путь (Base Path):${NC}   ${CYAN}${PANEL_PATH}${NC}"
+        if [ -n "${NODE_TOKEN:-}" ]; then
+            echo -e "  - ${YELLOW}API Token:${NC}                  ${GREEN}${NODE_TOKEN}${NC}"
+        else
+            echo -e "  - ${YELLOW}API Token:${NC}                  ${GREEN}Сгенерирован в базе 3X-UI${NC}"
+        fi
+        echo -e "  - ${YELLOW}Авторизация (Fallback):${NC}     Логин: ${WHITE}${ADMIN_USERNAME:-admin}${NC}, Пароль: ${YELLOW}${ADMIN_PASSWORD}${NC}"
+        echo -e "  - ${YELLOW}Проверка сертификата (TLS):${NC}  ${GREEN}Включена (Действительный сертификат Let's Encrypt)${NC}"
+    fi
+else
+    # --- Шаг 3: Автономный сервер AmneziaWG (awg-mgr) ---
+    if ! should_skip_step 3; then
+        step_begin 3
+        ensure_amneziawg_installed
+        setup_amneziawg_controller
+        deploy_amneziawg_backend
+        if command -v ufw >/dev/null 2>&1; then
+            local awg_p="${AWG_STANDALONE_PORT:-8445}"
+            ufw allow "${awg_p}/udp" comment "AmneziaWG Standalone Server" >/dev/null 2>&1 || true
+            ok "Правило файрвола: разрешен порт ${awg_p}/udp (AmneziaWG)"
+        fi
+        step_finish 3
     fi
 
     echo
-    echo -e "${YELLOW}ШАГ 8: Приватный AdGuard Home DoH + Split-DNS:${NC}"
-    echo -e "  - ${YELLOW}Веб-панель:${NC}          ${CYAN}${local_agh_panel_url}${NC}"
-    echo -e "  - ${YELLOW}Логин / Пароль:${NC}      ${GREEN}${AGH_USER}${NC} / ${GREEN}${AGH_PASS}${NC}"
-    echo -e "  - ${YELLOW}URL DoH для роутера:${NC} ${GREEN}${local_agh_doh_url}${NC}"
-    echo -e "  - ${YELLOW}Split-DNS зоны:${NC}      ${CYAN}.ru, .рф, .su, .kz, .by${NC} → ${GREEN}Яндекс DNS (77.88.8.8)${NC}"
-    echo -e "  - ${YELLOW}Блокировка рекламы:${NC}  ${GREEN}OISD Small (активен, автообновление каждые 24ч)${NC}"
-    echo -e "  - ${YELLOW}Upstream DNS:${NC}        ${CYAN}Control D (p2 Ads/Malware), Google H3, Cloudflare, DoQ${NC}"
-    if [[ "${AGH_XRAY_DNS,,}" == "y" || "${AGH_XRAY_DNS:-}" == "1" ]]; then
-        echo -e "  - ${YELLOW}Интеграция с Xray:${NC}   ${GREEN}127.0.0.1 (Все VPN-клиенты фильтруются через AGH)${NC}"
-    fi
+    echo -e "${GREEN}=====================================================================${NC}"
+    echo -e "  ${GREEN}${BOLD}🎉 УСТАНОВКА АВТОНОМНОГО СЕРВЕРА AMNEZIAWG УСПЕШНО ЗАВЕРШЕНА!${NC}"
+    echo -e "${GREEN}=====================================================================${NC}"
     echo
-    echo -e "  ${YELLOW}Инструкция по настройке роутера (Keenetic):${NC}"
-    echo -e "    1. Сетевые правила -> Интернет-фильтры -> Настройка DNS (вкладка DNS-серверы)"
-    echo -e "    2. Добавить DNS-сервер -> IP-адрес: ${CYAN}${local_server_ip}${NC}"
-    echo -e "    3. URL DoH: ${CYAN}${local_agh_doh_url}${NC}"
+    echo -e "${YELLOW}СЕРВЕРНЫЙ КОНТРОЛЛЕР AMNEZIAWG (awg-mgr):${NC}"
+    echo -e "  - ${YELLOW}Служба ядра Linux:${NC}         ${GREEN}awg-quick@awg0${NC} (активна)"
+    echo -e "  - ${YELLOW}Внешний UDP-порт:${NC}          ${WHITE}${AWG_STANDALONE_PORT:-8445}/udp${NC}"
+    echo -e "  - ${YELLOW}Хост подключения (Endpoint):${NC} ${CYAN}${AWG_SERVER_HOST:-${WAN_IP:-127.0.0.1}}:${AWG_STANDALONE_PORT:-8445}${NC}"
+    echo -e "  - ${YELLOW}Первичный конфиг админа:${NC}     ${CYAN}/root/awg/client-1.conf${NC}"
+    echo -e "  - ${YELLOW}Утилита управления:${NC}          ${GREEN}awg-mgr${NC} (или ${GREEN}awg-cli${NC})"
     echo
-    echo -e "  ${YELLOW}Инструкция по настройке OpenWrt (Podkop / https-dns-proxy):${NC}"
-    echo -e "    1. Services -> HTTPS DNS Proxy -> Добавить upstream"
-    echo -e "    2. Custom URL: ${CYAN}${local_agh_doh_url}${NC}"
-fi
+    echo -e "  ${YELLOW}Команды управления клиентами:${NC}"
+    echo -e "    * Создать нового клиента:   ${CYAN}awg-mgr add <имя> [--expires=30d] [--dns=quad9|cloudflare|adguard]${NC}"
+    echo -e "    * Список всех клиентов:     ${CYAN}awg-mgr list${NC}"
+    echo -e "    * Показать QR-код клиента:  ${CYAN}awg-mgr qr <имя>${NC}"
+    echo -e "    * Отозвать / удалить:       ${CYAN}awg-mgr remove <имя>${NC}"
+    echo -e "    * Резервная копия:          ${CYAN}awg-mgr backup${NC} / ${CYAN}awg-mgr restore <файл>${NC}"
+    echo -e "    * Автоочистка истекших:     ${CYAN}awg-mgr purge-expired${NC} (активна в cron)"
+    echo
 
-if [[ "${ENABLE_NODE_TOKEN,,}" == "y" || "${ENABLE_NODE_TOKEN:-}" == "1" ]]; then
-    echo
-    echo -e "${YELLOW}ПОДКЛЮЧЕНИЕ СЕРВЕРА КАК УЗЛА (3X-UI NODE):${NC}"
-    echo -e "  - ${YELLOW}Имя узла (Node Name):${NC}       ${GREEN}${NODE_TOKEN_NAME}${NC}"
-    echo -e "  - ${YELLOW}Адрес хоста (Host):${NC}         ${CYAN}${PRIMARY_DOMAIN}${NC}"
-    echo -e "  - ${YELLOW}Порт (Port):${NC}                ${GREEN}443${NC} (HTTPS через Nginx L4/L7 маскировку)"
-    echo -e "  - ${YELLOW}Базовый путь (Base Path):${NC}   ${CYAN}${PANEL_PATH}${NC}"
-    if [ -n "${NODE_TOKEN:-}" ]; then
-        echo -e "  - ${YELLOW}API Token:${NC}                  ${GREEN}${NODE_TOKEN}${NC}"
-    else
-        echo -e "  - ${YELLOW}API Token:${NC}                  ${GREEN}Сгенерирован в базе 3X-UI${NC}"
+    if [ -f "/root/awg/client-1.conf" ] && command -v /root/awg/manage_amneziawg.sh >/dev/null 2>&1; then
+        echo -e "  ${WHITE}${BOLD}QR-код для подключения первого клиента (client-1):${NC}"
+        /root/awg/manage_amneziawg.sh qr client-1 2>/dev/null || true
+        echo
     fi
-    echo -e "  - ${YELLOW}Авторизация (Fallback):${NC}     Логин: ${WHITE}${ADMIN_USERNAME:-admin}${NC}, Пароль: ${YELLOW}${ADMIN_PASSWORD}${NC}"
-    echo -e "  - ${YELLOW}Проверка сертификата (TLS):${NC}  ${GREEN}Включена (Действительный сертификат Let's Encrypt)${NC}"
 fi
 echo -e "${GREEN}=====================================================================${NC}"
 

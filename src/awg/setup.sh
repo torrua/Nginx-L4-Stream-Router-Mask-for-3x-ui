@@ -140,21 +140,7 @@ EOF_AWG_PY
     fi
     chmod 750 "$awg_dir/manage_amneziawg.py"
 
-    # Запись скрипта-лаунчера
-    cat << 'EOF_AWG_SH' > "$awg_dir/manage_amneziawg.sh"
-#!/usr/bin/env bash
-set -euo pipefail
-AWG_DIR="${AWG_DIR:-/root/awg}"
-PYTHON_BIN="$(command -v python3 2>/dev/null || echo /usr/bin/python3)"
-exec "$PYTHON_BIN" "$AWG_DIR/manage_amneziawg.py" "$@"
-EOF_AWG_SH
-    chmod 755 "$awg_dir/manage_amneziawg.sh"
-
-    # Создание глобальных симлинков для удобного управления из консоли
-    ln -sf "$awg_dir/manage_amneziawg.sh" /usr/local/bin/awg-mgr 2>/dev/null || true
-    ln -sf "$awg_dir/manage_amneziawg.sh" /usr/local/bin/awg-cli 2>/dev/null || true
-
-    # Настройка правил файрвола UFW
+    # Настройка порта и хоста
     local awg_port="${AWG_SERVER_PORT:-${AWG_STANDALONE_PORT:-}}"
     if [ -z "$awg_port" ]; then
         if [ "${AWG_V3_PORT:-}" = "8443" ] && [[ "${ENABLE_AWG_V3:-}" == "1" || "${ENABLE_AWG_V3,,}" == "y" ]]; then
@@ -163,6 +149,25 @@ EOF_AWG_SH
             awg_port="8443"
         fi
     fi
+    local awg_host="${AWG_SERVER_HOST:-${SERVER_PUBLIC_HOST:-}}"
+
+    # Запись скрипта-лаунчера
+    cat << EOF_AWG_SH > "$awg_dir/manage_amneziawg.sh"
+#!/usr/bin/env bash
+set -euo pipefail
+AWG_DIR="\${AWG_DIR:-/root/awg}"
+PYTHON_BIN="\$(command -v python3 2>/dev/null || echo /usr/bin/python3)"
+[ -n "${awg_host}" ] && export SERVER_PUBLIC_HOST="\${SERVER_PUBLIC_HOST:-${awg_host}}"
+[ -n "${awg_port}" ] && export SERVER_PORT="\${SERVER_PORT:-${awg_port}}"
+exec "\$PYTHON_BIN" "\$AWG_DIR/manage_amneziawg.py" "\$@"
+EOF_AWG_SH
+    chmod 755 "$awg_dir/manage_amneziawg.sh"
+
+    # Создание глобальных симлинков для удобного управления из консоли
+    ln -sf "$awg_dir/manage_amneziawg.sh" /usr/local/bin/awg-mgr 2>/dev/null || true
+    ln -sf "$awg_dir/manage_amneziawg.sh" /usr/local/bin/awg-cli 2>/dev/null || true
+
+    # Настройка правил файрвола UFW
     if command -v ufw >/dev/null 2>&1; then
         ufw allow "${awg_port}/udp" comment "AmneziaWG Server Engine" >/dev/null 2>&1 || true
     fi
@@ -312,13 +317,17 @@ EOF_AWG0
         fi
     fi
 
-    # 4. Создание первого административного клиента, если таблица клиентов пуста и client-1.conf не существует
     if [ -f "$awg_dir/client-1.conf" ]; then
+        if [ -n "${AWG_SERVER_HOST:-}" ]; then
+            sed -i "s|^Endpoint = .*|Endpoint = ${AWG_SERVER_HOST}:${awg_port}|" "$awg_dir/client-1.conf" 2>/dev/null || true
+        fi
         ok "Существующий профиль администратора сохранен: $awg_dir/client-1.conf"
     else
         local client_count=$(/root/awg/manage_amneziawg.sh status 2>/dev/null | grep -o '"total": [0-9]*' | awk '{print $2}' || echo "0")
         if [ "$client_count" = "0" ] || [ -z "$client_count" ]; then
             log "Создание первичного профиля администратора (client-1)..."
+            export SERVER_PUBLIC_HOST="${AWG_SERVER_HOST:-${SERVER_PUBLIC_HOST:-}}"
+            export SERVER_PORT="${awg_port}"
             if ! /root/awg/manage_amneziawg.sh add client-1 >/dev/null 2>&1; then
                 warn "Не удалось автоматически сгенерировать первичного клиента client-1. Попробуйте вручную: awg-mgr add <имя>"
             else

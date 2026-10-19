@@ -53,7 +53,7 @@ reconstruct_arrays_from_vars() {
     if [[ "${v_cls,,}" == "y" || "$v_cls" == "1" ]]; then
         CLASSIC_ENABLED=1
         CLASSIC_PORTS_LIST=(${CLASSIC_PORT:-46443})
-        local classic_raw="${CLASSIC_SNI:-gateway.icloud.com}"
+        local classic_raw="${CLASSIC_SNI:-avito.ru}"
         EXT_SNI_LIST=()
         for cs in ${classic_raw//,/ }; do
             cs=$(echo "$cs" | tr -d '[:space:]')
@@ -63,8 +63,8 @@ reconstruct_arrays_from_vars() {
             fi
         done
         [ ${#EXT_SNI_TO_PORT[@]} -gt 0 ] || {
-            EXT_SNI_LIST=("gateway.icloud.com")
-            EXT_SNI_TO_PORT["gateway.icloud.com"]="${CLASSIC_PORTS_LIST[0]}"
+            EXT_SNI_LIST=("avito.ru")
+            EXT_SNI_TO_PORT["avito.ru"]="${CLASSIC_PORTS_LIST[0]}"
         }
     else
         CLASSIC_ENABLED=0
@@ -119,6 +119,8 @@ reconstruct_arrays_from_vars() {
 
     # Нормализация логических переменных (1/0 и y/n)
     local _v
+    _v="${ENABLE_WEB_STACK:-y}"; if is_true "$_v"; then ENABLE_WEB_STACK=1; else ENABLE_WEB_STACK=0; fi
+    AWG_SERVER_HOST="${AWG_SERVER_HOST:-}"
     _v="${ENABLE_STEAL:-${STEAL_ENABLED:-y}}"; if is_true "$_v"; then ENABLE_STEAL="y"; STEAL_ENABLED=1; else ENABLE_STEAL="n"; STEAL_ENABLED=0; fi
     _v="${ENABLE_CLASSIC:-${CLASSIC_ENABLED:-y}}"; if is_true "$_v"; then ENABLE_CLASSIC="y"; CLASSIC_ENABLED=1; else ENABLE_CLASSIC="n"; CLASSIC_ENABLED=0; fi
     _v="${ENABLE_HY2:-n}"
@@ -134,6 +136,16 @@ reconstruct_arrays_from_vars() {
     fi
     _v="${ENABLE_AWG_V3:-n}"; if is_true "$_v"; then ENABLE_AWG_V3=1; else ENABLE_AWG_V3=0; fi
     _v="${ENABLE_AWG_V2:-n}"; if is_true "$_v"; then ENABLE_AWG_V2=1; else ENABLE_AWG_V2=0; fi
+    _v="${ENABLE_AWG_STANDALONE:-n}"; if is_true "$_v"; then ENABLE_AWG_STANDALONE=1; else ENABLE_AWG_STANDALONE=0; fi
+    AWG_STANDALONE_PORT="${AWG_STANDALONE_PORT:-8445}"
+    _v="${ENABLE_SS2022:-n}"; if is_true "$_v"; then ENABLE_SS2022=1; else ENABLE_SS2022=0; fi
+    SS2022_PORT="${SS2022_PORT:-8388}"
+    _v="${ENABLE_TUIC:-n}"; if is_true "$_v"; then ENABLE_TUIC=1; else ENABLE_TUIC=0; fi
+    TUIC_PORT="${TUIC_PORT:-8448}"
+    _v="${ENABLE_MTPROTO:-n}"; if is_true "$_v"; then ENABLE_MTPROTO=1; else ENABLE_MTPROTO=0; fi
+    MTPROTO_PORT="${MTPROTO_PORT:-8444}"
+    MTPROTO_FAKETLS_DOMAIN="${MTPROTO_FAKETLS_DOMAIN:-gateway.icloud.com}"
+    MTPROTO_ADTAG="${MTPROTO_ADTAG:-}"
     _v="${ENABLE_AGH:-n}"
     if is_true "$_v"; then
         ENABLE_AGH=1
@@ -183,6 +195,8 @@ save_session_state() {
     umask 077
 
     local v=""
+    local web_stack_save="n"
+    v="${ENABLE_WEB_STACK:-y}"; is_true "$v" && web_stack_save="y"
     local steal_save="n"
     v="${ENABLE_STEAL:-${STEAL_ENABLED:-n}}"; is_true "$v" && steal_save="y"
     local classic_save="n"
@@ -193,6 +207,14 @@ save_session_state() {
     v="${ENABLE_AWG_V3:-n}"; is_true "$v" && awg_v3_save="y"
     local awg_v2_save="n"
     v="${ENABLE_AWG_V2:-n}"; is_true "$v" && awg_v2_save="y"
+    local awg_standalone_save="n"
+    v="${ENABLE_AWG_STANDALONE:-n}"; is_true "$v" && awg_standalone_save="y"
+    local ss2022_save="n"
+    v="${ENABLE_SS2022:-n}"; is_true "$v" && ss2022_save="y"
+    local tuic_save="n"
+    v="${ENABLE_TUIC:-n}"; is_true "$v" && tuic_save="y"
+    local mtproto_save="n"
+    v="${ENABLE_MTPROTO:-n}"; is_true "$v" && mtproto_save="y"
     local auto_setup_3xui_save="n"
     v="${AUTO_SETUP_3XUI:-n}"; is_true "$v" && auto_setup_3xui_save="y"
     local node_token_save="n"
@@ -229,6 +251,7 @@ save_session_state() {
 # АВТОМАТИЧЕСКИ СОХРАНЕННАЯ КОНФИГУРАЦИЯ СЕССИИ
 # Для перезапуска без вопросов: ./setup_mask.sh --config $save_path --non-interactive
 # ==============================================================================
+ENABLE_WEB_STACK="$web_stack_save"
 PRIMARY_DOMAIN="${PRIMARY_DOMAIN:-}"
 ADD_WWW="${ADD_WWW:-y}"
 EXTRA_SSL_DOMAINS="${EXTRA_SSL_DOMAINS:-}"
@@ -274,6 +297,21 @@ AWG_RANDOM_TRAILERS="${AWG_RANDOM_TRAILERS:-false}"
 
 ENABLE_AWG_V2="$awg_v2_save"
 AWG_V2_PORT="${AWG_V2_PORT:-8444}"
+
+ENABLE_AWG_STANDALONE="$awg_standalone_save"
+AWG_STANDALONE_PORT="${AWG_STANDALONE_PORT:-8445}"
+AWG_SERVER_HOST="${AWG_SERVER_HOST:-}"
+
+ENABLE_SS2022="$ss2022_save"
+SS2022_PORT="${SS2022_PORT:-8388}"
+
+ENABLE_TUIC="$tuic_save"
+TUIC_PORT="${TUIC_PORT:-8448}"
+
+ENABLE_MTPROTO="$mtproto_save"
+MTPROTO_PORT="${MTPROTO_PORT:-8444}"
+MTPROTO_FAKETLS_DOMAIN="${MTPROTO_FAKETLS_DOMAIN:-gateway.icloud.com}"
+MTPROTO_ADTAG="${MTPROTO_ADTAG:-}"
 
 AWG_PRIMARY_DNS="${AWG_PRIMARY_DNS:-9.9.9.9}"
 AWG_SECONDARY_DNS="${AWG_SECONDARY_DNS:-76.76.2.0}"

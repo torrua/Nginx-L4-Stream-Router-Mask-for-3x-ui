@@ -69,6 +69,11 @@ EOF
 
     sysctl --system >/dev/null 2>&1 || true
 
+    # Оптимизация резолвера gai.conf (приоритет IPv4 для исключения таймаутов mtg/Go QUIC)
+    if [ -f /etc/gai.conf ]; then
+        sed -i 's/#precedence ::ffff:0:0\/96  100/precedence ::ffff:0:0\/96  100/' /etc/gai.conf 2>/dev/null || true
+    fi
+
     # Хранение системных логов journald в RAM (Storage=volatile, без записи на диск)
     mkdir -p /etc/systemd/journald.conf.d/
     cat << 'EOF' > /etc/systemd/journald.conf.d/00-volatile.conf

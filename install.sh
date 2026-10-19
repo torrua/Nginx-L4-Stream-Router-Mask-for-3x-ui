@@ -7,10 +7,106 @@
 # Exit on severe unhandled errors
 set -o pipefail
 
-SCRIPT_VERSION="v7.8.0"
+SCRIPT_VERSION="v8.0.0"
 
 # Защита от аварийного обрыва SSH-сессии при установке
 trap 'echo -e "\n[!] Внимание: получен сигнал SIGHUP, процесс установки продолжается в фоне..." >> "${INSTALL_LOG:-/var/log/nginx_mask_install.log}" 2>&1' SIGHUP
+
+# Terminal Colors & Styles
+RED=$'\033[0;31m'
+GREEN=$'\033[0;32m'
+YELLOW=$'\033[1;33m'
+BLUE=$'\033[0;34m'
+MAGENTA=$'\033[0;35m'
+CYAN=$'\033[0;36m'
+WHITE=$'\033[1;37m'
+DIM=$'\033[2m'
+BOLD=$'\033[1m'
+NC=$'\033[0m'
+RESET=$'\033[0m'
+
+# Status Symbols
+CHECK="✔"
+CROSS="✖"
+ARROW="➜"
+STAR="★"
+INFO="ℹ"
+LOCK="🔒"
+SHIELD="🛡"
+# Standard Logging Functions
+log()  { echo -e "  ${CYAN}[+]${NC} $*"; }
+ok()   { echo -e "  ${GREEN}${CHECK:-✔}${NC} $*"; }
+warn() { echo -e "  ${YELLOW}[!]${NC} $*"; }
+die()  { echo -e "  ${RED}${CROSS:-✖} $*${NC}" >&2; exit 1; }
+# =============================================================
+#  ФУНКЦИИ ДИАГНОСТИКИ, РЕЗЕРВНОГО КОПИРОВАНИЯ И SMOKE-TEST
+# =============================================================
+
+backup_nginx_configs() {
+    local bkp_dir="/var/backups/nginx_mask"
+    mkdir -p "$bkp_dir"
+    local ts
+    ts=$(date +%Y%m%d_%H%M%S)
+    local bkp_file="$bkp_dir/nginx_conf_${ts}.tar.gz"
+
+    if [ -d /etc/nginx ]; then
+        if tar -czf "$bkp_file" -C /etc nginx 2>/dev/null; then
+            export LAST_NGINX_BACKUP="$bkp_file"
+            local old_backups
+            old_backups=$(ls -1t "$bkp_dir"/nginx_conf_*.tar.gz 2>/dev/null | tail -n +6 || true)
+            if [ -n "$old_backups" ]; then
+                echo "$old_backups" | xargs -r rm -f 2>/dev/null || true
+            fi
+            ok "Создана полная резервная копия конфигурации Nginx: $bkp_file (ротация: 5)"
+        fi
+    fi
+}
+
+restore_nginx_configs() {
+    local bkp="${LAST_NGINX_BACKUP:-}"
+    if [ -z "$bkp" ] || [ ! -f "$bkp" ]; then
+        bkp=$(ls -1t /var/backups/nginx_mask/nginx_conf_*.tar.gz 2>/dev/null | head -n 1 || true)
+    fi
+    if [ -n "$bkp" ] && [ -f "$bkp" ]; then
+        log "Откат конфигурации Nginx из резервной копии $bkp..."
+        tar -xzf "$bkp" -C /etc 2>/dev/null || true
+        nginx -t >/dev/null 2>&1 && systemctl reload nginx 2>/dev/null || true
+        ok "Конфигурация Nginx возвращена в исходное состояние."
+    fi
+}
+
+determine_nginx_http2_mode() {
+    local ver_raw=""
+    if command -v nginx >/dev/null 2>&1; then
+        ver_raw=$(nginx -v 2>&1 | grep -oP 'nginx/\K[0-9.]+' || true)
+    fi
+    [ -n "$ver_raw" ] || ver_raw="1.25.1"
+
+    local is_modern=0
+    local major minor patch
+    major=$(echo "$ver_raw" | cut -d. -f1)
+    minor=$(echo "$ver_raw" | cut -d. -f2)
+    patch=$(echo "$ver_raw" | cut -d. -f3)
+    major=${major:-0}; minor=${minor:-0}; patch=${patch:-0}
+
+    if [ "$major" -gt 1 ] 2>/dev/null; then
+        is_modern=1
+    elif [ "$major" -eq 1 ] 2>/dev/null && [ "$minor" -gt 25 ] 2>/dev/null; then
+        is_modern=1
+    elif [ "$major" -eq 1 ] 2>/dev/null && [ "$minor" -eq 25 ] 2>/dev/null && [ "$patch" -ge 1 ] 2>/dev/null; then
+        is_modern=1
+    fi
+
+    if [ "$is_modern" -eq 1 ]; then
+        HTTP2_LISTEN_PARAM=""
+        HTTP2_DIRECTIVE="http2 on;"
+        HTTP2_HTTP_PARAMS=$'    http2_recv_buffer_size 16m;\n    http2_max_concurrent_streams 512;'
+    else
+        HTTP2_LISTEN_PARAM="http2 "
+        HTTP2_DIRECTIVE="# http2 on; (legacy listen param)"
+        HTTP2_HTTP_PARAMS=$'    # http2 buffers managed by legacy core'
+    fi
+}
 
 detect_active_ssh_port() {
     local active_port=""
@@ -34,36 +130,772 @@ get_ssh_service_name() {
     fi
 }
 
+get_wan_ip() {
+    if [ -n "${WAN_IP:-}" ]; then
+        echo "$WAN_IP"
+        return 0
+    fi
+    local cache_file="/run/setup_mask_wan_ip"
+    if [ ! -d /run ] || ! touch /run/.test_w 2>/dev/null; then
+        cache_file="/tmp/setup_mask_wan_ip"
+    else
+        rm -f /run/.test_w 2>/dev/null || true
+    fi
 
-# --- Color Palette & Typography ---
-BOLD=$'\033[1m'
-DIM=$'\033[2m'
-RESET=$'\033[0m'
+    if [ -f "$cache_file" ]; then
+        local cached
+        cached=$(cat "$cache_file" 2>/dev/null | tr -d '[:space:]' || true)
+        if [ -n "$cached" ] && [[ "$cached" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            WAN_IP="$cached"
+            echo "$WAN_IP"
+            return 0
+        fi
+    fi
 
-RED=$'\033[0;31m'
-GREEN=$'\033[0;32m'
-YELLOW=$'\033[0;33m'
-BLUE=$'\033[0;34m'
-MAGENTA=$'\033[0;35m'
-CYAN=$'\033[0;36m'
-WHITE=$'\033[1;37m'
+    local ip_val=""
+    ip_val=$(curl -s4 --connect-timeout 3 icanhazip.com 2>/dev/null \
+          || curl -s4 --connect-timeout 3 api.ipify.org 2>/dev/null \
+          || curl -s4 --connect-timeout 3 ifconfig.me 2>/dev/null || true)
+    ip_val=$(echo "$ip_val" | tr -d '[:space:]')
 
-BG_BLUE=$'\033[44m'
-BG_GREEN=$'\033[42m'
+    if [ -z "$ip_val" ] || ! [[ "$ip_val" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        ip_val=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}' | head -n1 || echo "")
+    fi
 
-# --- Symbols ---
-CHECK="✔"
-CROSS="✖"
-ARROW="➜"
-INFO="ℹ"
-STAR="★"
-LOCK="🔒"
-SHIELD="🛡"
-
-die() {
-    echo -e "  ${RED}${CROSS} $*${RESET}" >&2
-    exit 1
+    if [ -n "$ip_val" ]; then
+        WAN_IP="$ip_val"
+        echo "$WAN_IP" > "$cache_file" 2>/dev/null || true
+    fi
+    echo "${WAN_IP:-127.0.0.1}"
 }
+
+
+get_port_listener_info() {
+    local proto="$1"
+    local port="$2"
+    local raw=""
+    local flag="-t"
+    [ "$proto" = "udp" ] && flag="-u"
+
+    if command -v ss >/dev/null 2>&1; then
+        raw=$(ss -l -n -p "$flag" 2>/dev/null | grep -E ":${port}\b" || true)
+    elif command -v netstat >/dev/null 2>&1; then
+        raw=$(netstat -l -n -p "$flag" 2>/dev/null | grep -E ":${port}\b" || true)
+    elif command -v lsof >/dev/null 2>&1; then
+        raw=$(lsof -i "${proto}:${port}" -sTCP:LISTEN 2>/dev/null || lsof -i "${proto}:${port}" 2>/dev/null || true)
+    fi
+
+    local proc_info=""
+    if [ -n "$raw" ]; then
+        if echo "$raw" | grep -q 'users:('; then
+            proc_info=$(echo "$raw" | grep -oP 'users:\(\(\K[^)]+' | head -n1 | tr -d '"' || true)
+        elif echo "$raw" | grep -qE '[0-9]+/[-_a-zA-Z0-9]+'; then
+            proc_info=$(echo "$raw" | grep -oE '[0-9]+/[-_a-zA-Z0-9]+' | head -n1 || true)
+        fi
+        [ -z "$proc_info" ] && proc_info=$(echo "$raw" | awk '{print $NF}' | head -n1 || true)
+    fi
+    echo "$proc_info"
+}
+
+is_port_in_use() {
+    local proto="$1"
+    local port="$2"
+    if command -v ss >/dev/null 2>&1; then
+        local flag="-t"
+        [ "$proto" = "udp" ] && flag="-u"
+        ss -l -n "$flag" 2>/dev/null | grep -qE ":${port}\b" && return 0
+    elif command -v netstat >/dev/null 2>&1; then
+        local flag="-t"
+        [ "$proto" = "udp" ] && flag="-u"
+        netstat -l -n "$flag" 2>/dev/null | grep -qE ":${port}\b" && return 0
+    elif [ "$proto" = "tcp" ] && timeout 1 bash -c "</dev/tcp/127.0.0.1/$port" 2>/dev/null; then
+        return 0
+    fi
+    return 1
+}
+
+
+inspect_port_conflicts() {
+    echo ""
+    echo -e "  ${CYAN}${BOLD}🔎  УНИВЕРСАЛЬНЫЙ ИНСПЕКТОР СЕТЕВЫХ ПОРТОВ И СЛУЖБ (PREFLIGHT)${NC}"
+    echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}"
+
+    PORT_AGH_WEB="${PORT_AGH_WEB:-3000}"
+
+    # 1. Проверка настраиваемого веб-порта AdGuard Home (по умолчанию 3000)
+    if [[ "${ENABLE_AGH:-0}" == "1" || "${ENABLE_AGH,,}" == "y" ]]; then
+        if is_port_in_use "tcp" "$PORT_AGH_WEB"; then
+            local listener
+            listener=$(get_port_listener_info "tcp" "$PORT_AGH_WEB")
+            if echo "$listener" | grep -qi "AdGuardHome"; then
+                ok "Порт $PORT_AGH_WEB занят собственным сервисом AdGuard Home — порт сохранен."
+            else
+                warn "Порт $PORT_AGH_WEB занят активным процессом: ${listener:-сторонней службой}."
+                local candidate=3001
+                local candidate_found=0
+                while [ "$candidate" -le 3053 ]; do
+                    if ! is_port_in_use "tcp" "$candidate"; then
+                        candidate_found=1
+                        break
+                    fi
+                    candidate=$(( candidate + 1 ))
+                done
+                if [ "$candidate_found" -eq 1 ]; then
+                    PORT_AGH_WEB="$candidate"
+                    ok "Автоматическое переназначение: веб-панель AdGuard Home перенесена на свободный порт ${WHITE}$PORT_AGH_WEB${NC} (конфликт устранен)."
+                    if declare -f invalidate_checkpoint >/dev/null 2>&1; then
+                        invalidate_checkpoint 6 2>/dev/null || true
+                    fi
+                else
+                    die "Все порты в диапазоне 3001–3053 заняты. AdGuard Home не может быть размещен автоматически. Освободите порт или задайте PORT_AGH_WEB вручную."
+                fi
+            fi
+        else
+            ok "Порт $PORT_AGH_WEB (AdGuard Home Web) свободен."
+        fi
+    fi
+
+    # 2. Проверка системного DNS-порта 53 (TCP/UDP)
+    if [[ "${ENABLE_AGH:-0}" == "1" || "${ENABLE_AGH,,}" == "y" ]]; then
+        if is_port_in_use "udp" 53 || is_port_in_use "tcp" 53; then
+            local dns_owner
+            dns_owner=$(get_port_listener_info "udp" 53)
+            [ -z "$dns_owner" ] && dns_owner=$(get_port_listener_info "tcp" 53)
+            if echo "$dns_owner" | grep -qi "systemd-resolve"; then
+                ok "Обнаружен локальный systemd-resolved на порту 53 — будет безопасно отключен стаб-слушатель (DNSStubListener=no) с сохранением системного DNS хоста."
+            else
+                warn "Порт 53 занят процессом: ${dns_owner:-сторонним DNS-сервером}. AdGuard Home требует свободного порта 53."
+            fi
+        else
+            ok "Порт 53 (DNS) свободен."
+        fi
+    fi
+
+    # 3. Проверка внешних портов маршрутизации и маскирования (80 и 443 TCP)
+    local _web_stack="${ENABLE_WEB_STACK:-y}"
+    if [[ "${_web_stack,,}" == "y" || "${_web_stack}" == "1" || "${_web_stack,,}" == "true" ]]; then
+        for p in 80 443; do
+            if is_port_in_use "tcp" "$p"; then
+                local w_owner
+                w_owner=$(get_port_listener_info "tcp" "$p")
+                if echo "$w_owner" | grep -qi "nginx"; then
+                    ok "Порт $p слушает Nginx (будет переконфигурирован в единый L4/L7 роутер маскирования)."
+                else
+                    die "Порт $p занят сторонним процессом: ${w_owner:-не Nginx}. Для сквозного TLS/HTTP маскирования требуется порт $p."
+                fi
+            else
+                ok "Порт $p (Веб / Маскирование) свободен."
+            fi
+        done
+
+        # 3.1. Проверка существующих сторонних сайтов на прямой listen 443
+        local conflicting_vhosts=()
+        for vf in /etc/nginx/sites-enabled/* /etc/nginx/conf.d/*.conf; do
+            [ -f "$vf" ] || continue
+            local b_name
+            b_name=$(basename "$vf")
+            case "$b_name" in
+                default|default.conf|01-main.conf|02-*.conf|03-adguard.conf|vpn_mask.conf)
+                    continue
+                    ;;
+            esac
+            if grep -Eq 'listen[[:space:]]+([^;]*:)?443' "$vf" 2>/dev/null; then
+                if ! grep -q 'listen[[:space:]]+unix:' "$vf" 2>/dev/null; then
+                    conflicting_vhosts+=("$b_name")
+                fi
+            fi
+        done
+        if [ ${#conflicting_vhosts[@]} -gt 0 ]; then
+            warn "Обнаружены существующие vhost с прямым слушанием порта 443: ${conflicting_vhosts[*]}"
+            warn "Nginx Stream роутер использует порт 443. Такие vhost должны быть адаптированы под сокет unix:/dev/shm/nginx-http.sock."
+        fi
+
+        # 4. Проверка внутренних служебных портов стека
+        local internal_ports=()
+        [ -n "${PANEL_PORT:-}" ] && internal_ports+=("Панель 3X-UI:$PANEL_PORT")
+        [ -n "${SUB_PORT:-}" ] && internal_ports+=("Канал подписок:$SUB_PORT")
+        [ -n "${XHTTP_STREAM_PORT:-}" ] && internal_ports+=("xHTTP стрим:$XHTTP_STREAM_PORT")
+        [ -n "${REALITY_FALLBACK_PORT:-}" ] && internal_ports+=("REALITY Fallback:$REALITY_FALLBACK_PORT")
+
+        for item in "${internal_ports[@]}"; do
+            local s_name="${item%%:*}"
+            local s_port="${item##*:}"
+            if is_port_in_use "tcp" "$s_port"; then
+                local p_owner
+                p_owner=$(get_port_listener_info "tcp" "$s_port")
+                if echo "$p_owner" | grep -qiE "x-ui|xray|nginx"; then
+                    ok "Внутренний порт $s_port ($s_name) занят собственным сервисом ($p_owner) — готов к реконфигурации."
+                else
+                    warn "Внутренний порт $s_port ($s_name) занят сторонним процессом: ${p_owner:-неизвестно}. Возможен конфликт."
+                fi
+            fi
+        done
+    fi
+
+    # 5. Проверка порта автономного AmneziaWG (UDP)
+    local _awg_sa="${ENABLE_AWG_STANDALONE:-0}"
+    if [[ "${_awg_sa,,}" == "y" || "${_awg_sa}" == "1" || "${_awg_sa,,}" == "true" ]]; then
+        local awg_p="${AWG_STANDALONE_PORT:-8445}"
+        if is_port_in_use "udp" "$awg_p"; then
+            local awg_owner
+            awg_owner=$(get_port_listener_info "udp" "$awg_p")
+            if echo "$awg_owner" | grep -qiE "amnezia|wireguard"; then
+                ok "UDP-порт $awg_p (AmneziaWG) занят собственной службой ($awg_owner)."
+            else
+                warn "UDP-порт $awg_p (AmneziaWG) занят сторонним процессом: ${awg_owner:-неизвестно}. Возможен конфликт."
+            fi
+        else
+            ok "Порт $awg_p/udp (AmneziaWG Standalone) свободен."
+        fi
+    fi
+
+    echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}\n"
+}
+
+post_install_sanity_check() {
+    echo ""
+    echo -e "  ${CYAN}${BOLD}🔍  ПРОВЕРКА РАБОТОСПОСОБНОСТИ СЕРВИСОВ (SMOKE TEST)${NC}"
+    echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}"
+
+    local all_ok=1
+
+    # 1. Nginx служба и порт 443 TCP
+    if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet nginx 2>/dev/null; then
+        ok "Служба Nginx: активна (running)"
+    else
+        warn "Служба Nginx: НЕ АКТИВНА!"
+        all_ok=0
+    fi
+
+    if timeout 2 bash -c '</dev/tcp/127.0.0.1/443' 2>/dev/null; then
+        ok "Порт 443 TCP (Nginx Stream Router): отвечает"
+    else
+        warn "Порт 443 TCP (Nginx Stream Router): НЕ ОТВЕЧАЕТ на 127.0.0.1!"
+        all_ok=0
+    fi
+
+    if timeout 2 bash -c '</dev/tcp/127.0.0.1/80' 2>/dev/null; then
+        ok "Порт 80 TCP (HTTP / ACME Redirect): отвечает"
+    else
+        warn "Порт 80 TCP (HTTP): НЕ ОТВЕЧАЕТ на 127.0.0.1!"
+    fi
+
+    # 2. Xray / 3X-UI
+    if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet x-ui 2>/dev/null; then
+        ok "Служба 3X-UI: активна (running)"
+    else
+        warn "Служба 3X-UI: НЕ АКТИВНА!"
+        all_ok=0
+    fi
+
+    local steal_p="${STEAL_PORTS_LIST[0]:-${STEAL_PORT:-45443}}"
+    local classic_p="${CLASSIC_PORTS_LIST[0]:-${CLASSIC_PORT:-46443}}"
+    local xhttp_p="${XHTTP_STREAM_PORT:-50443}"
+    local panel_p="${PANEL_PORT:-10443}"
+    local sub_p="${SUB_PORT:-55443}"
+
+    if [[ "${ENABLE_STEAL,,}" == "y" || "${ENABLE_STEAL:-}" == "1" ]]; then
+        if timeout 2 bash -c "</dev/tcp/127.0.0.1/$steal_p" 2>/dev/null; then
+            ok "Подключение REALITY (свой сайт, порт $steal_p): отвечает"
+        else
+            warn "Подключение REALITY (свой сайт, порт $steal_p): НЕ ОТВЕЧАЕТ!"
+            all_ok=0
+        fi
+    fi
+
+    if [[ "${ENABLE_CLASSIC,,}" == "y" || "${ENABLE_CLASSIC:-}" == "1" ]]; then
+        if timeout 2 bash -c "</dev/tcp/127.0.0.1/$classic_p" 2>/dev/null; then
+            ok "Подключение REALITY (внешние сервисы, порт $classic_p): отвечает"
+        else
+            warn "Подключение REALITY (внешние сервисы, порт $classic_p): НЕ ОТВЕЧАЕТ!"
+            all_ok=0
+        fi
+    fi
+
+    if timeout 2 bash -c "</dev/tcp/127.0.0.1/$xhttp_p" 2>/dev/null; then
+        ok "Инбаунд VLESS xHTTP (порт $xhttp_p): отвечает"
+    else
+        warn "Инбаунд VLESS xHTTP (порт $xhttp_p): НЕ ОТВЕЧАЕТ!"
+        all_ok=0
+    fi
+
+    if timeout 2 bash -c "</dev/tcp/127.0.0.1/$panel_p" 2>/dev/null; then
+        ok "Панель 3X-UI (порт $panel_p): отвечает"
+    else
+        warn "Панель 3X-UI (порт $panel_p): НЕ ОТВЕЧАЕТ!"
+    fi
+
+    if timeout 2 bash -c "</dev/tcp/127.0.0.1/$sub_p" 2>/dev/null; then
+        ok "Канал подписок 3X-UI (порт $sub_p): отвечает"
+    else
+        warn "Канал подписок 3X-UI (порт $sub_p): НЕ ОТВЕЧАЕТ!"
+    fi
+
+    # 3. UDP сервисы (Hysteria 2 / AmneziaWG)
+    if [[ "${ENABLE_HY2,,}" == "y" || "${ENABLE_HY2:-}" == "1" ]]; then
+        if ss -ulpn 2>/dev/null | grep -q ":${HY2_PORT:-443} "; then
+            ok "Hysteria 2 UDP (порт ${HY2_PORT:-443}): слушает"
+        fi
+    fi
+    if [[ "${ENABLE_AWG_V3,,}" == "y" || "${ENABLE_AWG_V3:-}" == "1" ]]; then
+        if ss -ulpn 2>/dev/null | grep -q ":${AWG_V3_PORT:-8443} "; then
+            ok "AmneziaWG v3.1 UDP (порт ${AWG_V3_PORT:-8443}): слушает"
+        fi
+    fi
+
+    # 4. AdGuard Home
+    if [[ "${ENABLE_AGH,,}" == "y" || "${ENABLE_AGH:-}" == "1" ]]; then
+        if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet AdGuardHome 2>/dev/null; then
+            ok "Служба AdGuard Home: активна (running)"
+        else
+            warn "Служба AdGuard Home: НЕ АКТИВНА!"
+        fi
+        if timeout 2 bash -c '</dev/tcp/127.0.0.1/53' 2>/dev/null || ss -ulpn 2>/dev/null | grep -q ':53 '; then
+            ok "AdGuard Home DNS (порт 53): слушает"
+        fi
+    fi
+
+    # 5. SSL сертификат
+    local main_cert=""
+    if [ "${SSL_ENGINE_CHOICE:-1}" = "1" ]; then
+        main_cert="/etc/letsencrypt/live/${PRIMARY_DOMAIN:-}/fullchain.pem"
+    else
+        main_cert="/etc/ssl/acme/${PRIMARY_DOMAIN:-}/fullchain.pem"
+    fi
+    if [ -f "$main_cert" ] && command -v openssl >/dev/null 2>&1; then
+        local exp_date
+        exp_date=$(openssl x509 -enddate -noout -in "$main_cert" 2>/dev/null | cut -d= -f2 || true)
+        local exp_epoch
+        exp_epoch=$(date -d "$exp_date" +%s 2>/dev/null || echo 0)
+        local now_epoch
+        now_epoch=$(date +%s)
+        local days_left=$(( (exp_epoch - now_epoch) / 86400 ))
+        if [ "$days_left" -gt 0 ]; then
+            ok "SSL-сертификат $PRIMARY_DOMAIN: действителен (осталось $days_left дн., до $exp_date)"
+        else
+            warn "SSL-сертификат $PRIMARY_DOMAIN: ИСТЕК ИЛИ НЕВАЛИДЕН!"
+            all_ok=0
+        fi
+    fi
+
+    # 6. Decoy сайт
+    if [ -n "${PRIMARY_DOMAIN:-}" ] && command -v curl >/dev/null 2>&1; then
+        local http_code
+        http_code=$(curl -sk -o /dev/null -w "%{http_code}" --resolve "${PRIMARY_DOMAIN}:443:127.0.0.1" "https://${PRIMARY_DOMAIN}/" 2>/dev/null || echo "ERR")
+        if [ "$http_code" = "200" ]; then
+            ok "Веб-маска (HTTPS GET /): HTTP $http_code OK"
+        else
+            warn "Веб-маска (HTTPS GET /): вернула код $http_code"
+        fi
+    fi
+
+    echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}"
+    if [ "$all_ok" -eq 1 ]; then
+        echo -e "  ${GREEN}${BOLD}✔ Все ключевые компоненты работают штатно!${NC}\n"
+    else
+        echo -e "  ${YELLOW}${BOLD}⚠️  Обнаружены предупреждения при проверке компонентов (см. выше).${NC}\n"
+    fi
+}
+
+run_doctor_check() {
+    clear 2>/dev/null || true
+    echo -e "  ${CYAN}${BOLD}🩺  ДИАГНОСТИКА СИСТЕМЫ И СЕРВИСОВ (DOCTOR MODE)${NC}"
+    echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}"
+    echo -e "  Дата проверки: ${WHITE}$(date '+%Y-%m-%d %H:%M:%S')${NC}\n"
+
+    # 1. ОС и Ядро
+    echo -e "  ${WHITE}${BOLD}[1/7] ОС и Сетевой стек ядра:${NC}"
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        echo -e "    • Дистрибутив:       ${GREEN}${PRETTY_NAME:-$ID}${NC}"
+    fi
+    echo -e "    • Ядро Linux:         ${GREEN}$(uname -r)${NC}"
+
+    local cc
+    cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "unknown")
+    if [ "$cc" = "bbr" ]; then
+        echo -e "    • Алгоритм TCP:      ${GREEN}BBR (активен)${NC}"
+    else
+        echo -e "    • Алгоритм TCP:      ${YELLOW}$cc (рекомендуется bbr)${NC}"
+    fi
+
+    local qdisc
+    qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo "unknown")
+    echo -e "    • Очередь qdisc:     ${GREEN}$qdisc${NC}"
+
+    if iptables -t mangle -L -n -v 2>/dev/null | grep -q "TCPMSS.*clamp"; then
+        echo -e "    • MSS Clamping:      ${GREEN}АКТИВЕН (iptables mangle TCPMSS clamp)${NC}"
+    else
+        echo -e "    • MSS Clamping:      ${YELLOW}не обнаружен в iptables mangle${NC}"
+    fi
+
+    local ipv6_all
+    ipv6_all=$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null || echo "0")
+    if [ "$ipv6_all" = "1" ] || [ ! -d /proc/sys/net/ipv6 ]; then
+        echo -e "    • Статус IPv6:       ${GREEN}ОТКЛЮЧЕН (no leak)${NC}"
+    else
+        echo -e "    • Статус IPv6:       ${RED}АКТИВЕН (возможны утечки DNS/IPv6)${NC}"
+    fi
+
+    # 2. Nginx
+    echo -e "\n  ${WHITE}${BOLD}[2/7] Веб-сервер Nginx (L4/L7 Router):${NC}"
+    if command -v nginx >/dev/null 2>&1; then
+        local ng_ver
+        ng_ver=$(nginx -v 2>&1 | cut -d/ -f2 || true)
+        echo -e "    • Версия Nginx:      ${GREEN}$ng_ver${NC}"
+        if systemctl is-active --quiet nginx 2>/dev/null; then
+            echo -e "    • Статус службы:     ${GREEN}active (running)${NC}"
+        else
+            echo -e "    • Статус службы:     ${RED}NOT RUNNING${NC}"
+        fi
+        if nginx -t >/dev/null 2>&1; then
+            echo -e "    • Синтаксис конфига: ${GREEN}OK (nginx -t passed)${NC}"
+        else
+            echo -e "    • Синтаксис конфига: ${RED}ОШИБКА в конфигурации!${NC}"
+        fi
+        [ -f /etc/nginx/stream.d/00-stream.conf ] && echo -e "    • Stream Router:     ${GREEN}/etc/nginx/stream.d/00-stream.conf (присутствует)${NC}" || echo -e "    • Stream Router:     ${RED}00-stream.conf ОТСУТСТВУЕТ!${NC}"
+        [ -f /etc/nginx/conf.d/01-main.conf ] && echo -e "    • Main HTTP Config:  ${GREEN}/etc/nginx/conf.d/01-main.conf (присутствует)${NC}" || echo -e "    • Main HTTP Config:  ${RED}01-main.conf ОТСУТСТВУЕТ!${NC}"
+    else
+        echo -e "    • Nginx:             ${RED}не установлен${NC}"
+    fi
+
+    # 3. Xray-core и 3X-UI
+    echo -e "\n  ${WHITE}${BOLD}[3/7] Прокси-ядро Xray и панель 3X-UI:${NC}"
+    if systemctl is-active --quiet x-ui 2>/dev/null; then
+        echo -e "    • Статус 3X-UI:      ${GREEN}active (running)${NC}"
+    else
+        echo -e "    • Статус 3X-UI:      ${RED}NOT RUNNING${NC}"
+    fi
+    local xray_bin="/usr/local/x-ui/bin/xray-linux-amd64"
+    [ -f "$xray_bin" ] || xray_bin="/usr/local/x-ui/bin/xray"
+    [ -f "$xray_bin" ] || xray_bin="/etc/x-ui/bin/xray-linux-amd64"
+    [ -f "$xray_bin" ] || xray_bin="/etc/x-ui/bin/xray"
+    if [ -x "$xray_bin" ]; then
+        local xv
+        xv=$("$xray_bin" -version 2>/dev/null | head -n1 | awk '{print $2}' || true)
+        echo -e "    • Ядро Xray-core:    ${GREEN}${xv:-найден}${NC}"
+    fi
+    if [ -f /etc/x-ui/x-ui.db ]; then
+        echo -e "    • База SQLite:       ${GREEN}/etc/x-ui/x-ui.db (${WHITE}$(du -h /etc/x-ui/x-ui.db 2>/dev/null | awk '{print $1}')${GREEN})${NC}"
+    fi
+    if systemctl is-active --quiet xray-geo-update.timer 2>/dev/null; then
+        echo -e "    • Таймер гео-баз:    ${GREEN}активен (еженедельное обновление)${NC}"
+    fi
+
+    # 4. Прослушиваемые порты
+    echo -e "\n  ${WHITE}${BOLD}[4/7] Сетевые порты (Listening Sockets):${NC}"
+    doctor_check_tcp() {
+        local p="$1"
+        local desc="$2"
+        if timeout 1 bash -c "</dev/tcp/127.0.0.1/$p" 2>/dev/null; then
+            echo -e "    • TCP :$p ($desc): ${GREEN}ОТКРЫТ (отвечает)${NC}"
+        else
+            echo -e "    • TCP :$p ($desc): ${RED}НЕ ОТВЕЧАЕТ${NC}"
+        fi
+    }
+    doctor_check_tcp 443 "Nginx Stream Router"
+    doctor_check_tcp 80 "HTTP Redirect / ACME"
+    doctor_check_tcp 9443 "Anti-Loop Fallback"
+    doctor_check_tcp "${STEAL_PORT:-45443}" "Xray REALITY (свой сайт)"
+    doctor_check_tcp "${CLASSIC_PORT:-46443}" "Xray REALITY (внешние сервисы)"
+    doctor_check_tcp "${XHTTP_STREAM_PORT:-50443}" "Xray VLESS xHTTP"
+    doctor_check_tcp "${PANEL_PORT:-10443}" "3X-UI Web Panel"
+    doctor_check_tcp "${SUB_PORT:-55443}" "3X-UI Subscriptions"
+
+    # UDP
+    if ss -ulpn 2>/dev/null | grep -q ":${HY2_PORT:-443} "; then
+        echo -e "    • UDP :${HY2_PORT:-443} (Hysteria 2): ${GREEN}СЛУШАЕТ${NC}"
+    else
+        echo -e "    • UDP :${HY2_PORT:-443} (Hysteria 2): ${DIM}не активен или выключен${NC}"
+    fi
+    if ss -ulpn 2>/dev/null | grep -q ":${AWG_V3_PORT:-8443} "; then
+        echo -e "    • UDP :${AWG_V3_PORT:-8443} (AmneziaWG v3): ${GREEN}СЛУШАЕТ${NC}"
+    else
+        echo -e "    • UDP :${AWG_V3_PORT:-8443} (AmneziaWG v3): ${DIM}не активен или выключен${NC}"
+    fi
+
+    # 5. AdGuard Home
+    echo -e "\n  ${WHITE}${BOLD}[5/7] AdGuard Home DNS:${NC}"
+    if [ -f /opt/AdGuardHome/AdGuardHome ]; then
+        if systemctl is-active --quiet AdGuardHome 2>/dev/null; then
+            echo -e "    • Статус:            ${GREEN}active (running)${NC}"
+        else
+            echo -e "    • Статус:            ${RED}NOT RUNNING${NC}"
+        fi
+        if ss -ulpn 2>/dev/null | grep -q ":53 "; then
+            echo -e "    • DNS Порт 53:       ${GREEN}СЛУШАЕТ${NC}"
+        else
+            echo -e "    • DNS Порт 53:       ${YELLOW}не слушает 53${NC}"
+        fi
+    else
+        echo -e "    • AdGuard Home:      ${DIM}не установлен на этом сервере${NC}"
+    fi
+
+    # 6. SSL сертификаты
+    echo -e "\n  ${WHITE}${BOLD}[6/7] SSL-сертификаты:${NC}"
+    local found_cert=0
+    for cert_dir in "/etc/letsencrypt/live" "/etc/ssl/acme"; do
+        if [ -d "$cert_dir" ]; then
+            for c_path in "$cert_dir"/*/fullchain.pem; do
+                if [ -f "$c_path" ]; then
+                    found_cert=1
+                    local c_dom
+                    c_dom=$(basename "$(dirname "$c_path")")
+                    local c_exp
+                    c_exp=$(openssl x509 -enddate -noout -in "$c_path" 2>/dev/null | cut -d= -f2 || echo "unknown")
+                    local exp_sec
+                    exp_sec=$(date -d "$c_exp" +%s 2>/dev/null || echo 0)
+                    local days_rem=$(( (exp_sec - $(date +%s)) / 86400 ))
+                    if [ "$days_rem" -gt 15 ]; then
+                        echo -e "    • Домен ${CYAN}$c_dom${NC}: ${GREEN}валиден${NC} (осталось ${GREEN}$days_rem дн.${NC}, до $c_exp)"
+                    elif [ "$days_rem" -gt 0 ]; then
+                        echo -e "    • Домен ${CYAN}$c_dom${NC}: ${YELLOW}скоро истекает${NC} (осталось $days_rem дн.!)"
+                    else
+                        echo -e "    • Домен ${CYAN}$c_dom${NC}: ${RED}ИСТЕК!${NC}"
+                    fi
+                fi
+            done
+        fi
+    done
+    [ "$found_cert" -eq 0 ] && echo -e "    • Сертификаты:       ${YELLOW}не найдены${NC}"
+
+    # 7. Безопасность и Маскировка Censys
+    echo -e "\n  ${WHITE}${BOLD}[7/7] Аудит маскировки и защита от активных сканеров:${NC}"
+    local ip_resp
+    ip_resp=$(curl -sk -o /dev/null -w "%{http_code}" --connect-timeout 2 "https://127.0.0.1:443/" 2>/dev/null || echo "DROP")
+    if [ "$ip_resp" = "000" ] || [ "$ip_resp" = "DROP" ]; then
+        echo -e "    • Запрос по IP (без SNI):   ${GREEN}СБРОС СОЕДИНЕНИЯ (TLS DROP) — Censys не увидит сертификат!${NC}"
+    elif [ "$ip_resp" = "444" ]; then
+        echo -e "    • Запрос по IP (без SNI):   ${GREEN}HTTP 444 (Сброс соединения)${NC}"
+    else
+        echo -e "    • Запрос по IP (без SNI):   ${YELLOW}Ответил код $ip_resp (рекомендуется сброс)${NC}"
+    fi
+
+    if [ -n "${PRIMARY_DOMAIN:-}" ]; then
+        local dom_resp
+        dom_resp=$(curl -sk -o /dev/null -w "%{http_code}" --resolve "${PRIMARY_DOMAIN}:443:127.0.0.1" --connect-timeout 2 "https://${PRIMARY_DOMAIN}/" 2>/dev/null || echo "ERR")
+        if [ "$dom_resp" = "200" ]; then
+            echo -e "    • Домен https://${PRIMARY_DOMAIN}/:  ${GREEN}HTTP 200 OK (Веб-маска активна)${NC}"
+        else
+            echo -e "    • Домен https://${PRIMARY_DOMAIN}/:  ${YELLOW}Код $dom_resp${NC}"
+        fi
+    fi
+
+    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qw "active"; then
+        echo -e "    • Файервол UFW:              ${GREEN}активен${NC}"
+        local leak=0
+        for lp in 9443 "${STEAL_PORT:-45443}" "${CLASSIC_PORT:-46443}" "${XHTTP_STREAM_PORT:-50443}"; do
+            if ufw status | grep -E "^$lp/tcp.*ALLOW" >/dev/null 2>&1; then
+                echo -e "    • ${RED}ВНИМАНИЕ: Порт $lp/tcp открыт в UFW наружу!${NC}"
+                leak=1
+            fi
+        done
+        [ "$leak" -eq 0 ] && echo -e "    • Изоляция локальных сокетов:  ${GREEN}OK (внутренние порты 9443, 45443, 46443, 50443 не открыты наружу)${NC}"
+    else
+        echo -e "    • Файервол UFW:              ${YELLOW}не активен или не установлен${NC}"
+    fi
+
+    echo -e "\n  ${DIM}────────────────────────────────────────────────────────────${NC}"
+    echo -e "  ${GREEN}Диагностика завершена.${NC}\n"
+    exit 0
+}
+
+if [ "$CHECK_MODE" -eq 1 ]; then
+    run_doctor_check
+    exit 0
+fi
+
+if [ "$NON_INTERACTIVE" -eq 1 ]; then
+    log "Включен НЕИНТЕРАКТИВНЫЙ режим (Ansible / Cloud-Init / CI)."
+fi
+
+if [ "${DEBUG_MODE:-0}" -eq 1 ]; then
+    warn "Включён режим отладки (--debug): спиннеры отключены, весь вывод команд виден напрямую."
+fi
+
+# =============================================================
+#  ФУНКЦИИ ФАЗЫ УСТАНОВКИ (определены до фазы для читаемости и --debug)
+# =============================================================
+
+apply_sysctl_and_limits() {
+    # Загрузка модуля nf_conntrack и сохранение для автозагрузки при старте ОС
+    modprobe nf_conntrack 2>/dev/null || true
+    if [ -d /etc/modules-load.d ]; then
+        echo "nf_conntrack" > /etc/modules-load.d/99-vless-conntrack.conf 2>/dev/null || true
+    fi
+
+    cat << 'EOF' > /etc/sysctl.d/99-vless-tuning.conf
+net.ipv4.ip_forward = 1
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+net.ipv4.tcp_syncookies = 1
+net.ipv4.conf.all.rp_filter = 2
+net.ipv4.conf.default.rp_filter = 2
+net.ipv4.ip_nonlocal_bind = 1
+vm.swappiness = 10
+
+# Отключение IPv6 (защита от утечек трафика)
+net.ipv6.conf.all.disable_ipv6 = 1
+net.ipv6.conf.default.disable_ipv6 = 1
+net.ipv6.conf.lo.disable_ipv6 = 1
+
+# Защита таблицы conntrack от зависших сессий (разрывы ТСПУ/DPI без FIN/RST)
+net.netfilter.nf_conntrack_max = 262144
+net.netfilter.nf_conntrack_tcp_timeout_established = 1800
+net.netfilter.nf_conntrack_tcp_timeout_close_wait = 30
+net.netfilter.nf_conntrack_tcp_timeout_fin_wait = 30
+net.netfilter.nf_conntrack_tcp_timeout_time_wait = 30
+
+net.ipv4.ip_local_port_range = 1024 65535
+net.core.netdev_max_backlog = 16384
+net.core.somaxconn = 65535
+net.ipv4.tcp_max_syn_backlog = 65535
+
+net.ipv4.tcp_fin_timeout = 15
+net.ipv4.tcp_keepalive_time = 300
+net.ipv4.tcp_keepalive_intvl = 30
+net.ipv4.tcp_keepalive_probes = 5
+net.ipv4.tcp_max_tw_buckets = 524288
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_orphan_retries = 2
+net.ipv4.tcp_slow_start_after_idle = 0
+
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+net.core.rmem_default = 212992
+net.core.wmem_default = 212992
+net.ipv4.tcp_rmem = 4096 131072 16777216
+net.ipv4.tcp_wmem = 4096 131072 16777216
+net.ipv4.udp_mem = 65536 131072 262144
+net.ipv4.udp_rmem_min = 16384
+net.ipv4.udp_wmem_min = 16384
+
+vm.dirty_ratio = 6
+vm.dirty_background_ratio = 3
+
+net.ipv4.tcp_mtu_probing = 1
+net.ipv4.tcp_mtu_probe_floor = 1024
+
+fs.file-max = 2097152
+fs.inotify.max_user_instances = 8192
+fs.inotify.max_user_watches = 524288
+net.ipv4.tcp_notsent_lowat = 16384
+EOF
+
+    sysctl --system >/dev/null 2>&1 || true
+
+    # Оптимизация резолвера gai.conf (приоритет IPv4 для исключения таймаутов mtg/Go QUIC)
+    if [ -f /etc/gai.conf ]; then
+        sed -i 's/#precedence ::ffff:0:0\/96  100/precedence ::ffff:0:0\/96  100/' /etc/gai.conf 2>/dev/null || true
+    fi
+
+    # Хранение системных логов journald в RAM (Storage=volatile, без записи на диск)
+    mkdir -p /etc/systemd/journald.conf.d/
+    cat << 'EOF' > /etc/systemd/journald.conf.d/00-volatile.conf
+[Journal]
+Storage=volatile
+RuntimeMaxUse=64M
+MaxRetentionSec=1day
+EOF
+    systemctl restart systemd-journald 2>/dev/null || true
+
+    # Disable IPv6 immediately on all active interfaces (runtime)
+    if [ -d /proc/sys/net/ipv6/conf ]; then
+        for iface in $(ls /proc/sys/net/ipv6/conf/ 2>/dev/null); do
+            sysctl -w net.ipv6.conf."$iface".disable_ipv6=1 >/dev/null 2>&1 || true
+        done
+    fi
+
+    # Hardware/Kernel level disable via GRUB (survives cloud network resets upon reboot)
+    if [ -f /etc/default/grub ]; then
+        if ! grep -q "ipv6.disable=1" /etc/default/grub; then
+            cp /etc/default/grub /etc/default/grub.bak 2>/dev/null || true
+            sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="/GRUB_CMDLINE_LINUX_DEFAULT="ipv6.disable=1 /' /etc/default/grub
+            sed -i "s/GRUB_CMDLINE_LINUX_DEFAULT='/GRUB_CMDLINE_LINUX_DEFAULT='ipv6.disable=1 /" /etc/default/grub
+            sed -i 's/GRUB_CMDLINE_LINUX="/GRUB_CMDLINE_LINUX="ipv6.disable=1 /' /etc/default/grub
+            sed -i "s/GRUB_CMDLINE_LINUX='/GRUB_CMDLINE_LINUX='ipv6.disable=1 /" /etc/default/grub
+            if command -v update-grub &>/dev/null; then
+                update-grub >/dev/null 2>&1 || true
+            elif command -v grub-mkconfig &>/dev/null; then
+                grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1 || true
+            fi
+        fi
+    fi
+
+    # Crontab guard against cloud-init / network daemon sysctl overrides on boot
+    if command -v crontab &>/dev/null; then
+        local cron_job="@reboot sleep 10 && sysctl --system"
+        if ! crontab -l 2>/dev/null | grep -Fq "$cron_job"; then
+            (crontab -l 2>/dev/null || true; echo "$cron_job") | crontab - 2>/dev/null || true
+        fi
+    fi
+
+    # Disable IPv6 in UFW configuration
+    if [ -f /etc/default/ufw ]; then
+        if grep -q "^IPV6=" /etc/default/ufw; then
+            sed -i 's/^IPV6=.*/IPV6=no/' /etc/default/ufw 2>/dev/null || true
+        else
+            echo "IPV6=no" >> /etc/default/ufw 2>/dev/null || true
+        fi
+    fi
+
+    cat << 'EOF' > /etc/security/limits.d/99-proxy-limits.conf
+* soft nofile 524288
+* hard nofile 524288
+root soft nofile 524288
+root hard nofile 524288
+www-data soft nofile 524288
+www-data hard nofile 524288
+nginx soft nofile 524288
+nginx hard nofile 524288
+EOF
+
+    # TCP MSS Clamping — предотвращение PMTU Blackhole при блокировке ICMP (для ядро/TUN/FORWARD трафика)
+    # Примечание: действует на маршрутизируемый трафик ядра Linux; не влияет на userspace gVisor в 3X-UI.
+    if ! iptables -t mangle -C FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null; then
+        iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+    fi
+    if command -v ip6tables >/dev/null 2>&1; then
+        if ! ip6tables -t mangle -C FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null; then
+            ip6tables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+        fi
+    fi
+
+    # Персистентность MSS Clamping через /etc/ufw/before.rules и before6.rules
+    if [ -f /etc/ufw/before.rules ] && ! grep -q 'TCPMSS --clamp-mss-to-pmtu' /etc/ufw/before.rules 2>/dev/null; then
+        if ! grep -q '^\*mangle' /etc/ufw/before.rules 2>/dev/null; then
+            sed -i '/^\*filter/i\# TCP MSS Clamping - prevents PMTU blackhole (added by setup_mask.sh)\n*mangle\n:FORWARD ACCEPT [0:0]\n-A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu\nCOMMIT\n' /etc/ufw/before.rules
+        else
+            sed -i '/^\*mangle/a\-A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu' /etc/ufw/before.rules
+        fi
+    fi
+    if [ -f /etc/ufw/before6.rules ] && ! grep -q 'TCPMSS --clamp-mss-to-pmtu' /etc/ufw/before6.rules 2>/dev/null; then
+        if ! grep -q '^\*mangle' /etc/ufw/before6.rules 2>/dev/null; then
+            sed -i '/^\*filter/i\# TCP MSS Clamping IPv6 - prevents PMTU blackhole (added by setup_mask.sh)\n*mangle\n:FORWARD ACCEPT [0:0]\n-A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu\nCOMMIT\n' /etc/ufw/before6.rules
+        else
+            sed -i '/^\*mangle/a\-A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu' /etc/ufw/before6.rules
+        fi
+    fi
+}
+
+supports_x86_64_v3() {
+    local arch
+    arch=$(uname -m 2>/dev/null || echo "unknown")
+    if [ "$arch" != "x86_64" ]; then
+        return 0
+    fi
+    if [ -x /lib64/ld-linux-x86-64.so.2 ]; then
+        if /lib64/ld-linux-x86-64.so.2 --help 2>&1 | grep -E 'x86-64-v3' | grep -q 'supported'; then
+            return 0
+        fi
+    fi
+    if grep -q "avx2" /proc/cpuinfo 2>/dev/null && grep -q "bmi2" /proc/cpuinfo 2>/dev/null; then
+        return 0
+    fi
+    return 1
+}
+
+
 
 # --- Global Paths & Logs ---
 INSTALL_LOG="/var/log/nginx_mask_install.log"
@@ -100,66 +932,123 @@ clear_banner() {
     check_for_script_updates
 }
 
-# Spinner function for background processes
-# Usage: run_with_spinner "Task description" bash_function_or_command
+# Interactive Terminal Spinner & Task Runner
+# Supports:
+#   - Animated spinner in interactive TTY
+#   - Plain output in non-interactive / CI / piped runs
+#   - DEBUG_MODE=1 passthrough (full stdout/stderr in real-time)
+#   - Interactive failure recovery menu (Retry / Skip / Abort)
+
 run_with_spinner() {
     local task_name="$1"
     shift
-    local cmd=("$@")
-    
-    # Run command in background and redirect output to log
-    "${cmd[@]}" >> "$INSTALL_LOG" 2>&1 &
-    local pid=$!
-    local exit_code=0
-    
-    if [ ! -t 1 ]; then
-        echo -e "  ${CYAN}*${RESET}  ${WHITE}${task_name}...${RESET}"
-        wait "$pid"
-        exit_code=$?
-    else
-        # Spinner glyphs
-        local spin_chars=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
-        local delay=0.08
-        
-        # Hide cursor
-        tput civis 2>/dev/null || echo -ne "\033[?25l"
-        
-        local i=0
-        while kill -0 "$pid" 2>/dev/null; do
-            i=$(( (i + 1) % 10 ))
-            printf "\r  ${CYAN}${spin_chars[$i]}${RESET}  ${WHITE}%-52s${RESET}" "$task_name..."
-            sleep "$delay"
-        done
-        
-        wait "$pid"
-        exit_code=$?
-        
-        # Show cursor
-        tput cnorm 2>/dev/null || echo -ne "\033[?25h"
-    fi
-    
-    if [ $exit_code -eq 0 ]; then
-        if [ ! -t 1 ]; then
-            printf "  ${GREEN}${CHECK}${RESET}  ${WHITE}%-52s${RESET} ${GREEN}[DONE]${RESET}\n" "$task_name"
+    local log_file="${SETUP_MASK_LOG:-${INSTALL_LOG:-${SPINNER_LOG_FILE:-/tmp/cmd_spinner.log}}}"
+
+    while true; do
+        local exit_code=0
+
+        # ── DEBUG MODE: без фона, весь вывод сразу в stdout ──
+        if [ "${DEBUG_MODE:-0}" -eq 1 ]; then
+            echo -e "\n  ${CYAN}[DEBUG]${NC} ${WHITE}▶ $task_name${NC}"
+            echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
+            local _prev_e=0
+            [[ "$-" =~ e ]] && _prev_e=1
+            set +e
+            if declare -f "$1" >/dev/null 2>&1; then
+                ( shopt -s inherit_errexit 2>/dev/null || true; set -euo pipefail; "$@" )
+                exit_code=$?
+            else
+                ( shopt -s inherit_errexit 2>/dev/null || true; set -euo pipefail; eval "$*" )
+                exit_code=$?
+            fi
+            [ "$_prev_e" -eq 1 ] && set -e
+            if [ $exit_code -eq 0 ]; then
+                echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
+                echo -e "  ${GREEN}${CHECK:-✔}${NC}  ${WHITE}$task_name${NC} ${GREEN}[ГОТОВО]${NC}\n"
+                return 0
+            else
+                echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
+            fi
         else
-            printf "\r  ${GREEN}${CHECK}${RESET}  ${WHITE}%-52s${RESET} ${GREEN}[DONE]${RESET}\n" "$task_name"
+            # ── Нормальный режим: фоновый процесс + спиннер ──
+            local spin_chars=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+            local delay=0.08
+
+            : > "$log_file"
+
+            if declare -f "$1" >/dev/null 2>&1; then
+                "$@" >> "$log_file" 2>&1 &
+            else
+                ( eval "$*" ) >> "$log_file" 2>&1 &
+            fi
+            local pid=$!
+
+            if [ ! -t 1 ]; then
+                echo -e "  ${CYAN}*${NC}  ${WHITE}${task_name}...${NC}"
+                wait "$pid"
+                exit_code=$?
+            else
+                tput civis 2>/dev/null || echo -ne "\033[?25l"
+                local i=0
+                while kill -0 "$pid" 2>/dev/null; do
+                    i=$(( (i + 1) % 10 ))
+                    printf "\r  ${CYAN}${spin_chars[$i]}${NC}  ${WHITE}%-54s${NC}" "$task_name..."
+                    sleep "$delay"
+                done
+                wait "$pid"
+                exit_code=$?
+                tput cnorm 2>/dev/null || echo -ne "\033[?25h"
+            fi
+
+            if [ $exit_code -eq 0 ]; then
+                if [ ! -t 1 ]; then
+                    printf "  ${GREEN}${CHECK:-✔}${NC}  ${WHITE}%-54s${NC} ${GREEN}[ГОТОВО]${NC}\n" "$task_name"
+                else
+                    printf "\r  ${GREEN}${CHECK:-✔}${NC}  ${WHITE}%-54s${NC} ${GREEN}[ГОТОВО]${NC}\n" "$task_name"
+                fi
+                return 0
+            fi
+
+            if [ ! -t 1 ]; then
+                printf "  ${RED}${CROSS:-✖}${NC}  ${WHITE}%-54s${NC} ${RED}[ОШИБКА]${NC}\n" "$task_name"
+            else
+                printf "\r  ${RED}${CROSS:-✖}${NC}  ${WHITE}%-54s${NC} ${RED}[ОШИБКА]${NC}\n" "$task_name"
+            fi
+            echo -e "\n  ${RED}${BOLD}Полный лог ошибки:${NC}"
+            echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
+            [ -f "$log_file" ] && cat "$log_file" | sed 's/^/    /' || true
+            echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
+            echo -e "  ${DIM}Совет: запустите с флагом ${WHITE}--debug${DIM} для подробного вывода в реальном времени.${NC}\n"
         fi
-        return 0
-    else
-        if [ ! -t 1 ]; then
-            printf "  ${RED}${CROSS}${RESET}  ${WHITE}%-52s${RESET} ${RED}[FAILED]${RESET}\n" "$task_name"
+
+        # ── Интерактивная обработка сбоя (Retry / Skip / Abort) ──
+        if [ "${NON_INTERACTIVE:-0}" -eq 0 ] && [ -t 1 ]; then
+            echo -e "  ${YELLOW}${BOLD}Действия при сбое:${NC}"
+            echo -e "    ${CYAN}${BOLD}[1] Повторить попытку (Retry)${NC} — после исправления причин (напр. DNS)"
+            echo -e "    ${YELLOW}[2] Пропустить этот шаг и продолжить (Skip)${NC}"
+            echo -e "    ${RED}[3] Прервать установку (Abort)${NC}"
+            local retry_ans=""
+            read -rp "  Ваш выбор [1/2/3] (по умолчанию: 1): " retry_ans </dev/tty || read -r retry_ans || retry_ans="1"
+            retry_ans=$(echo "${retry_ans:-1}" | tr -d '[:space:]')
+            case "$retry_ans" in
+                2)
+                    warn "Шаг '$task_name' пропущен по выбору пользователя."
+                    return 0
+                    ;;
+                3)
+                    die "Шаг завершился с ошибкой (exit $exit_code): $task_name"
+                    ;;
+                *)
+                    echo -e "  ${CYAN}${ARROW:-➜} Повторная попытка: $task_name...${NC}\n"
+                    continue
+                    ;;
+            esac
         else
-            printf "\r  ${RED}${CROSS}${RESET}  ${WHITE}%-52s${RESET} ${RED}[FAILED]${RESET}\n" "$task_name"
+            return $exit_code
         fi
-        echo -e "\n  ${RED}${BOLD}Ошибка при выполнении:${RESET} ${YELLOW}$task_name${RESET}"
-        echo -e "  ${DIM}Подробности записаны в лог:${RESET} ${WHITE}$INSTALL_LOG${RESET}"
-        echo -e "  ${DIM}Последние строки лога:${RESET}"
-        echo -e "${RED}────────────────────────────────────────────────────────────${RESET}"
-        tail -n 12 "$INSTALL_LOG" | sed 's/^/    /'
-        echo -e "${RED}────────────────────────────────────────────────────────────${RESET}"
-        exit 1
-    fi
+    done
 }
+
 
 # Step Progress Header
 print_step() {
@@ -439,72 +1328,9 @@ step_os_hardening() {
         fi
     fi
     
-    # 1. Enable BBR & System Network Tuning
-    cat <<'EOF' > /etc/sysctl.d/99-vps-tuning.conf
-net.core.default_qdisc=fq
-net.ipv4.tcp_congestion_control=bbr
-net.ipv4.ip_forward=1
-net.ipv4.ip_nonlocal_bind=1
-net.ipv4.tcp_syncookies=1
-net.ipv4.conf.all.rp_filter=2
-net.ipv4.conf.default.rp_filter=2
-net.core.somaxconn=65535
-net.ipv4.tcp_max_syn_backlog=65535
-net.core.netdev_max_backlog=100000
-net.ipv4.ip_local_port_range=1024 65535
-net.ipv4.tcp_fastopen=3
-net.ipv4.tcp_slow_start_after_idle=0
-net.core.rmem_max=67108864
-net.core.wmem_max=67108864
-net.ipv4.tcp_rmem=4096 87380 33554432
-net.ipv4.tcp_wmem=4096 65536 33554432
-net.ipv4.tcp_mtu_probing=1
-net.ipv6.conf.all.disable_ipv6=1
-net.ipv6.conf.default.disable_ipv6=1
-net.ipv6.conf.lo.disable_ipv6=1
-EOF
-    sysctl --system >/dev/null 2>&1 || true
+    # 1. Enable BBR, Conntrack, Socket Limits & System Network Tuning
+    apply_sysctl_and_limits
 
-    # Хранение системных логов journald в RAM (Storage=volatile, без записи на диск)
-    mkdir -p /etc/systemd/journald.conf.d/
-    cat << 'EOF' > /etc/systemd/journald.conf.d/00-volatile.conf
-[Journal]
-Storage=volatile
-RuntimeMaxUse=64M
-MaxRetentionSec=1day
-EOF
-    systemctl restart systemd-journald 2>/dev/null || true
-
-    # Disable IPv6 immediately on all active interfaces (runtime)
-    if [ -d /proc/sys/net/ipv6/conf ]; then
-        for iface in $(ls /proc/sys/net/ipv6/conf/ 2>/dev/null); do
-            sysctl -w net.ipv6.conf."$iface".disable_ipv6=1 >/dev/null 2>&1 || true
-        done
-    fi
-
-    # Hardware/Kernel level disable via GRUB (survives cloud network resets upon reboot)
-    if [ -f /etc/default/grub ]; then
-        if ! grep -q "ipv6.disable=1" /etc/default/grub; then
-            cp /etc/default/grub /etc/default/grub.bak 2>/dev/null || true
-            sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="/GRUB_CMDLINE_LINUX_DEFAULT="ipv6.disable=1 /' /etc/default/grub
-            sed -i "s/GRUB_CMDLINE_LINUX_DEFAULT='/GRUB_CMDLINE_LINUX_DEFAULT='ipv6.disable=1 /" /etc/default/grub
-            sed -i 's/GRUB_CMDLINE_LINUX="/GRUB_CMDLINE_LINUX="ipv6.disable=1 /' /etc/default/grub
-            sed -i "s/GRUB_CMDLINE_LINUX='/GRUB_CMDLINE_LINUX='ipv6.disable=1 /" /etc/default/grub
-            if command -v update-grub &>/dev/null; then
-                update-grub >/dev/null 2>&1 || true
-            elif command -v grub-mkconfig &>/dev/null; then
-                grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1 || true
-            fi
-        fi
-    fi
-
-    # Crontab guard against cloud-init / network daemon sysctl overrides on boot
-    if command -v crontab &>/dev/null; then
-        cron_job="@reboot sleep 10 && sysctl --system"
-        if ! crontab -l 2>/dev/null | grep -Fq "$cron_job"; then
-            (crontab -l 2>/dev/null || true; echo "$cron_job") | crontab - 2>/dev/null || true
-        fi
-    fi
 
     # 2. SSH Configuration & Fail2ban (защита от потери доступа)
     apply_ssh_configuration "$SSH_PORT" "$SSH_ACTIVE_PORT"
@@ -541,24 +1367,48 @@ EOF
     if [ "$SSH_PORT" -ne "$SSH_ACTIVE_PORT" ]; then
         ufw allow "${SSH_PORT}/tcp" comment 'Target SSH Port' >/dev/null 2>&1 || true
     fi
-    ufw allow 80/tcp comment 'HTTP / ACME' >/dev/null 2>&1 || true
-    ufw allow 443/tcp comment 'HTTPS / L4 Router' >/dev/null 2>&1 || true
-    ufw allow 443/udp comment 'QUIC / H3 / Hysteria 2' >/dev/null 2>&1 || true
-    ufw allow 8443/udp comment 'AmneziaWG v3 / Hysteria 2' >/dev/null 2>&1 || true
-    ufw allow 8444/udp comment 'AmneziaWG v2' >/dev/null 2>&1 || true
-    if [[ "${HY2_PORT_HOPPING,,}" == "y" || "${HY2_PORT_HOPPING:-}" == "1" ]] && [ -n "${HY2_PORT_HOPPING_RANGE:-}" ]; then
-        ufw allow "${HY2_PORT_HOPPING_RANGE//:/ }/udp" comment 'Hysteria 2 Port Hopping' >/dev/null 2>&1 || true
+    if is_true "${ENABLE_WEB_STACK:-y}"; then
+        ufw allow 80/tcp comment 'HTTP / ACME' >/dev/null 2>&1 || true
+        ufw allow 443/tcp comment 'HTTPS / L4 Router' >/dev/null 2>&1 || true
+        ufw allow 443/udp comment 'QUIC / H3 / Hysteria 2' >/dev/null 2>&1 || true
+        if is_true "${ENABLE_AWG_V3:-n}"; then
+            ufw allow "${AWG_V3_PORT:-8443}/udp" comment 'AmneziaWG v3' >/dev/null 2>&1 || true
+        fi
+        if is_true "${ENABLE_AWG_V2:-n}"; then
+            ufw allow "${AWG_V2_PORT:-8444}/udp" comment 'AmneziaWG v2' >/dev/null 2>&1 || true
+        fi
+        if is_true "${ENABLE_AWG_STANDALONE:-0}"; then
+            ufw allow "${AWG_STANDALONE_PORT:-8445}/udp" comment 'AmneziaWG Standalone Server' >/dev/null 2>&1 || true
+        fi
+        if is_true "${ENABLE_SS2022:-0}"; then
+            local ss_p="${SS2022_PORT:-8388}"
+            ufw allow "${ss_p}/tcp" comment 'Shadowsocks 2022 TCP' >/dev/null 2>&1 || true
+            ufw allow "${ss_p}/udp" comment 'Shadowsocks 2022 UDP' >/dev/null 2>&1 || true
+        fi
+        if is_true "${ENABLE_TUIC:-0}"; then
+            local tuic_p="${TUIC_PORT:-8448}"
+            ufw allow "${tuic_p}/udp" comment 'TUIC v5 QUIC' >/dev/null 2>&1 || true
+        fi
+        if is_true "${ENABLE_MTPROTO:-0}"; then
+            local mtp_p="${MTPROTO_PORT:-8444}"
+            ufw allow "${mtp_p}/tcp" comment 'Telegram MTProxy FakeTLS' >/dev/null 2>&1 || true
+        fi
+        if [[ "${HY2_PORT_HOPPING,,}" == "y" || "${HY2_PORT_HOPPING:-}" == "1" ]] && [ -n "${HY2_PORT_HOPPING_RANGE:-}" ]; then
+            ufw allow "${HY2_PORT_HOPPING_RANGE//:/ }/udp" comment 'Hysteria 2 Port Hopping' >/dev/null 2>&1 || true
+        fi
+        
+        # Deny direct access to internal 3X-UI inbound ports
+        ufw deny 10443/tcp comment 'VLESS Reality Internal' >/dev/null 2>&1 || true
+        ufw deny 11443/tcp comment 'Anti-Loop Stub Internal' >/dev/null 2>&1 || true
+        ufw deny 55443/tcp comment 'VLESS gRPC Internal' >/dev/null 2>&1 || true
+        ufw deny 45443/tcp comment 'VLESS WS Internal' >/dev/null 2>&1 || true
+        ufw deny 46443/tcp comment 'VLESS Classic Internal' >/dev/null 2>&1 || true
+        ufw deny 50443/tcp comment 'VLESS xHTTP Internal' >/dev/null 2>&1 || true
+        ufw deny 9443/tcp  comment 'Trojan Internal' >/dev/null 2>&1 || true
+        ufw deny "$PANEL_INTERNAL_PORT"/tcp comment '3X-UI Panel Internal' >/dev/null 2>&1 || true
+    else
+        ufw allow "${AWG_STANDALONE_PORT:-8445}/udp" comment 'AmneziaWG Standalone Server' >/dev/null 2>&1 || true
     fi
-    
-    # Deny direct access to internal 3X-UI inbound ports
-    ufw deny 10443/tcp comment 'VLESS Reality Internal' >/dev/null 2>&1 || true
-    ufw deny 11443/tcp comment 'Anti-Loop Stub Internal' >/dev/null 2>&1 || true
-    ufw deny 55443/tcp comment 'VLESS gRPC Internal' >/dev/null 2>&1 || true
-    ufw deny 45443/tcp comment 'VLESS WS Internal' >/dev/null 2>&1 || true
-    ufw deny 46443/tcp comment 'VLESS xHTTP Internal' >/dev/null 2>&1 || true
-    ufw deny 50443/tcp comment 'Shadowsocks 2022 Internal' >/dev/null 2>&1 || true
-    ufw deny 9443/tcp  comment 'Trojan Internal' >/dev/null 2>&1 || true
-    ufw deny "$PANEL_INTERNAL_PORT"/tcp comment '3X-UI Panel Internal' >/dev/null 2>&1 || true
     
     echo "y" | ufw enable >/dev/null 2>&1 || true
 }

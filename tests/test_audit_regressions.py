@@ -3,6 +3,7 @@ tests/test_audit_regressions.py - Assert-based regression tests for audit findin
 """
 
 import ast
+import base64
 import contextlib
 import io
 import ipaddress
@@ -17,6 +18,7 @@ import subprocess
 import tempfile
 import types
 import unittest
+import uuid
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -394,6 +396,623 @@ inspect_port_conflicts
 """)
         self.assertEqual(res.returncode, 15, "Preflight must abort when port 443 is occupied by docker-proxy")
         self.assertIn("FATAL_ABORT", res.stdout)
+
+    def test_preflight_allows_occupied_443_when_no_web_stack(self):
+        """Preflight must NOT abort on port 443 conflict if ENABLE_WEB_STACK=0 (Standalone AWG only)."""
+        res = run_shell("""
+set -euo pipefail
+CHECK_MODE=0; NON_INTERACTIVE=0; DEBUG_MODE=0
+CYAN=; BOLD=; NC=; DIM=; WHITE=;
+warn(){ :; }; ok(){ :; }; die(){ echo "FATAL_ABORT:$*"; exit 15; };
+source src/common/preflight.sh
+ENABLE_AGH=0
+ENABLE_WEB_STACK=0
+ENABLE_AWG_STANDALONE=1
+AWG_STANDALONE_PORT=8445
+
+is_port_in_use(){ [[ "$2" == 443 ]]; }
+get_port_listener_info(){ echo "docker-proxy"; }
+
+inspect_port_conflicts
+""")
+        self.assertEqual(res.returncode, 0, f"Preflight must not abort when ENABLE_WEB_STACK=0: {res.stderr}")
+        self.assertNotIn("FATAL_ABORT", res.stdout)
+
+
+
+class TestExtraProtocolsKeys(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.ns = {}
+        exec((ROOT / "src/xray/keys.py").read_text(encoding="utf-8"), cls.ns)
+
+    def test_ss2022_key_generation_and_validation(self):
+        """Verify Shadowsocks 2022 key generation and byte length validation for 16 and 32 bytes."""
+        gen = self.ns["generate_ss2022_key"]
+        val = self.ns["validate_ss2022_key"]
+
+        # 32 bytes for AES-256
+        k256 = gen("2022-blake3-aes-256-gcm")
+        self.assertTrue(val(k256, "2022-blake3-aes-256-gcm"))
+        self.assertFalse(val(k256, "2022-blake3-aes-128-gcm"))
+
+        # 16 bytes for AES-128
+        k128 = gen("2022-blake3-aes-128-gcm")
+        self.assertTrue(val(k128, "2022-blake3-aes-128-gcm"))
+        self.assertFalse(val(k128, "2022-blake3-aes-256-gcm"))
+
+        # Invalid cases
+        self.assertFalse(val("", "2022-blake3-aes-256-gcm"))
+        self.assertFalse(val(None, "2022-blake3-aes-256-gcm"))
+        self.assertFalse(val("not-base64-at-all!@#$", "2022-blake3-aes-256-gcm"))
+        bad_len = base64.b64encode(b"short-key").decode()
+        self.assertFalse(val(bad_len, "2022-blake3-aes-256-gcm"))
+
+    def test_mtproto_secret_and_adtag_validation(self):
+        """Verify Telegram MTProxy FakeTLS secret generation/validation and adTag hex check."""
+        gen_sec = self.ns["generate_mtproto_secret"]
+        val_sec = self.ns["validate_mtproto_secret"]
+        val_ad = self.ns["validate_mtproto_adtag"]
+
+        sec = gen_sec("gateway.icloud.com")
+        self.assertTrue(sec.startswith("ee"))
+        self.assertTrue(val_sec(sec))
+
+        # Check domain decoded correctly
+        domain_hex = sec[34:]
+        self.assertEqual(bytes.fromhex(domain_hex).decode("utf-8"), "gateway.icloud.com")
+
+        # Invalid secrets
+        self.assertFalse(val_sec("dd" + sec[2:]))  # wrong prefix
+        self.assertFalse(val_sec("ee" + "00" * 16)) # no domain (too short: 34 chars < 38)
+        self.assertFalse(val_sec("ee1234"))        # too short
+        self.assertFalse(val_sec("not-hex"))
+
+        # adTag validation (strictly 32 hex chars, no signs)
+        good_ad = "0123456789abcdef0123456789abcdef"
+        self.assertTrue(val_ad(good_ad))
+        self.assertFalse(val_ad("short"))
+        self.assertFalse(val_ad(good_ad + "00"))
+        self.assertFalse(val_ad("zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"))
+        self.assertFalse(val_ad("+0123456789abcdef0123456789abcde"))  # signed number rejected
+        self.assertFalse(val_ad("-0123456789abcdef0123456789abcde"))  # signed number rejected
+        self.assertFalse(val_ad(""))
+
+
+class TestExtraProtocolsInbounds(unittest.TestCase):
+    def setUp(self):
+        self.conn = sqlite3.connect(":memory:")
+        self.cur = self.conn.cursor()
+        self.cur.execute("""
+            CREATE TABLE inbounds (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                up INTEGER,
+                down INTEGER,
+                total INTEGER,
+                remark TEXT,
+                enable INTEGER,
+                expiry_time INTEGER,
+                listen TEXT,
+                port INTEGER,
+                protocol TEXT,
+                settings TEXT,
+                stream_settings TEXT,
+                tag TEXT,
+                sniffing TEXT
+            )
+        """)
+        self.cur.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, password TEXT)")
+        self.cur.execute("INSERT INTO users VALUES (1, 'admin', 'admin')")
+        self.cur.execute("""
+            CREATE TABLE clients (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT,
+                enable INTEGER,
+                uuid TEXT,
+                password TEXT,
+                auth TEXT,
+                flow TEXT,
+                secret TEXT,
+                ad_tag TEXT,
+                created_at INTEGER,
+                updated_at INTEGER
+            )
+        """)
+        self.cur.execute("""
+            CREATE TABLE client_traffics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                inbound_id INTEGER,
+                enable INTEGER,
+                email TEXT,
+                up INTEGER,
+                down INTEGER,
+                expiry_time INTEGER,
+                total INTEGER,
+                reset INTEGER
+            )
+        """)
+        self.cur.execute("""
+            CREATE TABLE client_inbounds (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_id INTEGER,
+                inbound_id INTEGER
+            )
+        """)
+        self.ns = {
+            "conn": self.conn,
+            "cur": self.cur,
+            "dry_run": False,
+            "force_remarks": False,
+            "domain": "test.example.com",
+            "hy2_port": 443,
+            "classic_port": 46443,
+            "classic_sni": "gateway.icloud.com",
+            "all_tables": {"inbounds", "users", "clients", "client_traffics", "client_inbounds"},
+            "client_traffics_cols": {"id", "inbound_id", "enable", "email", "up", "down", "expiry_time", "total", "reset"},
+            "clients_cols": {"id", "email", "enable", "uuid", "password", "auth", "flow", "secret", "ad_tag", "created_at", "updated_at"},
+            "client_inbounds_cols": {"id", "client_id", "inbound_id"},
+            "json": json,
+            "os": os,
+            "uuid": uuid,
+            "base64": base64,
+            "admin_id": 1,
+        }
+        exec((ROOT / "src/xray/clients.py").read_text(encoding="utf-8"), self.ns)
+        exec((ROOT / "src/xray/keys.py").read_text(encoding="utf-8"), self.ns)
+        exec((ROOT / "src/xray/inbounds.py").read_text(encoding="utf-8"), self.ns)
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_ss2022_inbound_and_force_tls_none(self):
+        """Verify Shadowsocks 2022 inbound reconciliation sets forceTls: 'none' and repairs bad key."""
+        reconcile = self.ns["smart_reconcile_inbound"]
+        # 1. Insert an existing inbound with corrupted key and forceTls mistakenly set to "tls"
+        bad_settings = {
+            "method": "2022-blake3-aes-256-gcm",
+            "password": "bad-key-not-32-bytes",
+            "clients": [{"email": "Client", "password": "also-corrupted-key", "method": "legacy-method"}]
+        }
+        bad_stream = {
+            "network": "tcp",
+            "security": "none",
+            "externalProxy": [{"dest": "test.example.com", "port": 8388, "forceTls": "tls", "remark": "SS-Old"}]
+        }
+        self.cur.execute("""
+            INSERT INTO inbounds (user_id, up, down, total, remark, enable, expiry_time, listen, port, protocol, settings, stream_settings, tag, sniffing)
+            VALUES (1, 0, 0, 0, 'SS-Old', 1, 0, '0.0.0.0', 8388, 'shadowsocks', ?, ?, 'in-shadowsocks-2022', '{}')
+        """, (json.dumps(bad_settings), json.dumps(bad_stream)))
+        self.conn.commit()
+
+        # 2. Run smart_reconcile_inbound with valid default blueprint
+        good_settings = {
+            "method": "2022-blake3-aes-256-gcm",
+            "password": self.ns["generate_ss2022_key"]("2022-blake3-aes-256-gcm"),
+            "clients": [{"email": "Client", "password": self.ns["generate_ss2022_key"]("2022-blake3-aes-256-gcm"), "subId": "12345678", "enable": True}]
+        }
+        good_stream = {
+            "network": "tcp",
+            "security": "none",
+            "externalProxy": [{"dest": "test.example.com", "port": 8388, "forceTls": "none", "remark": "Shadowsocks 2022"}]
+        }
+        reconcile(8388, "shadowsocks", "in-shadowsocks-2022", "Shadowsocks 2022", good_settings, good_stream, listen="0.0.0.0")
+
+        self.cur.execute("SELECT settings, stream_settings FROM inbounds WHERE port = 8388")
+        row = self.cur.fetchone()
+        self.assertIsNotNone(row)
+        s = json.loads(row[0])
+        st = json.loads(row[1])
+
+        # Verify key was repaired
+        self.assertTrue(self.ns["validate_ss2022_key"](s["password"], "2022-blake3-aes-256-gcm"))
+        self.assertTrue(self.ns["validate_ss2022_key"](s["clients"][0]["password"], "2022-blake3-aes-256-gcm"))
+        self.assertNotIn("method", s["clients"][0], "Obsolete client.method must be stripped")
+
+        # Verify forceTls fixed to 'none'
+        self.assertEqual(st["externalProxy"][0]["forceTls"], "none", "Shadowsocks externalProxy forceTls must be 'none'")
+
+    def test_tuic_inbound_settings_and_cert_paths(self):
+        """Verify TUIC v5 inbound preserves certificate and private_key directly in settings."""
+        reconcile = self.ns["smart_reconcile_inbound"]
+        tuic_settings = {
+            "certificate": "/etc/letsencrypt/live/test.example.com/fullchain.pem",
+            "private_key": "/etc/letsencrypt/live/test.example.com/privkey.pem",
+            "congestion_control": "bbr",
+            "alpn": ["h3", "spdy/3.1"],
+            "udp_relay_mode": "native",
+            "clients": [{"uuid": str(uuid.uuid4()), "password": "tuic-password-16", "email": "Client"}]
+        }
+        tuic_stream = {
+            "network": "quic",
+            "security": "tls",
+            "externalProxy": [{"dest": "test.example.com", "port": 8448, "forceTls": "tls", "remark": "TUIC v5"}]
+        }
+        reconcile(8448, "tuic", "in-tuic-v5", "TUIC v5", tuic_settings, tuic_stream, listen="0.0.0.0")
+
+        self.cur.execute("SELECT settings, stream_settings FROM inbounds WHERE port = 8448")
+        row = self.cur.fetchone()
+        self.assertIsNotNone(row)
+        s = json.loads(row[0])
+        st = json.loads(row[1])
+
+        self.assertEqual(s["certificate"], "/etc/letsencrypt/live/test.example.com/fullchain.pem")
+        self.assertEqual(s["private_key"], "/etc/letsencrypt/live/test.example.com/privkey.pem")
+        self.assertEqual(s["congestion_control"], "bbr")
+        self.assertEqual(st["network"], "quic")
+        self.assertEqual(st["security"], "tls")
+        self.assertEqual(st["externalProxy"][0]["forceTls"], "tls")
+
+    def test_mtproto_settings_cleanup_and_clients_sync(self):
+        """Verify MTProxy settings cleans root secret/adTag, extracts into clients, and sets forceTls 'none'."""
+        reconcile = self.ns["smart_reconcile_inbound"]
+        sec = self.ns["generate_mtproto_secret"]("gateway.icloud.com")
+        ad = "0123456789abcdef0123456789abcdef"
+
+        # 1. Insert existing inbound with legacy root secret/adTag and forceTls: "tls"
+        mtp_settings = {
+            "secret": "legacy-root-secret",
+            "adTag": "legacy-root-adtag",
+            "domainFronting": {"ip": "gateway.icloud.com", "port": 443, "proxyProtocol": False},
+            "clients": [{"email": "Client", "secret": sec, "adTag": ad}]
+        }
+        mtp_stream = {
+            "network": "tcp",
+            "security": "none",
+            "externalProxy": [{"dest": "test.example.com", "port": 8444, "forceTls": "tls", "remark": "MTProxy"}]
+        }
+        self.cur.execute("""
+            INSERT INTO inbounds (user_id, up, down, total, remark, enable, expiry_time, listen, port, protocol, settings, stream_settings, tag, sniffing)
+            VALUES (1, 0, 0, 0, 'MTProxy-Old', 1, 0, '0.0.0.0', 8444, 'mtproto', ?, ?, 'in-mtproto-faketls', '{}')
+        """, (json.dumps(mtp_settings), json.dumps(mtp_stream)))
+        self.conn.commit()
+
+        # 2. Run smart_reconcile_inbound with valid default blueprint
+        good_mtp_settings = {
+            "domainFronting": {"ip": "gateway.icloud.com", "port": 443, "proxyProtocol": False},
+            "clients": [{"email": "Client", "secret": sec, "adTag": ad, "subId": "12345678", "enable": True}]
+        }
+        good_mtp_stream = {
+            "network": "tcp",
+            "security": "none",
+            "externalProxy": [{"dest": "test.example.com", "port": 8444, "forceTls": "none", "remark": "Telegram MTProxy"}]
+        }
+        reconcile(8444, "mtproto", "in-mtproto-faketls", "Telegram MTProxy", good_mtp_settings, good_mtp_stream, listen="0.0.0.0")
+
+        self.cur.execute("SELECT settings, stream_settings FROM inbounds WHERE port = 8444")
+        row = self.cur.fetchone()
+        self.assertIsNotNone(row)
+        s = json.loads(row[0])
+        st = json.loads(row[1])
+
+        # Obsolete root fields must be removed
+        self.assertNotIn("secret", s)
+        self.assertNotIn("adTag", s)
+        self.assertNotIn("ad_tag", s)
+
+        # Clients table should have secret and ad_tag
+        self.cur.execute("SELECT secret, ad_tag FROM clients WHERE email = 'Client'")
+        c_row = self.cur.fetchone()
+        self.assertIsNotNone(c_row)
+        self.assertEqual(c_row[0], sec)
+        self.assertEqual(c_row[1], ad)
+
+        # forceTls must be 'none'
+        self.assertEqual(st["externalProxy"][0]["forceTls"], "none")
+
+    def test_amneziawg_force_tls_none(self):
+        """Verify AmneziaWG externalProxy forceTls is repaired to 'none'."""
+        reconcile = self.ns["smart_reconcile_inbound"]
+        awg_settings = {
+            "server": {"h1": "1", "h2": "2", "h3": "3", "h4": "4", "jc": 4, "jmin": 40, "jmax": 70, "s1": 16, "s2": 16, "s3": 16, "s4": 16, "mtu": 1280},
+            "clients": [{"email": "Client", "allowedIPs": ["10.8.1.2/32"]}]
+        }
+        awg_stream = {
+            "externalProxy": [{"dest": "test.example.com", "port": 8443, "forceTls": "tls", "remark": "AWG"}]
+        }
+        self.cur.execute("""
+            INSERT INTO inbounds (user_id, up, down, total, remark, enable, expiry_time, listen, port, protocol, settings, stream_settings, tag, sniffing)
+            VALUES (1, 0, 0, 0, 'AWG-Old', 1, 0, '0.0.0.0', 8443, 'amneziawg', ?, ?, 'in-8443-udp', '{}')
+        """, (json.dumps(awg_settings), json.dumps(awg_stream)))
+        self.conn.commit()
+
+        reconcile(8443, "amneziawg", "in-8443-udp", "AmneziaWG v3", awg_settings, awg_stream, listen="0.0.0.0")
+
+        self.cur.execute("SELECT stream_settings FROM inbounds WHERE port = 8443")
+        st = json.loads(self.cur.fetchone()[0])
+        self.assertEqual(st["externalProxy"][0]["forceTls"], "none", "AWG externalProxy forceTls must be 'none'")
+
+    def test_client_credentials_isolation_between_protocols(self):
+        """Verify that syncing Shadowsocks and MTProto does not overwrite each other's credentials in clients table."""
+        sync_clients = self.ns["sync_inbound_clients"]
+        ss_key = self.ns["generate_ss2022_key"]("2022-blake3-aes-256-gcm")
+        mtp_sec = self.ns["generate_mtproto_secret"]("gateway.icloud.com")
+        mtp_ad = "0123456789abcdef0123456789abcdef"
+
+        # 1. Sync Shadowsocks inbound client
+        ss_settings = {
+            "method": "2022-blake3-aes-256-gcm",
+            "clients": [{"email": "Client", "password": ss_key, "subId": "sub12345"}]
+        }
+        sync_clients(1, "shadowsocks", "SS2022", ss_settings)
+
+        self.cur.execute("SELECT password, auth, secret, ad_tag FROM clients WHERE email = 'Client'")
+        row = self.cur.fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row[0], ss_key, "Shadowsocks key must be in password column")
+        self.assertFalse(row[1], "Auth column must not be populated by Shadowsocks key")
+        self.assertFalse(row[2], "Secret column must not be populated by Shadowsocks key")
+
+        # 2. Sync Hysteria 2 inbound client (must NOT overwrite clients.password)
+        hy2_pass = "hexpassword123456"
+        hy2_settings = {
+            "clients": [{"email": "Client", "auth": hy2_pass, "subId": "sub12345"}]
+        }
+        sync_clients(3, "hysteria", "Hysteria2", hy2_settings)
+
+        self.cur.execute("SELECT password, auth, secret, ad_tag FROM clients WHERE email = 'Client'")
+        row = self.cur.fetchone()
+        self.assertEqual(row[0], ss_key, "Hysteria 2 sync must NOT overwrite clients.password with auth hex")
+        self.assertEqual(row[1], hy2_pass, "Hysteria 2 password must be in clients.auth")
+
+        # 3. Sync MTProto inbound client
+        mtp_settings = {
+            "clients": [{"email": "Client", "secret": mtp_sec, "adTag": mtp_ad, "subId": "sub12345"}]
+        }
+        sync_clients(2, "mtproto", "MTProto", mtp_settings)
+
+        self.cur.execute("SELECT password, auth, secret, ad_tag FROM clients WHERE email = 'Client'")
+        row = self.cur.fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row[0], ss_key, "MTProto must NOT overwrite clients.password")
+        self.assertEqual(row[1], hy2_pass, "MTProto must NOT overwrite clients.auth")
+        self.assertEqual(row[2], mtp_sec, "MTProto secret must be in secret column")
+        self.assertEqual(row[3], mtp_ad, "MTProto adTag must be in ad_tag column")
+
+        # 4. Re-sync Shadowsocks inbound client
+        sync_clients(1, "shadowsocks", "SS2022", ss_settings)
+
+        self.cur.execute("SELECT password, auth, secret, ad_tag FROM clients WHERE email = 'Client'")
+        row = self.cur.fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row[0], ss_key, "Shadowsocks re-sync must keep password")
+        self.assertEqual(row[1], hy2_pass, "Shadowsocks re-sync must keep auth")
+        self.assertEqual(row[2], mtp_sec, "Shadowsocks re-sync must NOT clobber clients.secret")
+        self.assertEqual(row[3], mtp_ad, "Shadowsocks re-sync must NOT clobber clients.ad_tag")
+
+    def test_ss2022_uri_composite_password(self):
+        """Verify Shadowsocks 2022 client URI uses SIP002 Base64 format with composite ServerPassword:UserPassword."""
+        import base64
+        import urllib.parse
+        server_key = self.ns["generate_ss2022_key"]("2022-blake3-aes-256-gcm")
+        client_key = self.ns["generate_ss2022_key"]("2022-blake3-aes-256-gcm")
+        ss_method = "2022-blake3-aes-256-gcm"
+        domain = "test.example.com"
+        port = 8388
+
+        raw_userinfo = f"{ss_method}:{server_key}:{client_key}"
+        b64_userinfo = base64.urlsafe_b64encode(raw_userinfo.encode("utf-8")).decode("utf-8").rstrip("=")
+        uri = f"ss://{b64_userinfo}@{domain}:{port}#Test"
+
+        self.assertTrue(uri.startswith("ss://"))
+        self.assertIn(f"@{domain}:{port}#Test", uri)
+
+        # Decode SIP002 Base64 userinfo
+        b64_part = uri.split("://")[1].split("@")[0]
+        padded_b64 = b64_part + "=" * (-len(b64_part) % 4)
+        decoded_userinfo = base64.urlsafe_b64decode(padded_b64).decode("utf-8")
+        parts = decoded_userinfo.split(":")
+        self.assertEqual(len(parts), 3, "SIP002 Base64 userinfo must contain method:server_key:client_key")
+        self.assertEqual(parts[0], ss_method)
+        self.assertEqual(parts[1], server_key)
+        self.assertEqual(parts[2], client_key)
+
+    def test_mtproto_prefer_ipv4_enforced(self):
+        """Verify MTProxy settings enforces preferIp: prefer-ipv4 to avoid IPv6 timeout hangs."""
+        reconcile = self.ns["smart_reconcile_inbound"]
+        sec = self.ns["generate_mtproto_secret"]("gateway.icloud.com")
+        mtp_settings = {
+            "domainFronting": {"ip": "gateway.icloud.com", "port": 443, "proxyProtocol": False},
+            "clients": [{"email": "Client", "secret": sec}]
+        }
+        mtp_stream = {
+            "network": "tcp",
+            "security": "none",
+            "externalProxy": [{"dest": "test.example.com", "port": 8444, "forceTls": "none", "remark": "MTProxy"}]
+        }
+        reconcile(8444, "mtproto", "in-mtproto-faketls", "MTProxy", mtp_settings, mtp_stream, listen="0.0.0.0")
+
+        self.cur.execute("SELECT settings FROM inbounds WHERE port = 8444")
+        s = json.loads(self.cur.fetchone()[0])
+        self.assertEqual(s.get("preferIp"), "prefer-ipv4", "MTProxy settings must contain preferIp: prefer-ipv4")
+
+    def test_awg_standalone_step_separation(self):
+        """Verify standalone AWG and 3X-UI inbounds are separated in wizard, env, and setup_mask."""
+        wizard_path = Path("src/tui/wizard.sh")
+        self.assertTrue(wizard_path.exists())
+        wizard_content = wizard_path.read_text(encoding="utf-8")
+        self.assertIn("q_step_protocols", wizard_content)
+        self.assertIn("q_step_awg_v3", wizard_content)
+        self.assertIn("q_step_awg_v2", wizard_content)
+        self.assertIn("q_step_awg_standalone", wizard_content)
+        self.assertIn("TOTAL_STEPS=12", wizard_content)
+        self.assertIn("AmneziaWG v3.1 (инбаунд 3X-UI", wizard_content)
+        self.assertIn("Автономный сервер AmneziaWG", wizard_content)
+
+        env_path = Path("src/system/env.sh")
+        env_content = env_path.read_text(encoding="utf-8")
+        self.assertIn("ENABLE_AWG_STANDALONE", env_content)
+        self.assertIn("AWG_STANDALONE_PORT", env_content)
+
+    def test_multiselect_numeric_fallback_and_tui_detection(self):
+        """Verify multiselect graceful fallback (Option A) and terminal capability detection."""
+        # 1. Terminal capability check
+        res_tui = run_shell("""
+set -euo pipefail
+source src/common/colors.sh
+source src/common/logger.sh
+is_true() { local val="${1:-0}"; [[ "$val" == "1" || "${val,,}" == "y" || "${val,,}" == "true" ]]; }
+NON_INTERACTIVE=0
+source src/tui/prompts.sh
+
+# Under pipe (subshell stdout is not a TTY), can_use_interactive_tui must return 1 (fallback)
+if can_use_interactive_tui; then
+    echo "TUI_RESULT:INTERACTIVE"
+else
+    echo "TUI_RESULT:FALLBACK"
+fi
+""")
+        self.assertEqual(res_tui.returncode, 0)
+        self.assertIn("TUI_RESULT:FALLBACK", res_tui.stdout)
+
+        # 2. Multiselect numeric parsing (options 1 and 3)
+        res_multiselect = run_shell("""
+set -euo pipefail
+source src/common/colors.sh
+source src/common/logger.sh
+is_true() { local val="${1:-0}"; [[ "$val" == "1" || "${val,,}" == "y" || "${val,,}" == "true" ]]; }
+NON_INTERACTIVE=0
+source src/tui/prompts.sh
+
+p_keys=("PROTO_A" "PROTO_B" "PROTO_C")
+p_labels=("Protocol Alpha" "Protocol Beta" "Protocol Gamma")
+PROTO_A="n"
+PROTO_B="n"
+PROTO_C="n"
+
+# Pass '1,3' to simulate user input in fallback mode
+prompt_multiselect_numeric "Choose protocols" p_keys p_labels <<< "1,3"
+
+echo "A=$PROTO_A B=$PROTO_B C=$PROTO_C"
+""")
+        self.assertEqual(res_multiselect.returncode, 0)
+        self.assertIn("A=y B=n C=y", res_multiselect.stdout)
+
+        # 3. Multiselect non-interactive auto mode
+        res_auto = run_shell("""
+set -euo pipefail
+source src/common/colors.sh
+source src/common/logger.sh
+is_true() { local val="${1:-0}"; [[ "$val" == "1" || "${val,,}" == "y" || "${val,,}" == "true" ]]; }
+NON_INTERACTIVE=1
+source src/tui/prompts.sh
+
+p_keys=("PROTO_A" "PROTO_B")
+p_labels=("Proto 1" "Proto 2")
+PROTO_A="y"
+PROTO_B="n"
+
+prompt_multiselect "Choose" p_keys p_labels
+echo "AUTO_A=$PROTO_A AUTO_B=$PROTO_B"
+""")
+        self.assertEqual(res_auto.returncode, 0)
+        self.assertIn("AUTO_A=y AUTO_B=n", res_auto.stdout)
+
+    def test_modular_web_stack_and_standalone_awg(self):
+        """Verify modular architecture: optional web stack (Nginx+3X-UI) and standalone AWG."""
+        # 1. Environment and example config
+        env_ex = (ROOT / "setup_mask.env.example").read_text(encoding="utf-8")
+        self.assertIn("ENABLE_WEB_STACK", env_ex)
+        self.assertIn("AWG_SERVER_HOST", env_ex)
+
+        env_sh = (ROOT / "src/system/env.sh").read_text(encoding="utf-8")
+        self.assertIn("ENABLE_WEB_STACK", env_sh)
+        self.assertIn("AWG_SERVER_HOST", env_sh)
+
+        # 2. CLI flags and overrides
+        prompts_sh = (ROOT / "src/tui/prompts.sh").read_text(encoding="utf-8")
+        self.assertIn("--web-stack", prompts_sh)
+        self.assertIn("--no-web-stack", prompts_sh)
+        self.assertIn("--awg-host", prompts_sh)
+
+        banner_sh = (ROOT / "src/tui/banner.sh").read_text(encoding="utf-8")
+        self.assertIn("--web-stack", banner_sh)
+        self.assertIn("--no-web-stack", banner_sh)
+        self.assertIn("--awg-host", banner_sh)
+
+        # 3. Wizard Step 0 and standalone flow
+        wizard_sh = (ROOT / "src/tui/wizard.sh").read_text(encoding="utf-8")
+        self.assertIn("Шаг 0: Выбор компонентов для установки", wizard_sh)
+        self.assertIn("run_standalone_awg_wizard", wizard_sh)
+        self.assertIn("Endpoint", wizard_sh)
+        self.assertIn("AWG_SERVER_HOST", wizard_sh)
+
+        # 4. Preinstall conditions
+        preinstall_sh = (ROOT / "src/system/preinstall.sh").read_text(encoding="utf-8")
+        self.assertIn('is_true "${ENABLE_WEB_STACK:-y}"', preinstall_sh)
+
+        # 5. Compiled setup_mask.sh entrypoint flow
+        setup_main = (ROOT / "src/entrypoints/setup_mask.main.sh").read_text(encoding="utf-8")
+        self.assertIn('if is_true "${ENABLE_WEB_STACK:-y}"; then', setup_main)
+        self.assertIn("УСТАНОВКА АВТОНОМНОГО СЕРВЕРА AMNEZIAWG УСПЕШНО ЗАВЕРШЕНА", setup_main)
+
+        # 6. AWG launcher exports SERVER_PUBLIC_HOST
+        awg_setup = (ROOT / "src/awg/setup.sh").read_text(encoding="utf-8")
+        self.assertIn("SERVER_PUBLIC_HOST", awg_setup)
+
+        steps_sh = (ROOT / "src/installer/steps.sh").read_text(encoding="utf-8")
+        self.assertIn('is_true "${ENABLE_WEB_STACK:-y}"', steps_sh)
+
+    def test_get_wan_ip_uses_cache(self):
+        """Verify get_wan_ip prefers cached /run/setup_mask_wan_ip or /tmp before calling curl."""
+        res = run_shell("""
+source src/common/preflight.sh
+cache_file="/run/setup_mask_wan_ip"
+touch /run/.test_w 2>/dev/null || cache_file="/tmp/setup_mask_wan_ip"
+rm -f /run/.test_w 2>/dev/null || true
+echo "203.0.113.42" > "$cache_file"
+ip=$(get_wan_ip)
+printf "RESOLVED_IP=[%s]" "$ip"
+rm -f "$cache_file"
+""")
+        self.assertEqual(res.returncode, 0, f"get_wan_ip failed: {res.stderr}")
+        self.assertIn("RESOLVED_IP=[203.0.113.42]", res.stdout)
+
+
+    def test_is_port_in_use_udp_does_not_use_dev_udp(self):
+        """Verify is_port_in_use never attempts connectionless /dev/udp redirection."""
+        preflight_sh = (ROOT / "src/common/preflight.sh").read_text(encoding="utf-8")
+        self.assertNotIn("/dev/udp", preflight_sh, "is_port_in_use must not test UDP via /dev/udp")
+
+    def test_external_proxy_preserves_sni_and_returns_inbound_id(self):
+        """Verify smart_reconcile_inbound preserves SNI in externalProxy and returns valid inbound_id."""
+        reconcile = self.ns["smart_reconcile_inbound"]
+        reality_settings = {
+            "clients": [{"id": str(uuid.uuid4()), "flow": "xtls-rprx-vision", "email": "Client", "subId": "12345678", "enable": True}],
+            "decryption": "none"
+        }
+        reality_stream = {
+            "network": "tcp",
+            "security": "reality",
+            "tcpSettings": {"acceptProxyProtocol": True, "header": {"type": "none"}},
+            "realitySettings": {
+                "show": False, "xver": 0, "dest": "avito.ru:443", "target": "avito.ru:443",
+                "serverNames": ["avito.ru"], "privateKey": "testprivkey", "minClientVer": "1.0.0",
+                "shortIds": ["abcdef12"],
+                "settings": {"publicKey": "testpubkey", "fingerprint": "firefox", "serverName": "avito.ru", "spiderX": "/"}
+            },
+            "externalProxy": [{"dest": "test.example.com", "port": 443, "forceTls": "same", "sni": "avito.ru", "remark": "VLESS Classic"}]
+        }
+        ib_id = reconcile(46443, "vless", "in-classic-reality", "VLESS Classic", reality_settings, reality_stream, listen="127.0.0.1")
+        self.assertIsNotNone(ib_id, "smart_reconcile_inbound must return inbound_id on creation")
+
+        self.cur.execute("SELECT stream_settings FROM inbounds WHERE id = ?", (ib_id,))
+        row = self.cur.fetchone()
+        self.assertIsNotNone(row)
+        st = json.loads(row[0])
+        ext = st.get("externalProxy", [])
+        self.assertEqual(len(ext), 1)
+        self.assertEqual(ext[0].get("sni"), "avito.ru", "externalProxy must preserve SNI avito.ru")
+        self.assertEqual(ext[0].get("forceTls"), "same", "externalProxy forceTls must be 'same' for REALITY")
+
+        # Re-run reconcile to verify update preservation
+        ib_id2 = reconcile(46443, "vless", "in-classic-reality", "VLESS Classic", reality_settings, reality_stream, listen="127.0.0.1")
+        self.assertEqual(ib_id, ib_id2, "smart_reconcile_inbound must return matching inbound_id on update")
+
+        self.cur.execute("SELECT stream_settings FROM inbounds WHERE id = ?", (ib_id,))
+        st2 = json.loads(self.cur.fetchone()[0])
+        ext2 = st2.get("externalProxy", [])
+        self.assertEqual(ext2[0].get("sni"), "avito.ru", "externalProxy must keep SNI on reconcile update")
 
 
 if __name__ == "__main__":

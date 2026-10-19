@@ -23,3 +23,13 @@ test_profiles/
 docs/UPSTREAM_TRACKING.md
 docs/upstream_sync_state.json
 scripts/check_upstream_sync.py
+
+# Local infrastructure & cluster references (local only)
+docs/AWG_BEST_PRACTICES_REFERENCE.md
+docs/AWG_3.1_REFERENCE_SPECIFICATION.md
+
+# Local test & debug artifacts
+awg-tools/
+extracted_amnezia/
+*.conf
+run_remote_install.py

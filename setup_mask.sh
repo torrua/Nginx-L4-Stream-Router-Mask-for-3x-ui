@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # ==============================================================================
-# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v8.0.0 Universal
+# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v8.0.1 Universal
 # Nginx L4 Stream + 3X-UI + Unix Sockets + Native proxy_http_version 2 + 3 Decoys
 # ==============================================================================
 # Архитектура:
@@ -27,7 +27,7 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="v8.0.0"
+SCRIPT_VERSION="v8.0.1"
 
 
 # --------------------------- Замеры времени и телеметрия ---------------------------
@@ -457,7 +457,7 @@ generate_config_template() {
     local target_file="${1:-setup_mask.env.example}"
     cat << 'EOF_CONF' > "$target_file"
 # ==============================================================================
-# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v8.0.0 Universal)
+# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v8.0.1 Universal)
 # ==============================================================================
 # Данный файл позволяет выполнять полностью автоматическую установку:
 # ./setup_mask.sh --config setup_mask.env --non-interactive --force
@@ -4927,7 +4927,7 @@ else
 
     if [ "$NON_INTERACTIVE" -eq 0 ]; then
         START_AT_REVIEW=0
-        local has_saved_config=0
+        has_saved_config=0
         if is_true "${ENABLE_WEB_STACK:-y}" && [ -n "${PRIMARY_DOMAIN:-}" ]; then
             has_saved_config=1
         elif ! is_true "${ENABLE_WEB_STACK:-y}" && [ -n "${AWG_SERVER_HOST:-}" ]; then
@@ -5165,7 +5165,7 @@ elif [ "$EXPRESS_MODE" -eq 1 ]; then
     echo -e "    ${DIM}• REALITY (свой сайт):${NC}  ${WHITE}cdn.$PRIMARY_DOMAIN -> 127.0.0.1:$STEAL_PORT${NC}"
     echo -e "    ${DIM}• REALITY (внешний):${NC}    ${WHITE}avito.ru -> 127.0.0.1:$CLASSIC_PORT${NC}"
     echo -e "    ${DIM}• VLESS xHTTP:${NC}    ${WHITE}$XHTTP_STREAM_PATH -> 127.0.0.1:$XHTTP_STREAM_PORT${NC}"
-    local udp_stack_summary="Hysteria 2 (:443), AWG v3 (:8443)"
+    udp_stack_summary="Hysteria 2 (:443), AWG v3 (:8443)"
     is_true "${ENABLE_AWG_STANDALONE:-0}" && udp_stack_summary="${udp_stack_summary}, Standalone (:8445)"
     echo -e "    ${DIM}• UDP Стек:${NC}       ${WHITE}${udp_stack_summary}${NC}"
     echo -e "    ${DIM}• Cloudflare WARP:${NC} ${WHITE}Активирован (Google, Gemini, AI / YouTube direct)${NC}"
@@ -9067,7 +9067,7 @@ else
         setup_amneziawg_controller
         deploy_amneziawg_backend
         if command -v ufw >/dev/null 2>&1; then
-            local awg_p="${AWG_STANDALONE_PORT:-8445}"
+            awg_p="${AWG_STANDALONE_PORT:-8445}"
             ufw allow "${awg_p}/udp" comment "AmneziaWG Standalone Server" >/dev/null 2>&1 || true
             ok "Правило файрвола: разрешен порт ${awg_p}/udp (AmneziaWG)"
         fi

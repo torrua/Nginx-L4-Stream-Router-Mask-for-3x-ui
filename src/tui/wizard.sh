@@ -100,7 +100,7 @@ else
 
     if [ "$NON_INTERACTIVE" -eq 0 ]; then
         START_AT_REVIEW=0
-        local has_saved_config=0
+        has_saved_config=0
         if is_true "${ENABLE_WEB_STACK:-y}" && [ -n "${PRIMARY_DOMAIN:-}" ]; then
             has_saved_config=1
         elif ! is_true "${ENABLE_WEB_STACK:-y}" && [ -n "${AWG_SERVER_HOST:-}" ]; then
@@ -338,7 +338,7 @@ elif [ "$EXPRESS_MODE" -eq 1 ]; then
     echo -e "    ${DIM}• REALITY (свой сайт):${NC}  ${WHITE}cdn.$PRIMARY_DOMAIN -> 127.0.0.1:$STEAL_PORT${NC}"
     echo -e "    ${DIM}• REALITY (внешний):${NC}    ${WHITE}avito.ru -> 127.0.0.1:$CLASSIC_PORT${NC}"
     echo -e "    ${DIM}• VLESS xHTTP:${NC}    ${WHITE}$XHTTP_STREAM_PATH -> 127.0.0.1:$XHTTP_STREAM_PORT${NC}"
-    local udp_stack_summary="Hysteria 2 (:443), AWG v3 (:8443)"
+    udp_stack_summary="Hysteria 2 (:443), AWG v3 (:8443)"
     is_true "${ENABLE_AWG_STANDALONE:-0}" && udp_stack_summary="${udp_stack_summary}, Standalone (:8445)"
     echo -e "    ${DIM}• UDP Стек:${NC}       ${WHITE}${udp_stack_summary}${NC}"
     echo -e "    ${DIM}• Cloudflare WARP:${NC} ${WHITE}Активирован (Google, Gemini, AI / YouTube direct)${NC}"

@@ -1015,5 +1015,27 @@ rm -f "$cache_file"
         self.assertEqual(ext2[0].get("sni"), "avito.ru", "externalProxy must keep SNI on reconcile update")
 
 
+class TestBashScopeRegressions(unittest.TestCase):
+    def test_no_illegal_local_outside_function(self):
+        """Verify that known top-level variables do not use 'local' keyword outside function scope."""
+        files_to_check = [
+            ROOT / "setup_mask.sh",
+            ROOT / "src" / "tui" / "wizard.sh",
+            ROOT / "src" / "entrypoints" / "setup_mask.main.sh",
+        ]
+        for f in files_to_check:
+            if not f.exists():
+                continue
+            content = f.read_text(encoding="utf-8")
+            self.assertNotIn("local has_saved_config", content, f"'local has_saved_config' found in {f.name}")
+            self.assertNotIn("local udp_stack_summary", content, f"'local udp_stack_summary' found in {f.name}")
+
+        setup_sh = (ROOT / "setup_mask.sh").read_text(encoding="utf-8")
+        # Ensure awg_p in step 3 standalone is not using local outside function
+        m_step3_awg = re.search(r'deploy_amneziawg_backend\s+if command -v ufw[^;]*;\s*then\s+([^\n]+)', setup_sh)
+        self.assertNotIn("local awg_p=", setup_sh.split("🎉 УСТАНОВКА АВТОНОМНОГО СЕРВЕРА AMNEZIAWG УСПЕШНО ЗАВЕРШЕНА")[0][-500:])
+
+
 if __name__ == "__main__":
     unittest.main()
+

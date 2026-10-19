@@ -9,7 +9,7 @@
 [Инструкция для новичков](docs/BEGINNER_GUIDE.md) • [Техническая архитектура](docs/ARCHITECTURE.md) • [Быстрый старт](#-быстрый-старт-установка-в-1-команду)
 
 [![CI](https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/actions/workflows/ci.yml/badge.svg)](https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/actions/workflows/ci.yml)
-[![Версия](https://img.shields.io/badge/версия-v8.0.0-blue)](https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui)
+[![Версия](https://img.shields.io/badge/версия-v8.0.1-blue)](https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui)
 [![ОС](https://img.shields.io/badge/ОС-Ubuntu%20%7C%20Debian-informational)](docs/BEGINNER_GUIDE.md#1-сервер-vps)
 [![Лицензия](https://img.shields.io/badge/лицензия-MIT-success)](LICENSE)
 
@@ -58,6 +58,7 @@
 | ⚙️ **[Техническое описание архитектуры](docs/ARCHITECTURE.md)** | Полная инженерная документация: схема Nginx L4 Stream, ручная настройка инбаундов 3X-UI, правила UFW от сканирования, Anti-Loop порт 9443, тюнинг буферов HTTP/2 xHTTP, диагностика (Health Check) и бэкапы. |
 | 🎛️ **[Автонастройка 3X-UI (`configure_3xui.sh`)](#-ручная-пошаговая-установка-для-экспертов)** | Скрипт, который сам создаёт подключения в панели, генерирует клиентские ссылки `:443` через `externalProxy`, настраивает Cloudflare WARP, задает часовой пояс, ежемесячный сброс трафика, защиту от SMTP-спама (порт 25) и блокировку SSRF к локальным службам VPS. |
 | ✍️ **[Редакционная политика](docs/EDITORIAL_POLICY.md)** | Стандарт коммуникации проекта: Tone of Voice, словарь понятных терминов для новичков, запрет пафоса и псевдомаркетинга. |
+| 📝 **[История версий и Release Notes](docs/RELEASE_NOTES_v8.0.1.md)** | Подробные отчеты о релизах: [v8.0.1](docs/RELEASE_NOTES_v8.0.1.md) (Hotfix Bash local), [v8.0.0](docs/RELEASE_NOTES_v8.0.0.md), [v7.8.0](docs/RELEASE_NOTES_v7.8.0.md). |
 
 ---
 

@@ -1012,6 +1012,7 @@ for item in res:
             echo -e "     • ${GREEN}ShadowTLS v4${NC}: идеальная маскировка под Apple gateway.icloud.com через Nginx Stream L4."
             echo -e "     • ${GREEN}Wstunnel (Nginx L7)${NC}: WebSocket туннелирование через порт 443 HTTPS с валидным SSL."
             echo -e "     • ${GREEN}Server-Side Zapret${NC}: десинхронизация DPI ТСПУ прямо на VPS через nfqws connbytes 1:6."
+            echo -e "     • ${GREEN}NaïveProxy${NC}: маскировка под Chrome HTTP/2/3 HTTPS (Chromium network stack via Caddy)."
             echo
         fi
 
@@ -1027,6 +1028,7 @@ for item in res:
             "ENABLE_SHADOWTLS"
             "ENABLE_WSTUNNEL"
             "ENABLE_ZAPRET"
+            "ENABLE_NAIVE"
         )
         local proto_labels=(
             "Hysteria 2 (UDP/QUIC Brutal CC, :${HY2_PORT:-443})"
@@ -1040,6 +1042,7 @@ for item in res:
             "ShadowTLS v4 + SS-2022 (Nginx Stream :443 SNI ${SHADOWTLS_SNI:-gateway.icloud.com})"
             "Wstunnel over Nginx L7 (HTTPS WebSocket :443 -> :${WSTUNNEL_PORT:-8080})"
             "Server-Side Zapret (DPI Desync nfqws connbytes 1:6 NFQUEUE 200)"
+            "NaïveProxy (Chromium HTTPS Stack via Caddy, :${NAIVE_PORT:-8446})"
         )
 
         prompt_multiselect "Выберите протоколы для установки" proto_keys proto_labels || return $?
@@ -1184,6 +1187,20 @@ for item in res:
             fi
         else
             ZAPRET_QNUM=""
+        fi
+
+        if is_true "$ENABLE_NAIVE"; then
+            [ -n "${NAIVE_PORT:-}" ] || NAIVE_PORT="8446"
+            [ -n "${NAIVE_USER:-}" ] || NAIVE_USER="user"
+            [ -n "${NAIVE_PASS:-}" ] || NAIVE_PASS="$(python3 -c 'import secrets; print(secrets.token_urlsafe(16))' 2>/dev/null || openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' || echo "nv${RANDOM}")"
+            if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+                prompt_default "  Порт для NaïveProxy" "$NAIVE_PORT" NAIVE_PORT || return $?
+                prompt_default "  Пользователь для NaïveProxy" "$NAIVE_USER" NAIVE_USER || return $?
+            fi
+        else
+            NAIVE_PORT=""
+            NAIVE_USER=""
+            NAIVE_PASS=""
         fi
 
         rebuild_all_domains
@@ -1671,6 +1688,10 @@ for item in res:
         local zapret_status="${RED}Отключен${NC}"
         is_true "${ENABLE_ZAPRET:-0}" && zapret_status="${GREEN}Включен${NC} (NFQUEUE ${ZAPRET_QNUM:-200}, ${ZAPRET_DESYNC:-split2})"
         echo -e "      ${DIM}• Server-Side Zapret:${NC}   $zapret_status"
+
+        local naive_status="${RED}Отключен${NC}"
+        is_true "${ENABLE_NAIVE:-0}" && naive_status="${GREEN}Включен${NC} (:${NAIVE_PORT:-8446}/tcp, Chrome HTTPS Caddy)"
+        echo -e "      ${DIM}• NaïveProxy:${NC}          $naive_status"
 
         local agh_status="${RED}Отключен${NC}"
         if is_true "${ENABLE_AGH:-0}"; then

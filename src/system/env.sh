@@ -187,8 +187,22 @@ reconstruct_arrays_from_vars() {
     _v="${ENABLE_NAIVE:-n}"; if is_true "$_v"; then ENABLE_NAIVE=1; else ENABLE_NAIVE=0; fi
     NAIVE_PORT="${NAIVE_PORT:-8446}"
     NAIVE_DOMAIN="${NAIVE_DOMAIN:-}"
+    if [ "$ENABLE_NAIVE" -eq 1 ] && [ -n "$NAIVE_DOMAIN" ]; then
+        if [[ ! " ${ALL_DOMAINS[*]} " == *" ${NAIVE_DOMAIN} "* ]]; then
+            ALL_DOMAINS+=("$NAIVE_DOMAIN")
+        fi
+    fi
     NAIVE_USER="${NAIVE_USER:-user}"
-    NAIVE_PASS="${NAIVE_PASS:-}"
+    if [ "$ENABLE_NAIVE" -eq 1 ] && [ -z "${NAIVE_PASS:-}" ]; then
+        NAIVE_PASS="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "naive${RANDOM}")"
+    fi
+    _v="${ENABLE_DNSTT:-n}"; if is_true "$_v"; then ENABLE_DNSTT=1; else ENABLE_DNSTT=0; fi
+    DNSTT_PORT="${DNSTT_PORT:-53053}"
+    DNSTT_DOMAIN="${DNSTT_DOMAIN:-}"
+    DNSTT_PUBKEY="${DNSTT_PUBKEY:-}"
+    if [ "$ENABLE_DNSTT" -eq 1 ]; then
+        ENABLE_SS2022=1
+    fi
     _v="${ENABLE_ZAPRET:-n}"; if is_true "$_v"; then ENABLE_ZAPRET=1; else ENABLE_ZAPRET=0; fi
     ZAPRET_QNUM="${ZAPRET_QNUM:-200}"
     ZAPRET_DESYNC="${ZAPRET_DESYNC:-split2}"
@@ -283,6 +297,8 @@ save_session_state() {
     v="${ENABLE_SHADOWTLS:-n}"; is_true "$v" && shadowtls_save="y"
     local naive_save="n"
     v="${ENABLE_NAIVE:-n}"; is_true "$v" && naive_save="y"
+    local dnstt_save="n"
+    v="${ENABLE_DNSTT:-n}"; is_true "$v" && dnstt_save="y"
     local zapret_save="n"
     v="${ENABLE_ZAPRET:-n}"; is_true "$v" && zapret_save="y"
     local wstunnel_save="n"
@@ -428,6 +444,10 @@ NAIVE_PORT="${NAIVE_PORT:-8446}"
 NAIVE_DOMAIN="${NAIVE_DOMAIN:-}"
 NAIVE_USER="${NAIVE_USER:-user}"
 NAIVE_PASS="${NAIVE_PASS:-}"
+ENABLE_DNSTT="$dnstt_save"
+DNSTT_PORT="${DNSTT_PORT:-53053}"
+DNSTT_DOMAIN="${DNSTT_DOMAIN:-}"
+DNSTT_PUBKEY="${DNSTT_PUBKEY:-}"
 ENABLE_ZAPRET="$zapret_save"
 ZAPRET_QNUM="${ZAPRET_QNUM:-200}"
 ZAPRET_DESYNC="${ZAPRET_DESYNC:-split2}"

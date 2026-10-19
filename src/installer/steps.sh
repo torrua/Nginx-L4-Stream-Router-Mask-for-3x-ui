@@ -522,6 +522,102 @@ EOF
     fi
 }
 
+setup_naive_service() {
+    log "Настройка службы NaïveProxy (Caddy forwardproxy@naive)..."
+    local cur_arch
+    cur_arch=$(uname -m 2>/dev/null || echo "x86_64")
+    local caddy_arch="amd64"
+    case "$cur_arch" in
+        x86_64|amd64) caddy_arch="amd64" ;;
+        aarch64|arm64) caddy_arch="arm64" ;;
+        *) caddy_arch="amd64" ;;
+    esac
+
+    local bin_dir="${LOCAL_BIN_DIR:-/usr/local/bin}"
+    [ -d "$bin_dir" ] || mkdir -p "$bin_dir" 2>/dev/null || true
+
+    if [ ! -x "${bin_dir}/caddy-naive" ]; then
+        local caddy_tmp="/tmp/caddy_naive_$$"
+        mkdir -p "$caddy_tmp"
+        local rel_ver="${SCRIPT_VERSION:-v8.1.0}"
+        local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/caddy-naive-linux-${caddy_arch}.tar.gz"
+        local dl_mirror="https://ghfast.top/${dl_url}"
+        if curl -fsSL --connect-timeout 15 "$dl_url" -o "$caddy_tmp/caddy.tar.gz" 2>/dev/null || \
+           curl -fsSL --connect-timeout 15 "$dl_mirror" -o "$caddy_tmp/caddy.tar.gz" 2>/dev/null; then
+            tar -zxf "$caddy_tmp/caddy.tar.gz" -C "$caddy_tmp" 2>/dev/null || true
+            if [ -f "$caddy_tmp/caddy-naive" ]; then
+                cp "$caddy_tmp/caddy-naive" "${bin_dir}/caddy-naive"
+                chmod +x "${bin_dir}/caddy-naive"
+            fi
+        fi
+        rm -rf "$caddy_tmp" 2>/dev/null || true
+    fi
+
+    local naive_port="${NAIVE_PORT:-8446}"
+    local naive_user="${NAIVE_USER:-user}"
+    local naive_pass="${NAIVE_PASS:-}"
+    if [ -z "$naive_pass" ]; then
+        naive_pass=$(python3 -c "import secrets; print(secrets.token_urlsafe(16))" 2>/dev/null || openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' || echo "ChangeMeNaive2026")
+        NAIVE_PASS="$naive_pass"
+    fi
+    local naive_domain="${NAIVE_DOMAIN:-${PRIMARY_DOMAIN:-}}"
+
+    mkdir -p /etc/naiveproxy /var/www/html
+    local tls_directive="tls internal"
+    if [ -n "${PRIMARY_DOMAIN:-}" ] && [ -f "/etc/letsencrypt/live/${PRIMARY_DOMAIN}/fullchain.pem" ] && [ -f "/etc/letsencrypt/live/${PRIMARY_DOMAIN}/privkey.pem" ]; then
+        tls_directive="tls /etc/letsencrypt/live/${PRIMARY_DOMAIN}/fullchain.pem /etc/letsencrypt/live/${PRIMARY_DOMAIN}/privkey.pem"
+    fi
+
+    cat << EOF > /etc/naiveproxy/Caddyfile
+{
+  order forward_proxy before reverse_proxy
+}
+
+:${naive_port} {
+  ${tls_directive}
+
+  forward_proxy {
+    basic_auth ${naive_user} ${naive_pass}
+    hide_ip
+    hide_via
+    probe_resistance
+  }
+
+  file_server {
+    root /var/www/html
+  }
+}
+EOF
+
+    mkdir -p /etc/systemd/system
+    cat << EOF > /etc/systemd/system/caddy-naive.service
+[Unit]
+Description=Caddy NaïveProxy Server Daemon
+After=network.target network-online.target
+
+[Service]
+Type=simple
+ExecStart=${bin_dir}/caddy-naive run --config /etc/naiveproxy/Caddyfile --adapter caddyfile
+Restart=always
+RestartSec=3s
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload 2>/dev/null || true
+        systemctl enable caddy-naive >/dev/null 2>&1 || true
+        if [ -x "${bin_dir}/caddy-naive" ]; then
+            systemctl restart caddy-naive 2>/dev/null || true
+            ok "Служба NaïveProxy активирована (порт ${naive_port}, user: ${naive_user})."
+        else
+            warn "Бинарник ${bin_dir}/caddy-naive не найден, запуск caddy-naive отложен."
+        fi
+    fi
+}
+
 deploy_native_nextgen_services() {
     if is_true "${ENABLE_ZAPRET:-0}"; then
         setup_zapret_service
@@ -534,6 +630,9 @@ deploy_native_nextgen_services() {
     fi
     if is_true "${ENABLE_WSTUNNEL:-0}"; then
         setup_wstunnel_service
+    fi
+    if is_true "${ENABLE_NAIVE:-0}"; then
+        setup_naive_service
     fi
 }
 

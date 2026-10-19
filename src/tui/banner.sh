@@ -234,6 +234,19 @@ ZAPRET_QNUM="200"
 ZAPRET_DESYNC="split2"
 ZAPRET_FOOLING="md5sig,badseq"
 
+# NaïveProxy (Caddy with forwardproxy@naive via Nginx Stream L4) [y/n]
+ENABLE_NAIVE="n"
+NAIVE_PORT="8446"
+NAIVE_DOMAIN=""
+NAIVE_USER="user"
+NAIVE_PASS=""
+
+# DNSTT (Emergency DNS Tunneling over DoH via dnstt-server) [y/n]
+ENABLE_DNSTT="n"
+DNSTT_PORT="53053"
+DNSTT_DOMAIN=""
+DNSTT_PUBKEY=""
+
 # --- 10. БЕЗОПАСНОСТЬ ХОСТА (HOST SECURITY & SSH HARDENING) ---
 # Включить настройку безопасности хоста (порт SSH, ключи, защита от брутфорса) [y/n]
 ENABLE_HOST_SECURITY="n"

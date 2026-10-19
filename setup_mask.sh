@@ -625,6 +625,19 @@ ZAPRET_QNUM="200"
 ZAPRET_DESYNC="split2"
 ZAPRET_FOOLING="md5sig,badseq"
 
+# NaïveProxy (Caddy with forwardproxy@naive via Nginx Stream L4) [y/n]
+ENABLE_NAIVE="n"
+NAIVE_PORT="8446"
+NAIVE_DOMAIN=""
+NAIVE_USER="user"
+NAIVE_PASS=""
+
+# DNSTT (Emergency DNS Tunneling over DoH via dnstt-server) [y/n]
+ENABLE_DNSTT="n"
+DNSTT_PORT="53053"
+DNSTT_DOMAIN=""
+DNSTT_PUBKEY=""
+
 # --- 10. БЕЗОПАСНОСТЬ ХОСТА (HOST SECURITY & SSH HARDENING) ---
 # Включить настройку безопасности хоста (порт SSH, ключи, защита от брутфорса) [y/n]
 ENABLE_HOST_SECURITY="n"
@@ -955,8 +968,22 @@ reconstruct_arrays_from_vars() {
     _v="${ENABLE_NAIVE:-n}"; if is_true "$_v"; then ENABLE_NAIVE=1; else ENABLE_NAIVE=0; fi
     NAIVE_PORT="${NAIVE_PORT:-8446}"
     NAIVE_DOMAIN="${NAIVE_DOMAIN:-}"
+    if [ "$ENABLE_NAIVE" -eq 1 ] && [ -n "$NAIVE_DOMAIN" ]; then
+        if [[ ! " ${ALL_DOMAINS[*]} " == *" ${NAIVE_DOMAIN} "* ]]; then
+            ALL_DOMAINS+=("$NAIVE_DOMAIN")
+        fi
+    fi
     NAIVE_USER="${NAIVE_USER:-user}"
-    NAIVE_PASS="${NAIVE_PASS:-}"
+    if [ "$ENABLE_NAIVE" -eq 1 ] && [ -z "${NAIVE_PASS:-}" ]; then
+        NAIVE_PASS="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "naive${RANDOM}")"
+    fi
+    _v="${ENABLE_DNSTT:-n}"; if is_true "$_v"; then ENABLE_DNSTT=1; else ENABLE_DNSTT=0; fi
+    DNSTT_PORT="${DNSTT_PORT:-53053}"
+    DNSTT_DOMAIN="${DNSTT_DOMAIN:-}"
+    DNSTT_PUBKEY="${DNSTT_PUBKEY:-}"
+    if [ "$ENABLE_DNSTT" -eq 1 ]; then
+        ENABLE_SS2022=1
+    fi
     _v="${ENABLE_ZAPRET:-n}"; if is_true "$_v"; then ENABLE_ZAPRET=1; else ENABLE_ZAPRET=0; fi
     ZAPRET_QNUM="${ZAPRET_QNUM:-200}"
     ZAPRET_DESYNC="${ZAPRET_DESYNC:-split2}"
@@ -1051,6 +1078,8 @@ save_session_state() {
     v="${ENABLE_SHADOWTLS:-n}"; is_true "$v" && shadowtls_save="y"
     local naive_save="n"
     v="${ENABLE_NAIVE:-n}"; is_true "$v" && naive_save="y"
+    local dnstt_save="n"
+    v="${ENABLE_DNSTT:-n}"; is_true "$v" && dnstt_save="y"
     local zapret_save="n"
     v="${ENABLE_ZAPRET:-n}"; is_true "$v" && zapret_save="y"
     local wstunnel_save="n"
@@ -1196,6 +1225,10 @@ NAIVE_PORT="${NAIVE_PORT:-8446}"
 NAIVE_DOMAIN="${NAIVE_DOMAIN:-}"
 NAIVE_USER="${NAIVE_USER:-user}"
 NAIVE_PASS="${NAIVE_PASS:-}"
+ENABLE_DNSTT="$dnstt_save"
+DNSTT_PORT="${DNSTT_PORT:-53053}"
+DNSTT_DOMAIN="${DNSTT_DOMAIN:-}"
+DNSTT_PUBKEY="${DNSTT_PUBKEY:-}"
 ENABLE_ZAPRET="$zapret_save"
 ZAPRET_QNUM="${ZAPRET_QNUM:-200}"
 ZAPRET_DESYNC="${ZAPRET_DESYNC:-split2}"
@@ -1702,6 +1735,15 @@ CLI_WSTUNNEL_PORT=""
 CLI_WSTUNNEL_PREFIX=""
 CLI_ENABLE_ZAPRET=""
 CLI_ZAPRET_QNUM=""
+CLI_ENABLE_NAIVE=""
+CLI_NAIVE_PORT=""
+CLI_NAIVE_DOMAIN=""
+CLI_NAIVE_USER=""
+CLI_NAIVE_PASS=""
+CLI_ENABLE_DNSTT=""
+CLI_DNSTT_PORT=""
+CLI_DNSTT_DOMAIN=""
+CLI_DNSTT_PUBKEY=""
 CLI_ALL_PROTOCOLS=""
 
 while [[ $# -gt 0 ]]; do
@@ -6160,6 +6202,102 @@ EOF
     fi
 }
 
+setup_naive_service() {
+    log "Настройка службы NaïveProxy (Caddy forwardproxy@naive)..."
+    local cur_arch
+    cur_arch=$(uname -m 2>/dev/null || echo "x86_64")
+    local caddy_arch="amd64"
+    case "$cur_arch" in
+        x86_64|amd64) caddy_arch="amd64" ;;
+        aarch64|arm64) caddy_arch="arm64" ;;
+        *) caddy_arch="amd64" ;;
+    esac
+
+    local bin_dir="${LOCAL_BIN_DIR:-/usr/local/bin}"
+    [ -d "$bin_dir" ] || mkdir -p "$bin_dir" 2>/dev/null || true
+
+    if [ ! -x "${bin_dir}/caddy-naive" ]; then
+        local caddy_tmp="/tmp/caddy_naive_$$"
+        mkdir -p "$caddy_tmp"
+        local rel_ver="${SCRIPT_VERSION:-v8.1.0}"
+        local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/caddy-naive-linux-${caddy_arch}.tar.gz"
+        local dl_mirror="https://ghfast.top/${dl_url}"
+        if curl -fsSL --connect-timeout 15 "$dl_url" -o "$caddy_tmp/caddy.tar.gz" 2>/dev/null || \
+           curl -fsSL --connect-timeout 15 "$dl_mirror" -o "$caddy_tmp/caddy.tar.gz" 2>/dev/null; then
+            tar -zxf "$caddy_tmp/caddy.tar.gz" -C "$caddy_tmp" 2>/dev/null || true
+            if [ -f "$caddy_tmp/caddy-naive" ]; then
+                cp "$caddy_tmp/caddy-naive" "${bin_dir}/caddy-naive"
+                chmod +x "${bin_dir}/caddy-naive"
+            fi
+        fi
+        rm -rf "$caddy_tmp" 2>/dev/null || true
+    fi
+
+    local naive_port="${NAIVE_PORT:-8446}"
+    local naive_user="${NAIVE_USER:-user}"
+    local naive_pass="${NAIVE_PASS:-}"
+    if [ -z "$naive_pass" ]; then
+        naive_pass=$(python3 -c "import secrets; print(secrets.token_urlsafe(16))" 2>/dev/null || openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' || echo "ChangeMeNaive2026")
+        NAIVE_PASS="$naive_pass"
+    fi
+    local naive_domain="${NAIVE_DOMAIN:-${PRIMARY_DOMAIN:-}}"
+
+    mkdir -p /etc/naiveproxy /var/www/html
+    local tls_directive="tls internal"
+    if [ -n "${PRIMARY_DOMAIN:-}" ] && [ -f "/etc/letsencrypt/live/${PRIMARY_DOMAIN}/fullchain.pem" ] && [ -f "/etc/letsencrypt/live/${PRIMARY_DOMAIN}/privkey.pem" ]; then
+        tls_directive="tls /etc/letsencrypt/live/${PRIMARY_DOMAIN}/fullchain.pem /etc/letsencrypt/live/${PRIMARY_DOMAIN}/privkey.pem"
+    fi
+
+    cat << EOF > /etc/naiveproxy/Caddyfile
+{
+  order forward_proxy before reverse_proxy
+}
+
+:${naive_port} {
+  ${tls_directive}
+
+  forward_proxy {
+    basic_auth ${naive_user} ${naive_pass}
+    hide_ip
+    hide_via
+    probe_resistance
+  }
+
+  file_server {
+    root /var/www/html
+  }
+}
+EOF
+
+    mkdir -p /etc/systemd/system
+    cat << EOF > /etc/systemd/system/caddy-naive.service
+[Unit]
+Description=Caddy NaïveProxy Server Daemon
+After=network.target network-online.target
+
+[Service]
+Type=simple
+ExecStart=${bin_dir}/caddy-naive run --config /etc/naiveproxy/Caddyfile --adapter caddyfile
+Restart=always
+RestartSec=3s
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload 2>/dev/null || true
+        systemctl enable caddy-naive >/dev/null 2>&1 || true
+        if [ -x "${bin_dir}/caddy-naive" ]; then
+            systemctl restart caddy-naive 2>/dev/null || true
+            ok "Служба NaïveProxy активирована (порт ${naive_port}, user: ${naive_user})."
+        else
+            warn "Бинарник ${bin_dir}/caddy-naive не найден, запуск caddy-naive отложен."
+        fi
+    fi
+}
+
 deploy_native_nextgen_services() {
     if is_true "${ENABLE_ZAPRET:-0}"; then
         setup_zapret_service
@@ -6172,6 +6310,9 @@ deploy_native_nextgen_services() {
     fi
     if is_true "${ENABLE_WSTUNNEL:-0}"; then
         setup_wstunnel_service
+    fi
+    if is_true "${ENABLE_NAIVE:-0}"; then
+        setup_naive_service
     fi
 }
 
@@ -7213,6 +7354,7 @@ for item in res:
             echo -e "     • ${GREEN}ShadowTLS v4${NC}: идеальная маскировка под Apple gateway.icloud.com через Nginx Stream L4."
             echo -e "     • ${GREEN}Wstunnel (Nginx L7)${NC}: WebSocket туннелирование через порт 443 HTTPS с валидным SSL."
             echo -e "     • ${GREEN}Server-Side Zapret${NC}: десинхронизация DPI ТСПУ прямо на VPS через nfqws connbytes 1:6."
+            echo -e "     • ${GREEN}NaïveProxy${NC}: маскировка под Chrome HTTP/2/3 HTTPS (Chromium network stack via Caddy)."
             echo
         fi
 
@@ -7228,6 +7370,7 @@ for item in res:
             "ENABLE_SHADOWTLS"
             "ENABLE_WSTUNNEL"
             "ENABLE_ZAPRET"
+            "ENABLE_NAIVE"
         )
         local proto_labels=(
             "Hysteria 2 (UDP/QUIC Brutal CC, :${HY2_PORT:-443})"
@@ -7241,6 +7384,7 @@ for item in res:
             "ShadowTLS v4 + SS-2022 (Nginx Stream :443 SNI ${SHADOWTLS_SNI:-gateway.icloud.com})"
             "Wstunnel over Nginx L7 (HTTPS WebSocket :443 -> :${WSTUNNEL_PORT:-8080})"
             "Server-Side Zapret (DPI Desync nfqws connbytes 1:6 NFQUEUE 200)"
+            "NaïveProxy (Chromium HTTPS Stack via Caddy, :${NAIVE_PORT:-8446})"
         )
 
         prompt_multiselect "Выберите протоколы для установки" proto_keys proto_labels || return $?
@@ -7385,6 +7529,20 @@ for item in res:
             fi
         else
             ZAPRET_QNUM=""
+        fi
+
+        if is_true "$ENABLE_NAIVE"; then
+            [ -n "${NAIVE_PORT:-}" ] || NAIVE_PORT="8446"
+            [ -n "${NAIVE_USER:-}" ] || NAIVE_USER="user"
+            [ -n "${NAIVE_PASS:-}" ] || NAIVE_PASS="$(python3 -c 'import secrets; print(secrets.token_urlsafe(16))' 2>/dev/null || openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' || echo "nv${RANDOM}")"
+            if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+                prompt_default "  Порт для NaïveProxy" "$NAIVE_PORT" NAIVE_PORT || return $?
+                prompt_default "  Пользователь для NaïveProxy" "$NAIVE_USER" NAIVE_USER || return $?
+            fi
+        else
+            NAIVE_PORT=""
+            NAIVE_USER=""
+            NAIVE_PASS=""
         fi
 
         rebuild_all_domains
@@ -7872,6 +8030,10 @@ for item in res:
         local zapret_status="${RED}Отключен${NC}"
         is_true "${ENABLE_ZAPRET:-0}" && zapret_status="${GREEN}Включен${NC} (NFQUEUE ${ZAPRET_QNUM:-200}, ${ZAPRET_DESYNC:-split2})"
         echo -e "      ${DIM}• Server-Side Zapret:${NC}   $zapret_status"
+
+        local naive_status="${RED}Отключен${NC}"
+        is_true "${ENABLE_NAIVE:-0}" && naive_status="${GREEN}Включен${NC} (:${NAIVE_PORT:-8446}/tcp, Chrome HTTPS Caddy)"
+        echo -e "      ${DIM}• NaïveProxy:${NC}          $naive_status"
 
         local agh_status="${RED}Отключен${NC}"
         if is_true "${ENABLE_AGH:-0}"; then

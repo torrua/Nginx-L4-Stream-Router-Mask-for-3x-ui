@@ -356,6 +356,9 @@ inspect_port_conflicts() {
     local _masque_en="${ENABLE_MASQUE:-n}"
     if [[ "${_masque_en,,}" == "y" || "${_masque_en}" == "1" || "${_masque_en,,}" == "true" ]]; then
         local m_port="${MASQUE_PORT:-8445}"
+        if [[ "${_awg_sa,,}" == "y" || "${_awg_sa}" == "1" || "${_awg_sa,,}" == "true" ]] && [ "$m_port" = "${AWG_STANDALONE_PORT:-8445}" ]; then
+            warn "Коллизия портов: MASQUE и AmneziaWG Standalone используют один UDP-порт ($m_port)! Измените MASQUE_PORT или AWG_STANDALONE_PORT."
+        fi
         if is_port_in_use "udp" "$m_port"; then
             local m_owner
             m_owner=$(get_port_listener_info "udp" "$m_port")

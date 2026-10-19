@@ -137,9 +137,10 @@ NaïveProxy использует форк сетевого стека Chromium:
 Вместо установки zapret на каждое клиентское устройство серверный `nfqws` десинхронизирует ТСПУ прямо на VPS:
 
 ```bash
-# Правило iptables перехватывает исключительно первые 6 пакетов сессии:
-iptables -t mangle -I POSTROUTING -p tcp --tcp-flags SYN,ACK SYN,ACK \
+# Правило iptables перехватывает первые 6 пакетов сессии с защитой от циклов:
+iptables -t mangle -I POSTROUTING -p tcp \
   -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original \
+  -m mark ! --mark 0x40000000/0x40000000 \
   -j NFQUEUE --queue-num 200 --queue-bypass
 ```
 
@@ -159,9 +160,11 @@ services:
   wstunnel-dokploy:
     image: ghcr.io/erebe/wstunnel:latest
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command:
       - "server"
-      - "--restrict-to=127.0.0.1:51820,127.0.0.1:8388,127.0.0.1:10443"
+      - "--restrict-to=host.docker.internal:51820,host.docker.internal:8388,host.docker.internal:10443,127.0.0.1:51820,127.0.0.1:8388,127.0.0.1:10443"
       - "ws://0.0.0.0:8080"
     networks:
       - dokploy-network
@@ -226,7 +229,7 @@ Traefik самостоятельно выпускает SSL для `wstunnel.you
 ### 2. Подключение WireGuard / AmneziaWG через Wstunnel
 На компьютере или роутере запустите wstunnel клиент:
 ```bash
-wstunnel client -L udp://127.0.0.1:51820:127.0.0.1:51820 wss://wstunnel.yourdomain.online
+wstunnel client -L udp://127.0.0.1:51820:host.docker.internal:51820 wss://wstunnel.yourdomain.online
 ```
 В файле конфигурации WireGuard / AmneziaWG укажите:
 ```ini

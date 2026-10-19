@@ -166,6 +166,9 @@ reconstruct_arrays_from_vars() {
 
     # Сосуществование с Dokploy и протоколы следующего поколения
     _v="${DOKPLOY_COEXISTENCE:-n}"; if is_true "$_v"; then DOKPLOY_COEXISTENCE="y"; else DOKPLOY_COEXISTENCE="n"; fi
+    if [ "$DOKPLOY_COEXISTENCE" = "y" ]; then
+        ENABLE_WEB_STACK=0
+    fi
     _v="${ENABLE_MASQUE:-n}"; if is_true "$_v"; then ENABLE_MASQUE=1; else ENABLE_MASQUE=0; fi
     MASQUE_PORT="${MASQUE_PORT:-8445}"
     _v="${ENABLE_SHADOWTLS:-n}"; if is_true "$_v"; then ENABLE_SHADOWTLS=1; else ENABLE_SHADOWTLS=0; fi
@@ -218,8 +221,14 @@ save_session_state() {
     umask 077
 
     local v=""
+    local dokploy_coexist_save="n"
+    v="${DOKPLOY_COEXISTENCE:-n}"; is_true "$v" && dokploy_coexist_save="y"
     local web_stack_save="n"
-    v="${ENABLE_WEB_STACK:-y}"; is_true "$v" && web_stack_save="y"
+    if [ "$dokploy_coexist_save" = "y" ]; then
+        web_stack_save="dokploy"
+    else
+        v="${ENABLE_WEB_STACK:-y}"; is_true "$v" && web_stack_save="y"
+    fi
     local steal_save="n"
     v="${ENABLE_STEAL:-${STEAL_ENABLED:-n}}"; is_true "$v" && steal_save="y"
     local classic_save="n"
@@ -248,9 +257,6 @@ save_session_state() {
     v="${ENABLE_AGH:-n}"; is_true "$v" && agh_save="y"
     local agh_xray_save="n"
     v="${AGH_XRAY_DNS:-n}"; is_true "$v" && agh_xray_save="y"
-
-    local dokploy_coexist_save="n"
-    v="${DOKPLOY_COEXISTENCE:-n}"; is_true "$v" && dokploy_coexist_save="y"
     local masque_save="n"
     v="${ENABLE_MASQUE:-n}"; is_true "$v" && masque_save="y"
     local shadowtls_save="n"

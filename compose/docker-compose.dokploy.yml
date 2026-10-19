@@ -11,9 +11,11 @@ services:
     image: ghcr.io/erebe/wstunnel:latest
     container_name: wstunnel-dokploy
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command:
       - "server"
-      - "--restrict-to=127.0.0.1:51820,127.0.0.1:8388,127.0.0.1:10443"
+      - "--restrict-to=host.docker.internal:51820,host.docker.internal:8388,host.docker.internal:10443,127.0.0.1:51820,127.0.0.1:8388,127.0.0.1:10443"
       - "ws://0.0.0.0:8080"
     networks:
       - dokploy-network
@@ -49,12 +51,16 @@ services:
       - V3=1
       - LISTEN=0.0.0.0:${SHADOWTLS_PORT:-8543}
       - SERVER=${SS2022_BACKEND_HOST:-127.0.0.1}:${SS2022_BACKEND_PORT:-8388}
+      - TLS=${SHADOWTLS_SNI:-gateway.icloud.com}:443
       - TLS_NAMES=${SHADOWTLS_SNI:-gateway.icloud.com}
       - PASSWORD=${SHADOWTLS_PASSWORD}
 
   # 4. NaïveProxy with Caddy (Cloudflare DNS-01 ACME)
   naiveproxy-caddy:
-    image: caddy:latest
+    build:
+      context: ./naiveproxy
+      dockerfile: Dockerfile
+    image: local-naiveproxy:latest
     container_name: naiveproxy-caddy
     restart: unless-stopped
     ports:

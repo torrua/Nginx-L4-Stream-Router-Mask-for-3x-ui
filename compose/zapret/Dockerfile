@@ -1,11 +1,12 @@
-FROM alpine:3.19
+FROM debian:bookworm-slim
 
-RUN apk add --no-cache \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     iptables \
-    libnetfilter_queue \
-    libcap \
+    libnetfilter-queue1 \
     curl \
-    tar
+    ca-certificates \
+    tar && \
+    rm -rf /var/lib/apt/lists/*
 
 # Установка nfqws из официального релиза bol-van/zapret
 ARG ZAPRET_VERSION=v69.2
@@ -20,3 +21,4 @@ COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
+

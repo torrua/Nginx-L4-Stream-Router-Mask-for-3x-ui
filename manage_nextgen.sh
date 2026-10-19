@@ -17,6 +17,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 BOLD='\033[1m'
+DIM='\033[2m'
 NC='\033[0m'
 
 log()   { echo -e "${CYAN}[*]${NC} $*"; }
@@ -57,6 +58,68 @@ ensure_env() {
     fi
 }
 
+ensure_configs() {
+    ensure_env
+
+    local masque_tpl="${COMPOSE_DIR}/sing-box-masque/config.json.template"
+    local masque_cfg="${COMPOSE_DIR}/sing-box-masque/config.json"
+    local naive_tpl="${COMPOSE_DIR}/naiveproxy/Caddyfile.template"
+    local naive_cfg="${COMPOSE_DIR}/naiveproxy/Caddyfile"
+
+    # Чтение переменных окружения
+    set -a
+    # shellcheck disable=SC1090
+    source "$ENV_FILE"
+    set +a
+
+    # 1. Генерация sing-box MASQUE config.json при отсутствии
+    if [ ! -f "$masque_cfg" ] && [ -f "$masque_tpl" ]; then
+        log "Генерация конфигурации Sing-box MASQUE (${masque_cfg})..."
+        local m_port="${MASQUE_PORT:-8445}"
+        local m_user="${MASQUE_USER:-client}"
+        local m_pass="${MASQUE_PASS:-ChangeMeSecretMasquePass2026!}"
+        local m_dom="${PRIMARY_DOMAIN:-yourdomain.online}"
+        local m_cert="${MASQUE_CERT_PATH:-/etc/ssl/certs/fullchain.pem}"
+        local m_key="${MASQUE_KEY_PATH:-/etc/ssl/certs/privkey.pem}"
+
+        if command -v python3 >/dev/null 2>&1; then
+            python3 -c "
+import json
+with open('$masque_tpl', 'r', encoding='utf-8') as f:
+    data = json.load(f)
+for ib in data.get('inbounds', []):
+    if ib.get('type') == 'masque':
+        ib['listen_port'] = int('$m_port')
+        if 'users' in ib and ib['users']:
+            ib['users'][0]['username'] = '$m_user'
+            ib['users'][0]['password'] = '$m_pass'
+        if 'tls' in ib:
+            ib['tls']['server_name'] = '$m_dom'
+            ib['tls']['certificate_path'] = '$m_cert'
+            ib['tls']['key_path'] = '$m_key'
+with open('$masque_cfg', 'w', encoding='utf-8') as f:
+    json.dump(data, f, indent=2)
+" 2>/dev/null || cp "$masque_tpl" "$masque_cfg"
+        else
+            sed -e "s|\"listen_port\": 8445|\"listen_port\": ${m_port}|g" \
+                -e "s|\"username\": \"client\"|\"username\": \"${m_user}\"|g" \
+                -e "s|\"password\": \"CHANGE_ME_PASSWORD\"|\"password\": \"${m_pass}\"|g" \
+                -e "s|\"server_name\": \"yourdomain.online\"|\"server_name\": \"${m_dom}\"|g" \
+                -e "s|/etc/ssl/certs/fullchain.pem|${m_cert}|g" \
+                -e "s|/etc/ssl/certs/privkey.pem|${m_key}|g" \
+                "$masque_tpl" > "$masque_cfg"
+        fi
+        ok "Конфигурация Sing-box MASQUE инициализирована."
+    fi
+
+    # 2. Инициализация NaïveProxy Caddyfile при отсутствии
+    if [ ! -f "$naive_cfg" ] && [ -f "$naive_tpl" ]; then
+        log "Создание конфигурации NaïveProxy Caddyfile (${naive_cfg})..."
+        cp "$naive_tpl" "$naive_cfg"
+        ok "Конфигурация NaïveProxy Caddyfile инициализирована."
+    fi
+}
+
 get_compose_file() {
     local dokploy_net_exists=0
     if command -v docker >/dev/null 2>&1; then
@@ -71,7 +134,7 @@ get_compose_file() {
 }
 
 cmd_status() {
-    ensure_env
+    ensure_configs
     local compose_cmd
     compose_cmd=$(get_compose_cmd)
     local compose_file
@@ -106,7 +169,7 @@ cmd_status() {
 
     # Проверка правила iptables Zapret
     echo -e "${BOLD}Статус Server-Side Zapret (connbytes 1:6 NFQUEUE):${NC}"
-    if iptables -t mangle -C POSTROUTING -p tcp --tcp-flags SYN,ACK SYN,ACK -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original -j NFQUEUE --queue-num 200 --queue-bypass 2>/dev/null; then
+    if iptables -t mangle -C POSTROUTING -p tcp -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original -m mark ! --mark 0x40000000/0x40000000 -j NFQUEUE --queue-num 200 --queue-bypass 2>/dev/null; then
         echo -e "  [+] ${GREEN}iptables mangle правило NFQUEUE connbytes 1:6 активно${NC}"
     else
         echo -e "  [-] ${YELLOW}iptables mangle правило NFQUEUE не активно${NC}"
@@ -114,7 +177,7 @@ cmd_status() {
 }
 
 cmd_up() {
-    ensure_env
+    ensure_configs
     local compose_cmd
     compose_cmd=$(get_compose_cmd)
     local compose_file
@@ -131,7 +194,7 @@ cmd_up() {
 }
 
 cmd_down() {
-    ensure_env
+    ensure_configs
     local compose_cmd
     compose_cmd=$(get_compose_cmd)
     local compose_file
@@ -148,7 +211,7 @@ cmd_down() {
 }
 
 cmd_restart() {
-    ensure_env
+    ensure_configs
     local compose_cmd
     compose_cmd=$(get_compose_cmd)
     local compose_file
@@ -165,7 +228,7 @@ cmd_restart() {
 }
 
 cmd_logs() {
-    ensure_env
+    ensure_configs
     local compose_cmd
     compose_cmd=$(get_compose_cmd)
     local compose_file
@@ -185,7 +248,7 @@ cmd_dokploy_export() {
 }
 
 cmd_clients() {
-    ensure_env
+    ensure_configs
     # Чтение переменных из .env
     set -a
     # shellcheck disable=SC1090
@@ -281,8 +344,9 @@ EOF_STLS
     echo -e "${BOLD}${YELLOW}4. Wstunnel over Dokploy Traefik (WebSocket / HTTP/3 over port 443)${NC}"
     echo -e "   Туннелирование WireGuard / AmneziaWG через Dokploy Traefik:"
     echo -e "   Команда запуска клиента wstunnel на ПК / роутере:"
-    echo -e "   ${GREEN}wstunnel client -L udp://127.0.0.1:51820:127.0.0.1:51820 wss://${ws_dom}${NC}"
+    echo -e "   ${GREEN}wstunnel client -L udp://127.0.0.1:51820:host.docker.internal:51820 wss://${ws_dom}${NC}"
     echo -e "   (В клиенте WireGuard/AmneziaWG укажите Endpoint = 127.0.0.1:51820)"
+    echo -e "   ${DIM}Примечание: host.docker.internal перенаправляет трафик из контейнера wstunnel на хост-сервис WireGuard.${NC}"
     echo ""
 
     # 5. Server-Side Zapret

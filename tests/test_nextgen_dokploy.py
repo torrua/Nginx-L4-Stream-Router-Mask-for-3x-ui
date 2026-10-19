@@ -134,6 +134,15 @@ class TestComposeConfigs(unittest.TestCase):
         self.assertIn("NFQUEUE", content)
         self.assertIn("--queue-bypass", content)
         self.assertIn("trap cleanup", content)
+        self.assertIn("mark ! --mark 0x40000000/0x40000000", content, "Rule must prevent loops for reinjected packets")
+        self.assertNotIn("--tcp-flags SYN,ACK SYN,ACK", content, "Rule must not be restricted to SYN,ACK packets")
+
+    def test_zapret_dockerfile_uses_debian_and_netfilter(self):
+        df_path = ROOT / "compose" / "zapret" / "Dockerfile"
+        self.assertTrue(df_path.is_file())
+        content = df_path.read_text(encoding="utf-8")
+        self.assertIn("debian:bookworm-slim", content, "Must use Debian for glibc binary compatibility")
+        self.assertIn("libnetfilter-queue1", content, "Must install libnetfilter-queue1 runtime library")
 
     def test_dokploy_compose_traefik_labels(self):
         compose_path = ROOT / "compose" / "docker-compose.dokploy.yml"
@@ -146,6 +155,66 @@ class TestComposeConfigs(unittest.TestCase):
         self.assertIn("naiveproxy-caddy", content)
         self.assertIn("server-side-zapret", content)
         self.assertIn("dokploy-network:", content)
+        self.assertIn("extra_hosts:", content, "Must support host.docker.internal")
+        self.assertIn("host.docker.internal:51820", content)
+
+    def test_naiveproxy_compose_build_block(self):
+        for cname in ["docker-compose.nextgen.yml", "docker-compose.dokploy.yml"]:
+            cpath = ROOT / "compose" / cname
+            content = cpath.read_text(encoding="utf-8")
+            self.assertIn("build:", content)
+            self.assertIn("context: ./naiveproxy", content)
+            self.assertIn("local-naiveproxy:latest", content)
+
+    def test_shadowtls_tls_env(self):
+        for cname in ["docker-compose.nextgen.yml", "docker-compose.dokploy.yml"]:
+            cpath = ROOT / "compose" / cname
+            content = cpath.read_text(encoding="utf-8")
+            self.assertIn("TLS=", content, "Shadow-TLS must receive TLS env var for upstream entrypoint.sh")
+
+    def test_dokploy_coexistence_forces_web_stack_off(self):
+        """When DOKPLOY_COEXISTENCE=y, reconstruct_arrays_from_vars forces ENABLE_WEB_STACK=0."""
+        res = run_shell("""
+set -euo pipefail
+CYAN=; BOLD=; NC=; DIM=; WHITE=;
+warn(){ :; }; ok(){ :; }; die(){ exit 1; };
+is_true() { local val="${1:-0}"; [[ "$val" == "1" || "${val,,}" == "y" || "${val,,}" == "true" ]]; }
+source src/system/env.sh
+PRIMARY_DOMAIN="example.com"
+ENABLE_WEB_STACK="y"
+DOKPLOY_COEXISTENCE="y"
+
+reconstruct_arrays_from_vars
+echo "WEB_STACK:$ENABLE_WEB_STACK"
+echo "DOKPLOY:$DOKPLOY_COEXISTENCE"
+""")
+        self.assertEqual(res.returncode, 0)
+        self.assertIn("WEB_STACK:0", res.stdout)
+        self.assertIn("DOKPLOY:y", res.stdout)
+
+    def test_masque_awg_port_collision_preflight(self):
+        """Preflight detects collision between MASQUE and AWG standalone ports."""
+        res = run_shell("""
+set -euo pipefail
+CHECK_MODE=0; NON_INTERACTIVE=0; DEBUG_MODE=0
+CYAN=; BOLD=; NC=; DIM=; WHITE=;
+warn(){ echo "WARN:$*"; }; ok(){ echo "OK:$*"; }; die(){ exit 15; };
+is_true() { local val="${1:-0}"; [[ "$val" == "1" || "${val,,}" == "y" || "${val,,}" == "true" ]]; }
+source src/common/preflight.sh
+ENABLE_AGH=0
+ENABLE_WEB_STACK=0
+ENABLE_AWG_STANDALONE=y
+AWG_STANDALONE_PORT=8445
+ENABLE_MASQUE=y
+MASQUE_PORT=8445
+
+is_port_in_use(){ return 1; }
+get_port_listener_info(){ echo ""; }
+
+inspect_port_conflicts
+""")
+        self.assertEqual(res.returncode, 0)
+        self.assertIn("Коллизия портов: MASQUE и AmneziaWG Standalone", res.stdout)
 
     def test_manage_nextgen_syntax(self):
         manage_sh = ROOT / "manage_nextgen.sh"

@@ -12,6 +12,10 @@
 *.env.local
 *.env.production
 setup_mask.env
+compose/sing-box-masque/config.json
+compose/naiveproxy/Caddyfile
+!compose/sing-box-masque/config.json.template
+!compose/naiveproxy/Caddyfile.template
 !*.env.example
 !setup_mask.env.example
 

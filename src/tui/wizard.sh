@@ -1207,7 +1207,7 @@ for item in res:
             ensure_agh_client_id || return 1
             local def_agh_cid="$AGH_CLIENT_ID"
             prompt_default "  Секретный ClientID токен для роутера" "$def_agh_cid" AGH_CLIENT_ID || return $?
-            prompt_yes_no "  Использовать AdGuard Home как DNS для VPN-клиентов (Xray)?" "${AGH_XRAY_DNS:-y}" AGH_XRAY_DNS || return $?
+            prompt_yes_no "  Использовать AdGuard Home как DNS для VPN-клиентов (Xray)?" "${AGH_XRAY_DNS:-n}" AGH_XRAY_DNS || return $?
             ok "AdGuard Home настроен (Режим: $AGH_MODE, ClientID: $AGH_CLIENT_ID)"
         else
             ENABLE_AGH=0

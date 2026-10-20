@@ -212,7 +212,7 @@ AGH_PASS=""
 # Секретный ClientID для роутера (часть URL DoH)
 AGH_CLIENT_ID=""
 # Использовать AdGuard Home как DNS для VPN-клиентов (Xray DNS → 127.0.0.1) [y/n]
-AGH_XRAY_DNS="y"
+AGH_XRAY_DNS="n"
 
 # --- 9. ПРОТОКОЛЫ СЛЕДУЮЩЕГО ПОКОЛЕНИЯ (NEXT-GEN) ---
 # MASQUE (RFC 9484 / RFC 9298 via Sing-box daemon, HTTP/3 UDP) [y/n]

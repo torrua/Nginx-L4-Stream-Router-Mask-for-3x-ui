@@ -26,7 +26,7 @@ apply_express_defaults() {
     express_default ENABLE_WARP y
     express_default ENABLE_AGH y
     express_default AGH_MODE 1
-    express_default AGH_XRAY_DNS y
+    express_default AGH_XRAY_DNS n
     reconstruct_arrays_from_vars
     finalize_installation_config
 }

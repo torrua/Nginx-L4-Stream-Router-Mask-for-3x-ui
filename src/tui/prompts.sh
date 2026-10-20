@@ -251,6 +251,7 @@ prompt_multiselect_numeric() {
     else
         log "Все протоколы из списка отключены."
     fi
+    echo ""
     return 0
 }
 
@@ -439,6 +440,7 @@ prompt_multiselect_tui() {
     else
         log "Все протоколы из списка отключены."
     fi
+    echo ""
     return 0
 }
 

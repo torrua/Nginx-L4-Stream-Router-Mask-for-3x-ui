@@ -598,7 +598,7 @@ AGH_PASS=""
 # Секретный ClientID для роутера (часть URL DoH)
 AGH_CLIENT_ID=""
 # Использовать AdGuard Home как DNS для VPN-клиентов (Xray DNS → 127.0.0.1) [y/n]
-AGH_XRAY_DNS="y"
+AGH_XRAY_DNS="n"
 
 # --- 9. ПРОТОКОЛЫ СЛЕДУЮЩЕГО ПОКОЛЕНИЯ (NEXT-GEN) ---
 # MASQUE (RFC 9484 / RFC 9298 via Sing-box daemon, HTTP/3 UDP) [y/n]
@@ -1703,6 +1703,7 @@ prompt_multiselect_numeric() {
     else
         log "Все протоколы из списка отключены."
     fi
+    echo ""
     return 0
 }
 
@@ -1891,6 +1892,7 @@ prompt_multiselect_tui() {
     else
         log "Все протоколы из списка отключены."
     fi
+    echo ""
     return 0
 }
 
@@ -6600,7 +6602,7 @@ apply_express_defaults() {
     express_default ENABLE_WARP y
     express_default ENABLE_AGH y
     express_default AGH_MODE 1
-    express_default AGH_XRAY_DNS y
+    express_default AGH_XRAY_DNS n
     reconstruct_arrays_from_vars
     finalize_installation_config
 }
@@ -10706,7 +10708,7 @@ for item in res:
             ensure_agh_client_id || return 1
             local def_agh_cid="$AGH_CLIENT_ID"
             prompt_default "  Секретный ClientID токен для роутера" "$def_agh_cid" AGH_CLIENT_ID || return $?
-            prompt_yes_no "  Использовать AdGuard Home как DNS для VPN-клиентов (Xray)?" "${AGH_XRAY_DNS:-y}" AGH_XRAY_DNS || return $?
+            prompt_yes_no "  Использовать AdGuard Home как DNS для VPN-клиентов (Xray)?" "${AGH_XRAY_DNS:-n}" AGH_XRAY_DNS || return $?
             ok "AdGuard Home настроен (Режим: $AGH_MODE, ClientID: $AGH_CLIENT_ID)"
         else
             ENABLE_AGH=0

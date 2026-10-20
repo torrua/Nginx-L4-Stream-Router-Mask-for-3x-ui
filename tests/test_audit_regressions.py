@@ -1631,6 +1631,21 @@ echo "AGH_CLIENT_ID=$AGH_CLIENT_ID"
         self.assertIn("WSTUNNEL_PREFIX=/custom-ws-prefix/", out_custom)
         self.assertIn("AGH_CLIENT_ID=custom-router-client", out_custom)
 
+    def test_nginx_stream_module_loading_resilience(self):
+        """Verify that ensure_nginx_stream_module is defined and wired in nginx install and config."""
+        install_sh = (ROOT / "src/nginx/install.sh").read_text(encoding="utf-8")
+        config_sh = (ROOT / "src/nginx/config.sh").read_text(encoding="utf-8")
+        self.assertIn("ensure_nginx_stream_module()", install_sh)
+        self.assertIn("ensure_nginx_stream_module", config_sh)
+        self.assertIn("load_module", install_sh)
+        self.assertIn("libnginx-mod-stream", install_sh)
+
+    def test_nginx_reject_server_has_http2_listen_parity(self):
+        """Verify that SSL reject default_server has HTTP2_LISTEN_PARAM to prevent protocol options redefined warning."""
+        config_sh = (ROOT / "src/nginx/config.sh").read_text(encoding="utf-8")
+        self.assertIn('listen unix:/dev/shm/nginx-http.sock ssl ${HTTP2_LISTEN_PARAM}default_server proxy_protocol;', config_sh)
+        self.assertIn('listen 127.0.0.1:$REALITY_FALLBACK_PORT ssl ${HTTP2_LISTEN_PARAM}default_server proxy_protocol;', config_sh)
+
 
 
 if __name__ == "__main__":

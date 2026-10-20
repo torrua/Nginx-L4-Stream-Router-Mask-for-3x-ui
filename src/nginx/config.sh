@@ -18,9 +18,21 @@
           /etc/nginx/stream.d/vpn_mask_stream.conf 2>/dev/null || true
 
     mkdir -p /etc/nginx/modules-enabled 2>/dev/null || true
+    find /etc/nginx/modules-enabled/ -xtype l -delete 2>/dev/null || true
+    ensure_nginx_stream_module
     modules_load_block=""
     if compgen -G "/etc/nginx/modules-enabled/*.conf" >/dev/null 2>&1; then
         modules_load_block="include /etc/nginx/modules-enabled/*.conf;"
+    else
+        for cand in /etc/nginx/modules/ngx_stream_module.so \
+                    /usr/lib/nginx/modules/ngx_stream_module.so \
+                    /usr/share/nginx/modules/ngx_stream_module.so \
+                    /usr/local/nginx/modules/ngx_stream_module.so; do
+            if [ -f "$cand" ]; then
+                modules_load_block="load_module $cand;"
+                break
+            fi
+        done
     fi
 
     # Определение поддержки директив HTTP/2 в установленной версии Nginx
@@ -497,8 +509,9 @@ server {
 
 # HTTPS SSL-Reject сервер для перехвата невалидных SNI и сканеров по IP
 server {
-    listen unix:/dev/shm/nginx-http.sock ssl default_server proxy_protocol;
-    listen 127.0.0.1:$REALITY_FALLBACK_PORT ssl default_server proxy_protocol;
+    listen unix:/dev/shm/nginx-http.sock ssl ${HTTP2_LISTEN_PARAM}default_server proxy_protocol;
+    listen 127.0.0.1:$REALITY_FALLBACK_PORT ssl ${HTTP2_LISTEN_PARAM}default_server proxy_protocol;
+    ${HTTP2_DIRECTIVE}
     server_name _;
 
     ssl_reject_handshake on;

@@ -77,7 +77,13 @@ reconstruct_arrays_from_vars() {
     for p in "${CLASSIC_PORTS_LIST[@]:-}"; do [ -n "$p" ] && ALL_REALITY_PORTS+=("$p"); done
 
     PANEL_PORT="${PANEL_PORT:-10443}"
-    RAW_PATH="${PANEL_PATH:-${RAW_PATH:-my-3x-panel}}"
+    if [ -z "${RAW_PATH:-}" ] || [ "${RAW_PATH:-}" = "my-3x-panel" ]; then
+        if [ -n "${PANEL_PATH:-}" ] && [ "${PANEL_PATH:-}" != "my-3x-panel" ] && [ "${PANEL_PATH:-}" != "/my-3x-panel/" ]; then
+            RAW_PATH="${PANEL_PATH}"
+        else
+            RAW_PATH="panel-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "panel${RANDOM}")"
+        fi
+    fi
     RAW_PATH="${RAW_PATH#/}"
     RAW_PATH="${RAW_PATH%/}"
     PANEL_PATH="/${RAW_PATH}/"
@@ -165,6 +171,9 @@ reconstruct_arrays_from_vars() {
     AUTO_SETUP_3XUI="${AUTO_SETUP_3XUI:-y}"
     _v="${SHOW_MANUAL_STEPS:-n}"; if is_true "$_v"; then SHOW_MANUAL_STEPS=1; else SHOW_MANUAL_STEPS=0; fi
     PORT_AGH_WEB="${PORT_AGH_WEB:-3000}"
+    if [ -z "${AGH_CLIENT_ID:-}" ] || [ "${AGH_CLIENT_ID:-}" = "home-router" ]; then
+        AGH_CLIENT_ID="client-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "client${RANDOM}")"
+    fi
 
     # Сосуществование с Dokploy и протоколы следующего поколения
     _v="${DOKPLOY_COEXISTENCE:-n}"; if is_true "$_v"; then DOKPLOY_COEXISTENCE="y"; else DOKPLOY_COEXISTENCE="n"; fi
@@ -222,10 +231,13 @@ reconstruct_arrays_from_vars() {
     ZAPRET_FOOLING="${ZAPRET_FOOLING:-md5sig,badseq}"
     _v="${ENABLE_WSTUNNEL:-n}"; if is_true "$_v"; then ENABLE_WSTUNNEL=1; else ENABLE_WSTUNNEL=0; fi
     WSTUNNEL_DOMAIN="${WSTUNNEL_DOMAIN:-}"
-    local _wst_pref="${WSTUNNEL_PREFIX:-/wstunnel}"
-    _wst_pref="/${_wst_pref#/}"
+    local _wst_pref="${WSTUNNEL_PREFIX:-}"
+    _wst_pref="${_wst_pref#/}"
     _wst_pref="${_wst_pref%/}"
-    WSTUNNEL_PREFIX="${_wst_pref}/"
+    if [ -z "$_wst_pref" ] || [ "$_wst_pref" = "wstunnel" ] || [ "$_wst_pref" = "secret-ws" ]; then
+        _wst_pref="ws-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "ws${RANDOM}")"
+    fi
+    WSTUNNEL_PREFIX="/${_wst_pref}/"
     WSTUNNEL_PORT="${WSTUNNEL_PORT:-8080}"
     if [ "$ENABLE_WSTUNNEL" -eq 1 ] && [ -z "${WSTUNNEL_SECRET:-}" ]; then
         WSTUNNEL_SECRET="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "wst${RANDOM}")"
@@ -325,9 +337,12 @@ save_session_state() {
     local force_close_old_save="n"
     v="${FORCE_CLOSE_OLD_SSH:-n}"; is_true "$v" && force_close_old_save="y"
 
-    local _save_panel_path="${RAW_PATH:-${PANEL_PATH:-my-3x-panel}}"
+    local _save_panel_path="${RAW_PATH:-${PANEL_PATH:-}}"
     _save_panel_path="${_save_panel_path#/}"
     _save_panel_path="${_save_panel_path%/}"
+    if [ -z "$_save_panel_path" ] || [ "$_save_panel_path" = "my-3x-panel" ]; then
+        _save_panel_path="panel-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "panel${RANDOM}")"
+    fi
 
     local _save_sub_path="${RAW_SUB_PATH:-${SUB_PATH:-my-post-key}}"
     _save_sub_path="${_save_sub_path#/}"
@@ -430,7 +445,7 @@ AGH_MODE="${AGH_MODE:-1}"
 AGH_DOMAIN="${AGH_DOMAIN:-}"
 AGH_USER="${AGH_USER:-admin}"
 AGH_PASS="${AGH_PASS:-}"
-AGH_CLIENT_ID="${AGH_CLIENT_ID:-home-router}"
+AGH_CLIENT_ID="${AGH_CLIENT_ID:-client-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "client${RANDOM}")}"
 PORT_AGH_WEB="${PORT_AGH_WEB:-3000}"
 AGH_XRAY_DNS="$agh_xray_save"
 SHOW_TIPS="${SHOW_TIPS:-y}"
@@ -467,7 +482,7 @@ ZAPRET_DESYNC="${ZAPRET_DESYNC:-split2}"
 ZAPRET_FOOLING="${ZAPRET_FOOLING:-md5sig,badseq}"
 ENABLE_WSTUNNEL="$wstunnel_save"
 WSTUNNEL_DOMAIN="${WSTUNNEL_DOMAIN:-}"
-WSTUNNEL_PREFIX="${WSTUNNEL_PREFIX:-/wstunnel}"
+WSTUNNEL_PREFIX="${WSTUNNEL_PREFIX:-/${_wst_pref}/}"
 WSTUNNEL_PORT="${WSTUNNEL_PORT:-8080}"
 WSTUNNEL_SECRET="${WSTUNNEL_SECRET:-}"
 

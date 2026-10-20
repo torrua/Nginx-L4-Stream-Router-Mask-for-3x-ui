@@ -1600,6 +1600,56 @@ class TestBashScopeRegressions(unittest.TestCase):
             if os.path.exists(temp_db):
                 os.unlink(temp_db)
 
+    def test_randomized_paths_and_tokens(self):
+        """Verify that PANEL_PATH, WSTUNNEL_PREFIX, and AGH_CLIENT_ID are randomized by default and custom values are preserved."""
+        if not BASH.exists():
+            self.skipTest(f"bash not found at {BASH}")
+
+        # 1. Defaults -> must generate random paths and tokens
+        script_defaults = f"""
+set -e
+source "src/system/env.sh"
+PRIMARY_DOMAIN="example.com"
+ENABLE_WSTUNNEL=1
+ENABLE_AGH=1
+reconstruct_arrays_from_vars
+echo "PANEL_PATH=$PANEL_PATH"
+echo "WSTUNNEL_PREFIX=$WSTUNNEL_PREFIX"
+echo "AGH_CLIENT_ID=$AGH_CLIENT_ID"
+"""
+        res = run_shell(script_defaults)
+        self.assertEqual(res.returncode, 0, f"Error: {res.stderr}")
+        out = res.stdout
+        self.assertRegex(out, r"PANEL_PATH=/panel-[a-z0-9]{8}/")
+        self.assertRegex(out, r"WSTUNNEL_PREFIX=/ws-[a-z0-9]{8}/")
+        self.assertRegex(out, r"AGH_CLIENT_ID=client-[a-z0-9]{8}")
+        self.assertNotIn("my-3x-panel", out)
+        self.assertNotIn("/wstunnel/", out)
+        self.assertNotIn("home-router", out)
+
+        # 2. Custom values -> must be strictly preserved
+        script_custom = f"""
+set -e
+source "src/system/env.sh"
+PRIMARY_DOMAIN="example.com"
+PANEL_PATH="custom-panel-path"
+WSTUNNEL_PREFIX="/custom-ws-prefix/"
+AGH_CLIENT_ID="custom-router-client"
+ENABLE_WSTUNNEL=1
+ENABLE_AGH=1
+reconstruct_arrays_from_vars
+echo "PANEL_PATH=$PANEL_PATH"
+echo "WSTUNNEL_PREFIX=$WSTUNNEL_PREFIX"
+echo "AGH_CLIENT_ID=$AGH_CLIENT_ID"
+"""
+        res_custom = run_shell(script_custom)
+        self.assertEqual(res_custom.returncode, 0, f"Error: {res_custom.stderr}")
+        out_custom = res_custom.stdout
+        self.assertIn("PANEL_PATH=/custom-panel-path/", out_custom)
+        self.assertIn("WSTUNNEL_PREFIX=/custom-ws-prefix/", out_custom)
+        self.assertIn("AGH_CLIENT_ID=custom-router-client", out_custom)
+
+
 
 if __name__ == "__main__":
     unittest.main()

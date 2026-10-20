@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # ==============================================================================
-# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v8.2.1 Universal
+# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v8.2.2 Universal
 # Nginx L4 Stream + 3X-UI + Unix Sockets + Native proxy_http_version 2 + 3 Decoys
 # ==============================================================================
 # Архитектура:
@@ -27,7 +27,7 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="v8.2.1"
+SCRIPT_VERSION="v8.2.2"
 
 
 # --------------------------- Замеры времени и телеметрия ---------------------------
@@ -464,7 +464,7 @@ generate_config_template() {
     local target_file="${1:-setup_mask.env.example}"
     cat << 'EOF_CONF' > "$target_file"
 # ==============================================================================
-# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v8.2.1 Universal)
+# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v8.2.2 Universal)
 # ==============================================================================
 # Данный файл позволяет выполнять полностью автоматическую установку:
 # ./setup_mask.sh --config setup_mask.env --non-interactive --force
@@ -513,7 +513,7 @@ CLASSIC_SNI="avito.ru"
 
 # --- 3. ВНУТРЕННИЕ ПОРТЫ И ПУТИ 3X-UI И xHTTP ---
 PANEL_PORT="10443"
-PANEL_PATH="my-3x-panel"
+PANEL_PATH=""
 # Учетные данные администратора панели 3X-UI
 ADMIN_USERNAME="admin"
 ADMIN_PASSWORD=""
@@ -598,7 +598,7 @@ AGH_DOMAIN=""
 AGH_USER="admin"
 AGH_PASS=""
 # Секретный ClientID для роутера (часть URL DoH)
-AGH_CLIENT_ID="home-router"
+AGH_CLIENT_ID=""
 # Использовать AdGuard Home как DNS для VPN-клиентов (Xray DNS → 127.0.0.1) [y/n]
 AGH_XRAY_DNS="y"
 
@@ -617,7 +617,7 @@ SHADOWTLS_PASSWORD=""
 
 # Wstunnel over Nginx L7 (Туннелирование WebSocket через порт 443 HTTPS с SSL) [y/n]
 ENABLE_WSTUNNEL="n"
-WSTUNNEL_PREFIX="/wstunnel"
+WSTUNNEL_PREFIX=""
 WSTUNNEL_PORT="8080"
 WSTUNNEL_SECRET=""
 
@@ -860,7 +860,13 @@ reconstruct_arrays_from_vars() {
     for p in "${CLASSIC_PORTS_LIST[@]:-}"; do [ -n "$p" ] && ALL_REALITY_PORTS+=("$p"); done
 
     PANEL_PORT="${PANEL_PORT:-10443}"
-    RAW_PATH="${PANEL_PATH:-${RAW_PATH:-my-3x-panel}}"
+    if [ -z "${RAW_PATH:-}" ] || [ "${RAW_PATH:-}" = "my-3x-panel" ]; then
+        if [ -n "${PANEL_PATH:-}" ] && [ "${PANEL_PATH:-}" != "my-3x-panel" ] && [ "${PANEL_PATH:-}" != "/my-3x-panel/" ]; then
+            RAW_PATH="${PANEL_PATH}"
+        else
+            RAW_PATH="panel-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "panel${RANDOM}")"
+        fi
+    fi
     RAW_PATH="${RAW_PATH#/}"
     RAW_PATH="${RAW_PATH%/}"
     PANEL_PATH="/${RAW_PATH}/"
@@ -948,6 +954,9 @@ reconstruct_arrays_from_vars() {
     AUTO_SETUP_3XUI="${AUTO_SETUP_3XUI:-y}"
     _v="${SHOW_MANUAL_STEPS:-n}"; if is_true "$_v"; then SHOW_MANUAL_STEPS=1; else SHOW_MANUAL_STEPS=0; fi
     PORT_AGH_WEB="${PORT_AGH_WEB:-3000}"
+    if [ -z "${AGH_CLIENT_ID:-}" ] || [ "${AGH_CLIENT_ID:-}" = "home-router" ]; then
+        AGH_CLIENT_ID="client-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "client${RANDOM}")"
+    fi
 
     # Сосуществование с Dokploy и протоколы следующего поколения
     _v="${DOKPLOY_COEXISTENCE:-n}"; if is_true "$_v"; then DOKPLOY_COEXISTENCE="y"; else DOKPLOY_COEXISTENCE="n"; fi
@@ -1005,10 +1014,13 @@ reconstruct_arrays_from_vars() {
     ZAPRET_FOOLING="${ZAPRET_FOOLING:-md5sig,badseq}"
     _v="${ENABLE_WSTUNNEL:-n}"; if is_true "$_v"; then ENABLE_WSTUNNEL=1; else ENABLE_WSTUNNEL=0; fi
     WSTUNNEL_DOMAIN="${WSTUNNEL_DOMAIN:-}"
-    local _wst_pref="${WSTUNNEL_PREFIX:-/wstunnel}"
-    _wst_pref="/${_wst_pref#/}"
+    local _wst_pref="${WSTUNNEL_PREFIX:-}"
+    _wst_pref="${_wst_pref#/}"
     _wst_pref="${_wst_pref%/}"
-    WSTUNNEL_PREFIX="${_wst_pref}/"
+    if [ -z "$_wst_pref" ] || [ "$_wst_pref" = "wstunnel" ] || [ "$_wst_pref" = "secret-ws" ]; then
+        _wst_pref="ws-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "ws${RANDOM}")"
+    fi
+    WSTUNNEL_PREFIX="/${_wst_pref}/"
     WSTUNNEL_PORT="${WSTUNNEL_PORT:-8080}"
     if [ "$ENABLE_WSTUNNEL" -eq 1 ] && [ -z "${WSTUNNEL_SECRET:-}" ]; then
         WSTUNNEL_SECRET="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "wst${RANDOM}")"
@@ -1108,9 +1120,12 @@ save_session_state() {
     local force_close_old_save="n"
     v="${FORCE_CLOSE_OLD_SSH:-n}"; is_true "$v" && force_close_old_save="y"
 
-    local _save_panel_path="${RAW_PATH:-${PANEL_PATH:-my-3x-panel}}"
+    local _save_panel_path="${RAW_PATH:-${PANEL_PATH:-}}"
     _save_panel_path="${_save_panel_path#/}"
     _save_panel_path="${_save_panel_path%/}"
+    if [ -z "$_save_panel_path" ] || [ "$_save_panel_path" = "my-3x-panel" ]; then
+        _save_panel_path="panel-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "panel${RANDOM}")"
+    fi
 
     local _save_sub_path="${RAW_SUB_PATH:-${SUB_PATH:-my-post-key}}"
     _save_sub_path="${_save_sub_path#/}"
@@ -1213,7 +1228,7 @@ AGH_MODE="${AGH_MODE:-1}"
 AGH_DOMAIN="${AGH_DOMAIN:-}"
 AGH_USER="${AGH_USER:-admin}"
 AGH_PASS="${AGH_PASS:-}"
-AGH_CLIENT_ID="${AGH_CLIENT_ID:-home-router}"
+AGH_CLIENT_ID="${AGH_CLIENT_ID:-client-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "client${RANDOM}")}"
 PORT_AGH_WEB="${PORT_AGH_WEB:-3000}"
 AGH_XRAY_DNS="$agh_xray_save"
 SHOW_TIPS="${SHOW_TIPS:-y}"
@@ -1250,7 +1265,7 @@ ZAPRET_DESYNC="${ZAPRET_DESYNC:-split2}"
 ZAPRET_FOOLING="${ZAPRET_FOOLING:-md5sig,badseq}"
 ENABLE_WSTUNNEL="$wstunnel_save"
 WSTUNNEL_DOMAIN="${WSTUNNEL_DOMAIN:-}"
-WSTUNNEL_PREFIX="${WSTUNNEL_PREFIX:-/wstunnel}"
+WSTUNNEL_PREFIX="${WSTUNNEL_PREFIX:-/${_wst_pref}/}"
 WSTUNNEL_PORT="${WSTUNNEL_PORT:-8080}"
 WSTUNNEL_SECRET="${WSTUNNEL_SECRET:-}"
 
@@ -6423,7 +6438,7 @@ setup_naive_service() {
         local caddy_tmp="/tmp/caddy_naive_$$"
         mkdir -p "$caddy_tmp"
         local rel_ver="${SCRIPT_VERSION:-v8.1.0}"
-        [[ "$rel_ver" == "v8.2.1" ]] && rel_ver="v8.1.0"
+        [[ "$rel_ver" == "v8.2.2" ]] && rel_ver="v8.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/caddy-naive-linux-${caddy_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
@@ -6560,7 +6575,7 @@ setup_dnstt_service() {
         local dnstt_tmp="/tmp/dnstt_$$"
         mkdir -p "$dnstt_tmp"
         local rel_ver="${SCRIPT_VERSION:-v8.1.0}"
-        [[ "$rel_ver" == "v8.2.1" ]] && rel_ver="v8.1.0"
+        [[ "$rel_ver" == "v8.2.2" ]] && rel_ver="v8.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/dnstt-server-linux-${dnstt_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
@@ -6980,12 +6995,12 @@ elif [ "$EXPRESS_MODE" -eq 1 ]; then
     ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
     ADMIN_PASSWORD="${ADMIN_PASSWORD:-$(head -c 128 /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 12 || echo "Admin1234567")}"
     SERVER_PREFIX="${SERVER_PREFIX:-Server}"
-    if [ -n "${PANEL_PATH:-}" ]; then
+    if [ -n "${PANEL_PATH:-}" ] && [ "${PANEL_PATH:-}" != "my-3x-panel" ] && [ "${PANEL_PATH:-}" != "/my-3x-panel/" ]; then
         RAW_PATH="${PANEL_PATH#/}"
         RAW_PATH="${RAW_PATH%/}"
         PANEL_PATH="/${RAW_PATH}/"
     else
-        RAW_PATH="panel-$(head -c 64 /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 6 || echo "${RANDOM}")"
+        RAW_PATH="panel-$(head -c 64 /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "${RANDOM}")"
         PANEL_PATH="/${RAW_PATH}/"
     fi
     SUB_PORT="55443"
@@ -7027,7 +7042,9 @@ elif [ "$EXPRESS_MODE" -eq 1 ]; then
     AGH_USER="${AGH_USER:-admin}"
     DEFAULT_AG_PASS="AgHome_$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 8 || echo 'Pass1234')"
     AGH_PASS="${AGH_PASS:-$DEFAULT_AG_PASS}"
-    AGH_CLIENT_ID="${AGH_CLIENT_ID:-home-router}"
+    if [ -z "${AGH_CLIENT_ID:-}" ] || [ "${AGH_CLIENT_ID:-}" = "home-router" ]; then
+        AGH_CLIENT_ID="client-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "client${RANDOM}")"
+    fi
     AGH_XRAY_DNS="${AGH_XRAY_DNS:-y}"
     STEAL_ENABLED=1
     CLASSIC_ENABLED=1
@@ -7221,10 +7238,10 @@ for item in res:
         PANEL_PORT="${PANEL_PORT:-10443}"
         ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
         ADMIN_PASSWORD="${ADMIN_PASSWORD:-$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 12 || echo "Admin1234567")}"
-        if [ -n "${PANEL_PATH:-}" ]; then
+        if [ -n "${PANEL_PATH:-}" ] && [ "${PANEL_PATH:-}" != "my-3x-panel" ] && [ "${PANEL_PATH:-}" != "/my-3x-panel/" ]; then
             RAW_PATH="${PANEL_PATH#/}"; RAW_PATH="${RAW_PATH%/}"
-        elif [ -z "${RAW_PATH:-}" ]; then
-            RAW_PATH="panel-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "3xui${RANDOM}")"
+        elif [ -z "${RAW_PATH:-}" ] || [ "${RAW_PATH:-}" = "my-3x-panel" ]; then
+            RAW_PATH="panel-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "panel${RANDOM}")"
         fi
         RAW_PATH="${RAW_PATH#/}"; RAW_PATH="${RAW_PATH%/}"
         validate_path_segment "$RAW_PATH" "URI панели"
@@ -7318,10 +7335,13 @@ for item in res:
         if [[ "${ENABLE_WSTUNNEL,,}" == "y" || "${ENABLE_WSTUNNEL:-}" == "1" ]]; then
             ENABLE_WSTUNNEL=1
             WSTUNNEL_PORT="${WSTUNNEL_PORT:-8080}"
-            local _wst_pref="${WSTUNNEL_PREFIX:-/wstunnel}"
-            _wst_pref="/${_wst_pref#/}"
+            local _wst_pref="${WSTUNNEL_PREFIX:-}"
+            _wst_pref="${_wst_pref#/}"
             _wst_pref="${_wst_pref%/}"
-            WSTUNNEL_PREFIX="${_wst_pref}/"
+            if [ -z "$_wst_pref" ] || [ "$_wst_pref" = "wstunnel" ] || [ "$_wst_pref" = "secret-ws" ]; then
+                _wst_pref="ws-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "ws${RANDOM}")"
+            fi
+            WSTUNNEL_PREFIX="/${_wst_pref}/"
         else
             ENABLE_WSTUNNEL=0
         fi
@@ -7360,7 +7380,9 @@ for item in res:
             [ "$AGH_MODE" = "2" ] && AGH_DOMAIN="${AGH_DOMAIN:-dns.$PRIMARY_DOMAIN}" || AGH_DOMAIN=""
             AGH_USER="${AGH_USER:-admin}"
             AGH_PASS="${AGH_PASS:-AgHome_$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 8 || echo 'Pass1234')}"
-            AGH_CLIENT_ID="${AGH_CLIENT_ID:-home-router}"
+            if [ -z "${AGH_CLIENT_ID:-}" ] || [ "${AGH_CLIENT_ID:-}" = "home-router" ]; then
+        AGH_CLIENT_ID="client-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "client${RANDOM}")"
+    fi
             [[ "${AGH_XRAY_DNS,,}" == "y" || "${AGH_XRAY_DNS:-}" == "1" ]] && AGH_XRAY_DNS="y" || AGH_XRAY_DNS="n"
         else
             ENABLE_AGH=0
@@ -7670,9 +7692,10 @@ for item in res:
             local def_pass="${ADMIN_PASSWORD:-$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 12 || echo "Admin1234567")}"
             prompt_default "  Пароль администратора 3X-UI" "$def_pass" ADMIN_PASSWORD || return $?
 
-            local rand_p_path="panel-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "3xui${RANDOM}")"
+            local rand_p_path="panel-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "panel${RANDOM}")"
             local r_path="${RAW_PATH:-${PANEL_PATH:-$rand_p_path}}"
             r_path="${r_path#/}"; r_path="${r_path%/}"
+            [ "$r_path" = "my-3x-panel" ] && r_path="$rand_p_path"
             prompt_default "  Секретный URI-путь к веб-панели (без слэшей)" "$r_path" RAW_PATH || return $?
             validate_path_segment "$RAW_PATH" "URI панели"
             PANEL_PATH="/${RAW_PATH#/}"; PANEL_PATH="${PANEL_PATH%/}/"
@@ -7700,10 +7723,10 @@ for item in res:
             ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
             [ -n "${ADMIN_PASSWORD:-}" ] || ADMIN_PASSWORD="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 12 || echo "Admin1234567")"
 
-            if [ -n "${PANEL_PATH:-}" ]; then
+            if [ -n "${PANEL_PATH:-}" ] && [ "${PANEL_PATH:-}" != "my-3x-panel" ] && [ "${PANEL_PATH:-}" != "/my-3x-panel/" ]; then
                 RAW_PATH="${PANEL_PATH#/}"; RAW_PATH="${RAW_PATH%/}"
-            elif [ -z "${RAW_PATH:-}" ]; then
-                RAW_PATH="panel-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "3xui${RANDOM}")"
+            elif [ -z "${RAW_PATH:-}" ] || [ "${RAW_PATH:-}" = "my-3x-panel" ]; then
+                RAW_PATH="panel-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "panel${RANDOM}")"
             fi
             RAW_PATH="${RAW_PATH#/}"; RAW_PATH="${RAW_PATH%/}"
             PANEL_PATH="/${RAW_PATH#/}"; PANEL_PATH="${PANEL_PATH%/}/"
@@ -7899,9 +7922,11 @@ for item in res:
 
         if is_true "$ENABLE_WSTUNNEL"; then
             [ -n "${WSTUNNEL_PORT:-}" ] || WSTUNNEL_PORT="8080"
-            [ -n "${WSTUNNEL_PREFIX:-}" ] || WSTUNNEL_PREFIX="/wstunnel"
-            local _wp="${WSTUNNEL_PREFIX#/}"
-            _wp="${_wp%/}"
+            local _wp="${WSTUNNEL_PREFIX:-}"
+            _wp="${_wp#/}"; _wp="${_wp%/}"
+            if [ -z "$_wp" ] || [ "$_wp" = "wstunnel" ] || [ "$_wp" = "secret-ws" ]; then
+                _wp="ws-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "ws${RANDOM}")"
+            fi
             WSTUNNEL_PREFIX="/${_wp}/"
             [ -n "${WSTUNNEL_SECRET:-}" ] || WSTUNNEL_SECRET="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "wst${RANDOM}")"
             if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
@@ -8034,7 +8059,11 @@ for item in res:
             prompt_default "  Логин администратора AdGuard Home" "${AGH_USER:-admin}" AGH_USER || return $?
             local def_ag_pass="${AGH_PASS:-AgHome_$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 8 || echo 'Pass1234')}"
             prompt_default "  Пароль администратора AdGuard Home" "$def_ag_pass" AGH_PASS || return $?
-            prompt_default "  Секретный ClientID токен для роутера" "${AGH_CLIENT_ID:-home-router}" AGH_CLIENT_ID || return $?
+            local def_agh_cid="${AGH_CLIENT_ID:-}"
+            if [ -z "$def_agh_cid" ] || [ "$def_agh_cid" = "home-router" ]; then
+                def_agh_cid="client-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "client${RANDOM}")"
+            fi
+            prompt_default "  Секретный ClientID токен для роутера" "$def_agh_cid" AGH_CLIENT_ID || return $?
             prompt_yes_no "  Использовать AdGuard Home как DNS для VPN-клиентов (Xray)?" "${AGH_XRAY_DNS:-y}" AGH_XRAY_DNS || return $?
             ok "AdGuard Home настроен (Режим: $AGH_MODE, ClientID: $AGH_CLIENT_ID)"
         else

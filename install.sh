@@ -7,7 +7,7 @@
 # Exit on severe unhandled errors
 set -o pipefail
 
-SCRIPT_VERSION="v8.2.1"
+SCRIPT_VERSION="v8.2.2"
 
 # Защита от аварийного обрыва SSH-сессии при установке
 trap 'echo -e "\n[!] Внимание: получен сигнал SIGHUP, процесс установки продолжается в фоне..." >> "${INSTALL_LOG:-/var/log/nginx_mask_install.log}" 2>&1' SIGHUP
@@ -2358,7 +2358,7 @@ setup_naive_service() {
         local caddy_tmp="/tmp/caddy_naive_$$"
         mkdir -p "$caddy_tmp"
         local rel_ver="${SCRIPT_VERSION:-v8.1.0}"
-        [[ "$rel_ver" == "v8.2.1" ]] && rel_ver="v8.1.0"
+        [[ "$rel_ver" == "v8.2.2" ]] && rel_ver="v8.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/caddy-naive-linux-${caddy_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
@@ -2495,7 +2495,7 @@ setup_dnstt_service() {
         local dnstt_tmp="/tmp/dnstt_$$"
         mkdir -p "$dnstt_tmp"
         local rel_ver="${SCRIPT_VERSION:-v8.1.0}"
-        [[ "$rel_ver" == "v8.2.1" ]] && rel_ver="v8.1.0"
+        [[ "$rel_ver" == "v8.2.2" ]] && rel_ver="v8.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/dnstt-server-linux-${dnstt_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"

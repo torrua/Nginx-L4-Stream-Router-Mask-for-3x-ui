@@ -483,8 +483,16 @@ except Exception as e:
 
 domain = os.environ.get("PRIMARY_DOMAIN") or existing_settings.get("subDomain") or "localhost"
 panel_port = os.environ.get("PANEL_PORT") or existing_settings.get("webPort") or "10443"
-panel_path = os.environ.get("PANEL_PATH") or existing_settings.get("webBasePath") or "my-3x-panel"
-panel_path = panel_path.strip("/")
+panel_env = (os.environ.get("PANEL_PATH") or "").strip("/")
+if panel_env and panel_env != "my-3x-panel":
+    panel_path = panel_env
+else:
+    panel_db = (existing_settings.get("webBasePath") or "").strip("/")
+    if panel_db and panel_db != "my-3x-panel":
+        panel_path = panel_db
+    else:
+        import secrets
+        panel_path = "panel-" + secrets.token_hex(4)
 
 sub_port = os.environ.get("SUB_PORT") or existing_settings.get("subPort") or "55443"
 sub_path = os.environ.get("SUB_PATH") or existing_settings.get("subPath") or "my-post-key"
@@ -2214,7 +2222,11 @@ if not dry_run:
 
     enable_wstunnel = os.environ.get("ENABLE_WSTUNNEL", "n").lower() in ("1", "y", "true")
     wstunnel_port = int(os.environ.get("WSTUNNEL_PORT") or "8080")
-    wstunnel_prefix = (os.environ.get("WSTUNNEL_PREFIX") or "secret-ws").strip().strip("/")
+    wstunnel_raw = (os.environ.get("WSTUNNEL_PREFIX") or "").strip().strip("/")
+    if not wstunnel_raw or wstunnel_raw in ("wstunnel", "secret-ws"):
+        import secrets
+        wstunnel_raw = "ws-" + secrets.token_hex(4)
+    wstunnel_prefix = wstunnel_raw
     wstunnel_cli = f"wstunnel client -L socks5://127.0.0.1:1080 --http-upgrade-path-prefix {wstunnel_prefix} wss://{domain}:443"
     wstunnel_uri = f"wstunnel://{domain}:443/{wstunnel_prefix}"
 
@@ -2387,7 +2399,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
 else
     echo -e "${GREEN}      ОБНОВЛЕНИЕ И ВОССТАНОВЛЕНИЕ СИСТЕМЫ УСПЕШНО ЗАВЕРШЕНО!         ${NC}"
     echo -e "  - ${BOLD}Подключения клиентов:${NC}   ${GREEN}Сохранены без разрыва и сброса ключей${NC}"
-    echo -e "  - ${BOLD}Вход в панель 3X-UI:${NC}    ${CYAN}https://${PRIMARY_DOMAIN:-домен}/${PANEL_PATH:-my-3x-panel}/${NC}"
+    echo -e "  - ${BOLD}Вход в панель 3X-UI:${NC}    ${CYAN}https://${PRIMARY_DOMAIN:-домен}/${PANEL_PATH:-${panel_path:-panel}}/${NC}"
     echo -e "  - ${BOLD}Ссылка на подписку:${NC}     ${CYAN}https://${PRIMARY_DOMAIN:-домен}/${SUB_PATH:-my-post-key}/${NC}"
     echo -e "  - ${BOLD}Ссылка (Clash):${NC}         ${CYAN}https://${PRIMARY_DOMAIN:-домен}/${SUB_CLASH_PATH:-${SUB_PATH:-my-post-key}/clash}/${NC}"
     for c_env in "/run/3xui_unified_client.env" "/tmp/3xui_unified_client.env"; do

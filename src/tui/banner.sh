@@ -122,7 +122,7 @@ CLASSIC_SNI="avito.ru"
 
 # --- 3. ВНУТРЕННИЕ ПОРТЫ И ПУТИ 3X-UI И xHTTP ---
 PANEL_PORT="10443"
-PANEL_PATH="my-3x-panel"
+PANEL_PATH=""
 # Учетные данные администратора панели 3X-UI
 ADMIN_USERNAME="admin"
 ADMIN_PASSWORD=""
@@ -207,7 +207,7 @@ AGH_DOMAIN=""
 AGH_USER="admin"
 AGH_PASS=""
 # Секретный ClientID для роутера (часть URL DoH)
-AGH_CLIENT_ID="home-router"
+AGH_CLIENT_ID=""
 # Использовать AdGuard Home как DNS для VPN-клиентов (Xray DNS → 127.0.0.1) [y/n]
 AGH_XRAY_DNS="y"
 
@@ -226,7 +226,7 @@ SHADOWTLS_PASSWORD=""
 
 # Wstunnel over Nginx L7 (Туннелирование WebSocket через порт 443 HTTPS с SSL) [y/n]
 ENABLE_WSTUNNEL="n"
-WSTUNNEL_PREFIX="/wstunnel"
+WSTUNNEL_PREFIX=""
 WSTUNNEL_PORT="8080"
 WSTUNNEL_SECRET=""
 

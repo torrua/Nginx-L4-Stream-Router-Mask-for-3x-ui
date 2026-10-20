@@ -386,12 +386,12 @@ run_with_spinner() {
         if [ "${NON_INTERACTIVE:-0}" -eq 0 ] && [ -t 1 ]; then
             echo -e "  ${YELLOW}${BOLD}Действия при сбое:${NC}"
             echo -e "    ${CYAN}${BOLD}[1] Повторить попытку (Retry)${NC} — после исправления причин (напр. DNS)"
-            echo -e "    ${RED}[3] Прервать установку (Abort)${NC}"
+            echo -e "    ${RED}[2] Прервать установку (Abort)${NC}"
             local retry_ans=""
-            read -rp "  Ваш выбор [1/3] (по умолчанию: 1): " retry_ans </dev/tty || read -r retry_ans || retry_ans="1"
+            read -rp "  Ваш выбор [1/2] (по умолчанию: 1): " retry_ans </dev/tty || read -r retry_ans || retry_ans="1"
             retry_ans=$(echo "${retry_ans:-1}" | tr -d '[:space:]')
             case "$retry_ans" in
-                3)
+                2|3)
                     die "Шаг завершился с ошибкой (exit $exit_code): $task_name"
                     ;;
                 *)

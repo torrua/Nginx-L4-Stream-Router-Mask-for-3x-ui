@@ -28,16 +28,20 @@ install_step_security() {
 
 # @include "installer/web.sh"
 install_step_decoy() {
+    :
 # @include "nginx/decoys.sh"
 }
 install_step_nginx_config() {
+    :
 # @include "nginx/config.sh"
 }
 install_step_firewall() {
+    :
 # @include "installer/firewall.sh"
 }
 # @include "installer/panel.sh"
 install_step_adguard() {
+    :
 # @include "adguard/setup.sh"
 }
 # @include "installer/awg.sh"

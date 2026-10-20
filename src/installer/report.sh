@@ -1,7 +1,9 @@
 report_installation() {
     if is_true "${ENABLE_WEB_STACK:-y}"; then
+        :
 # @include "installer/report-web.sh"
     else
+        :
 # @include "installer/report-awg.sh"
     fi
     SCRIPT_END_TIME=$(date +%s)

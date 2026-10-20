@@ -6971,6 +6971,7 @@ EOF
         fi
 }
 install_step_decoy() {
+    :
 # =============================================================
 #  ГЕНЕРАЦИЯ ВЫБРАННОЙ ВЕБ-МАСКИ
 # =============================================================
@@ -7730,6 +7731,7 @@ EOF_ROBOTS
     chmod -R 755 "$WEBROOT"
 }
 install_step_nginx_config() {
+    :
 # =============================================================
 #  ШАГ 6: ПОЛНАЯ КОНФИГУРАЦИЯ NGINX И ПЕРЕЗАПУСК СЛУЖБ
 # =============================================================
@@ -8641,6 +8643,7 @@ EOF
     }
 }
 install_step_firewall() {
+    :
 # Apply only the ports owned by this installation, preserving existing rules.
 command -v ufw >/dev/null 2>&1 || die "UFW is not installed."
 ufw allow "${SSH_ACTIVE_PORT:-22}/tcp"
@@ -8894,6 +8897,7 @@ EOF_GEOTMR
     fi
 }
 install_step_adguard() {
+    :
     install_agh_task() {
         # 1. Отключение systemd-resolved StubListener
         mkdir -p /etc/systemd/resolved.conf.d
@@ -9070,6 +9074,7 @@ install_step_verify() {
 }
 report_installation() {
     if is_true "${ENABLE_WEB_STACK:-y}"; then
+        :
 # =============================================================
 #  ФОРМИРОВАНИЕ ИТОГОВ И ИНСТРУКЦИИ ДЛЯ 3X-UI
 # =============================================================
@@ -9423,6 +9428,7 @@ fi
         echo -e "  - ${YELLOW}Проверка сертификата (TLS):${NC}  ${GREEN}Включена (Действительный сертификат Let's Encrypt)${NC}"
     fi
     else
+        :
     echo
     echo -e "${GREEN}=====================================================================${NC}"
     echo -e "  ${GREEN}${BOLD}🎉 УСТАНОВКА АВТОНОМНОГО СЕРВЕРА AMNEZIAWG УСПЕШНО ЗАВЕРШЕНА!${NC}"

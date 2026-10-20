@@ -182,7 +182,7 @@ step_install_nginx_and_mask() {
     export PANEL_PORT="$PANEL_INTERNAL_PORT"
     export PANEL_PATH="/$PANEL_SECRET/"
     export SUB_PATH="/$SUB_SECRET/"
-    export SUB_TITLE="${SUB_TITLE:-}"
+    export SUB_TITLE="${SUB_TITLE:-${SERVER_PREFIX:-Server}}"
     export XHTTP_STREAM_PATH="/$XHTTP_SECRET/"
 
     bash ./setup_mask.sh --auto \
@@ -193,7 +193,7 @@ step_install_nginx_and_mask() {
         --panel-port "$PANEL_INTERNAL_PORT" \
         --panel-path "/$PANEL_SECRET/" \
         --sub-path "/$SUB_SECRET/" \
-        --sub-title "${SUB_TITLE:-}" \
+        --sub-title "${SUB_TITLE:-${SERVER_PREFIX:-Server}}" \
         --xhttp-path "/$XHTTP_SECRET/" \
         --user "$PANEL_USER" \
         --pass "$PANEL_PASS" || die "Ошибка при развертывании маскировки Nginx (setup_mask.sh)."
@@ -822,7 +822,8 @@ step_configure_inbounds() {
         export PANEL_PORT="$PANEL_INTERNAL_PORT"
         export PANEL_PATH="/$PANEL_SECRET/"
         export SUB_PATH="/$SUB_SECRET/"
-        export SUB_TITLE="${SUB_TITLE:-}"
+        export SERVER_PREFIX="${SERVER_PREFIX:-Server}"
+        export SUB_TITLE="${SUB_TITLE:-$SERVER_PREFIX}"
         export XHTTP_STREAM_PATH="/$XHTTP_SECRET/"
         export ENABLE_NAIVE="${ENABLE_NAIVE:-0}"
         export NAIVE_PORT="${NAIVE_PORT:-8446}"

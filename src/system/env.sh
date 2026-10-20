@@ -111,6 +111,7 @@ reconstruct_arrays_from_vars() {
     XHTTP_STREAM_PATH="/${RAW_XHTTP_STREAM_PATH}/"
 
     SERVER_PREFIX="${SERVER_PREFIX:-Server}"
+    SUB_TITLE="${SUB_TITLE:-$SERVER_PREFIX}"
     ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
     ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
     DECOY_MODE="${DECOY_MODE:-1}"
@@ -162,6 +163,7 @@ reconstruct_arrays_from_vars() {
     _v="${AGH_XRAY_DNS:-n}"; if is_true "$_v"; then AGH_XRAY_DNS="y"; else AGH_XRAY_DNS="n"; fi
     HY2_PORT_HOPPING="${HY2_PORT_HOPPING:-n}"
     AUTO_SETUP_3XUI="${AUTO_SETUP_3XUI:-y}"
+    _v="${SHOW_MANUAL_STEPS:-n}"; if is_true "$_v"; then SHOW_MANUAL_STEPS=1; else SHOW_MANUAL_STEPS=0; fi
     PORT_AGH_WEB="${PORT_AGH_WEB:-3000}"
 
     # Сосуществование с Dokploy и протоколы следующего поколения
@@ -377,7 +379,7 @@ SERVER_PREFIX="${SERVER_PREFIX:-Server}"
 SUB_PORT="${SUB_PORT:-55443}"
 SUB_PATH="${_save_sub_path}"
 SUB_CLASH_PATH="${_save_sub_clash_path}"
-SUB_TITLE="${SUB_TITLE:-}"
+SUB_TITLE="${SUB_TITLE:-$SERVER_PREFIX}"
 XHTTP_STREAM_PORT="${XHTTP_STREAM_PORT:-50443}"
 XHTTP_STREAM_PATH="${_save_xhttp_path}"
 

@@ -361,6 +361,7 @@ export PANEL_PATH="${PANEL_PATH:-}"
 export SUB_PORT="${SUB_PORT:-55443}"
 export SUB_PATH="${SUB_PATH:-}"
 export SUB_CLASH_PATH="${SUB_CLASH_PATH:-}"
+export SUB_TITLE="${SUB_TITLE:-${SERVER_PREFIX:-Server}}"
 export XHTTP_STREAM_PORT="${XHTTP_STREAM_PORT:-50443}"
 export XHTTP_STREAM_PATH="${XHTTP_STREAM_PATH:-}"
 export ENABLE_STEAL="${ENABLE_STEAL:-y}"
@@ -951,7 +952,13 @@ web_listen = os.environ.get("WEB_LISTEN", "").strip()
 sub_listen = os.environ.get("SUB_LISTEN", "").strip()
 sub_title = os.environ.get("SUB_TITLE", "").strip()
 if not sub_title:
+    srv_prefix = os.environ.get("SERVER_PREFIX", "").strip()
+    if srv_prefix and srv_prefix.lower() not in ("-", "none", "off", "no"):
+        sub_title = srv_prefix
+if not sub_title:
     sub_title = existing_settings.get("subTitle", "").strip()
+if not sub_title and domain and domain not in ("localhost", "127.0.0.1", "0.0.0.0"):
+    sub_title = domain
 
 settings_updates = {
     "webPort": panel_port,
@@ -1595,6 +1602,9 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
         target_settings["network"] = "tcp,udp"
         target_settings["udpOverTcp"] = True
         target_settings["udp_over_tcp"] = True
+        if target_stream.get("network") in ("tcp,udp", "udp"):
+            target_stream["network"] = "tcp"
+            repairs.append("исправлен network в stream_settings -> 'tcp'")
 
         # Валидация / сохранение серверного пароля (PSK)
         cur_srv_pwd = cur_settings.get("password")
@@ -1936,12 +1946,12 @@ if enable_awg_v3:
     a3_str = {"externalProxy": [{"dest": domain, "port": awg_v3_port, "remark": "AmneziaWG v3.1"}]}
     smart_reconcile_inbound(awg_v3_port, "amneziawg", "in-8443-udp", "AmneziaWG v3.1", a3_set, a3_str, listen="0.0.0.0")
 
-# 6. AmneziaWG v2.0 Legacy
+# 6. AmneziaWG v2.0
 if enable_awg_v2:
     a2_set = {
         "clients": [{
             "privateKey": def_wg_c_priv, "publicKey": def_wg_c_pub,
-            "allowedIPs": ["10.8.2.2/32"], "email": "Legacy-Router", "enable": True
+            "allowedIPs": ["10.8.2.2/32"], "email": "Client-Router", "enable": True
         }],
         "server": {
             "h1": "149419586", "h2": "878791997", "h3": "1251051976", "h4": "1657628296",
@@ -1951,7 +1961,7 @@ if enable_awg_v2:
         }
     }
     a2_str = {"externalProxy": [{"dest": domain, "port": awg_v2_port, "remark": "AmneziaWG v2.0"}]}
-    smart_reconcile_inbound(awg_v2_port, "amneziawg", "in-awg-v2-legacy", "AmneziaWG v2.0", a2_set, a2_str, listen="0.0.0.0")
+    smart_reconcile_inbound(awg_v2_port, "amneziawg", "in-awg-v2", "AmneziaWG v2.0", a2_set, a2_str, listen="0.0.0.0")
 
 # 7. Shadowsocks 2022
 if enable_ss2022 or "shadowsocks" in existing_inbound_protos:
@@ -1959,13 +1969,15 @@ if enable_ss2022 or "shadowsocks" in existing_inbound_protos:
         "method": def_ss_method,
         "password": def_ss_server_pass,
         "network": "tcp,udp",
+        "udpOverTcp": True,
+        "udp_over_tcp": True,
         "clients": [{"email": "Client", "password": def_ss_client_pass, "enable": True}]
     }
     ss_ext_proxies = [{"dest": domain, "port": ss2022_port, "forceTls": "none", "remark": "Shadowsocks 2022"}]
     if enable_shadowtls:
         ss_ext_proxies.append({"dest": domain, "port": shadowtls_port, "forceTls": "tls", "remark": "ShadowTLS v4 + SS-2022"})
     ss_str = {
-        "network": "tcp,udp",
+        "network": "tcp",
         "security": "none",
         "externalProxy": ss_ext_proxies
     }

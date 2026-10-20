@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # ==============================================================================
-# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v8.2.0 Universal
+# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v8.2.1 Universal
 # Nginx L4 Stream + 3X-UI + Unix Sockets + Native proxy_http_version 2 + 3 Decoys
 # ==============================================================================
 # Архитектура:
@@ -13,7 +13,7 @@
 #   5) Опциональный скоростной UDP VPN: Hysteria 2 (по умолчанию 443/UDP)
 #   6) Опциональный двухверсионный стек AmneziaWG / WireGuard:
 #      - AmneziaWG v3.1 (WG3, по умолчанию 8443/UDP, Transport Protection)
-#      - AmneziaWG v2.0 / Legacy 1.0 (по умолчанию 8444/UDP, для роутеров)
+#      - AmneziaWG v2.0 (по умолчанию 8444/UDP, для роутеров Keenetic / OpenWrt)
 #   7) Гибридный SSL-движок с разделением каталогов:
 #      - Certbot (HTTP-01): /etc/letsencrypt/live/
 #      - acme.sh + Cloudflare (DNS-01): /etc/ssl/acme/ (изоляция от /root/ и 755/644)
@@ -27,7 +27,7 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="v8.2.0"
+SCRIPT_VERSION="v8.2.1"
 
 
 # --------------------------- Замеры времени и телеметрия ---------------------------
@@ -464,7 +464,7 @@ generate_config_template() {
     local target_file="${1:-setup_mask.env.example}"
     cat << 'EOF_CONF' > "$target_file"
 # ==============================================================================
-# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v8.2.0 Universal)
+# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v8.2.1 Universal)
 # ==============================================================================
 # Данный файл позволяет выполнять полностью автоматическую установку:
 # ./setup_mask.sh --config setup_mask.env --non-interactive --force
@@ -548,7 +548,7 @@ AWG_HEADER_PROTECTION_KEY=""
 # Рандомизация хвостов пакетов против анализа длины трафика WireGuard [true/false]
 AWG_RANDOM_TRAILERS="false"
 
-# AmneziaWG v2.0 / Legacy (Для роутеров) [y/n]
+# AmneziaWG v2.0 (Для роутеров Keenetic / OpenWrt) [y/n]
 ENABLE_AWG_V2="n"
 AWG_V2_PORT="8444"
 
@@ -894,6 +894,7 @@ reconstruct_arrays_from_vars() {
     XHTTP_STREAM_PATH="/${RAW_XHTTP_STREAM_PATH}/"
 
     SERVER_PREFIX="${SERVER_PREFIX:-Server}"
+    SUB_TITLE="${SUB_TITLE:-$SERVER_PREFIX}"
     ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
     ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
     DECOY_MODE="${DECOY_MODE:-1}"
@@ -945,6 +946,7 @@ reconstruct_arrays_from_vars() {
     _v="${AGH_XRAY_DNS:-n}"; if is_true "$_v"; then AGH_XRAY_DNS="y"; else AGH_XRAY_DNS="n"; fi
     HY2_PORT_HOPPING="${HY2_PORT_HOPPING:-n}"
     AUTO_SETUP_3XUI="${AUTO_SETUP_3XUI:-y}"
+    _v="${SHOW_MANUAL_STEPS:-n}"; if is_true "$_v"; then SHOW_MANUAL_STEPS=1; else SHOW_MANUAL_STEPS=0; fi
     PORT_AGH_WEB="${PORT_AGH_WEB:-3000}"
 
     # Сосуществование с Dokploy и протоколы следующего поколения
@@ -1160,7 +1162,7 @@ SERVER_PREFIX="${SERVER_PREFIX:-Server}"
 SUB_PORT="${SUB_PORT:-55443}"
 SUB_PATH="${_save_sub_path}"
 SUB_CLASH_PATH="${_save_sub_clash_path}"
-SUB_TITLE="${SUB_TITLE:-}"
+SUB_TITLE="${SUB_TITLE:-$SERVER_PREFIX}"
 XHTTP_STREAM_PORT="${XHTTP_STREAM_PORT:-50443}"
 XHTTP_STREAM_PATH="${_save_xhttp_path}"
 
@@ -2151,6 +2153,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --expert)
             EXPERT_MODE=1
+            shift
+            ;;
+        --manual-steps)
+            SHOW_MANUAL_STEPS=1
             shift
             ;;
         --gen-config)
@@ -4506,11 +4512,24 @@ def parse_duration(duration_str: str) -> timedelta | datetime | None:
             return timedelta(seconds=val)
     return None
 
+def get_server_display_name() -> str:
+    srv_prefix = os.environ.get("SERVER_PREFIX", "").strip()
+    if srv_prefix and srv_prefix.lower() not in ("-", "none", "off", "no"):
+        return srv_prefix
+    sub_title = os.environ.get("SUB_TITLE", "").strip()
+    if sub_title and sub_title.lower() not in ("-", "none", "off", "no"):
+        return sub_title
+    if SERVER_HOST and SERVER_HOST not in ("127.0.0.1", "0.0.0.0", "localhost"):
+        return SERVER_HOST
+    return "Server"
+
 def encode_amnezia_vpnuri_31(
     conf_text: str, client_ip: str, client_priv: str, client_pub: str,
-    description: str = "AmneziaWG 3.1",
+    description: str | None = None,
     dns1: str = PRIMARY_DNS, dns2: str = SECONDARY_DNS
 ) -> str:
+    if not description:
+        description = f"{get_server_display_name()} — Client"
     internal_config = conf_text
     server_pub = None
     server_psk = None
@@ -4629,12 +4648,13 @@ PersistentKeepalive = {PERSISTENT_KEEPALIVE}
         "config": internal_config, "hostName": server_host,
         "mtu": str(cur_mtu), "persistent_keep_alive": cur_keepalive,
         "port": port_int, "psk_key": server_psk,
-        "server_pub_key": server_pub
+        "server_pub_key": server_pub,
+        "isThirdPartyConfig": True
     }
     if CPA:
         last_config_dict["ContentPaddingAddition"] = CPA
 
-    container_id = CONTAINER or "amnezia-awg"
+    container_id = CONTAINER if CONTAINER and CONTAINER != "amnezia-awg" else "amnezia-awg2"
     awg_dict = {
         "DisableCookies": DISABLE_COOKIES,
         "H1": H1, "H2": H2, "H3": H3, "H4": H4,
@@ -4645,6 +4665,7 @@ PersistentKeepalive = {PERSISTENT_KEEPALIVE}
         "RandomTrailers": RANDOM_TRAILERS, "RejectAfterTime": REJECT_AFTER_TIME,
         "RekeyAfterTime": REKEY_AFTER_TIME, "RekeyTimeout": REKEY_TIMEOUT,
         "S1": S1, "S2": S2, "S3": S3, "S4": S4,
+        "isThirdPartyConfig": True,
         "last_config": json.dumps(last_config_dict, ensure_ascii=False),
         "port": str(server_port), "protocol_version": proto_ver,
         "subnet_address": "10.8.0.0", "transport_proto": "udp"
@@ -5068,7 +5089,7 @@ def add_client(
 
         vpnuri = encode_amnezia_vpnuri_31(
             conf_content, client_ip, client_priv, client_pub,
-            description=f"AmneziaWG - {client_name}",
+            description=f"{get_server_display_name()} — {client_name}",
             dns1=dns1, dns2=dns2
         )
         vpnuri_file = AWG_DIR / f"{client_name}.vpnuri"
@@ -5479,7 +5500,7 @@ def get_client_uri(client_name: str):
             c_pub = curve25519_pubkey(c_priv) or ""
             uri = encode_amnezia_vpnuri_31(
                 conf_content, c_ip, c_priv, c_pub,
-                description=f"AmneziaWG - {client_name}"
+                description=f"{get_server_display_name()} — {client_name}"
             )
             uri_file.write_text(uri, encoding="utf-8")
             try:
@@ -6027,7 +6048,7 @@ step_install_nginx_and_mask() {
     export PANEL_PORT="$PANEL_INTERNAL_PORT"
     export PANEL_PATH="/$PANEL_SECRET/"
     export SUB_PATH="/$SUB_SECRET/"
-    export SUB_TITLE="${SUB_TITLE:-}"
+    export SUB_TITLE="${SUB_TITLE:-${SERVER_PREFIX:-Server}}"
     export XHTTP_STREAM_PATH="/$XHTTP_SECRET/"
 
     bash ./setup_mask.sh --auto \
@@ -6038,7 +6059,7 @@ step_install_nginx_and_mask() {
         --panel-port "$PANEL_INTERNAL_PORT" \
         --panel-path "/$PANEL_SECRET/" \
         --sub-path "/$SUB_SECRET/" \
-        --sub-title "${SUB_TITLE:-}" \
+        --sub-title "${SUB_TITLE:-${SERVER_PREFIX:-Server}}" \
         --xhttp-path "/$XHTTP_SECRET/" \
         --user "$PANEL_USER" \
         --pass "$PANEL_PASS" || die "Ошибка при развертывании маскировки Nginx (setup_mask.sh)."
@@ -6402,7 +6423,7 @@ setup_naive_service() {
         local caddy_tmp="/tmp/caddy_naive_$$"
         mkdir -p "$caddy_tmp"
         local rel_ver="${SCRIPT_VERSION:-v8.1.0}"
-        [[ "$rel_ver" == "v8.2.0" ]] && rel_ver="v8.1.0"
+        [[ "$rel_ver" == "v8.2.1" ]] && rel_ver="v8.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/caddy-naive-linux-${caddy_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
@@ -6539,7 +6560,7 @@ setup_dnstt_service() {
         local dnstt_tmp="/tmp/dnstt_$$"
         mkdir -p "$dnstt_tmp"
         local rel_ver="${SCRIPT_VERSION:-v8.1.0}"
-        [[ "$rel_ver" == "v8.2.0" ]] && rel_ver="v8.1.0"
+        [[ "$rel_ver" == "v8.2.1" ]] && rel_ver="v8.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/dnstt-server-linux-${dnstt_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
@@ -6667,7 +6688,8 @@ step_configure_inbounds() {
         export PANEL_PORT="$PANEL_INTERNAL_PORT"
         export PANEL_PATH="/$PANEL_SECRET/"
         export SUB_PATH="/$SUB_SECRET/"
-        export SUB_TITLE="${SUB_TITLE:-}"
+        export SERVER_PREFIX="${SERVER_PREFIX:-Server}"
+        export SUB_TITLE="${SUB_TITLE:-$SERVER_PREFIX}"
         export XHTTP_STREAM_PATH="/$XHTTP_SECRET/"
         export ENABLE_NAIVE="${ENABLE_NAIVE:-0}"
         export NAIVE_PORT="${NAIVE_PORT:-8446}"
@@ -7953,7 +7975,7 @@ for item in res:
     }
 
     q_step_awg_v2() {
-        prompt_yes_no "Установить и настроить AmneziaWG v2.0 / Legacy (инбаунд 3X-UI)?" "${ENABLE_AWG_V2:-n}" ENABLE_AWG_V2 || return $?
+        prompt_yes_no "Установить и настроить AmneziaWG v2.0 (для роутеров Keenetic / OpenWrt, инбаунд 3X-UI)?" "${ENABLE_AWG_V2:-n}" ENABLE_AWG_V2 || return $?
         if is_true "${ENABLE_AWG_V2:-y}"; then
             ENABLE_AWG_V2=1
             start_amneziawg_preinstall_bg
@@ -11234,6 +11256,7 @@ echo
 echo -e "${YELLOW}[SSL] ВЫПУЩЕННЫЕ СЕРТИФИКАТЫ (Базовый путь: ${SSL_BASE_DIR}):${NC}"
 echo -e "$SSL_CERT_REPORT"
 
+if [[ "${SHOW_MANUAL_STEPS:-0}" == "1" ]]; then
 echo -e "${YELLOW}ШАГ 1: Настройка файервола UFW (Защита локальных сокетов и открытие VPN):${NC}"
 echo -e "  ${CYAN}${UFW_ALLOW_LIST}${NC}"
 echo -e "  ${RED}ufw deny $PANEL_PORT/tcp && ufw deny $SUB_PORT/tcp && ufw deny $XHTTP_STREAM_PORT/tcp && ufw deny $REALITY_FALLBACK_PORT/tcp${UFW_DENY_LIST}${NC}"
@@ -11294,6 +11317,7 @@ echo -e "    * Тайминги соединения: ${CYAN}KeepaliveTimeout = 
 echo -e "    * Переключатели: ${CYAN}RandomTrailers:${NC} ${RED}Выключить (OFF, критично для скорости!)${NC} | ${CYAN}DisableCookies:${NC} ${GREEN}Включить${NC}"
 echo
 fi
+fi
 
     if [[ "${ENABLE_AWG_V3:-}" == "1" || "${ENABLE_AWG_V3,,}" == "y" ]] || \
        [[ "${ENABLE_AWG_V2:-}" == "1" || "${ENABLE_AWG_V2,,}" == "y" ]] || \
@@ -11306,15 +11330,17 @@ fi
         deploy_amneziawg_backend
     fi
 
-    if [[ "${ENABLE_AWG_V2:-}" == "1" || "${ENABLE_AWG_V2,,}" == "y" ]] && [ -n "${AWG_V2_PORT:-}" ]; then
-        echo -e "${YELLOW}ШАГ 6: Инбаунд AmneziaWG v2.0 / Legacy (UDP $AWG_V2_PORT):${NC}"
-        echo -e "  - ${YELLOW}Вкладка «Основное»:${NC} Протокол: ${GREEN}amneziawg / wireguard${NC} | Адрес: ${GREEN}0.0.0.0${NC} | Порт: ${GREEN}$AWG_V2_PORT${NC} (UDP)"
-        echo -e "  - ${YELLOW}Вкладка «Параметры AWG» (Для роутеров Keenetic / OpenWrt и старых клиентов):${NC}"
-        echo -e "    * ${CYAN}H1-H4 (Строки):${NC} ${GREEN}\"149419586\", \"878791997\", \"1251051976\", \"1657628296\"${NC}"
-        echo -e "    * ${CYAN}HeaderProtectionKey:${NC} ${RED}ПУСТО (Выключено)${NC}"
-        echo -e "    * ${CYAN}Смещения (>= 12):${NC} ${GREEN}S1 = 16, S2 = 20, S3 = 24, S4 = 16${NC}"
-        echo -e "    * ${CYAN}Junk packets:${NC} ${GREEN}Jc = 2, Jmin = 20, Jmax = 50${NC} | ${CYAN}MTU:${NC} ${GREEN}1280${NC}"
-        echo
+    if [[ "${SHOW_MANUAL_STEPS:-0}" == "1" ]]; then
+        if [[ "${ENABLE_AWG_V2:-}" == "1" || "${ENABLE_AWG_V2,,}" == "y" ]] && [ -n "${AWG_V2_PORT:-}" ]; then
+            echo -e "${YELLOW}ШАГ 6: Инбаунд AmneziaWG v2.0 (UDP $AWG_V2_PORT):${NC}"
+            echo -e "  - ${YELLOW}Вкладка «Основное»:${NC} Протокол: ${GREEN}amneziawg / wireguard${NC} | Адрес: ${GREEN}0.0.0.0${NC} | Порт: ${GREEN}$AWG_V2_PORT${NC} (UDP)"
+            echo -e "  - ${YELLOW}Вкладка «Параметры AWG» (Для роутеров Keenetic / OpenWrt):${NC}"
+            echo -e "    * ${CYAN}H1-H4 (Строки):${NC} ${GREEN}\"149419586\", \"878791997\", \"1251051976\", \"1657628296\"${NC}"
+            echo -e "    * ${CYAN}HeaderProtectionKey:${NC} ${RED}ПУСТО (Выключено)${NC}"
+            echo -e "    * ${CYAN}Смещения (>= 12):${NC} ${GREEN}S1 = 16, S2 = 20, S3 = 24, S4 = 16${NC}"
+            echo -e "    * ${CYAN}Junk packets:${NC} ${GREEN}Jc = 2, Jmin = 20, Jmax = 50${NC} | ${CYAN}MTU:${NC} ${GREEN}1280${NC}"
+            echo
+        fi
     fi
 
     if [[ "${ENABLE_AWG_STANDALONE:-}" == "1" || "${ENABLE_AWG_STANDALONE,,}" == "y" ]]; then
@@ -11341,18 +11367,20 @@ fi
         fi
     fi
 
-    echo -e "${YELLOW}ШАГ 7: Настройки Клиента и Подписок в 3X-UI:${NC}"
-    echo -e "  - ${YELLOW}В карточке Клиента (Клиенты -> Учетные данные):${NC}"
-    echo -e "    * Для инбаунда REALITY: Flow: выбрать ${GREEN}xtls-rprx-vision${NC}"
-    echo -e "    * Для инбаунда xHTTP: Flow: строго ${RED}пусто (none)${NC} | Decryption: ключ ${GREEN}vlessenc${NC}"
-    echo -e "  - ${YELLOW}Настройки подписок (Панель -> Подписка):${NC}"
-    echo -e "    * Subscription Port: ${GREEN}$SUB_PORT${NC} | Subscription Path: ${GREEN}$SUB_PATH${NC}"
-    echo -e "    * Subscription URL: ${CYAN}https://${PRIMARY_DOMAIN}${SUB_PATH}${NC}"
-    echo -e "    * Subscription URL (JSON): ${CYAN}https://${PRIMARY_DOMAIN}${SUB_JSON_PATH}${NC}"
-    echo -e "    * Subscription URL (Clash): ${CYAN}https://${PRIMARY_DOMAIN}${SUB_CLASH_PATH}${NC}"
-    echo -e "  - ${YELLOW}В разделе «Хосты» (Hosts) добавьте 2 правила:${NC}"
-    echo -e "    1) ${BOLD}MAIN_SAME_443:${NC} Инбаунды: ${CYAN}REALITY + Hysteria 2${NC} -> Порт: ${GREEN}443${NC} | Безопасность: ${GREEN}same${NC}"
-    echo -e "    2) ${BOLD}XHTTP_TLS_443:${NC} Инбаунд: ${CYAN}${SERVER_PREFIX} (VLESS xHTTP)${NC} -> Порт: ${GREEN}443${NC} | Безопасность: ${GREEN}tls${NC} (SNI: ${CYAN}$PRIMARY_DOMAIN${NC})"
+    if [[ "${SHOW_MANUAL_STEPS:-0}" == "1" ]]; then
+        echo -e "${YELLOW}ШАГ 7: Настройки Клиента и Подписок в 3X-UI:${NC}"
+        echo -e "  - ${YELLOW}В карточке Клиента (Клиенты -> Учетные данные):${NC}"
+        echo -e "    * Для инбаунда REALITY: Flow: выбрать ${GREEN}xtls-rprx-vision${NC}"
+        echo -e "    * Для инбаунда xHTTP: Flow: строго ${RED}пусто (none)${NC} | Decryption: ключ ${GREEN}vlessenc${NC}"
+        echo -e "  - ${YELLOW}Настройки подписок (Панель -> Подписка):${NC}"
+        echo -e "    * Subscription Port: ${GREEN}$SUB_PORT${NC} | Subscription Path: ${GREEN}$SUB_PATH${NC}"
+        echo -e "    * Subscription URL: ${CYAN}https://${PRIMARY_DOMAIN}${SUB_PATH}${NC}"
+        echo -e "    * Subscription URL (JSON): ${CYAN}https://${PRIMARY_DOMAIN}${SUB_JSON_PATH}${NC}"
+        echo -e "    * Subscription URL (Clash): ${CYAN}https://${PRIMARY_DOMAIN}${SUB_CLASH_PATH}${NC}"
+        echo -e "  - ${YELLOW}В разделе «Хосты» (Hosts) добавьте 2 правила:${NC}"
+        echo -e "    1) ${BOLD}MAIN_SAME_443:${NC} Инбаунды: ${CYAN}REALITY + Hysteria 2${NC} -> Порт: ${GREEN}443${NC} | Безопасность: ${GREEN}same${NC}"
+        echo -e "    2) ${BOLD}XHTTP_TLS_443:${NC} Инбаунд: ${CYAN}${SERVER_PREFIX} (VLESS xHTTP)${NC} -> Порт: ${GREEN}443${NC} | Безопасность: ${GREEN}tls${NC} (SNI: ${CYAN}$PRIMARY_DOMAIN${NC})"
+    fi
 
     if [[ "${ENABLE_AGH,,}" == "y" || "${ENABLE_AGH:-}" == "1" ]]; then
         local_agh_panel_url=""
@@ -11368,7 +11396,7 @@ fi
         fi
 
         echo
-        echo -e "${YELLOW}ШАГ 8: Приватный AdGuard Home DoH + Split-DNS:${NC}"
+        echo -e "${YELLOW}ПРИВАТНЫЙ ADGUARD HOME DOH + SPLIT-DNS:${NC}"
         echo -e "  - ${YELLOW}Веб-панель:${NC}          ${CYAN}${local_agh_panel_url}${NC}"
         echo -e "  - ${YELLOW}Логин / Пароль:${NC}      ${GREEN}${AGH_USER}${NC} / ${GREEN}${AGH_PASS}${NC}"
         echo -e "  - ${YELLOW}URL DoH для роутера:${NC} ${GREEN}${local_agh_doh_url}${NC}"

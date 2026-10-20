@@ -683,7 +683,7 @@ class TestExtraProtocolsInbounds(unittest.TestCase):
             "clients": [{"email": "Client", "password": "also-corrupted-key", "method": "legacy-method"}]
         }
         bad_stream = {
-            "network": "tcp",
+            "network": "tcp,udp",
             "security": "none",
             "externalProxy": [{"dest": "test.example.com", "port": 8388, "forceTls": "tls", "remark": "SS-Old"}]
         }
@@ -716,6 +716,9 @@ class TestExtraProtocolsInbounds(unittest.TestCase):
         self.assertTrue(self.ns["validate_ss2022_key"](s["password"], "2022-blake3-aes-256-gcm"))
         self.assertTrue(self.ns["validate_ss2022_key"](s["clients"][0]["password"], "2022-blake3-aes-256-gcm"))
         self.assertNotIn("method", s["clients"][0], "Obsolete client.method must be stripped")
+
+        # Verify stream network was repaired from tcp,udp to tcp
+        self.assertEqual(st["network"], "tcp", "Shadowsocks streamSettings network must be 'tcp', never 'tcp,udp'")
 
         # Verify forceTls fixed to 'none'
         self.assertEqual(st["externalProxy"][0]["forceTls"], "none", "Shadowsocks externalProxy forceTls must be 'none'")
@@ -1524,6 +1527,78 @@ class TestBashScopeRegressions(unittest.TestCase):
         # Ensure awg_p in step 3 standalone is not using local outside function
         m_step3_awg = re.search(r'deploy_amneziawg_backend\s+if command -v ufw[^;]*;\s*then\s+([^\n]+)', setup_sh)
         self.assertNotIn("local awg_p=", setup_sh.split("🎉 УСТАНОВКА АВТОНОМНОГО СЕРВЕРА AMNEZIAWG УСПЕШНО ЗАВЕРШЕНА")[0][-500:])
+
+    def test_amnezia_vpnuri_naming_and_modern_container(self):
+        """Verify that Amnezia vpn:// URI uses informative server name and modern amnezia-awg2 container."""
+        from src.awg import manage_amneziawg
+        import base64, zlib, json
+
+        conf = "[Interface]\nPrivateKey = aaaa\nAddress = 10.8.1.2/32\n\n[Peer]\nPublicKey = bbbb\nEndpoint = 127.0.0.1:8443\n"
+        uri = manage_amneziawg.encode_amnezia_vpnuri_31(conf, "10.8.1.2", "aaaa", "bbbb", description="MyServer — user1")
+        self.assertTrue(uri.startswith("vpn://"))
+        raw_b64 = uri[6:]
+        pad = len(raw_b64) % 4
+        if pad: raw_b64 += "=" * (4 - pad)
+        decoded = base64.urlsafe_b64decode(raw_b64)
+        uncompressed = zlib.decompress(decoded[4:])
+        data = json.loads(uncompressed.decode("utf-8"))
+
+        self.assertEqual(data["description"], "MyServer — user1")
+        self.assertEqual(data["defaultContainer"], "amnezia-awg2")
+        self.assertEqual(data["containers"][0]["container"], "amnezia-awg2")
+        self.assertTrue(data["containers"][0]["awg"].get("isThirdPartyConfig", False))
+
+    def test_subscription_title_sync(self):
+        """Verify that SUB_TITLE / SERVER_PREFIX is saved to 3X-UI subTitle setting."""
+        import tempfile, sqlite3
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            temp_db = f.name
+        try:
+            conn = sqlite3.connect(temp_db)
+            cur = conn.cursor()
+            cur.execute("CREATE TABLE settings (id INTEGER PRIMARY KEY, key TEXT, value TEXT)")
+            cur.execute("""
+                CREATE TABLE inbounds (
+                    id INTEGER PRIMARY KEY, user_id INTEGER, up INTEGER, down INTEGER, total INTEGER,
+                    remark TEXT, enable INTEGER, expiry_time INTEGER, listen TEXT, port INTEGER,
+                    protocol TEXT, settings TEXT, stream_settings TEXT, tag TEXT, sniffing TEXT
+                )
+            """)
+            cur.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, password TEXT)")
+            cur.execute("INSERT INTO users VALUES (1, 'admin', 'admin')")
+            cur.execute("INSERT INTO settings (key, value) VALUES ('subTitle', '')")
+            conn.commit()
+            conn.close()
+
+            env = os.environ.copy()
+            env["DB_PATH"] = temp_db
+            env["DRY_RUN"] = "0"
+            env["SERVER_PREFIX"] = "TestService"
+            env["SUB_TITLE"] = ""
+            env["PRIMARY_DOMAIN"] = "example.com"
+            env["PANEL_PORT"] = "2053"
+            env["PANEL_PATH"] = "panel"
+            env["SUB_PORT"] = "2096"
+            env["SUB_PATH"] = "sub"
+            env["PYTHON_CMD"] = sys.executable
+
+            conf_script = (ROOT / "configure_3xui.sh").read_text(encoding="utf-8")
+            m = re.search(r"\$PYTHON_CMD\" - << 'EOF_PYTHON_CONFIG'\n(.*)\nEOF_PYTHON_CONFIG", conf_script, re.DOTALL)
+            self.assertIsNotNone(m)
+            py_code = m.group(1)
+
+            res = subprocess.run([sys.executable, "-"], input=py_code, env=env, capture_output=True, text=True, encoding="utf-8")
+            self.assertEqual(res.returncode, 0, f"STDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}")
+
+            conn = sqlite3.connect(temp_db)
+            cur = conn.cursor()
+            cur.execute("SELECT value FROM settings WHERE key = 'subTitle'")
+            val = cur.fetchone()[0]
+            conn.close()
+            self.assertEqual(val, "TestService", "subTitle setting in 3X-UI should take SERVER_PREFIX if SUB_TITLE is empty")
+        finally:
+            if os.path.exists(temp_db):
+                os.unlink(temp_db)
 
 
 if __name__ == "__main__":

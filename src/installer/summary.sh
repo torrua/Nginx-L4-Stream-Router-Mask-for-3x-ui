@@ -71,6 +71,23 @@ save_and_display_summary() {
         awg_vpnuri=$(head -n 1 "/root/awg/client-1.vpnuri" 2>/dev/null | tr -d '[:space:]')
     fi
 
+    local ext_ports_list="80/tcp (HTTP), 443/tcp (HTTPS Stream Router)"
+    if [ "${ENABLE_HY2:-1}" != "0" ] && [ "${ENABLE_HY2:-y}" != "n" ]; then
+        ext_ports_list+=", 443/udp (Hysteria 2)"
+    fi
+    if [ "${ENABLE_MASQUE:-0}" = "1" ] || [ "${ENABLE_MASQUE:-}" = "y" ]; then
+        ext_ports_list+=", ${MASQUE_PORT:-8445}/udp (MASQUE)"
+    fi
+    if [ "${ENABLE_TUIC:-0}" = "1" ] || [ "${ENABLE_TUIC:-}" = "y" ]; then
+        ext_ports_list+=", ${TUIC_PORT:-8448}/udp (TUIC v5)"
+    fi
+    if [ "${ENABLE_AWG_V3:-1}" != "0" ] && [ "${ENABLE_AWG_V3:-y}" != "n" ]; then
+        ext_ports_list+=", ${AWG_V3_PORT:-8443}/udp (AmneziaWG)"
+    fi
+    if [ "${ENABLE_DNSTT:-0}" = "1" ] || [ "${ENABLE_DNSTT:-}" = "y" ]; then
+        ext_ports_list+=", ${DNSTT_PORT:-53053}/udp (DNSTT)"
+    fi
+
     cat <<EOF > "$CREDENTIALS_FILE"
 ====================================================================
  NGINX L4 STREAM ROUTER & 3X-UI — УЧЕТНЫЕ ДАННЫЕ СЕРВЕРА
@@ -86,7 +103,7 @@ URL Панели:     https://${PRIMARY_DOMAIN}/${PANEL_SECRET}/
 [ СЕТЕВЫЕ ПАРАМЕТРЫ ]
 Основной домен: ${PRIMARY_DOMAIN}
 SSL Сертификат: /etc/letsencrypt/live/${PRIMARY_DOMAIN}/
-Внешние порты:  80/tcp (HTTP), 443/tcp (HTTPS Stream Router), 443/udp (Hysteria 2)
+Внешние порты:  ${ext_ports_list}
 SSH Порт:       ${SSH_PORT}
 
 [ ПРЯМЫЕ ССЫЛКИ НА ПОДПИСКУ КЛИЕНТОВ ]
@@ -149,7 +166,7 @@ print_dashboard() {
     echo -e "    ${DIM}• Внешний фасад:${RESET}  ${GREEN}443 TCP (Nginx Stream ssl_preread)${RESET}"
     echo -e "    ${DIM}• Маскировка SNI:${RESET} ${WHITE}${PRIMARY_DOMAIN} ${DIM}➜${RESET} ${GREEN}Decoy Site (HTML5/Nginx)${RESET}"
     echo -e "    ${DIM}• Hysteria 2 UDP:${RESET} ${GREEN}443 UDP (QUIC / TLS SNI)${RESET}"
-    echo -e "    ${DIM}• Фаервол UFW:${RESET}    ${GREEN}Порты протоколов (10443, 55443 и др.) изолированы${RESET}"
+    echo -e "    ${DIM}• Фаервол UFW:${RESET}    ${GREEN}Внутренние сервисы и порты панели надежно изолированы на 127.0.0.1${RESET}"
     echo -e "    ${DIM}• Ядро Linux:${RESET}     ${GREEN}BBR активирован, IPv6 отключен (no leak)${RESET}"
     echo ""
     if [ -n "${MASQUE_URI:-}" ] || [ -n "${SHADOWTLS_URI:-}" ] || [ -n "${WSTUNNEL_CLI:-}" ] || [ -n "${ZAPRET_INFO:-}" ] || [ -n "${NAIVE_URI:-}" ] || [ -n "${DNSTT_CLI:-}" ]; then

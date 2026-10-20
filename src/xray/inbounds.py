@@ -343,6 +343,9 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
         target_settings["network"] = "tcp,udp"
         target_settings["udpOverTcp"] = True
         target_settings["udp_over_tcp"] = True
+        if target_stream.get("network") in ("tcp,udp", "udp"):
+            target_stream["network"] = "tcp"
+            repairs.append("исправлен network в stream_settings -> 'tcp'")
 
         # Валидация / сохранение серверного пароля (PSK)
         cur_srv_pwd = cur_settings.get("password")

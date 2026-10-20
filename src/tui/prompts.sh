@@ -881,6 +881,10 @@ while [[ $# -gt 0 ]]; do
             EXPERT_MODE=1
             shift
             ;;
+        --manual-steps)
+            SHOW_MANUAL_STEPS=1
+            shift
+            ;;
         --gen-config)
             GEN_CONFIG=1
             if [[ -n "${2:-}" && ! "$2" =~ ^- ]]; then

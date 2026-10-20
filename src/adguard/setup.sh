@@ -248,6 +248,7 @@ echo
 echo -e "${YELLOW}[SSL] ВЫПУЩЕННЫЕ СЕРТИФИКАТЫ (Базовый путь: ${SSL_BASE_DIR}):${NC}"
 echo -e "$SSL_CERT_REPORT"
 
+if [[ "${SHOW_MANUAL_STEPS:-0}" == "1" ]]; then
 echo -e "${YELLOW}ШАГ 1: Настройка файервола UFW (Защита локальных сокетов и открытие VPN):${NC}"
 echo -e "  ${CYAN}${UFW_ALLOW_LIST}${NC}"
 echo -e "  ${RED}ufw deny $PANEL_PORT/tcp && ufw deny $SUB_PORT/tcp && ufw deny $XHTTP_STREAM_PORT/tcp && ufw deny $REALITY_FALLBACK_PORT/tcp${UFW_DENY_LIST}${NC}"
@@ -307,4 +308,5 @@ echo -e "    * Тайминги ключей: ${CYAN}RekeyAfterTime = 120-170${N
 echo -e "    * Тайминги соединения: ${CYAN}KeepaliveTimeout = 15-20${NC}, ${CYAN}MaxHandshakeAttempts = 20-25${NC}"
 echo -e "    * Переключатели: ${CYAN}RandomTrailers:${NC} ${RED}Выключить (OFF, критично для скорости!)${NC} | ${CYAN}DisableCookies:${NC} ${GREEN}Включить${NC}"
 echo
+fi
 fi

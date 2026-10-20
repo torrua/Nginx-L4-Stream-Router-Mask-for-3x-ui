@@ -425,11 +425,24 @@ def parse_duration(duration_str: str) -> timedelta | datetime | None:
             return timedelta(seconds=val)
     return None
 
+def get_server_display_name() -> str:
+    srv_prefix = os.environ.get("SERVER_PREFIX", "").strip()
+    if srv_prefix and srv_prefix.lower() not in ("-", "none", "off", "no"):
+        return srv_prefix
+    sub_title = os.environ.get("SUB_TITLE", "").strip()
+    if sub_title and sub_title.lower() not in ("-", "none", "off", "no"):
+        return sub_title
+    if SERVER_HOST and SERVER_HOST not in ("127.0.0.1", "0.0.0.0", "localhost"):
+        return SERVER_HOST
+    return "Server"
+
 def encode_amnezia_vpnuri_31(
     conf_text: str, client_ip: str, client_priv: str, client_pub: str,
-    description: str = "AmneziaWG 3.1",
+    description: str | None = None,
     dns1: str = PRIMARY_DNS, dns2: str = SECONDARY_DNS
 ) -> str:
+    if not description:
+        description = f"{get_server_display_name()} — Client"
     internal_config = conf_text
     server_pub = None
     server_psk = None
@@ -548,12 +561,13 @@ PersistentKeepalive = {PERSISTENT_KEEPALIVE}
         "config": internal_config, "hostName": server_host,
         "mtu": str(cur_mtu), "persistent_keep_alive": cur_keepalive,
         "port": port_int, "psk_key": server_psk,
-        "server_pub_key": server_pub
+        "server_pub_key": server_pub,
+        "isThirdPartyConfig": True
     }
     if CPA:
         last_config_dict["ContentPaddingAddition"] = CPA
 
-    container_id = CONTAINER or "amnezia-awg"
+    container_id = CONTAINER if CONTAINER and CONTAINER != "amnezia-awg" else "amnezia-awg2"
     awg_dict = {
         "DisableCookies": DISABLE_COOKIES,
         "H1": H1, "H2": H2, "H3": H3, "H4": H4,
@@ -564,6 +578,7 @@ PersistentKeepalive = {PERSISTENT_KEEPALIVE}
         "RandomTrailers": RANDOM_TRAILERS, "RejectAfterTime": REJECT_AFTER_TIME,
         "RekeyAfterTime": REKEY_AFTER_TIME, "RekeyTimeout": REKEY_TIMEOUT,
         "S1": S1, "S2": S2, "S3": S3, "S4": S4,
+        "isThirdPartyConfig": True,
         "last_config": json.dumps(last_config_dict, ensure_ascii=False),
         "port": str(server_port), "protocol_version": proto_ver,
         "subnet_address": "10.8.0.0", "transport_proto": "udp"
@@ -987,7 +1002,7 @@ def add_client(
 
         vpnuri = encode_amnezia_vpnuri_31(
             conf_content, client_ip, client_priv, client_pub,
-            description=f"AmneziaWG - {client_name}",
+            description=f"{get_server_display_name()} — {client_name}",
             dns1=dns1, dns2=dns2
         )
         vpnuri_file = AWG_DIR / f"{client_name}.vpnuri"
@@ -1398,7 +1413,7 @@ def get_client_uri(client_name: str):
             c_pub = curve25519_pubkey(c_priv) or ""
             uri = encode_amnezia_vpnuri_31(
                 conf_content, c_ip, c_priv, c_pub,
-                description=f"AmneziaWG - {client_name}"
+                description=f"{get_server_display_name()} — {client_name}"
             )
             uri_file.write_text(uri, encoding="utf-8")
             try:

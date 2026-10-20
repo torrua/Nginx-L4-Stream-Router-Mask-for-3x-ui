@@ -157,7 +157,7 @@ AWG_HEADER_PROTECTION_KEY=""
 # Рандомизация хвостов пакетов против анализа длины трафика WireGuard [true/false]
 AWG_RANDOM_TRAILERS="false"
 
-# AmneziaWG v2.0 / Legacy (Для роутеров) [y/n]
+# AmneziaWG v2.0 (Для роутеров Keenetic / OpenWrt) [y/n]
 ENABLE_AWG_V2="n"
 AWG_V2_PORT="8444"
 

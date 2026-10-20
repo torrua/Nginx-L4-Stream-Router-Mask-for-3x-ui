@@ -7,7 +7,7 @@
 # Exit on severe unhandled errors
 set -o pipefail
 
-SCRIPT_VERSION="v8.2.0"
+SCRIPT_VERSION="v8.2.1"
 
 # Защита от аварийного обрыва SSH-сессии при установке
 trap 'echo -e "\n[!] Внимание: получен сигнал SIGHUP, процесс установки продолжается в фоне..." >> "${INSTALL_LOG:-/var/log/nginx_mask_install.log}" 2>&1' SIGHUP
@@ -1983,7 +1983,7 @@ step_install_nginx_and_mask() {
     export PANEL_PORT="$PANEL_INTERNAL_PORT"
     export PANEL_PATH="/$PANEL_SECRET/"
     export SUB_PATH="/$SUB_SECRET/"
-    export SUB_TITLE="${SUB_TITLE:-}"
+    export SUB_TITLE="${SUB_TITLE:-${SERVER_PREFIX:-Server}}"
     export XHTTP_STREAM_PATH="/$XHTTP_SECRET/"
 
     bash ./setup_mask.sh --auto \
@@ -1994,7 +1994,7 @@ step_install_nginx_and_mask() {
         --panel-port "$PANEL_INTERNAL_PORT" \
         --panel-path "/$PANEL_SECRET/" \
         --sub-path "/$SUB_SECRET/" \
-        --sub-title "${SUB_TITLE:-}" \
+        --sub-title "${SUB_TITLE:-${SERVER_PREFIX:-Server}}" \
         --xhttp-path "/$XHTTP_SECRET/" \
         --user "$PANEL_USER" \
         --pass "$PANEL_PASS" || die "Ошибка при развертывании маскировки Nginx (setup_mask.sh)."
@@ -2358,7 +2358,7 @@ setup_naive_service() {
         local caddy_tmp="/tmp/caddy_naive_$$"
         mkdir -p "$caddy_tmp"
         local rel_ver="${SCRIPT_VERSION:-v8.1.0}"
-        [[ "$rel_ver" == "v8.2.0" ]] && rel_ver="v8.1.0"
+        [[ "$rel_ver" == "v8.2.1" ]] && rel_ver="v8.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/caddy-naive-linux-${caddy_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
@@ -2495,7 +2495,7 @@ setup_dnstt_service() {
         local dnstt_tmp="/tmp/dnstt_$$"
         mkdir -p "$dnstt_tmp"
         local rel_ver="${SCRIPT_VERSION:-v8.1.0}"
-        [[ "$rel_ver" == "v8.2.0" ]] && rel_ver="v8.1.0"
+        [[ "$rel_ver" == "v8.2.1" ]] && rel_ver="v8.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/dnstt-server-linux-${dnstt_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
@@ -2623,7 +2623,8 @@ step_configure_inbounds() {
         export PANEL_PORT="$PANEL_INTERNAL_PORT"
         export PANEL_PATH="/$PANEL_SECRET/"
         export SUB_PATH="/$SUB_SECRET/"
-        export SUB_TITLE="${SUB_TITLE:-}"
+        export SERVER_PREFIX="${SERVER_PREFIX:-Server}"
+        export SUB_TITLE="${SUB_TITLE:-$SERVER_PREFIX}"
         export XHTTP_STREAM_PATH="/$XHTTP_SECRET/"
         export ENABLE_NAIVE="${ENABLE_NAIVE:-0}"
         export NAIVE_PORT="${NAIVE_PORT:-8446}"
@@ -2718,6 +2719,23 @@ save_and_display_summary() {
         awg_vpnuri=$(head -n 1 "/root/awg/client-1.vpnuri" 2>/dev/null | tr -d '[:space:]')
     fi
 
+    local ext_ports_list="80/tcp (HTTP), 443/tcp (HTTPS Stream Router)"
+    if [ "${ENABLE_HY2:-1}" != "0" ] && [ "${ENABLE_HY2:-y}" != "n" ]; then
+        ext_ports_list+=", 443/udp (Hysteria 2)"
+    fi
+    if [ "${ENABLE_MASQUE:-0}" = "1" ] || [ "${ENABLE_MASQUE:-}" = "y" ]; then
+        ext_ports_list+=", ${MASQUE_PORT:-8445}/udp (MASQUE)"
+    fi
+    if [ "${ENABLE_TUIC:-0}" = "1" ] || [ "${ENABLE_TUIC:-}" = "y" ]; then
+        ext_ports_list+=", ${TUIC_PORT:-8448}/udp (TUIC v5)"
+    fi
+    if [ "${ENABLE_AWG_V3:-1}" != "0" ] && [ "${ENABLE_AWG_V3:-y}" != "n" ]; then
+        ext_ports_list+=", ${AWG_V3_PORT:-8443}/udp (AmneziaWG)"
+    fi
+    if [ "${ENABLE_DNSTT:-0}" = "1" ] || [ "${ENABLE_DNSTT:-}" = "y" ]; then
+        ext_ports_list+=", ${DNSTT_PORT:-53053}/udp (DNSTT)"
+    fi
+
     cat <<EOF > "$CREDENTIALS_FILE"
 ====================================================================
  NGINX L4 STREAM ROUTER & 3X-UI — УЧЕТНЫЕ ДАННЫЕ СЕРВЕРА
@@ -2733,7 +2751,7 @@ URL Панели:     https://${PRIMARY_DOMAIN}/${PANEL_SECRET}/
 [ СЕТЕВЫЕ ПАРАМЕТРЫ ]
 Основной домен: ${PRIMARY_DOMAIN}
 SSL Сертификат: /etc/letsencrypt/live/${PRIMARY_DOMAIN}/
-Внешние порты:  80/tcp (HTTP), 443/tcp (HTTPS Stream Router), 443/udp (Hysteria 2)
+Внешние порты:  ${ext_ports_list}
 SSH Порт:       ${SSH_PORT}
 
 [ ПРЯМЫЕ ССЫЛКИ НА ПОДПИСКУ КЛИЕНТОВ ]
@@ -2796,7 +2814,7 @@ print_dashboard() {
     echo -e "    ${DIM}• Внешний фасад:${RESET}  ${GREEN}443 TCP (Nginx Stream ssl_preread)${RESET}"
     echo -e "    ${DIM}• Маскировка SNI:${RESET} ${WHITE}${PRIMARY_DOMAIN} ${DIM}➜${RESET} ${GREEN}Decoy Site (HTML5/Nginx)${RESET}"
     echo -e "    ${DIM}• Hysteria 2 UDP:${RESET} ${GREEN}443 UDP (QUIC / TLS SNI)${RESET}"
-    echo -e "    ${DIM}• Фаервол UFW:${RESET}    ${GREEN}Порты протоколов (10443, 55443 и др.) изолированы${RESET}"
+    echo -e "    ${DIM}• Фаервол UFW:${RESET}    ${GREEN}Внутренние сервисы и порты панели надежно изолированы на 127.0.0.1${RESET}"
     echo -e "    ${DIM}• Ядро Linux:${RESET}     ${GREEN}BBR активирован, IPv6 отключен (no leak)${RESET}"
     echo ""
     if [ -n "${MASQUE_URI:-}" ] || [ -n "${SHADOWTLS_URI:-}" ] || [ -n "${WSTUNNEL_CLI:-}" ] || [ -n "${ZAPRET_INFO:-}" ] || [ -n "${NAIVE_URI:-}" ] || [ -n "${DNSTT_CLI:-}" ]; then

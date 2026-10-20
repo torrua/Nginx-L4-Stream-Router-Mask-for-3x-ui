@@ -1262,7 +1262,7 @@ for item in res:
     }
 
     q_step_awg_v2() {
-        prompt_yes_no "Установить и настроить AmneziaWG v2.0 / Legacy (инбаунд 3X-UI)?" "${ENABLE_AWG_V2:-n}" ENABLE_AWG_V2 || return $?
+        prompt_yes_no "Установить и настроить AmneziaWG v2.0 (для роутеров Keenetic / OpenWrt, инбаунд 3X-UI)?" "${ENABLE_AWG_V2:-n}" ENABLE_AWG_V2 || return $?
         if is_true "${ENABLE_AWG_V2:-y}"; then
             ENABLE_AWG_V2=1
             start_amneziawg_preinstall_bg

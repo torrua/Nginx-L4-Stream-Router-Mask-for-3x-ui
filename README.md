@@ -17,6 +17,100 @@
 
 ---
 
+## ⚡ Быстрый старт (Установка в 1 команду)
+
+Подключитесь к VPS по SSH под пользователем `root` и запустите единый установщик:
+
+```bash
+curl -sSL "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/install.sh?v=$(date +%s)" | sudo bash
+```
+
+> **Нужно продолжить после сбоя или перезагрузки?**  
+> Выполните `bash install.sh -r` — мастер автоматически продолжит установку с сохранёнными параметрами с последнего незавершённого шага.
+
+---
+
+## 🗺️ Схема движения трафика (Traffic Flow)
+
+```mermaid
+flowchart TD
+    subgraph Clients["📱 Клиенты (iOS, Android, Windows, macOS, Linux, Keenetic / OpenWrt)"]
+        BrowserUser["🌐 Обычный браузер / Поисковый бот / Сканер Censys"]
+        VpnReality["🛡️ VPN: VLESS REALITY (Happ / v2rayNG / v2rayN)"]
+        VpnWeb["🔒 VPN: VLESS xHTTP / Wstunnel (Строгие корпоративные сети)"]
+        AmneziaClient["⚡ AmneziaWG v3.1 / v2.0 (Мобильные операторы 4G/5G / Keenetic)"]
+        NextGenClient["🚀 Next-Gen: Hysteria 2 / TUIC v5 / MASQUE / Shadowsocks 2022 / MTProxy"]
+    end
+
+    subgraph Port443["🚪 Единый входной порт: TCP 443 (Nginx Stream L4 Router)"]
+        StreamRouter{"Nginx L4 Stream SNI Router\n(Определение домена без расшифровки TLS)"}
+    end
+
+    subgraph DedicatedPorts["📡 Выделенные порты протоколов"]
+        PortHy2["UDP 443: Hysteria 2 (QUIC Brutal CC)"]
+        PortAWG["UDP 8443 (v3.1) / UDP 8444 (v2.0): 3X-UI AmneziaWG"]
+        PortAWGStand["UDP 8445: Автономный сервер AmneziaWG (awg-mgr)"]
+        PortTUIC["UDP 8448: TUIC v5 (QUIC 0-RTT BBR)"]
+        PortMASQUE["UDP 8449: MASQUE (Sing-box HTTP/3 Datagrams)"]
+        PortSS["TCP/UDP 8388: Shadowsocks 2022"]
+        PortMTP["TCP 8444: Telegram MTProxy (FakeTLS)"]
+        PortNaive["TCP 8446: NaïveProxy (Caddy)"]
+        PortDNSTT["UDP 53053: DNSTT DoH Tunnel"]
+    end
+
+    subgraph Inbounds["⚙️ Внутренние службы и ядро Xray"]
+        NginxL7["Nginx L7 Web-Server\n(unix:/dev/shm/nginx-http.sock)"]
+        MirrorSite["🎭 Сайт-маскировка (Decoy Mirror)\n/var/www/html"]
+        Panel3XUI["🎛️ Защищенная панель 3X-UI\nПорт 10443 (Секретный путь)"]
+        SubService["📋 Сервер подписок\nПорт 55443 (JSON / Base64 / Clash)"]
+        XrayRealitySteal["🛡️ Xray: VLESS Steal-Oneself\n(Поддомен cdn.* :45443)"]
+        XrayRealityClassic["🕶️ Xray: VLESS Classic External\n(Внешние SNI :46443)"]
+        XrayXHTTP["🚀 Xray: VLESS xHTTP Stream\n(:50443 через Nginx H2C/gRPC)"]
+        AmneziaCore["⚡ AmneziaWG Kernel DKMS (awg0)"]
+        SingBox["📦 Sing-box (MASQUE RFC 9484)"]
+        ShadowTLS["🍏 ShadowTLS v4 -> SS-2022 :8388 / Apple Decoy"]
+        WstunnelServ["🌐 Wstunnel Server :8080"]
+        AdGuard["🛡️ AdGuard Home DNS (:3000 / DoH)"]
+    end
+
+    subgraph Outbound["🌍 Умная маршрутизация исходящего трафика (Smart Outbound Routing)"]
+        DirectOut["⚡ DIRECT (Прямой выход с IP вашего VPS)\nYouTube, Российские сервисы (.ru, Госуслуги, Банки)"]
+        WarpOut["🛡️ Cloudflare WARP Outbound (WireGuard MTU 1280)\nGoogle, OpenAI ChatGPT, Claude, Gemini, Cloudflare Turnstile"]
+    end
+
+    %% Маршрутизация соединений
+    BrowserUser -->|"HTTPS GET / Сканирование IP"| StreamRouter
+    VpnReality -->|"SNI: cdn.domain.com"| StreamRouter
+    VpnReality -->|"SNI: gateway.icloud.com"| StreamRouter
+    VpnWeb -->|"SNI: domain.com (xHTTP/Wstunnel)"| StreamRouter
+
+    StreamRouter -->|"SNI: основной домен"| NginxL7
+    StreamRouter -->|"SNI: cdn.* (Свой сайт)"| XrayRealitySteal
+    StreamRouter -->|"SNI: внешний сайт"| XrayRealityClassic
+    StreamRouter -->|"SNI: Apple gateway.icloud.com"| ShadowTLS
+
+    NginxL7 -->|"Обычный посетитель / Бот"| MirrorSite
+    NginxL7 -->|"/secret-panel-path/"| Panel3XUI
+    NginxL7 -->|"/secret-sub-path/"| SubService
+    NginxL7 -->|"/secret-xhttp-path/"| XrayXHTTP
+    NginxL7 -->|"/wstunnel-prefix/"| WstunnelServ
+
+    AmneziaClient --> PortAWG & PortAWGStand
+    NextGenClient --> PortHy2 & PortTUIC & PortMASQUE & PortSS & PortMTP & PortNaive & PortDNSTT
+
+    PortAWG --> AmneziaCore
+    PortAWGStand --> AmneziaCore
+    PortMASQUE --> SingBox
+    WstunnelServ --> AmneziaCore
+    PortDNSTT --> PortSS
+
+    %% Исходящий трафик
+    XrayRealitySteal & XrayRealityClassic & XrayXHTTP & SingBox & PortSS & PortHy2 & PortTUIC -->|"Умная маршрутизация Xray"| DirectOut
+    XrayRealitySteal & XrayRealityClassic & XrayXHTTP & SingBox & PortSS & PortHy2 & PortTUIC -->|"AI & Обход капч"| WarpOut
+```
+
+---
+
 ## 📌 Архитектура устойчивости к цензуре и глубокому анализу трафика (DPI)
 
 Обычные протоколы (WireGuard, OpenVPN) легко вычисляются и блокируются провайдерами по характерным признакам трафика.
@@ -172,7 +266,7 @@ curl -sSL "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-
 Все ключевые операции (установка пакетов, BBR, выпуск SSL, запуск Nginx, ядро 3X-UI) защищены перехватом ошибок в реальном времени:
 * При сбое операция не прерывает скрипт аварийно: выводится полный лог ошибки и интерактивное меню:
   * **`[1] Повторить попытку (Retry)`** *(по умолчанию)* — исправьте причину (например, DNS A-запись или открытый порт) и продолжите без перезапуска.
-  * **`[3] Прервать установку (Abort)`** — безопасный выход с сохранением состояния.
+  * **`[2] Прервать установку (Abort)`** — безопасный выход с сохранением состояния.
 
 ### 📍 Система контрольных точек и возобновления
 * Скрипт сохраняет имена завершённых этапов и подписи параметров в файле `<конфиг>.state`; перед пропуском проверяется фактический результат. При повторном запуске после сбоя или обрыва связи предлагается выбор:

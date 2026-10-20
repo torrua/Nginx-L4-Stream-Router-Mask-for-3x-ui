@@ -253,7 +253,7 @@ reconstruct_arrays_from_vars() {
         ENABLE_WEB_STACK=0
     fi
     _v="${ENABLE_MASQUE:-n}"; if is_true "$_v"; then ENABLE_MASQUE=1; else ENABLE_MASQUE=0; fi
-    MASQUE_PORT="${MASQUE_PORT:-8445}"
+    MASQUE_PORT="${MASQUE_PORT:-8449}"
     MASQUE_USER="${MASQUE_USER:-client}"
     if [ "$ENABLE_MASQUE" -eq 1 ] && [ -z "${MASQUE_PASSWORD:-}" ]; then
         MASQUE_PASSWORD="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "masque${RANDOM}")"
@@ -557,7 +557,7 @@ SUB_LISTEN="${SUB_LISTEN:-127.0.0.1}"
 
 DOKPLOY_COEXISTENCE="$dokploy_coexist_save"
 ENABLE_MASQUE="$masque_save"
-MASQUE_PORT="${MASQUE_PORT:-8445}"
+MASQUE_PORT="${MASQUE_PORT:-8449}"
 MASQUE_USER="${MASQUE_USER:-client}"
 MASQUE_PASSWORD="${MASQUE_PASSWORD:-}"
 ENABLE_SHADOWTLS="$shadowtls_save"

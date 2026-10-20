@@ -5,7 +5,7 @@ services:
     container_name: sing-box-masque
     restart: unless-stopped
     ports:
-      - "${MASQUE_PORT:-8445}:${MASQUE_PORT:-8445}/udp"
+      - "${MASQUE_PORT:-8449}:${MASQUE_PORT:-8449}/udp"
     volumes:
       - ./sing-box-masque/config.json:/etc/sing-box/config.json:ro
       - /etc/letsencrypt:/etc/letsencrypt:ro

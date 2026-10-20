@@ -316,7 +316,7 @@ inspect_port_conflicts() {
     # 6. Проверка портов протоколов следующего поколения (MASQUE, ShadowTLS, NaïveProxy)
     local _masque_en="${ENABLE_MASQUE:-n}"
     if [[ "${_masque_en,,}" == "y" || "${_masque_en}" == "1" || "${_masque_en,,}" == "true" ]]; then
-        local m_port="${MASQUE_PORT:-8445}"
+        local m_port="${MASQUE_PORT:-8449}"
         if [[ "${_awg_sa,,}" == "y" || "${_awg_sa}" == "1" || "${_awg_sa,,}" == "true" ]] && [ "$m_port" = "${AWG_STANDALONE_PORT:-8445}" ]; then
             warn "Коллизия портов: MASQUE и AmneziaWG Standalone используют один UDP-порт ($m_port)! Измените MASQUE_PORT или AWG_STANDALONE_PORT."
         fi

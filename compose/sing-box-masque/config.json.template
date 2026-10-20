@@ -8,7 +8,7 @@
       "type": "masque",
       "tag": "masque-in",
       "listen": "::",
-      "listen_port": 8445,
+      "listen_port": 8449,
       "tcp_fast_open": true,
       "sniff": true,
       "sniff_override_destination": true,

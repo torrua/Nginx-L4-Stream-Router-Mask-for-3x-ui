@@ -113,7 +113,7 @@ class TestComposeConfigs(unittest.TestCase):
         inbounds = data.get("inbounds", [])
         self.assertTrue(any(ib.get("type") == "masque" for ib in inbounds), "masque inbound must be defined")
         masque_ib = next(ib for ib in inbounds if ib.get("type") == "masque")
-        self.assertEqual(masque_ib.get("listen_port"), 8445)
+        self.assertEqual(masque_ib.get("listen_port"), 8449)
         self.assertIn("h3", masque_ib.get("tls", {}).get("alpn", []))
         self.assertTrue(masque_ib.get("connect_udp", {}).get("enabled"))
         self.assertTrue(masque_ib.get("connect_ip", {}).get("enabled"))

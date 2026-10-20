@@ -260,6 +260,17 @@ echo BAD_SUCCESS
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("BAD_SUCCESS", result.stdout)
 
+    def test_default_ports_for_standalone_and_masque_do_not_conflict(self):
+        result = self.shell(r'''
+ENABLE_WEB_STACK=1; PRIMARY_DOMAIN=example.com; LE_EMAIL=admin@example.com
+ENABLE_AWG_STANDALONE=1
+ENABLE_MASQUE=1
+validate_installation_config
+echo VALID
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("VALID", result.stdout)
+
     def test_tcp_and_udp_can_share_a_number(self):
         result = self.shell(r'''
 ENABLE_WEB_STACK=1; PRIMARY_DOMAIN=example.com; LE_EMAIL=admin@example.com

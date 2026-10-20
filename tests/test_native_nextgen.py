@@ -322,7 +322,7 @@ export LOCAL_BIN_DIR="$MOCK_ROOT/usr/local/bin"
 systemctl(){ echo "MOCK_SYSTEMCTL:$*"; }
 
 PRIMARY_DOMAIN="vpn.example.com"
-MASQUE_PORT=8445
+MASQUE_PORT=8449
 MASQUE_USER="client1"
 MASQUE_PASSWORD="TestPassword123456"
 
@@ -341,7 +341,7 @@ rm -rf "$MOCK_ROOT"
         data = json.loads(json_str)
         ib = data["inbounds"][0]
         self.assertEqual(ib["type"], "masque")
-        self.assertEqual(ib["listen_port"], 8445)
+        self.assertEqual(ib["listen_port"], 8449)
         self.assertEqual(ib["tls"]["alpn"], ["h3"])
         self.assertTrue(ib["connect_udp"]["enabled"])
         self.assertTrue(ib["connect_ip"]["enabled"])

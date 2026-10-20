@@ -218,7 +218,7 @@ net.netfilter.nf_conntrack_tcp_timeout_time_wait = 30
 Подробная инженерная спецификация и инструкции по развертыванию: [🚀 Протоколы следующего поколения и интеграция с Dokploy](NEXTGEN_PROTOCOLS_DOKPLOY.md).
 
 * **MASQUE (RFC 9484 / RFC 9298 via Sing-box 1.14+):**
-  * Сверхскоростной транспорт датаграмм поверх HTTP/3 QUIC Datagrams (порт `8445/udp`).
+  * Сверхскоростной транспорт датаграмм поверх HTTP/3 QUIC Datagrams (порт `8449/udp`).
   * Нативная интеграция с iOS 17+ и macOS 14+ через системный `Network.framework`.
 * **ShadowTLS v4 + Shadowsocks-2022 (`udp_over_tcp: true`):**
   * Защита от активного сканирования (Active Probing): при попытке зондирования без валидного HMAC соединение прозрачно проксируется на настоящий сервер Apple (`gateway.icloud.com:443`).

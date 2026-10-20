@@ -37,7 +37,7 @@
    * **TUIC v5** (порт `8448/udp`) на базе QUIC 0-RTT с бесшовной миграцией сессий (Connection Migration) при смене сотовых вышек и сетей Wi-Fi.
    * **Shadowsocks 2022** (порт `8388` TCP/UDP, метод `2022-blake3-aes-128-gcm`) с защитой от атак повторного воспроизведения пакетов.
    * **Telegram MTProxy с маскировкой FakeTLS** (порт `8444/tcp`) для прямого подключения в Telegram без сторонних VPN-приложений.
-   * **MASQUE (RFC 9484 / RFC 9298 via Sing-box 1.14+)** (порт `8445/udp`): датаграммное проксирование HTTP/3 с нативной поддержкой в iOS 17+ и macOS 14+.
+   * **MASQUE (RFC 9484 / RFC 9298 via Sing-box 1.14+)** (порт `8449/udp`): датаграммное проксирование HTTP/3 с нативной поддержкой в iOS 17+ и macOS 14+.
    * **ShadowTLS v4 + Shadowsocks-2022** (`udp_over_tcp: true`, порт `8543/tcp`): подлинный TLS Apple (`gateway.icloud.com`) с защитой от активных зондов ТСПУ.
    * **NaïveProxy + Caddy** (порт `8446/tcp`): сетевой стек Chromium и выпуск SSL через Cloudflare DNS-01 ACME.
    * **Server-Side Zapret** (`nfqws` с `connbytes 1:6`): серверная десинхронизация DPI ТСПУ без снижения скорости.

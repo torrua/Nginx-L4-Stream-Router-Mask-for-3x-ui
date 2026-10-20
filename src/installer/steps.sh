@@ -107,7 +107,7 @@ setup_masque_service() {
         rm -rf "$sb_tmp" 2>/dev/null || true
     fi
 
-    local masque_p="${MASQUE_PORT:-8445}"
+    local masque_p="${MASQUE_PORT:-8449}"
     local masque_u="${MASQUE_USER:-client}"
     local masque_pw="${MASQUE_PASSWORD:-}"
     local cert_file="${SSL_BASE_DIR:-/etc/letsencrypt/live}/${PRIMARY_DOMAIN}/fullchain.pem"

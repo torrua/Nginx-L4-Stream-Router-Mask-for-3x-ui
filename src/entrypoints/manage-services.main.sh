@@ -75,7 +75,7 @@ ensure_configs() {
     # 1. Генерация sing-box MASQUE config.json при отсутствии
     if [ ! -f "$masque_cfg" ] && [ -f "$masque_tpl" ]; then
         log "Генерация конфигурации Sing-box MASQUE (${masque_cfg})..."
-        local m_port="${MASQUE_PORT:-8445}"
+        local m_port="${MASQUE_PORT:-8449}"
         local m_user="${MASQUE_USER:-client}"
         local m_pass="${MASQUE_PASS:-ChangeMeSecretMasquePass2026!}"
         local m_dom="${PRIMARY_DOMAIN:-yourdomain.online}"
@@ -101,7 +101,7 @@ with open('$masque_cfg', 'w', encoding='utf-8') as f:
     json.dump(data, f, indent=2)
 " 2>/dev/null || cp "$masque_tpl" "$masque_cfg"
         else
-            sed -e "s|\"listen_port\": 8445|\"listen_port\": ${m_port}|g" \
+            sed -e "s|\"listen_port\": 8449|\"listen_port\": ${m_port}|g" \
                 -e "s|\"username\": \"client\"|\"username\": \"${m_user}\"|g" \
                 -e "s|\"password\": \"CHANGE_ME_PASSWORD\"|\"password\": \"${m_pass}\"|g" \
                 -e "s|\"server_name\": \"yourdomain.online\"|\"server_name\": \"${m_dom}\"|g" \
@@ -156,7 +156,7 @@ cmd_status() {
 
     # Проверка прослушивания ключевых портов
     echo -e "${BOLD}Прослушивание портов на хосте:${NC}"
-    for proto_port in "UDP:8445:MASQUE" "TCP:8543:ShadowTLS" "TCP:8446:NaïveProxy" "TCP:8080:Wstunnel-Direct"; do
+    for proto_port in "UDP:8449:MASQUE" "TCP:8543:ShadowTLS" "TCP:8446:NaïveProxy" "TCP:8080:Wstunnel-Direct"; do
         IFS=":" read -r proto port name <<< "$proto_port"
         local flag="-t"
         [ "$proto" = "UDP" ] && flag="-u"
@@ -256,7 +256,7 @@ cmd_clients() {
     set +a
 
     local dom="${PRIMARY_DOMAIN:-yourdomain.online}"
-    local m_port="${MASQUE_PORT:-8445}"
+    local m_port="${MASQUE_PORT:-8449}"
     local m_user="${MASQUE_USER:-client}"
     local m_pass="${MASQUE_PASS:-password}"
     local stls_port="${SHADOWTLS_PORT:-8543}"

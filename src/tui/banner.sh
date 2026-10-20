@@ -27,7 +27,7 @@ show_help() {
   --web-stack / --no-web-stack Включить / отключить установку комплекса веб-маскировки Nginx + 3X-UI
   --awg-standalone             Включить установку автономного сервера AmneziaWG (awg-mgr)
   --awg-host <HOST/IP>         Домен или IP-адрес для подключения клиентов AmneziaWG (Endpoint)
-  --masque / --no-masque       Включить / отключить MASQUE (RFC 9484 / RFC 9298, :8445/udp)
+  --masque / --no-masque       Включить / отключить MASQUE (RFC 9484 / RFC 9298, :8449/udp)
   --shadowtls / --no-shadowtls Включить / отключить ShadowTLS v4 + SS-2022 (Nginx Stream SNI)
   --wstunnel / --no-wstunnel   Включить / отключить Wstunnel over Nginx L7 (HTTPS WebSocket)
   --zapret / --no-zapret       Включить / отключить Server-Side Zapret nfqws (DPI bypass)
@@ -217,7 +217,7 @@ AGH_XRAY_DNS="n"
 # --- 9. ПРОТОКОЛЫ СЛЕДУЮЩЕГО ПОКОЛЕНИЯ (NEXT-GEN) ---
 # MASQUE (RFC 9484 / RFC 9298 via Sing-box daemon, HTTP/3 UDP) [y/n]
 ENABLE_MASQUE="n"
-MASQUE_PORT="8445"
+MASQUE_PORT="8449"
 MASQUE_USER="client"
 MASQUE_PASSWORD=""
 

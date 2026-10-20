@@ -30,7 +30,7 @@
 
 | Протокол / Стек | Порт / Транспорт | Механизм маскировки | Защита от активного зонда (Active Probing) | Устойчивость к блокировкам UDP | Совместимость с Dokploy |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **MASQUE (RFC 9484/9298)** | UDP `8445` (HTTP/3 Datagram) | Стандартизированный IETF CONNECT-UDP/IP | Защита TLS 1.3 / QUIC хэндшейка | Средняя (требует открытый UDP) | 100% (независимый UDP-порт) |
+| **MASQUE (RFC 9484/9298)** | UDP `8449` (HTTP/3 Datagram) | Стандартизированный IETF CONNECT-UDP/IP | Защита TLS 1.3 / QUIC хэндшейка | Средняя (требует открытый UDP) | 100% (независимый UDP-порт) |
 | **ShadowTLS v4 + SS-2022** | TCP `8543` (L4 TLS) | Настоящий TLS-сертификат Apple (`gateway.icloud.com`) | **Абсолютная**: при неверном HMAC соединение пересылается на реальный сервер Apple | **100%**: `udp_over_tcp` инкапсулирует UDP в TCP | 100% (независимый TCP-порт) |
 | **NaïveProxy (Caddy)** | TCP/UDP `8446` | Сетевой стек Chromium (Google Chrome) | **Абсолютная**: `probe_resistance` отдает статический сайт без заголовков прокси | Высокая (HTTP/2 / HTTP/3 fallback) | 100% (DNS-01 ACME без портов 80/443) |
 | **Server-Side Zapret** | L3/L4 NFQUEUE | Десинхронизация DPI в первые 6 пакетов (`split2`, `md5sig`) | Прозрачная подмена TCP-сегментов для ТСПУ | Высокая для TCP-потоков | 100% (работает на уровне iptables mangle) |
@@ -47,14 +47,14 @@
 ### Решение: Dokploy Coexistence Architecture
 1. **Traefik сохраняет контроль над портами 80 и 443.** Никакие существующие веб-сайты, API и базы данных Dokploy не нарушаются.
 2. **Wstunnel подключается к внутренней сети Dokploy (`dokploy-network`).** Traefik перехватывает запросы к `wstunnel.yourdomain.online` на порту 443, выполняет автоматический выпуск SSL Let's Encrypt и проксирует WebSocket на порт 8080 контейнера Wstunnel.
-3. **MASQUE, ShadowTLS и NaïveProxy слушают изолированные порты** (`8445/udp`, `8543/tcp`, `8446/tcp`).
+3. **MASQUE, ShadowTLS и NaïveProxy слушают изолированные порты** (`8449/udp`, `8543/tcp`, `8446/tcp`).
 4. **NaïveProxy использует Cloudflare DNS-01 ACME Challenge.** Сертификаты выпускаются через API Cloudflare (TXT-записи), поэтому Caddy не требует портов 80 или 443.
 5. **Server-Side Zapret работает в пространстве ядра (iptables NFQUEUE).** Не открывает сетевых портов, десинхронизируя DPI ТСПУ для всех исходящих и транзитных TCP-пакетов.
 
 ```mermaid
 graph TD
     UserClient[Клиент] -->|HTTPS / 443 TCP| Traefik[Dokploy Traefik Proxy :80/:443]
-    UserClient -->|MASQUE / 8445 UDP| SingBoxMasque[Sing-box MASQUE :8445]
+    UserClient -->|MASQUE / 8449 UDP| SingBoxMasque[Sing-box MASQUE :8449]
     UserClient -->|ShadowTLS / 8543 TCP| ShadowTLS[ShadowTLS v4 :8543]
     UserClient -->|NaïveProxy / 8446 TCP| CaddyNaive[Caddy NaïveProxy :8446]
 
@@ -88,7 +88,7 @@ graph TD
       "type": "masque",
       "tag": "masque-in",
       "listen": "::",
-      "listen_port": 8445,
+      "listen_port": 8449,
       "users": [
         {
           "username": "client",

@@ -1230,7 +1230,7 @@ if not dry_run:
     mtproto_bot_secret = unified_mtp_secret[2:34] if len(unified_mtp_secret) >= 34 else unified_mtp_secret
 
     enable_masque = os.environ.get("ENABLE_MASQUE", "n").lower() in ("1", "y", "true")
-    masque_port = int(os.environ.get("MASQUE_PORT") or "8445")
+    masque_port = int(os.environ.get("MASQUE_PORT") or "8449")
     masque_user = (os.environ.get("MASQUE_USER") or "client").strip()
     masque_password = os.environ.get("MASQUE_PASSWORD", "").strip() or unified_ss_client_pass
     masque_uri = f"masque://{masque_user}:{masque_password}@{domain}:{masque_port}?alpn=h3#{urllib.parse.quote('MASQUE RFC 9484')}"

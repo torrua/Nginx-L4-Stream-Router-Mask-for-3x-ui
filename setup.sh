@@ -467,7 +467,7 @@ show_help() {
   --web-stack / --no-web-stack Включить / отключить установку комплекса веб-маскировки Nginx + 3X-UI
   --awg-standalone             Включить установку автономного сервера AmneziaWG (awg-mgr)
   --awg-host <HOST/IP>         Домен или IP-адрес для подключения клиентов AmneziaWG (Endpoint)
-  --masque / --no-masque       Включить / отключить MASQUE (RFC 9484 / RFC 9298, :8445/udp)
+  --masque / --no-masque       Включить / отключить MASQUE (RFC 9484 / RFC 9298, :8449/udp)
   --shadowtls / --no-shadowtls Включить / отключить ShadowTLS v4 + SS-2022 (Nginx Stream SNI)
   --wstunnel / --no-wstunnel   Включить / отключить Wstunnel over Nginx L7 (HTTPS WebSocket)
   --zapret / --no-zapret       Включить / отключить Server-Side Zapret nfqws (DPI bypass)
@@ -657,7 +657,7 @@ AGH_XRAY_DNS="n"
 # --- 9. ПРОТОКОЛЫ СЛЕДУЮЩЕГО ПОКОЛЕНИЯ (NEXT-GEN) ---
 # MASQUE (RFC 9484 / RFC 9298 via Sing-box daemon, HTTP/3 UDP) [y/n]
 ENABLE_MASQUE="n"
-MASQUE_PORT="8445"
+MASQUE_PORT="8449"
 MASQUE_USER="client"
 MASQUE_PASSWORD=""
 
@@ -1143,7 +1143,7 @@ reconstruct_arrays_from_vars() {
         ENABLE_WEB_STACK=0
     fi
     _v="${ENABLE_MASQUE:-n}"; if is_true "$_v"; then ENABLE_MASQUE=1; else ENABLE_MASQUE=0; fi
-    MASQUE_PORT="${MASQUE_PORT:-8445}"
+    MASQUE_PORT="${MASQUE_PORT:-8449}"
     MASQUE_USER="${MASQUE_USER:-client}"
     if [ "$ENABLE_MASQUE" -eq 1 ] && [ -z "${MASQUE_PASSWORD:-}" ]; then
         MASQUE_PASSWORD="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "masque${RANDOM}")"
@@ -1447,7 +1447,7 @@ SUB_LISTEN="${SUB_LISTEN:-127.0.0.1}"
 
 DOKPLOY_COEXISTENCE="$dokploy_coexist_save"
 ENABLE_MASQUE="$masque_save"
-MASQUE_PORT="${MASQUE_PORT:-8445}"
+MASQUE_PORT="${MASQUE_PORT:-8449}"
 MASQUE_USER="${MASQUE_USER:-client}"
 MASQUE_PASSWORD="${MASQUE_PASSWORD:-}"
 ENABLE_SHADOWTLS="$shadowtls_save"
@@ -2607,7 +2607,7 @@ ENABLE_SS2022 tcp SS2022_PORT 8388 SS2022
 ENABLE_SS2022 udp SS2022_PORT 8388 SS2022
 ENABLE_TUIC udp TUIC_PORT 8448 TUIC
 ENABLE_MTPROTO tcp MTPROTO_PORT 8444 MTProto
-ENABLE_MASQUE udp MASQUE_PORT 8445 MASQUE
+ENABLE_MASQUE udp MASQUE_PORT 8449 MASQUE
 ENABLE_SHADOWTLS tcp SHADOWTLS_PORT 8543 ShadowTLS
 ENABLE_WSTUNNEL tcp WSTUNNEL_PORT 8080 Wstunnel
 ENABLE_NAIVE tcp NAIVE_PORT 8446 NaiveProxy
@@ -2953,7 +2953,7 @@ inspect_port_conflicts() {
     # 6. Проверка портов протоколов следующего поколения (MASQUE, ShadowTLS, NaïveProxy)
     local _masque_en="${ENABLE_MASQUE:-n}"
     if [[ "${_masque_en,,}" == "y" || "${_masque_en}" == "1" || "${_masque_en,,}" == "true" ]]; then
-        local m_port="${MASQUE_PORT:-8445}"
+        local m_port="${MASQUE_PORT:-8449}"
         if [[ "${_awg_sa,,}" == "y" || "${_awg_sa}" == "1" || "${_awg_sa,,}" == "true" ]] && [ "$m_port" = "${AWG_STANDALONE_PORT:-8445}" ]; then
             warn "Коллизия портов: MASQUE и AmneziaWG Standalone используют один UDP-порт ($m_port)! Измените MASQUE_PORT или AWG_STANDALONE_PORT."
         fi
@@ -6131,7 +6131,7 @@ setup_masque_service() {
         rm -rf "$sb_tmp" 2>/dev/null || true
     fi
 
-    local masque_p="${MASQUE_PORT:-8445}"
+    local masque_p="${MASQUE_PORT:-8449}"
     local masque_u="${MASQUE_USER:-client}"
     local masque_pw="${MASQUE_PASSWORD:-}"
     local cert_file="${SSL_BASE_DIR:-/etc/letsencrypt/live}/${PRIMARY_DOMAIN}/fullchain.pem"
@@ -6685,7 +6685,7 @@ ENABLE_SS2022 tcp SS2022_PORT 8388 SS2022
 ENABLE_SS2022 udp SS2022_PORT 8388 SS2022
 ENABLE_TUIC udp TUIC_PORT 8448 TUIC
 ENABLE_MTPROTO tcp MTPROTO_PORT 8444 MTProto
-ENABLE_MASQUE udp MASQUE_PORT 8445 MASQUE
+ENABLE_MASQUE udp MASQUE_PORT 8449 MASQUE
 ENABLE_SHADOWTLS tcp SHADOWTLS_PORT 8543 ShadowTLS
 ENABLE_WSTUNNEL tcp WSTUNNEL_PORT 8080 Wstunnel
 ENABLE_NAIVE tcp NAIVE_PORT 8446 NaiveProxy
@@ -10072,7 +10072,7 @@ for item in res:
 
         if [[ "${ENABLE_MASQUE,,}" == "y" || "${ENABLE_MASQUE:-}" == "1" ]]; then
             ENABLE_MASQUE=1
-            MASQUE_PORT="${MASQUE_PORT:-8445}"
+            MASQUE_PORT="${MASQUE_PORT:-8449}"
         else
             ENABLE_MASQUE=0
         fi
@@ -10533,7 +10533,7 @@ for item in res:
             "TUIC v5 (QUIC 0-RTT + BBR, :${TUIC_PORT:-8448}/udp)"
             "Shadowsocks 2022 (2022-blake3-aes-256-gcm, :${SS2022_PORT:-8388})"
             "Telegram MTProxy (FakeTLS прямой доступ, :${MTPROTO_PORT:-8444}/tcp)"
-            "MASQUE (RFC 9484 / RFC 9298 via Sing-box, :${MASQUE_PORT:-8445}/udp)"
+            "MASQUE (RFC 9484 / RFC 9298 via Sing-box, :${MASQUE_PORT:-8449}/udp)"
             "ShadowTLS v4 + SS-2022 (Nginx Stream :443 SNI ${SHADOWTLS_SNI:-gateway.icloud.com})"
             "Wstunnel over Nginx L7 (HTTPS WebSocket :443 -> :${WSTUNNEL_PORT:-8080})"
             "Server-Side Zapret (DPI Desync nfqws connbytes 1:6 NFQUEUE 200)"
@@ -10627,7 +10627,7 @@ for item in res:
         fi
 
         if is_true "$ENABLE_MASQUE"; then
-            [ -n "${MASQUE_PORT:-}" ] || MASQUE_PORT="8445"
+            [ -n "${MASQUE_PORT:-}" ] || MASQUE_PORT="8449"
             [ -n "${MASQUE_USER:-}" ] || MASQUE_USER="client"
             [ -n "${MASQUE_PASSWORD:-}" ] || MASQUE_PASSWORD="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "masque${RANDOM}")"
             if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
@@ -11024,7 +11024,7 @@ for item in res:
                     if [[ "$custom_p" =~ ^[0-9]+$ ]] && [ "$custom_p" -ge 1024 ] && [ "$custom_p" -le 65535 ]; then
                         # Проверка на конфликт с известными портами сервисов
                         local conflict=0
-                        for reserved in 80 443 "${PANEL_PORT:-10443}" "${SUB_PORT:-55443}" "${XHTTP_STREAM_PORT:-50443}" "${HY2_PORT:-443}" "${AWG_V3_PORT:-8443}" "${AWG_V2_PORT:-8444}" "${AWG_STANDALONE_PORT:-8445}" "${SS2022_PORT:-8388}" "${TUIC_PORT:-8448}"; do
+                        for reserved in 80 443 "${PANEL_PORT:-10443}" "${SUB_PORT:-55443}" "${XHTTP_STREAM_PORT:-50443}" "${HY2_PORT:-443}" "${AWG_V3_PORT:-8443}" "${AWG_V2_PORT:-8444}" "${AWG_STANDALONE_PORT:-8445}" "${SS2022_PORT:-8388}" "${TUIC_PORT:-8448}" "${MASQUE_PORT:-8449}"; do
                             if [ "$custom_p" -eq "$reserved" ]; then
                                 warn "  Порт $custom_p уже используется для одного из VPN/прокси сервисов. Выберите другой."
                                 conflict=1
@@ -11183,7 +11183,7 @@ for item in res:
         echo -e "      ${DIM}• Telegram MTProxy:${NC}     $mtp_status"
 
         local masque_status="${RED}Отключен${NC}"
-        is_true "${ENABLE_MASQUE:-0}" && masque_status="${GREEN}Включен${NC} (:${MASQUE_PORT:-8445}/udp, RFC 9484)"
+        is_true "${ENABLE_MASQUE:-0}" && masque_status="${GREEN}Включен${NC} (:${MASQUE_PORT:-8449}/udp, RFC 9484)"
         echo -e "      ${DIM}• MASQUE (RFC 9484):${NC}    $masque_status"
 
         local stls_status="${RED}Отключен${NC}"

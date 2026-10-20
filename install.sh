@@ -4204,6 +4204,13 @@ import ipaddress
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
+
+def safe_exists(path):
+    try:
+        return Path(path).exists()
+    except (PermissionError, OSError):
+        return False
+
 # --- Execution Environment Detection (Container vs Host) ---
 def detect_container_name():
     env_name = os.environ.get("AWG_CONTAINER_NAME")
@@ -4235,7 +4242,7 @@ def detect_execution_mode():
         if res.returncode == 0 and res.stdout.strip() == "true":
             return "container", cand
 
-    if shutil.which("awg") or Path("/etc/amnezia/amneziawg/awg0.conf").exists():
+    if shutil.which("awg") or safe_exists("/etc/amnezia/amneziawg/awg0.conf"):
         return "host", None
 
     return "container", (cand or "amnezia-awg2")
@@ -4287,7 +4294,7 @@ def get_conf_path():
         return env_path
     if EXEC_MODE == "container":
         return "/opt/amnezia/awg/awg0.conf"
-    if Path("/etc/amnezia/amneziawg/awg0.conf").exists():
+    if safe_exists("/etc/amnezia/amneziawg/awg0.conf"):
         return "/etc/amnezia/amneziawg/awg0.conf"
     return "/opt/amnezia/awg/awg0.conf"
 
@@ -4307,7 +4314,7 @@ def run_cmd(cmd, check=False, input_data=None):
 
 def read_backend_file(path_str):
     p = Path(path_str)
-    if p.exists():
+    if safe_exists(p):
         try:
             return p.read_text(encoding="utf-8")
         except Exception:
@@ -4325,7 +4332,7 @@ def write_backend_file(path_str, content):
         _, stderr, rc = run_cmd(f"docker exec -i {CONTAINER} tee {path_str} >/dev/null", input_data=content)
         if rc == 0:
             written = True
-        elif p.parent.exists():
+        elif safe_exists(p.parent):
             try:
                 p.write_text(content, encoding="utf-8")
                 written = True
@@ -4344,7 +4351,7 @@ def append_backend_file(path_str, content):
         _, stderr, rc = run_cmd(f"docker exec -i {CONTAINER} tee -a {path_str} >/dev/null", input_data=content)
         if rc == 0:
             appended = True
-        elif p.exists():
+        elif safe_exists(p):
             try:
                 with open(p, "a", encoding="utf-8") as f:
                     f.write(content)
@@ -5074,7 +5081,7 @@ def add_client(
             )
         else:
             for p_cand in ("/etc/amnezia/amneziawg/wireguard_psk.key", str(AWG_DIR / "keys" / "server_psk.key")):
-                if Path(p_cand).exists():
+                if safe_exists(p_cand):
                     psk_flag = f"preshared-key {p_cand} "
                     break
             run_cmd(f"awg set awg0 peer {client_pub} {psk_flag}allowed-ips {client_ip}/32", check=True)
@@ -5378,7 +5385,7 @@ def unblock_client(client_name, expires: str | None = None):
             run_cmd(f"docker exec {CONTAINER} awg set awg0 peer {pubkey} {psk_flag}allowed-ips {ip}", check=True)
         else:
             for p_cand in ("/etc/amnezia/amneziawg/wireguard_psk.key", str(AWG_DIR / "keys" / "server_psk.key")):
-                if Path(p_cand).exists():
+                if safe_exists(p_cand):
                     psk_flag = f"preshared-key {p_cand} "
                     break
             run_cmd(f"awg set awg0 peer {pubkey} {psk_flag}allowed-ips {ip}", check=True)
@@ -5446,9 +5453,9 @@ def show_qr(client_name):
     conf_file = AWG_DIR / f"{client_name}.conf"
 
     content = ""
-    if uri_file.exists():
+    if safe_exists(uri_file):
         content = uri_file.read_text(encoding="utf-8").strip()
-    elif conf_file.exists():
+    elif safe_exists(conf_file):
         content = conf_file.read_text(encoding="utf-8").strip()
     else:
         return {"ok": False, "error": f"Profile for client '{client_name}' not found in {AWG_DIR}"}
@@ -5469,7 +5476,7 @@ def show_qr(client_name):
         "ok": True,
         "client": client_name,
         "qr_ascii": ansi_qr,
-        "png_file": str(png_path) if png_path.exists() else None,
+        "png_file": str(png_path) if safe_exists(png_path) else None,
         "vpnuri": content if content.startswith("vpn://") else None
     }
 
@@ -5484,15 +5491,15 @@ def backup_configs():
         with tarfile.open(archive_path, "w:gz") as tar:
             # 1. Server config
             conf_file = Path(get_conf_path())
-            if conf_file.exists():
+            if safe_exists(conf_file):
                 tar.add(conf_file, arcname="server/awg0.conf")
             # 2. Clients table
             tbl_file = Path(get_clients_table_path())
-            if tbl_file.exists():
+            if safe_exists(tbl_file):
                 tar.add(tbl_file, arcname="clients/clientsTable.json")
             # 3. Keys directory
             keys_dir = AWG_DIR / "keys"
-            if keys_dir.exists():
+            if safe_exists(keys_dir):
                 tar.add(keys_dir, arcname="keys")
             # 4. Client profiles
             for ext in ("*.conf", "*.vpnuri"):
@@ -5569,7 +5576,7 @@ def get_client_uri(client_name: str):
     uri_file = AWG_DIR / f"{client_name}.vpnuri"
     conf_file = AWG_DIR / f"{client_name}.conf"
 
-    if uri_file.exists():
+    if safe_exists(uri_file):
         uri = uri_file.read_text(encoding="utf-8").strip()
         if uri.startswith("vpn://"):
             return {
@@ -5580,7 +5587,7 @@ def get_client_uri(client_name: str):
                 "vpnuri_file": str(uri_file)
             }
 
-    if conf_file.exists():
+    if safe_exists(conf_file):
         conf_content = conf_file.read_text(encoding="utf-8")
         m_ip = re.search(r"^\s*Address\s*=\s*([^/,\s]+)", conf_content, re.MULTILINE | re.IGNORECASE)
         m_priv = re.search(r"^\s*PrivateKey\s*=\s*(\S+)", conf_content, re.MULTILINE | re.IGNORECASE)

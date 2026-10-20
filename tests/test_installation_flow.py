@@ -393,6 +393,49 @@ prompt_default() { printf -v "$3" '%s' "$2"; }
                 self.assertLess(lines.index("INSPECT"), lines.index("SAVE"))
                 self.assertLess(lines.index("APPLY:awg"), lines.index("APPLY:verify"))
 
+    def test_step_started_records_failed_step_and_restore_detects_it(self):
+        result = self.shell(r'''
+source src/common/checkpoint.sh
+SAVED_CONFIG_FILE="$TEST_WORK/config.env"
+ENABLE_WEB_STACK=1; ENABLE_AWG_STANDALONE=0; ENABLE_AGH=0
+PRIMARY_DOMAIN=test.example
+build_installation_plan
+record_step_started packages
+restore_installation_checkpoint
+printf 'STARTED:%s|%s\n' "$CHECKPOINT_FAILED" "$FAILED_STEP_NUM"
+record_step_completed packages
+restore_installation_checkpoint
+printf 'COMPLETED:%s|%s|%s\n' "$CHECKPOINT_FAILED" "$FAILED_STEP_NUM" "$LAST_COMPLETED_STEP"
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("STARTED:packages|1", result.stdout)
+        self.assertIn("COMPLETED:|0|1", result.stdout)
+
+    def test_validate_installation_config_fallback_email(self):
+        result = self.shell(r'''
+ENABLE_WEB_STACK=1; PRIMARY_DOMAIN=example.com; LE_EMAIL=""
+validate_installation_config
+printf 'EMAIL:%s\n' "$LE_EMAIL"
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("EMAIL:admin@example.com", result.stdout)
+
+    def test_save_session_state_persists_ports_mode_and_extras(self):
+        result = self.shell(r'''
+PRIMARY_DOMAIN=example.com; ENABLE_WEB_STACK=1
+PORTS_SETUP_MODE=2
+REALITY_FALLBACK_PORT=9443
+EXTRA_DOMAINS_USER=("extra1.example.com" "extra2.example.com")
+save_session_state "$TEST_WORK/config.env"
+grep -q '^PORTS_SETUP_MODE="2"' "$TEST_WORK/config.env" && echo PORTS_OK
+grep -q '^REALITY_FALLBACK_PORT="9443"' "$TEST_WORK/config.env" && echo FALLBACK_OK
+grep -q 'extra1.example.com' "$TEST_WORK/config.env" && echo EXTRA_OK
+''', "system/env.sh")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("PORTS_OK", result.stdout)
+        self.assertIn("FALLBACK_OK", result.stdout)
+        self.assertIn("EXTRA_OK", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

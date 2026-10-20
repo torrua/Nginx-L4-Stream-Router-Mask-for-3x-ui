@@ -8,21 +8,41 @@ EXPERT_MODE=${EXPERT_MODE:-0}
 SKIP_INTERVIEW=0
 if [ "$NON_INTERACTIVE" -eq 0 ]; then
     print_mask_banner
-    if [ "$LAST_COMPLETED_STEP" -gt 0 ] && [ "$LAST_COMPLETED_STEP" -lt "$TOTAL_STEPS" ]; then
-        NEXT_STEP=$(( LAST_COMPLETED_STEP + 1 ))
+    has_interrupted_run=0
+    TARGET_RESUME_STEP=0
+    FAILED_STEP_TITLE=""
+    if [ -n "${CHECKPOINT_FAILED:-}" ] && [ "${FAILED_STEP_NUM:-0}" -gt 0 ]; then
+        has_interrupted_run=1
+        TARGET_RESUME_STEP="$FAILED_STEP_NUM"
+        FAILED_STEP_TITLE="${INSTALLATION_TITLES[$CHECKPOINT_FAILED]:-${STEP_NAMES[$FAILED_STEP_NUM]:-Шаг $FAILED_STEP_NUM}}"
+    elif [ "$LAST_COMPLETED_STEP" -gt 0 ] && [ "$LAST_COMPLETED_STEP" -lt "$TOTAL_STEPS" ]; then
+        has_interrupted_run=1
+        TARGET_RESUME_STEP=$(( LAST_COMPLETED_STEP + 1 ))
+        FAILED_STEP_TITLE="${STEP_NAMES[$TARGET_RESUME_STEP]:-Шаг $TARGET_RESUME_STEP}"
+    fi
+
+    if [ "$has_interrupted_run" -eq 1 ]; then
         echo -e "  ${YELLOW}${BOLD}Обнаружена незавершенная установка!${NC}"
-        echo -e "  ${DIM}Последний успешно завершенный шаг: ${WHITE}Шаг $LAST_COMPLETED_STEP из $TOTAL_STEPS (${STEP_NAMES[$LAST_COMPLETED_STEP]:-})${NC}"
-        echo -e "    ${CYAN}${BOLD}[1] Продолжить с шага $NEXT_STEP (${STEP_NAMES[$NEXT_STEP]:-})${NC} (Рекомендуется)"
+        if [ -n "${CHECKPOINT_FAILED:-}" ] && [ "${FAILED_STEP_NUM:-0}" -gt 0 ]; then
+            echo -e "  ${RED}Предыдущая установка была прервана на шаге:${NC} ${WHITE}Шаг $TARGET_RESUME_STEP из $TOTAL_STEPS ($FAILED_STEP_TITLE)${NC}"
+            if [ "$LAST_COMPLETED_STEP" -gt 0 ]; then
+                echo -e "  ${DIM}Последний успешно завершенный шаг: ${WHITE}Шаг $LAST_COMPLETED_STEP из $TOTAL_STEPS (${STEP_NAMES[$LAST_COMPLETED_STEP]:-})${NC}"
+            fi
+        else
+            echo -e "  ${DIM}Последний успешно завершенный шаг: ${WHITE}Шаг $LAST_COMPLETED_STEP из $TOTAL_STEPS (${STEP_NAMES[$LAST_COMPLETED_STEP]:-})${NC}"
+        fi
+        echo -e "    ${CYAN}${BOLD}[1] Повторить/продолжить с шага $TARGET_RESUME_STEP ($FAILED_STEP_TITLE)${NC} (Рекомендуется)"
         echo -e "    ${YELLOW}[2] Начать установку заново (с шага 1)${NC}\n"
         read -rp "  Ваш выбор [1/2] (по умолчанию: 1): " RESUME_CHOICE </dev/tty || read -r RESUME_CHOICE || RESUME_CHOICE="1"
         RESUME_CHOICE=$(echo "${RESUME_CHOICE:-1}" | tr -d '[:space:]')
         if [ "$RESUME_CHOICE" != "2" ]; then
-            RESUME_STEP="$NEXT_STEP"
+            RESUME_STEP="$TARGET_RESUME_STEP"
             SKIP_INTERVIEW=1
             ok "Возобновление установки с шага $RESUME_STEP..."
         else
             LAST_COMPLETED_STEP=0
             RESUME_STEP=1
+            CHECKPOINT_FAILED=""
             record_step_completed 0
             ok "Сброс контрольной точки. Установка будет начата с первого шага."
         fi
@@ -31,7 +51,10 @@ if [ "$NON_INTERACTIVE" -eq 0 ]; then
 else
     # В неинтерактивном режиме с переданным конфигом пропускаем интервью и возобновляем
     SKIP_INTERVIEW=1
-    if [ "$LAST_COMPLETED_STEP" -gt 0 ] && [ "$LAST_COMPLETED_STEP" -lt "$TOTAL_STEPS" ]; then
+    if [ -n "${CHECKPOINT_FAILED:-}" ] && [ "${FAILED_STEP_NUM:-0}" -gt 0 ]; then
+        RESUME_STEP="$FAILED_STEP_NUM"
+        ok "Неинтерактивный режим: возобновление с шага $RESUME_STEP (${INSTALLATION_TITLES[$CHECKPOINT_FAILED]:-})..."
+    elif [ "$LAST_COMPLETED_STEP" -gt 0 ] && [ "$LAST_COMPLETED_STEP" -lt "$TOTAL_STEPS" ]; then
         RESUME_STEP=$(( LAST_COMPLETED_STEP + 1 ))
         ok "Неинтерактивный режим: возобновление с шага $RESUME_STEP..."
     fi
@@ -88,7 +111,6 @@ else
             read -r choice </dev/tty || read -r choice || true
             choice=$(echo "${choice:-}" | tr -d '[:space:]')
             if [ -z "$choice" ] || [[ "${choice,,}" == "y" ]] || [[ "${choice,,}" == "yes" ]]; then
-
                 return 0
             fi
             if [[ "${choice,,}" == "q" || "${choice,,}" == "quit" || "${choice,,}" == "exit" ]]; then
@@ -126,7 +148,6 @@ else
             case "$cfg_choice" in
                 2)
                     EXPRESS_MODE=0
-                    EXPERT_MODE=1
                     START_AT_REVIEW=0
                     ok "Пошаговый режим: сохраненные значения подставлены по умолчанию."
                     ;;
@@ -140,6 +161,7 @@ else
                     AWG_SERVER_HOST=""
                     ENABLE_STEAL=""
                     ENABLE_CLASSIC=""
+                    PORTS_SETUP_MODE=1
                     ENABLE_HY2=""
                     ENABLE_AWG_V3=""
                     ENABLE_AWG_V2=""
@@ -1684,7 +1706,6 @@ for item in res:
             choice=$(echo "${choice:-}" | tr -d '[:space:]')
 
             if [ -z "$choice" ] || [[ "${choice,,}" == "y" ]] || [[ "${choice,,}" == "yes" ]]; then
-
                 return 0
             fi
 
@@ -1789,7 +1810,6 @@ for item in res:
             fi
         done
         WIZARD_ALLOW_BACK=0
-
 
         rebuild_all_domains
         sync_reality_ports

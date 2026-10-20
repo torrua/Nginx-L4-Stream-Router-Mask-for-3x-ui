@@ -80,7 +80,9 @@ validate_installation_config() {
     fi
     if is_true "${ENABLE_WEB_STACK:-y}"; then
         [[ "${PRIMARY_DOMAIN:-}" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]] || die "Некорректный основной домен."
-        [ -n "${LE_EMAIL:-}" ] || die "Не задан email для сертификатов."
+        if [ -z "${LE_EMAIL:-}" ]; then
+            LE_EMAIL="admin@${PRIMARY_DOMAIN}"
+        fi
     else
         [ -n "${AWG_SERVER_HOST:-}" ] || die "Не задан Endpoint автономного AmneziaWG."
     fi

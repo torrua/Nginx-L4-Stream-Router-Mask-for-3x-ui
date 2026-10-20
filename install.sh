@@ -43,6 +43,8 @@ CURRENT_STEP_START=0
 declare -A STEP_DURATIONS=() STEP_BG_FLAGS=() STEP_NAMES=()
 declare -A DOMAIN_TO_PORT=() EXT_SNI_TO_PORT=() CHECKPOINT_HASHES=()
 CHECKPOINT_LAST=""
+CHECKPOINT_FAILED=""
+FAILED_STEP_NUM=0
 
 format_duration() {
     local total_seconds=$1
@@ -90,12 +92,22 @@ checkpoint_signature() {
 }
 
 load_checkpoint_state() {
-    CHECKPOINT_HASHES=(); CHECKPOINT_LAST=""
+    CHECKPOINT_HASHES=(); CHECKPOINT_LAST=""; CHECKPOINT_FAILED=""
     local state="${SAVED_CONFIG_FILE:-server-setup.env}.state" key value
-    [ -f "$state" ] || return 0
-    while IFS='=' read -r key value; do
+    if [ ! -f "$state" ]; then
+        if [ -f "/etc/server-setup.env.state" ]; then
+            state="/etc/server-setup.env.state"
+        else
+            return 0
+        fi
+    fi
+    while IFS='=' read -r key value || [ -n "$key" ]; do
+        key="${key//[[:space:]]/}"
+        value="${value//[[:space:]]/}"
         if [ "$key" = last ]; then
             [[ "$value" =~ ^[a-z_]+$ ]] && CHECKPOINT_LAST="$value"
+        elif [ "$key" = failed ]; then
+            [[ "$value" =~ ^[a-z_]+$ ]] && CHECKPOINT_FAILED="$value"
         elif [[ "$key" =~ ^[a-z_]+$ && "$value" =~ ^[a-f0-9]{64}$ ]]; then
             CHECKPOINT_HASHES[$key]="$value"
         fi
@@ -105,17 +117,47 @@ load_checkpoint_state() {
 
 restore_installation_checkpoint() {
     if [ "${ROTATE_PATHS:-0}" -eq 1 ]; then
-        LAST_COMPLETED_STEP=0; RESUME_STEP=1
+        LAST_COMPLETED_STEP=0; RESUME_STEP=1; CHECKPOINT_FAILED=""; FAILED_STEP_NUM=0
         return 0
     fi
     load_checkpoint_state
     # Old numeric checkpoints cannot identify a component or its input settings.
     LAST_COMPLETED_STEP=0
+    FAILED_STEP_NUM=0
     if [ -n "$CHECKPOINT_LAST" ] && [ "$CHECKPOINT_LAST" != verify ]; then
         LAST_COMPLETED_STEP="${STEP_NUMBERS[$CHECKPOINT_LAST]:-0}"
     fi
-    if [ "${RESUME_MODE:-0}" -eq 1 ] && [ "$LAST_COMPLETED_STEP" -eq 0 ]; then
+    if [ -n "$CHECKPOINT_FAILED" ]; then
+        FAILED_STEP_NUM="${STEP_NUMBERS[$CHECKPOINT_FAILED]:-0}"
+    fi
+    if [ "${RESUME_MODE:-0}" -eq 1 ] && [ "$LAST_COMPLETED_STEP" -eq 0 ] && [ "$FAILED_STEP_NUM" -eq 0 ]; then
         RESUME_STEP=$((TOTAL_STEPS + 1))
+    fi
+}
+
+record_step_started() {
+    local id
+    id=$(checkpoint_id "$1")
+    [ -n "$id" ] || return 0
+    load_checkpoint_state
+    CHECKPOINT_FAILED="$id"
+    local state="${SAVED_CONFIG_FILE:-server-setup.env}.state" temporary key
+    temporary=$(umask 077; mktemp "${state}.tmp.XXXXXX") || return 1
+    if ! {
+        printf 'last=%s\n' "$CHECKPOINT_LAST"
+        printf 'failed=%s\n' "$CHECKPOINT_FAILED"
+        for key in "${!CHECKPOINT_HASHES[@]}"; do
+            printf '%s=%s\n' "$key" "${CHECKPOINT_HASHES[$key]}"
+        done
+    } > "$temporary"; then rm -f -- "$temporary"; return 1; fi
+    if ! mv -f -- "$temporary" "$state"; then rm -f -- "$temporary"; return 1; fi
+    if [ "$state" != "/etc/server-setup.env.state" ]; then
+        local mirror_tmp
+        if mirror_tmp=$(mktemp /etc/server-setup.env.state.tmp.XXXXXX 2>/dev/null); then
+            if ! cp -f -- "$state" "$mirror_tmp" || ! chmod 600 "$mirror_tmp" || ! mv -f -- "$mirror_tmp" /etc/server-setup.env.state; then
+                rm -f -- "$mirror_tmp"
+            fi
+        fi
     fi
 }
 
@@ -124,21 +166,32 @@ record_step_completed() {
     id=$(checkpoint_id "$1")
     load_checkpoint_state
     if [ "$id" = 0 ] || [ -z "$id" ]; then
-        CHECKPOINT_LAST=""; LAST_COMPLETED_STEP=0
+        CHECKPOINT_LAST=""; CHECKPOINT_FAILED=""; LAST_COMPLETED_STEP=0
+        CHECKPOINT_HASHES=()
     else
         CHECKPOINT_HASHES[$id]=$(checkpoint_signature "$id") || return 1
         CHECKPOINT_LAST="$id"
+        CHECKPOINT_FAILED=""
         LAST_COMPLETED_STEP="${STEP_NUMBERS[$id]:-0}"
     fi
     local state="${SAVED_CONFIG_FILE:-server-setup.env}.state" temporary key
     temporary=$(umask 077; mktemp "${state}.tmp.XXXXXX") || return 1
     if ! {
         printf 'last=%s\n' "$CHECKPOINT_LAST"
+        printf 'failed=%s\n' "$CHECKPOINT_FAILED"
         for key in "${!CHECKPOINT_HASHES[@]}"; do
             printf '%s=%s\n' "$key" "${CHECKPOINT_HASHES[$key]}"
         done
     } > "$temporary"; then rm -f -- "$temporary"; return 1; fi
     if ! mv -f -- "$temporary" "$state"; then rm -f -- "$temporary"; return 1; fi
+    if [ "$state" != "/etc/server-setup.env.state" ]; then
+        local mirror_tmp
+        if mirror_tmp=$(mktemp /etc/server-setup.env.state.tmp.XXXXXX 2>/dev/null); then
+            if ! cp -f -- "$state" "$mirror_tmp" || ! chmod 600 "$mirror_tmp" || ! mv -f -- "$mirror_tmp" /etc/server-setup.env.state; then
+                rm -f -- "$mirror_tmp"
+            fi
+        fi
+    fi
 }
 
 checkpoint_artifact_valid() {
@@ -187,6 +240,7 @@ step_begin() {
     id=$(checkpoint_id "$1")
     number="${STEP_NUMBERS[$id]}"
     CURRENT_STEP_START=$(date +%s)
+    record_step_started "$id"
     print_step_bar "$number" "$TOTAL_STEPS" "${INSTALLATION_TITLES[$id]}"
 }
 
@@ -1300,7 +1354,7 @@ save_session_state() {
 ENABLE_WEB_STACK="$web_stack_save"
 PRIMARY_DOMAIN="${PRIMARY_DOMAIN:-}"
 ADD_WWW="${ADD_WWW:-y}"
-EXTRA_SSL_DOMAINS="${EXTRA_SSL_DOMAINS:-}"
+EXTRA_SSL_DOMAINS="${EXTRA_SSL_DOMAINS:-${EXTRA_DOMAINS_USER[*]:-}}"
 SSL_ENGINE_CHOICE="${SSL_ENGINE_CHOICE:-1}"
 LE_EMAIL="${LE_EMAIL:-}"
 CF_AUTH_METHOD="${CF_AUTH_METHOD:-1}"
@@ -1317,6 +1371,9 @@ STEAL_DOMAINS="${STEAL_DOMAINS[*]:-}"
 ENABLE_CLASSIC="$classic_save"
 CLASSIC_PORT="${CLASSIC_PORTS_LIST[0]:-46443}"
 CLASSIC_SNI="${EXT_SNI_LIST[*]:-}"
+
+PORTS_SETUP_MODE="${PORTS_SETUP_MODE:-1}"
+REALITY_FALLBACK_PORT="${REALITY_FALLBACK_PORT:-9443}"
 
 PANEL_PORT="${PANEL_PORT:-10443}"
 PANEL_PATH="${_save_panel_path}"
@@ -1929,6 +1986,7 @@ CHECK_MODE=0
 GEN_CONFIG=0
 ROTATE_PATHS=0
 FORCE_DNS=${FORCE_DNS:-0}
+PORTS_SETUP_MODE="${PORTS_SETUP_MODE:-1}"
 SAVED_CONFIG_FILE="server-setup.env"
 
 CLI_PRIMARY_DOMAIN=""
@@ -6741,7 +6799,9 @@ validate_installation_config() {
     fi
     if is_true "${ENABLE_WEB_STACK:-y}"; then
         [[ "${PRIMARY_DOMAIN:-}" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]] || die "Некорректный основной домен."
-        [ -n "${LE_EMAIL:-}" ] || die "Не задан email для сертификатов."
+        if [ -z "${LE_EMAIL:-}" ]; then
+            LE_EMAIL="admin@${PRIMARY_DOMAIN}"
+        fi
     else
         [ -n "${AWG_SERVER_HOST:-}" ] || die "Не задан Endpoint автономного AmneziaWG."
     fi
@@ -9511,21 +9571,41 @@ EXPERT_MODE=${EXPERT_MODE:-0}
 SKIP_INTERVIEW=0
 if [ "$NON_INTERACTIVE" -eq 0 ]; then
     print_mask_banner
-    if [ "$LAST_COMPLETED_STEP" -gt 0 ] && [ "$LAST_COMPLETED_STEP" -lt "$TOTAL_STEPS" ]; then
-        NEXT_STEP=$(( LAST_COMPLETED_STEP + 1 ))
+    has_interrupted_run=0
+    TARGET_RESUME_STEP=0
+    FAILED_STEP_TITLE=""
+    if [ -n "${CHECKPOINT_FAILED:-}" ] && [ "${FAILED_STEP_NUM:-0}" -gt 0 ]; then
+        has_interrupted_run=1
+        TARGET_RESUME_STEP="$FAILED_STEP_NUM"
+        FAILED_STEP_TITLE="${INSTALLATION_TITLES[$CHECKPOINT_FAILED]:-${STEP_NAMES[$FAILED_STEP_NUM]:-Шаг $FAILED_STEP_NUM}}"
+    elif [ "$LAST_COMPLETED_STEP" -gt 0 ] && [ "$LAST_COMPLETED_STEP" -lt "$TOTAL_STEPS" ]; then
+        has_interrupted_run=1
+        TARGET_RESUME_STEP=$(( LAST_COMPLETED_STEP + 1 ))
+        FAILED_STEP_TITLE="${STEP_NAMES[$TARGET_RESUME_STEP]:-Шаг $TARGET_RESUME_STEP}"
+    fi
+
+    if [ "$has_interrupted_run" -eq 1 ]; then
         echo -e "  ${YELLOW}${BOLD}Обнаружена незавершенная установка!${NC}"
-        echo -e "  ${DIM}Последний успешно завершенный шаг: ${WHITE}Шаг $LAST_COMPLETED_STEP из $TOTAL_STEPS (${STEP_NAMES[$LAST_COMPLETED_STEP]:-})${NC}"
-        echo -e "    ${CYAN}${BOLD}[1] Продолжить с шага $NEXT_STEP (${STEP_NAMES[$NEXT_STEP]:-})${NC} (Рекомендуется)"
+        if [ -n "${CHECKPOINT_FAILED:-}" ] && [ "${FAILED_STEP_NUM:-0}" -gt 0 ]; then
+            echo -e "  ${RED}Предыдущая установка была прервана на шаге:${NC} ${WHITE}Шаг $TARGET_RESUME_STEP из $TOTAL_STEPS ($FAILED_STEP_TITLE)${NC}"
+            if [ "$LAST_COMPLETED_STEP" -gt 0 ]; then
+                echo -e "  ${DIM}Последний успешно завершенный шаг: ${WHITE}Шаг $LAST_COMPLETED_STEP из $TOTAL_STEPS (${STEP_NAMES[$LAST_COMPLETED_STEP]:-})${NC}"
+            fi
+        else
+            echo -e "  ${DIM}Последний успешно завершенный шаг: ${WHITE}Шаг $LAST_COMPLETED_STEP из $TOTAL_STEPS (${STEP_NAMES[$LAST_COMPLETED_STEP]:-})${NC}"
+        fi
+        echo -e "    ${CYAN}${BOLD}[1] Повторить/продолжить с шага $TARGET_RESUME_STEP ($FAILED_STEP_TITLE)${NC} (Рекомендуется)"
         echo -e "    ${YELLOW}[2] Начать установку заново (с шага 1)${NC}\n"
         read -rp "  Ваш выбор [1/2] (по умолчанию: 1): " RESUME_CHOICE </dev/tty || read -r RESUME_CHOICE || RESUME_CHOICE="1"
         RESUME_CHOICE=$(echo "${RESUME_CHOICE:-1}" | tr -d '[:space:]')
         if [ "$RESUME_CHOICE" != "2" ]; then
-            RESUME_STEP="$NEXT_STEP"
+            RESUME_STEP="$TARGET_RESUME_STEP"
             SKIP_INTERVIEW=1
             ok "Возобновление установки с шага $RESUME_STEP..."
         else
             LAST_COMPLETED_STEP=0
             RESUME_STEP=1
+            CHECKPOINT_FAILED=""
             record_step_completed 0
             ok "Сброс контрольной точки. Установка будет начата с первого шага."
         fi
@@ -9534,7 +9614,10 @@ if [ "$NON_INTERACTIVE" -eq 0 ]; then
 else
     # В неинтерактивном режиме с переданным конфигом пропускаем интервью и возобновляем
     SKIP_INTERVIEW=1
-    if [ "$LAST_COMPLETED_STEP" -gt 0 ] && [ "$LAST_COMPLETED_STEP" -lt "$TOTAL_STEPS" ]; then
+    if [ -n "${CHECKPOINT_FAILED:-}" ] && [ "${FAILED_STEP_NUM:-0}" -gt 0 ]; then
+        RESUME_STEP="$FAILED_STEP_NUM"
+        ok "Неинтерактивный режим: возобновление с шага $RESUME_STEP (${INSTALLATION_TITLES[$CHECKPOINT_FAILED]:-})..."
+    elif [ "$LAST_COMPLETED_STEP" -gt 0 ] && [ "$LAST_COMPLETED_STEP" -lt "$TOTAL_STEPS" ]; then
         RESUME_STEP=$(( LAST_COMPLETED_STEP + 1 ))
         ok "Неинтерактивный режим: возобновление с шага $RESUME_STEP..."
     fi
@@ -9591,7 +9674,6 @@ else
             read -r choice </dev/tty || read -r choice || true
             choice=$(echo "${choice:-}" | tr -d '[:space:]')
             if [ -z "$choice" ] || [[ "${choice,,}" == "y" ]] || [[ "${choice,,}" == "yes" ]]; then
-
                 return 0
             fi
             if [[ "${choice,,}" == "q" || "${choice,,}" == "quit" || "${choice,,}" == "exit" ]]; then
@@ -9629,7 +9711,6 @@ else
             case "$cfg_choice" in
                 2)
                     EXPRESS_MODE=0
-                    EXPERT_MODE=1
                     START_AT_REVIEW=0
                     ok "Пошаговый режим: сохраненные значения подставлены по умолчанию."
                     ;;
@@ -9643,6 +9724,7 @@ else
                     AWG_SERVER_HOST=""
                     ENABLE_STEAL=""
                     ENABLE_CLASSIC=""
+                    PORTS_SETUP_MODE=1
                     ENABLE_HY2=""
                     ENABLE_AWG_V3=""
                     ENABLE_AWG_V2=""
@@ -11187,7 +11269,6 @@ for item in res:
             choice=$(echo "${choice:-}" | tr -d '[:space:]')
 
             if [ -z "$choice" ] || [[ "${choice,,}" == "y" ]] || [[ "${choice,,}" == "yes" ]]; then
-
                 return 0
             fi
 
@@ -11292,7 +11373,6 @@ for item in res:
             fi
         done
         WIZARD_ALLOW_BACK=0
-
 
         rebuild_all_domains
         sync_reality_ports

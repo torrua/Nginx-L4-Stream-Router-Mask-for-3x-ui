@@ -9,6 +9,8 @@ CURRENT_STEP_START=0
 declare -A STEP_DURATIONS=() STEP_BG_FLAGS=() STEP_NAMES=()
 declare -A DOMAIN_TO_PORT=() EXT_SNI_TO_PORT=() CHECKPOINT_HASHES=()
 CHECKPOINT_LAST=""
+CHECKPOINT_FAILED=""
+FAILED_STEP_NUM=0
 
 format_duration() {
     local total_seconds=$1
@@ -56,12 +58,22 @@ checkpoint_signature() {
 }
 
 load_checkpoint_state() {
-    CHECKPOINT_HASHES=(); CHECKPOINT_LAST=""
+    CHECKPOINT_HASHES=(); CHECKPOINT_LAST=""; CHECKPOINT_FAILED=""
     local state="${SAVED_CONFIG_FILE:-server-setup.env}.state" key value
-    [ -f "$state" ] || return 0
-    while IFS='=' read -r key value; do
+    if [ ! -f "$state" ]; then
+        if [ -f "/etc/server-setup.env.state" ]; then
+            state="/etc/server-setup.env.state"
+        else
+            return 0
+        fi
+    fi
+    while IFS='=' read -r key value || [ -n "$key" ]; do
+        key="${key//[[:space:]]/}"
+        value="${value//[[:space:]]/}"
         if [ "$key" = last ]; then
             [[ "$value" =~ ^[a-z_]+$ ]] && CHECKPOINT_LAST="$value"
+        elif [ "$key" = failed ]; then
+            [[ "$value" =~ ^[a-z_]+$ ]] && CHECKPOINT_FAILED="$value"
         elif [[ "$key" =~ ^[a-z_]+$ && "$value" =~ ^[a-f0-9]{64}$ ]]; then
             CHECKPOINT_HASHES[$key]="$value"
         fi
@@ -71,17 +83,47 @@ load_checkpoint_state() {
 
 restore_installation_checkpoint() {
     if [ "${ROTATE_PATHS:-0}" -eq 1 ]; then
-        LAST_COMPLETED_STEP=0; RESUME_STEP=1
+        LAST_COMPLETED_STEP=0; RESUME_STEP=1; CHECKPOINT_FAILED=""; FAILED_STEP_NUM=0
         return 0
     fi
     load_checkpoint_state
     # Old numeric checkpoints cannot identify a component or its input settings.
     LAST_COMPLETED_STEP=0
+    FAILED_STEP_NUM=0
     if [ -n "$CHECKPOINT_LAST" ] && [ "$CHECKPOINT_LAST" != verify ]; then
         LAST_COMPLETED_STEP="${STEP_NUMBERS[$CHECKPOINT_LAST]:-0}"
     fi
-    if [ "${RESUME_MODE:-0}" -eq 1 ] && [ "$LAST_COMPLETED_STEP" -eq 0 ]; then
+    if [ -n "$CHECKPOINT_FAILED" ]; then
+        FAILED_STEP_NUM="${STEP_NUMBERS[$CHECKPOINT_FAILED]:-0}"
+    fi
+    if [ "${RESUME_MODE:-0}" -eq 1 ] && [ "$LAST_COMPLETED_STEP" -eq 0 ] && [ "$FAILED_STEP_NUM" -eq 0 ]; then
         RESUME_STEP=$((TOTAL_STEPS + 1))
+    fi
+}
+
+record_step_started() {
+    local id
+    id=$(checkpoint_id "$1")
+    [ -n "$id" ] || return 0
+    load_checkpoint_state
+    CHECKPOINT_FAILED="$id"
+    local state="${SAVED_CONFIG_FILE:-server-setup.env}.state" temporary key
+    temporary=$(umask 077; mktemp "${state}.tmp.XXXXXX") || return 1
+    if ! {
+        printf 'last=%s\n' "$CHECKPOINT_LAST"
+        printf 'failed=%s\n' "$CHECKPOINT_FAILED"
+        for key in "${!CHECKPOINT_HASHES[@]}"; do
+            printf '%s=%s\n' "$key" "${CHECKPOINT_HASHES[$key]}"
+        done
+    } > "$temporary"; then rm -f -- "$temporary"; return 1; fi
+    if ! mv -f -- "$temporary" "$state"; then rm -f -- "$temporary"; return 1; fi
+    if [ "$state" != "/etc/server-setup.env.state" ]; then
+        local mirror_tmp
+        if mirror_tmp=$(mktemp /etc/server-setup.env.state.tmp.XXXXXX 2>/dev/null); then
+            if ! cp -f -- "$state" "$mirror_tmp" || ! chmod 600 "$mirror_tmp" || ! mv -f -- "$mirror_tmp" /etc/server-setup.env.state; then
+                rm -f -- "$mirror_tmp"
+            fi
+        fi
     fi
 }
 
@@ -90,21 +132,32 @@ record_step_completed() {
     id=$(checkpoint_id "$1")
     load_checkpoint_state
     if [ "$id" = 0 ] || [ -z "$id" ]; then
-        CHECKPOINT_LAST=""; LAST_COMPLETED_STEP=0
+        CHECKPOINT_LAST=""; CHECKPOINT_FAILED=""; LAST_COMPLETED_STEP=0
+        CHECKPOINT_HASHES=()
     else
         CHECKPOINT_HASHES[$id]=$(checkpoint_signature "$id") || return 1
         CHECKPOINT_LAST="$id"
+        CHECKPOINT_FAILED=""
         LAST_COMPLETED_STEP="${STEP_NUMBERS[$id]:-0}"
     fi
     local state="${SAVED_CONFIG_FILE:-server-setup.env}.state" temporary key
     temporary=$(umask 077; mktemp "${state}.tmp.XXXXXX") || return 1
     if ! {
         printf 'last=%s\n' "$CHECKPOINT_LAST"
+        printf 'failed=%s\n' "$CHECKPOINT_FAILED"
         for key in "${!CHECKPOINT_HASHES[@]}"; do
             printf '%s=%s\n' "$key" "${CHECKPOINT_HASHES[$key]}"
         done
     } > "$temporary"; then rm -f -- "$temporary"; return 1; fi
     if ! mv -f -- "$temporary" "$state"; then rm -f -- "$temporary"; return 1; fi
+    if [ "$state" != "/etc/server-setup.env.state" ]; then
+        local mirror_tmp
+        if mirror_tmp=$(mktemp /etc/server-setup.env.state.tmp.XXXXXX 2>/dev/null); then
+            if ! cp -f -- "$state" "$mirror_tmp" || ! chmod 600 "$mirror_tmp" || ! mv -f -- "$mirror_tmp" /etc/server-setup.env.state; then
+                rm -f -- "$mirror_tmp"
+            fi
+        fi
+    fi
 }
 
 checkpoint_artifact_valid() {
@@ -153,6 +206,7 @@ step_begin() {
     id=$(checkpoint_id "$1")
     number="${STEP_NUMBERS[$id]}"
     CURRENT_STEP_START=$(date +%s)
+    record_step_started "$id"
     print_step_bar "$number" "$TOTAL_STEPS" "${INSTALLATION_TITLES[$id]}"
 }
 

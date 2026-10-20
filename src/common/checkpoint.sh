@@ -1,27 +1,14 @@
-# --------------------------- Замеры времени и телеметрия ---------------------------
+# Checkpoints use stable step IDs and input signatures, independent of UI numbering.
 SCRIPT_START_TIME=$(date +%s)
 SCRIPT_START_DATETIME=$(date '+%Y-%m-%d %H:%M:%S')
-
-TOTAL_STEPS=7
+TOTAL_STEPS=0
 LAST_COMPLETED_STEP=${LAST_COMPLETED_STEP:-0}
 RESUME_STEP=${RESUME_STEP:-1}
 RESUME_MODE=${RESUME_MODE:-0}
 CURRENT_STEP_START=0
-
-declare -A STEP_DURATIONS=()
-declare -A STEP_BG_FLAGS=()
-declare -A DOMAIN_TO_PORT=()
-declare -A EXT_SNI_TO_PORT=()
-declare -A STEP_NAMES=(
-    [1]="Установка базовых системных зависимостей"
-    [2]="Оптимизация сетевого стека ядра Linux (BBR + fq + MSS Clamping)"
-    [3]="Подключение репозитория и установка Nginx Mainline"
-    [4]="Выпуск SSL-сертификатов Let's Encrypt"
-    [5]="Развертывание сайта-маскировки (Decoy Front)"
-    [6]="Сборка конфигурации Nginx и активация маршрутизатора"
-    [7]="Автоматическая настройка базы данных 3X-UI"
-    [8]="Приватный AdGuard Home DoH + Split-DNS"
-)
+declare -A STEP_DURATIONS=() STEP_BG_FLAGS=() STEP_NAMES=()
+declare -A DOMAIN_TO_PORT=() EXT_SNI_TO_PORT=() CHECKPOINT_HASHES=()
+CHECKPOINT_LAST=""
 
 format_duration() {
     local total_seconds=$1
@@ -39,137 +26,142 @@ is_true() {
     [[ "$val" == "1" || "${val,,}" == "y" || "${val,,}" == "true" ]]
 }
 
-record_step_completed() {
-    local step_num="$1"
-    LAST_COMPLETED_STEP="$step_num"
-    local cfg="${SAVED_CONFIG_FILE:-./setup_mask.env}"
-    if [ -f "$cfg" ]; then
-        if grep -q "^LAST_COMPLETED_STEP=" "$cfg"; then
-            sed -i "s/^LAST_COMPLETED_STEP=.*/LAST_COMPLETED_STEP=\"$step_num\"/" "$cfg"
-        else
-            echo "LAST_COMPLETED_STEP=\"$step_num\"" >> "$cfg"
-        fi
+checkpoint_id() {
+    local key="$1"
+    if [[ "$key" =~ ^[0-9]+$ ]]; then
+        printf '%s' "${STEP_IDS[$key]:-}"
+    else
+        printf '%s' "$key"
     fi
+}
+
+checkpoint_signature() {
+    local id="$1" key
+    local keys=""
+    case "$id" in
+        packages) keys="ENABLE_WEB_STACK ENABLE_ZAPRET" ;;
+        kernel|nginx) keys="" ;;
+        certificates) keys="PRIMARY_DOMAIN ALL_DOMAINS SSL_ENGINE_CHOICE CF_AUTH_METHOD CF_Token CF_Account_ID CF_Email CF_Key" ;;
+        decoy) keys="PRIMARY_DOMAIN DECOY_MODE" ;;
+        security) keys="SSH_PORT SSH_PUBLIC_KEY ENABLE_HOST_SECURITY ENABLE_FAIL2BAN DISABLE_PASSWORD_AUTH" ;;
+        *) keys="PRIMARY_DOMAIN ALL_DOMAINS STEAL_PORTS_LIST CLASSIC_PORTS_LIST EXT_SNI_LIST ALL_EXT_SNIS ADD_WWW ENABLE_WEB_STACK ENABLE_STEAL STEAL_DOMAINS STEAL_PORT ENABLE_CLASSIC CLASSIC_SNI CLASSIC_PORT PANEL_PORT PANEL_PATH ADMIN_USERNAME ADMIN_PASSWORD SUB_PORT SUB_PATH SUB_CLASH_PATH SUB_TITLE XHTTP_STREAM_PORT XHTTP_STREAM_PATH ENABLE_HY2 HY2_PORT HY2_DOMAIN HY2_PORT_HOPPING HY2_PORT_HOPPING_RANGE ENABLE_AWG_V3 AWG_V3_PORT ENABLE_AWG_V2 AWG_V2_PORT ENABLE_AWG_STANDALONE AWG_STANDALONE_PORT AWG_SERVER_HOST AWG_PRIMARY_DNS AWG_SECONDARY_DNS ENABLE_AGH AGH_MODE AGH_DOMAIN AGH_USER AGH_PASS AGH_CLIENT_ID AGH_XRAY_DNS PORT_AGH_WEB ENABLE_WARP WARP_LICENSE_KEY ENABLE_SS2022 SS2022_PORT SS2022_METHOD SS2022_PASSWORD ENABLE_TUIC TUIC_PORT TUIC_UUID TUIC_PASSWORD ENABLE_MTPROTO MTPROTO_PORT MTPROTO_SECRET ENABLE_MASQUE MASQUE_PORT MASQUE_PASSWORD ENABLE_SHADOWTLS SHADOWTLS_PORT SHADOWTLS_DOMAIN SHADOWTLS_PASSWORD ENABLE_NAIVE NAIVE_PORT NAIVE_DOMAIN NAIVE_USER NAIVE_PASS ENABLE_WSTUNNEL WSTUNNEL_PORT WSTUNNEL_PREFIX WSTUNNEL_SECRET ENABLE_DNSTT DNSTT_PORT DNSTT_DOMAIN DNSTT_PUBKEY ENABLE_ZAPRET ZAPRET_QNUM ZAPRET_DESYNC ZAPRET_FOOLING AUTO_SETUP_3XUI ENABLE_NODE_TOKEN NODE_TOKEN NODE_TOKEN_NAME TIME_LOCATION BLOCK_SMTP BLOCK_LAN WEB_LISTEN SUB_LISTEN AWG_HEADER_PROTECTION_KEY AWG_RANDOM_TRAILERS AWG_SUBNET_IP AWG_SUBNET_CIDR MTPROTO_FAKETLS_DOMAIN MTPROTO_ADTAG SHADOWTLS_SNI WSTUNNEL_DOMAIN" ;;
+    esac
+    {
+        printf '%s\0' "${SCRIPT_VERSION:-unknown}" "$id"
+        for key in $keys; do
+            local -n input="$key"
+            printf '%s\0' "$key" "${input[@]-}"
+        done
+    } | sha256sum | cut -d ' ' -f1
+}
+
+load_checkpoint_state() {
+    CHECKPOINT_HASHES=(); CHECKPOINT_LAST=""
+    local state="${SAVED_CONFIG_FILE:-server-setup.env}.state" key value
+    [ -f "$state" ] || return 0
+    while IFS='=' read -r key value; do
+        if [ "$key" = last ]; then
+            [[ "$value" =~ ^[a-z_]+$ ]] && CHECKPOINT_LAST="$value"
+        elif [[ "$key" =~ ^[a-z_]+$ && "$value" =~ ^[a-f0-9]{64}$ ]]; then
+            CHECKPOINT_HASHES[$key]="$value"
+        fi
+    done < "$state"
+    return 0
+}
+
+restore_installation_checkpoint() {
+    if [ "${ROTATE_PATHS:-0}" -eq 1 ]; then
+        LAST_COMPLETED_STEP=0; RESUME_STEP=1
+        return 0
+    fi
+    load_checkpoint_state
+    # Old numeric checkpoints cannot identify a component or its input settings.
+    LAST_COMPLETED_STEP=0
+    if [ -n "$CHECKPOINT_LAST" ] && [ "$CHECKPOINT_LAST" != verify ]; then
+        LAST_COMPLETED_STEP="${STEP_NUMBERS[$CHECKPOINT_LAST]:-0}"
+    fi
+    if [ "${RESUME_MODE:-0}" -eq 1 ] && [ "$LAST_COMPLETED_STEP" -eq 0 ]; then
+        RESUME_STEP=$((TOTAL_STEPS + 1))
+    fi
+}
+
+record_step_completed() {
+    local id
+    id=$(checkpoint_id "$1")
+    load_checkpoint_state
+    if [ "$id" = 0 ] || [ -z "$id" ]; then
+        CHECKPOINT_LAST=""; LAST_COMPLETED_STEP=0
+    else
+        CHECKPOINT_HASHES[$id]=$(checkpoint_signature "$id") || return 1
+        CHECKPOINT_LAST="$id"
+        LAST_COMPLETED_STEP="${STEP_NUMBERS[$id]:-0}"
+    fi
+    local state="${SAVED_CONFIG_FILE:-server-setup.env}.state" temporary key
+    temporary=$(umask 077; mktemp "${state}.tmp.XXXXXX") || return 1
+    if ! {
+        printf 'last=%s\n' "$CHECKPOINT_LAST"
+        for key in "${!CHECKPOINT_HASHES[@]}"; do
+            printf '%s=%s\n' "$key" "${CHECKPOINT_HASHES[$key]}"
+        done
+    } > "$temporary"; then rm -f -- "$temporary"; return 1; fi
+    if ! mv -f -- "$temporary" "$state"; then rm -f -- "$temporary"; return 1; fi
+}
+
+checkpoint_artifact_valid() {
+    case "$1" in
+        packages) command -v curl >/dev/null && command -v socat >/dev/null ;;
+        kernel) sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null | grep -qx bbr ;;
+        nginx) command -v nginx >/dev/null ;;
+        certificates)
+            local domain base
+            if [ "${SSL_ENGINE_CHOICE:-1}" = 1 ]; then base=/etc/letsencrypt/live; else base=/etc/ssl/acme; fi
+            for domain in "${ALL_DOMAINS[@]}"; do
+                [ -f "$base/$domain/privkey.pem" ] && openssl x509 -checkend 0 -noout -in "$base/$domain/fullchain.pem" >/dev/null 2>&1 || return 1
+            done
+            ;;
+        decoy) [ -f /var/www/html/index.html ] ;;
+        nginx_config) [ -f /etc/nginx/stream.d/00-stream.conf ] && nginx -t >/dev/null 2>&1 && systemctl is-active --quiet nginx ;;
+        panel) { [ -f /etc/x-ui/x-ui.db ] || [ -f /usr/local/x-ui/bin/x-ui.db ]; } && systemctl is-active --quiet x-ui ;;
+        adguard) [ -f /opt/AdGuardHome/AdGuardHome.yaml ] && systemctl is-active --quiet AdGuardHome ;;
+        awg) [ -f /etc/amnezia/amneziawg/awg0.conf ] && command -v awg >/dev/null && systemctl is-active --quiet awg-quick@awg0 ;;
+        *) return 1 ;;
+    esac
 }
 
 should_skip_step() {
-    local step_num="$1"
-    local step_title="${STEP_NAMES[$step_num]:-${2:-Шаг $step_num}}"
-    if [ "${RESUME_STEP:-1}" -gt "$step_num" ]; then
-        # Проверка фактического наличия артефактов шага на диске
-        local state_valid=1
-        local missing_reason=""
+    local id number signature
+    id=$(checkpoint_id "$1")
+    [ "$id" != verify ] && [ -n "$id" ] || return 1
+    number="${STEP_NUMBERS[$id]:-0}"
+    [ "${RESUME_STEP:-1}" -gt "$number" ] || return 1
+    load_checkpoint_state
+    signature=$(checkpoint_signature "$id") || return 1
+    [ "${CHECKPOINT_HASHES[$id]:-}" = "$signature" ] || return 1
+    checkpoint_artifact_valid "$id" || return 1
+    ok "${INSTALLATION_TITLES[$id]}: verified checkpoint"
+    STEP_DURATIONS[$number]=0
+    return 0
+}
 
-        case "$step_num" in
-            1)
-                if ! command -v curl >/dev/null 2>&1 || ! command -v socat >/dev/null 2>&1; then
-                    state_valid=0
-                    missing_reason="базовые утилиты (curl/socat) не найдены"
-                fi
-                ;;
-            2)
-                if ! sysctl net.ipv4.tcp_congestion_control 2>/dev/null | grep -q "bbr"; then
-                    state_valid=0
-                    missing_reason="TCP BBR не активен в sysctl"
-                fi
-                ;;
-            3)
-                if ! command -v nginx >/dev/null 2>&1; then
-                    state_valid=0
-                    missing_reason="бинарный файл nginx не найден"
-                fi
-                ;;
-            4)
-                local cert_file=""
-                if [ "${SSL_ENGINE_CHOICE:-1}" = "1" ]; then
-                    cert_file="/etc/letsencrypt/live/${PRIMARY_DOMAIN:-}/fullchain.pem"
-                else
-                    cert_file="/etc/ssl/acme/${PRIMARY_DOMAIN:-}/fullchain.pem"
-                fi
-                if [ -z "${PRIMARY_DOMAIN:-}" ] || [ ! -f "$cert_file" ]; then
-                    state_valid=0
-                    missing_reason="SSL-сертификат для $PRIMARY_DOMAIN отсутствует ($cert_file)"
-                fi
-                ;;
-            5)
-                if [ ! -f "/var/www/html/index.html" ]; then
-                    state_valid=0
-                    missing_reason="веб-маска /var/www/html/index.html не найдена"
-                fi
-                ;;
-            6)
-                if [ ! -f "/etc/nginx/stream.d/00-stream.conf" ] || [ ! -f "/etc/nginx/conf.d/01-main.conf" ] || [ ! -f "/etc/nginx/nginx.conf" ]; then
-                    state_valid=0
-                    missing_reason="конфигурации Nginx (00-stream.conf / 01-main.conf) отсутствуют"
-                fi
-                ;;
-            7)
-                if [ ! -f "/etc/x-ui/x-ui.db" ] && [ ! -f "/usr/local/x-ui/bin/x-ui.db" ]; then
-                    state_valid=0
-                    missing_reason="база данных 3X-UI x-ui.db не найдена"
-                fi
-                ;;
-            8)
-                if [[ "${ENABLE_AGH,,}" == "y" || "${ENABLE_AGH:-}" == "1" ]]; then
-                    if [ ! -f "/opt/AdGuardHome/AdGuardHome.yaml" ]; then
-                        state_valid=0
-                        missing_reason="конфигурация AdGuardHome.yaml не найдена"
-                    fi
-                fi
-                ;;
-        esac
-
-        if [ "$state_valid" -eq 1 ]; then
-            print_step_bar "$step_num" "$TOTAL_STEPS" "$step_title [Уже выполнен ранее]"
-            ok "$step_title — пропущено (файлы и сервисы проверены на диске)"
-            STEP_DURATIONS[$step_num]=0
-            return 0
-        else
-            warn "Шаг $step_num ($step_title) был отмечен завершенным, но $missing_reason."
-            log "Повторное выполнение шага $step_num для восстановления целостности..."
-            return 1
-        fi
-    fi
-    return 1
+invalidate_checkpoint() {
+    # A changed prerequisite invalidates downstream configuration too.
+    RESUME_STEP=1
 }
 
 step_begin() {
-    local step_num="$1"
-    local step_title="${STEP_NAMES[$step_num]:-$2}"
+    local id number
+    id=$(checkpoint_id "$1")
+    number="${STEP_NUMBERS[$id]}"
     CURRENT_STEP_START=$(date +%s)
-    print_step_bar "$step_num" "$TOTAL_STEPS" "$step_title"
+    print_step_bar "$number" "$TOTAL_STEPS" "${INSTALLATION_TITLES[$id]}"
 }
 
 step_finish() {
-    local step_num="$1"
-    local duration=0
-    local is_bg=0
-    local bg_dur_file="/tmp/setup_mask_bg_duration_${step_num}.time"
-    if [ -f "$bg_dur_file" ]; then
-        duration=$(cat "$bg_dur_file" 2>/dev/null | tr -d '[:space:]' || echo 0)
-        if [[ "$duration" =~ ^[0-9]+$ ]] && [ "$duration" -gt 0 ]; then
-            is_bg=1
-            STEP_BG_FLAGS[$step_num]=1
-        fi
-        rm -f "$bg_dur_file" 2>/dev/null || true
-    fi
-
-    if [ "$is_bg" -eq 0 ]; then
-        local step_end
-        step_end=$(date +%s)
-        duration=$(( step_end - CURRENT_STEP_START ))
-        [ "$duration" -lt 0 ] && duration=0
-    fi
-
-    STEP_DURATIONS[$step_num]="$duration"
-    local dur_str
-    dur_str=$(format_duration "$duration")
-    if [ "$is_bg" -eq 1 ]; then
-        ok "Шаг $step_num из $TOTAL_STEPS: ${STEP_NAMES[$step_num]} [ГОТОВО] (в фоне за $dur_str, сэкономлено: 100%)"
-    else
-        ok "Шаг $step_num из $TOTAL_STEPS: ${STEP_NAMES[$step_num]} [ГОТОВО] (время: $dur_str)"
-    fi
-    record_step_completed "$step_num"
+    local id number duration
+    id=$(checkpoint_id "$1")
+    number="${STEP_NUMBERS[$id]}"
+    duration=$(( $(date +%s) - CURRENT_STEP_START ))
+    STEP_DURATIONS[$number]=$duration
+    ok "${INSTALLATION_TITLES[$id]} [OK] ($(format_duration "$duration"))"
+    record_step_completed "$id"
 }
-
-

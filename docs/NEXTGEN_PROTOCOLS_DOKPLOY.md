@@ -19,7 +19,7 @@
 6. [Протокол 4: Server-Side Zapret (nfqws с iptables connbytes 1:6)](#6-протокол-4-server-side-zapret)
 7. [Протокол 5: Wstunnel поверх Dokploy Traefik (WebSocket / 443)](#7-протокол-5-wstunnel-поверх-dokploy-traefik)
 8. [Развертывание в панели Dokploy (Пошаговая инструкция)](#8-развертывание-в-панели-dokploy)
-9. [Управление через скрипт `manage_nextgen.sh`](#9-управление-через-скрипт-manage_nextgensh)
+9. [Управление через скрипт `manage-services.sh`](#9-управление-через-скрипт-manage-servicessh)
 10. [Настройка клиентских приложений](#10-настройка-клиентских-приложений)
 
 ---
@@ -197,26 +197,26 @@ Traefik самостоятельно выпускает SSL для `wstunnel.you
 
 ---
 
-## 9. Управление через скрипт `manage_nextgen.sh`
+## 9. Управление через скрипт `manage-services.sh`
 
 В репозитории предоставлена утилита быстрого управления:
 
 ```bash
 # Проверка статуса контейнеров, сетей и портов
-./manage_nextgen.sh status
+./manage-services.sh status
 
 # Запуск всех сервисов (автоматически определяет Dokploy)
-./manage_nextgen.sh up
+./manage-services.sh up
 
 # Вывод клиентских конфигураций и ссылок
-./manage_nextgen.sh clients
+./manage-services.sh clients
 
 # Просмотр логов конкретного сервиса
-./manage_nextgen.sh logs shadow-tls
-./manage_nextgen.sh logs wstunnel
+./manage-services.sh logs shadow-tls
+./manage-services.sh logs wstunnel
 
 # Экспорт стека для Dokploy
-./manage_nextgen.sh dokploy-export
+./manage-services.sh dokploy-export
 ```
 
 ---
@@ -224,7 +224,7 @@ Traefik самостоятельно выпускает SSL для `wstunnel.you
 ## 10. Настройка клиентских приложений
 
 ### 1. Sing-box 1.14+ / Happ Proxy (MASQUE & ShadowTLS)
-Выполните команду `./manage_nextgen.sh clients` для получения персонального JSON-блока `outbounds`. Скопируйте его в профиль клиента.
+Выполните команду `./manage-services.sh clients` для получения персонального JSON-блока `outbounds`. Скопируйте его в профиль клиента.
 
 ### 2. Подключение WireGuard / AmneziaWG через Wstunnel
 На компьютере или роутере запустите wstunnel клиент:

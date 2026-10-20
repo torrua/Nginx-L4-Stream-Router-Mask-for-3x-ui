@@ -9,7 +9,7 @@
 [Инструкция для новичков](docs/BEGINNER_GUIDE.md) • [Техническая архитектура](docs/ARCHITECTURE.md) • [Бэклог задач (РФ)](docs/BACKLOG.md) • [Быстрый старт](#-быстрый-старт-установка-в-1-команду)
 
 [![CI](https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/actions/workflows/ci.yml/badge.svg)](https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/actions/workflows/ci.yml)
-[![Версия](https://img.shields.io/badge/версия-v8.2.2-blue)](https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui)
+[![Версия](https://img.shields.io/badge/версия-v9.0.0-blue)](https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui)
 [![ОС](https://img.shields.io/badge/ОС-Ubuntu%20%7C%20Debian-informational)](docs/BEGINNER_GUIDE.md#1-сервер-vps)
 [![Лицензия](https://img.shields.io/badge/лицензия-MIT-success)](LICENSE)
 
@@ -60,16 +60,31 @@
 
 | Руководство | Описание |
 | :--- | :--- |
-| 🚀 **[Инструкция для новичков](docs/BEGINNER_GUIDE.md)** | Пошаговый запуск с нуля: аренда VPS и домена, укрепление ОС (`secure-vps.sh`), настройка Nginx (`setup_mask.sh`) и подключение устройств. |
+| 🚀 **[Инструкция для новичков](docs/BEGINNER_GUIDE.md)** | Пошаговый запуск с нуля: аренда VPS и домена, укрепление ОС (`prepare-server.sh`), настройка Nginx (`setup.sh`) и подключение устройств. |
 | ⚙️ **[Техническое описание архитектуры](docs/ARCHITECTURE.md)** | Полная инженерная документация: схема Nginx L4 Stream, ручная настройка инбаундов 3X-UI, правила UFW от сканирования, Anti-Loop порт 9443, тюнинг буферов HTTP/2 xHTTP, диагностика (Health Check) и бэкапы. |
 | 🛡️ **[Протоколы следующего поколения & Dokploy](docs/NEXTGEN_PROTOCOLS_DOKPLOY.md)** | Развертывание MASQUE, ShadowTLS v4, NaïveProxy, Zapret и Wstunnel через Docker Compose с нулевым конфликтом с Dokploy Traefik на портах 80/443. |
-| 🎛️ **[Автонастройка 3X-UI (`configure_3xui.sh`)](#-ручная-пошаговая-установка-для-экспертов)** | Скрипт, который сам создаёт подключения в панели, генерирует клиентские ссылки `:443` через `externalProxy`, настраивает Cloudflare WARP, задает часовой пояс, ежемесячный сброс трафика, защиту от SMTP-спама (порт 25) и блокировку SSRF к локальным службам VPS. |
+| 🎛️ **[Автонастройка 3X-UI (`configure-panel.sh`)](#-ручная-пошаговая-установка-для-экспертов)** | Скрипт, который сам создаёт подключения в панели, генерирует клиентские ссылки `:443` через `externalProxy`, настраивает Cloudflare WARP, задает часовой пояс, ежемесячный сброс трафика, защиту от SMTP-спама (порт 25) и блокировку SSRF к локальным службам VPS. |
 | ✍️ **[Редакционная политика](docs/EDITORIAL_POLICY.md)** | Стандарт коммуникации проекта: Tone of Voice, словарь понятных терминов для новичков, запрет пафоса и псевдомаркетинга. |
-| 📝 **[История версий и Release Notes](docs/RELEASE_NOTES_v8.2.2.md)** | Подробные отчеты о релизах: [v8.2.2](docs/RELEASE_NOTES_v8.2.2.md) (Stealth Paths & Tokens Randomization), [v8.2.1](docs/RELEASE_NOTES_v8.2.1.md) (Stability & UX Polish), [v8.2.0](docs/RELEASE_NOTES_v8.2.0.md) (Next-Gen & Extreme Stealth Suite), [v8.1.0](docs/RELEASE_NOTES_v8.1.0.md), [v8.0.2](docs/RELEASE_NOTES_v8.0.2.md), [v8.0.1](docs/RELEASE_NOTES_v8.0.1.md), [v8.0.0](docs/RELEASE_NOTES_v8.0.0.md). |
+| 📝 **[История версий и Release Notes](docs/RELEASE_NOTES_v9.0.0.md)** | Подробные отчеты о релизах: [v9.0.0](docs/RELEASE_NOTES_v9.0.0.md) (Unified Engine & Declarative Lifecycle), [v8.2.2](docs/RELEASE_NOTES_v8.2.2.md) (Случайные пути и сохранение действующих настроек), [v8.2.1](docs/RELEASE_NOTES_v8.2.1.md) (Stability & UX Polish), [v8.2.0](docs/RELEASE_NOTES_v8.2.0.md) (Next-Gen & Extreme Stealth Suite), [v8.1.0](docs/RELEASE_NOTES_v8.1.0.md), [v8.0.2](docs/RELEASE_NOTES_v8.0.2.md), [v8.0.1](docs/RELEASE_NOTES_v8.0.1.md), [v8.0.0](docs/RELEASE_NOTES_v8.0.0.md). |
 
 ---
 
 ## 🚀 Быстрый старт (Установка в 1 команду)
+
+### Скрипты и конфигурация
+
+| Файл | Назначение |
+| :--- | :--- |
+| [`install.sh`](install.sh) | Основной установщик: запуск Express или пошаговой настройки. |
+| [`setup.sh`](setup.sh) | Пошаговая настройка сервера, диагностика и продолжение установки. |
+| [`configure-panel.sh`](configure-panel.sh) | Настройка подключений и параметров панели. |
+| [`maintain.sh`](maintain.sh) | Проверка, восстановление настроек и откат к резервной копии. |
+| [`prepare-server.sh`](prepare-server.sh) | Первичная подготовка ОС, SSH и файрвола. |
+| [`manage-services.sh`](manage-services.sh) | Управление дополнительными сервисами через Docker Compose. |
+| [`src/awg/manage-clients.sh`](src/awg/manage-clients.sh) | Управление клиентами; реализация — `manage_clients.py` рядом с лаунчером. |
+| [`server-setup.env.example`](server-setup.env.example) | Шаблон основного конфига `server-setup.env`. |
+
+Старые имена скриптов работают как переходные обёртки. Ранее сохранённые `setup_mask.env` также распознаются автоматически; вручную переносить параметры не требуется.
 
 ### Подготовка: VPS и домен (DNS-записи)
 1. Арендуйте виртуальный сервер (VPS) с **Ubuntu 22.04 / 24.04** или **Debian 11 / 12**.
@@ -77,6 +92,8 @@
    * `@` (или ваш основной поддомен, например `vpn.domain.com`) → для веб-маскировки, панели и VLESS xHTTP.
    * `cdn` (или поддомен `cdn.domain.com` / `*.domain.com`) → **обязательно** для VLESS REALITY Steal-Oneself (маскировка под свой поддомен).
    *(Если используете Cloudflare: обязательно режим **DNS Only / Серое облако**).*
+
+Подробно: [порядок установки, ошибки и возобновление](docs/INSTALLATION_FLOW.md).
 
 ### Бесшовный интерактивный запуск (`install.sh`)
 Подключитесь к серверу по SSH под пользователем `root` и запустите единый мастер:
@@ -87,10 +104,10 @@ curl -sSL "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-
 
 > **Что произойдет автоматически:**
 > 1. **Интуитивный CLI-интерфейс:** выберите **Express Режим** (всего 2 вопроса: домен и email) или **Expert Режим** (с выбором префикса сервера, логина/пароля панели и детальной настройкой портов).
-> 2. **Параллельная фоновая подготовка:** пока вы вводите параметры, в фоне без пауз устанавливаются Nginx mainline, 3X-UI и сетевые компоненты ядра ОС.
+> 2. **Проверка плана:** параметры и порты проверяются до изменений системы; установка начинается после подтверждения состава и порядка этапов.
 > 3. **Укрепление ОС и изоляция:** включается **TCP BBR**, настраивается фаервол UFW, отключается IPv6 (чтобы трафик не уходил мимо VPN).
 > 4. **Развертывание стека и автосинхронизация:** выпускаются SSL-сертификаты Let's Encrypt, разворачивается сайт-маскировка, создаются протоколы с префиксом подключений `<Префикс> (<Метод>)` (например: `Server (VLESS Steal-Oneself)`), а клиенты автоматически синхронизируются с вкладкой «Клиенты» в 3X-UI.
-> 5. **Итоговый дашборд:** на экран выводятся персональная ссылка на защищенную панель, логин и пароль администратора, статус изоляции портов (данные надёжно сохраняются в `/root/vpn_credentials.txt` и `setup_mask.env` с правами 600).
+> 5. **Итоговый дашборд:** на экран выводятся персональная ссылка на защищенную панель, логин и пароль администратора, статус изоляции портов (данные надёжно сохраняются в `/root/vpn_credentials.txt` и `server-setup.env` с правами 600).
 
 <details>
 <summary><b>🔧 Ручная пошаговая установка (для экспертов)</b></summary>
@@ -99,15 +116,15 @@ curl -sSL "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-
 
 1. **Защита ОС и установка 3X-UI:**
    ```bash
-   curl -sSLO https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/secure-vps.sh && sudo bash secure-vps.sh
+   curl -sSLO https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/prepare-server.sh && sudo bash prepare-server.sh
    ```
 2. **Настройка Nginx, SSL и SNI-маскировки:**
    ```bash
-   curl -sSLO https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/setup_mask.sh && sudo bash setup_mask.sh
+   curl -sSLO https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/setup.sh && sudo bash setup.sh
    ```
 3. **Автосоздание входящих подключений (Inbounds):**
    ```bash
-   curl -sSL https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/configure_3xui.sh | sudo bash
+   curl -sSL https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/configure-panel.sh | sudo bash
    ```
 </details>
 
@@ -142,7 +159,7 @@ curl -sSL "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-
 
 ## 🛠️ Автоматизация, отказоустойчивость и CLI для сисадминов
 
-Скрипт `setup_mask.sh` оснащён встроенной системой надёжности и автоматизации:
+Скрипт `setup.sh` оснащён встроенной системой надёжности и автоматизации:
 
 ### 🩺 Экспресс-диагностика (`--check` / `--doctor`)
 Быстрая проверка состояния сервера за 2 секунды:
@@ -155,14 +172,13 @@ curl -sSL "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-
 Все ключевые операции (установка пакетов, BBR, выпуск SSL, запуск Nginx, ядро 3X-UI) защищены перехватом ошибок в реальном времени:
 * При сбое операция не прерывает скрипт аварийно: выводится полный лог ошибки и интерактивное меню:
   * **`[1] Повторить попытку (Retry)`** *(по умолчанию)* — исправьте причину (например, DNS A-запись или открытый порт) и продолжите без перезапуска.
-  * **`[2] Пропустить этот шаг (Skip)`** — пропустить текущее действие.
   * **`[3] Прервать установку (Abort)`** — безопасный выход с сохранением состояния.
 
 ### 📍 Система контрольных точек и возобновления
-* Скрипт сохраняет номер успешно завершённого этапа с валидацией фактических файлов на диске. При повторном запуске после сбоя или обрыва связи предлагается выбор:
+* Скрипт сохраняет имена завершённых этапов и подписи параметров в файле `<конфиг>.state`; перед пропуском проверяется фактический результат. При повторном запуске после сбоя или обрыва связи предлагается выбор:
   * `[1] Продолжить установку с шага N` (Enter — опросник пропускается, настройки берутся из сохранённого `.env`)
   * `[2] Начать заново (с шага 1)`
-* При штатном завершении контрольная точка автоматически сбрасывается в `0`.
+* При штатном завершении отметка незавершённой установки сбрасывается; итоговая проверка сервисов выполняется при каждом запуске.
 
 ### ⏱️ Хронометраж этапов и экспресс-проверка служб
 В финале скрипта запускается автоматическая экспресс-проверка всех служб и выводится детальный хронометраж каждого из этапов установки.
@@ -170,30 +186,30 @@ curl -sSL "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-
 ### Ключи командной строки:
 ```bash
 # Интерактивный запуск с мастером настройки (b — назад, экран проверки)
-sudo ./setup_mask.sh
+sudo ./setup.sh
 
 # Экспресс-диагностика всех сервисов, портов и SSL за 2 секунды
-sudo ./setup_mask.sh --check
+sudo ./setup.sh --check
 
 # Выбор компонентов установки (только веб-стек или только AmneziaWG)
-sudo ./setup_mask.sh --web-stack
-sudo ./setup_mask.sh --awg-standalone
-sudo ./setup_mask.sh --awg-host vpn.domain.com
+sudo ./setup.sh --web-stack
+sudo ./setup.sh --awg-standalone
+sudo ./setup.sh --awg-host vpn.domain.com
 
 # Экспертный режим (компактный мастер без подробных подсказок к протоколам)
-sudo ./setup_mask.sh --expert
+sudo ./setup.sh --expert
 
 # Возобновление прерванной установки с последнего шага
-sudo ./setup_mask.sh --resume
+sudo ./setup.sh --resume
 
 # Принудительный старт с указанного шага (1-12) в неинтерактивном режиме
-sudo ./setup_mask.sh --step 4 -y
+sudo ./setup.sh --step 4 -y
 
 # Режим отладки (вывод всех команд в консоль без спиннеров)
-sudo ./setup_mask.sh --debug
+sudo ./setup.sh --debug
 
 # Развёртывание через файл конфигурации (.env) / CI / Ansible
-sudo ./setup_mask.sh -c setup_mask.env -y --force
+sudo ./setup.sh -c server-setup.env -y --force
 ```
 
 ---

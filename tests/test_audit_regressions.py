@@ -34,7 +34,7 @@ def run_shell(code: str, env: dict | None = None) -> subprocess.CompletedProcess
         full_env.update(env)
     return subprocess.run(
         [str(BASH), "-s"],
-        input="export PATH=/usr/bin:/bin:$PATH\n" + code,
+        input="export PATH=/usr/bin:/bin:$PATH\nsource src/common/config.sh\n" + code,
         cwd=ROOT,
         text=True,
         encoding="utf-8",
@@ -47,11 +47,11 @@ def run_shell(code: str, env: dict | None = None) -> subprocess.CompletedProcess
 class TestAmneziaWG3XUISettings(unittest.TestCase):
     def test_awg_rekey_reject_no_overlap(self):
         """Verify that max(rekeyAfterTime) < min(rejectAfterTime) in 3X-UI template."""
-        conf_sh = (ROOT / "configure_3xui.sh").read_text(encoding="utf-8")
+        conf_sh = (ROOT / "configure-panel.sh").read_text(encoding="utf-8")
         m_rekey = re.search(r'"rekeyAfterTime":\s*"(\d+)-(\d+)"', conf_sh)
         m_reject = re.search(r'"rejectAfterTime":\s*"(\d+)-(\d+)"', conf_sh)
-        self.assertIsNotNone(m_rekey, "rekeyAfterTime must be present in configure_3xui.sh")
-        self.assertIsNotNone(m_reject, "rejectAfterTime must be present in configure_3xui.sh")
+        self.assertIsNotNone(m_rekey, "rekeyAfterTime must be present in configure-panel.sh")
+        self.assertIsNotNone(m_reject, "rejectAfterTime must be present in configure-panel.sh")
         max_rekey = int(m_rekey.group(2))
         min_reject = int(m_reject.group(1))
         self.assertLess(max_rekey, min_reject, f"max(rekeyAfterTime) [{max_rekey}] must be strictly less than min(rejectAfterTime) [{min_reject}]")
@@ -63,16 +63,16 @@ class TestAmneziaWG3XUISettings(unittest.TestCase):
         self.assertIn('"cpa"', inbounds_py, "cpa must be preserved in smart_reconcile_inbound")
 
     def test_manage_amneziawg_no_random_hpk_fallback(self):
-        """Verify that manage_amneziawg.py does not invent random HPK for clients when server lacks HPK."""
-        mgr_py = (ROOT / "src/awg/manage_amneziawg.py").read_text(encoding="utf-8")
+        """Verify that manage_clients.py does not invent random HPK for clients when server lacks HPK."""
+        mgr_py = (ROOT / "src/awg/manage_clients.py").read_text(encoding="utf-8")
         self.assertNotIn("HEADER_PROTECTION_KEY = base64.b64encode(secrets.token_bytes(32))", mgr_py,
-                         "manage_amneziawg.py must not generate random fallback HPK when server lacks HPK")
+                         "manage_clients.py must not generate random fallback HPK when server lacks HPK")
 
     def test_awg_v3_template_parameters_consistency(self):
-        """Verify configure_3xui.sh and update_repair.sh have consistent AWG v3 parameters."""
-        conf_sh = (ROOT / "configure_3xui.sh").read_text(encoding="utf-8")
-        upd_sh = (ROOT / "update_repair.sh").read_text(encoding="utf-8")
-        for text, name in [(conf_sh, "configure_3xui.sh"), (upd_sh, "update_repair.sh")]:
+        """Verify configure-panel.sh and maintain.sh have consistent AWG v3 parameters."""
+        conf_sh = (ROOT / "configure-panel.sh").read_text(encoding="utf-8")
+        upd_sh = (ROOT / "maintain.sh").read_text(encoding="utf-8")
+        for text, name in [(conf_sh, "configure-panel.sh"), (upd_sh, "maintain.sh")]:
             self.assertIn('"jc": 4', text, f"AWG v3 in {name} must have jc=4")
             self.assertIn('"jmin": 40', text, f"AWG v3 in {name} must have jmin=40")
             self.assertIn('"jmax": 70', text, f"AWG v3 in {name} must have jmax=70")
@@ -103,34 +103,19 @@ class TestAmneziaWG3XUISettings(unittest.TestCase):
         self.assertIn("RandomTrailers = on", setup_sh, "awg0.conf blueprint must contain RandomTrailers = on")
         self.assertIn("DisableCookies = off", setup_sh, "awg0.conf blueprint must contain DisableCookies = off")
 
-    def test_awg_event_driven_prewarm_architecture(self):
-        """Verify event-driven AWG pre-warm: definition before wizard, opt-in triggers, and sync."""
-        entrypoint_sh = (ROOT / "src/entrypoints/setup_mask.main.sh").read_text(encoding="utf-8")
-        idx_awg_include = entrypoint_sh.find('# @include "awg/setup.sh"')
-        idx_wizard_include = entrypoint_sh.find('# @include "tui/wizard.sh"')
-        self.assertNotEqual(idx_awg_include, -1, "awg/setup.sh must be included in setup_mask.main.sh")
-        self.assertNotEqual(idx_wizard_include, -1, "tui/wizard.sh must be included in setup_mask.main.sh")
-        self.assertLess(idx_awg_include, idx_wizard_include,
-                        "awg/setup.sh must be included BEFORE tui/wizard.sh for event-driven pre-warm")
-
-        setup_sh = (ROOT / "src/awg/setup.sh").read_text(encoding="utf-8")
-        self.assertIn("start_amneziawg_preinstall_bg()", setup_sh)
-        self.assertIn("sync_amneziawg_preinstall()", setup_sh)
-        self.assertIn("install_amneziawg_packages_task()", setup_sh)
-
-        wizard_sh = (ROOT / "src/tui/wizard.sh").read_text(encoding="utf-8")
-        self.assertIn("start_amneziawg_preinstall_bg", wizard_sh)
-
-        compiled_sh = (ROOT / "setup_mask.sh").read_text(encoding="utf-8")
-        def_pos = compiled_sh.find("start_amneziawg_preinstall_bg()")
-        self.assertNotEqual(def_pos, -1, "setup_mask.sh must contain start_amneziawg_preinstall_bg definition")
-        trigger_count = compiled_sh.count("start_amneziawg_preinstall_bg")
-        self.assertGreaterEqual(trigger_count, 4,
-                                "setup_mask.sh must have multiple event-driven prewarm trigger points")
+    def test_awg_installation_runs_after_configuration(self):
+        """AWG installation belongs to the confirmed plan, never to interview events."""
+        wizard = (ROOT / "src/tui/wizard.sh").read_text(encoding="utf-8")
+        self.assertFalse("start_amneziawg_preinstall_bg" in wizard)
+        engine = (ROOT / "src/installer/engine.sh").read_text(encoding="utf-8")
+        self.assertIn('installer/awg.sh', engine)
+        awg = (ROOT / "src/installer/awg.sh").read_text(encoding="utf-8")
+        self.assertIn("ensure_amneziawg_installed", awg)
+        self.assertIn("deploy_amneziawg_backend", awg)
 
     def test_awg_i1_dns_template_support(self):
         """Verify that DNS_I1_TEMPLATE is defined and matches the icloud.com 44-byte DNS response."""
-        mgr_py = (ROOT / "src/awg/manage_amneziawg.py").read_text(encoding="utf-8")
+        mgr_py = (ROOT / "src/awg/manage_clients.py").read_text(encoding="utf-8")
         self.assertIn("DNS_I1_TEMPLATE = ", mgr_py)
         expected_template = "<r 2><b 0x858000010001000000000669636c6f756403636f6d0000010001c00c000100010000105a00044d583737>"
         self.assertIn(expected_template, mgr_py)
@@ -146,9 +131,9 @@ class TestAmneziaWG3XUISettings(unittest.TestCase):
         import manage_amneziawg as mgr
 
         # 1. Verify CLI argument support in source code
-        mgr_src = (ROOT / "src/awg/manage_amneziawg.py").read_text(encoding="utf-8")
+        mgr_src = (ROOT / "src/awg/manage_clients.py").read_text(encoding="utf-8")
         for flag in ["--preset=", "--mtu=", "--jc=", "--jmin=", "--jmax=", "--keepalive=", "--allowed-ips="]:
-            self.assertIn(flag, mgr_src, f"CLI flag {flag} must be supported in manage_amneziawg.py")
+            self.assertIn(flag, mgr_src, f"CLI flag {flag} must be supported in manage_clients.py")
 
         # 2. Verify encode_amnezia_vpnuri_31 preserves asymmetric client parameters
         conf_sample = """[Interface]
@@ -277,7 +262,7 @@ Endpoint = 198.51.100.1:443
 
             # 1. JSON mode (default)
             res_json = subprocess.run(
-                [sys.executable, str(ROOT / "src/awg/manage_amneziawg.py"), "uri", "client-cli"],
+                [sys.executable, str(ROOT / "src/awg/manage_clients.py"), "uri", "client-cli"],
                 env=env, capture_output=True, text=True, check=True
             )
             data = json.loads(res_json.stdout)
@@ -286,14 +271,14 @@ Endpoint = 198.51.100.1:443
 
             # 2. Raw mode (--raw)
             res_raw = subprocess.run(
-                [sys.executable, str(ROOT / "src/awg/manage_amneziawg.py"), "uri", "client-cli", "--raw"],
+                [sys.executable, str(ROOT / "src/awg/manage_clients.py"), "uri", "client-cli", "--raw"],
                 env=env, capture_output=True, text=True, check=True
             )
             self.assertEqual(res_raw.stdout.strip(), expected_uri)
 
             # 3. QR code with --raw mode
             res_qr_raw = subprocess.run(
-                [sys.executable, str(ROOT / "src/awg/manage_amneziawg.py"), "qr", "client-cli", "--raw"],
+                [sys.executable, str(ROOT / "src/awg/manage_clients.py"), "qr", "client-cli", "--raw"],
                 env=env, capture_output=True, text=True, check=True
             )
             self.assertEqual(res_qr_raw.stdout.strip(), expected_uri)
@@ -438,14 +423,14 @@ class TestRoutingCustomConstraints(unittest.TestCase):
         conn.commit()
         conn.close()
 
-        raw = (ROOT / "configure_3xui.sh").read_text(encoding="utf-8").split("<< 'EOF_PYTHON_CONFIG'", 1)[1].split("\n", 1)[1]
+        raw = (ROOT / "configure-panel.sh").read_text(encoding="utf-8").split("<< 'EOF_PYTHON_CONFIG'", 1)[1].split("\n", 1)[1]
         code = raw.split("conn.commit()", 1)[0] + "conn.commit()\n"
         env = dict(DB_PATH=str(db), PRIMARY_DOMAIN="audit.example", DRY_RUN="0",
                    ENABLE_STEAL="n", ENABLE_CLASSIC="n", ENABLE_HY2="n",
                    ENABLE_AWG_V3="n", ENABLE_AWG_V2="n", ENABLE_WARP="y")
         ns = {}
         with patch.dict(os.environ, env, clear=True), patch("subprocess.run", return_value=types.SimpleNamespace(returncode=1, stdout="")):
-            exec(compile(code, "configure_3xui.sh", "exec"), ns)
+            exec(compile(code, "configure-panel.sh", "exec"), ns)
         ns["conn"].close()
 
         conn = sqlite3.connect(db)
@@ -977,10 +962,10 @@ class TestExtraProtocolsInbounds(unittest.TestCase):
         self.assertIn("ENABLE_HOST_SECURITY", env_content)
         self.assertIn("ENABLE_FAIL2BAN", env_content)
 
-        setup_main = Path("src/entrypoints/setup_mask.main.sh").read_text(encoding="utf-8")
+        setup_main = Path("src/entrypoints/setup.main.sh").read_text(encoding="utf-8")
         self.assertIn('# @include "system/security.sh"', setup_main)
-        self.assertIn("apply_ssh_configuration", setup_main)
-        self.assertIn("apply_fail2ban_configuration", setup_main)
+        self.assertIn("apply_ssh_configuration", (ROOT / "src/installer/engine.sh").read_text(encoding="utf-8"))
+        self.assertIn("apply_fail2ban_configuration", (ROOT / "src/installer/engine.sh").read_text(encoding="utf-8"))
 
     def test_ssh_dual_port_transition_and_keys(self):
         """Test dual-port sshd configuration, watcher deployment and key validation in isolated mock root."""
@@ -1142,7 +1127,7 @@ echo "AUTO_A=$PROTO_A AUTO_B=$PROTO_B"
     def test_modular_web_stack_and_standalone_awg(self):
         """Verify modular architecture: optional web stack (Nginx+3X-UI) and standalone AWG."""
         # 1. Environment and example config
-        env_ex = (ROOT / "setup_mask.env.example").read_text(encoding="utf-8")
+        env_ex = (ROOT / "server-setup.env.example").read_text(encoding="utf-8")
         self.assertIn("ENABLE_WEB_STACK", env_ex)
         self.assertIn("AWG_SERVER_HOST", env_ex)
 
@@ -1168,21 +1153,16 @@ echo "AUTO_A=$PROTO_A AUTO_B=$PROTO_B"
         self.assertIn("Endpoint", wizard_sh)
         self.assertIn("AWG_SERVER_HOST", wizard_sh)
 
-        # 4. Preinstall conditions
-        preinstall_sh = (ROOT / "src/system/preinstall.sh").read_text(encoding="utf-8")
-        self.assertIn('is_true "${ENABLE_WEB_STACK:-y}"', preinstall_sh)
-
-        # 5. Compiled setup_mask.sh entrypoint flow
-        setup_main = (ROOT / "src/entrypoints/setup_mask.main.sh").read_text(encoding="utf-8")
-        self.assertIn('if is_true "${ENABLE_WEB_STACK:-y}"; then', setup_main)
-        self.assertIn("УСТАНОВКА АВТОНОМНОГО СЕРВЕРА AMNEZIAWG УСПЕШНО ЗАВЕРШЕНА", setup_main)
+        plan = (ROOT / "src/installer/plan.sh").read_text(encoding="utf-8")
+        self.assertIn('is_true "${ENABLE_WEB_STACK:-y}"', plan)
+        self.assertIn('INSTALLATION_PLAN+=(awg)', plan)
+        setup_main = (ROOT / "src/entrypoints/setup.main.sh").read_text(encoding="utf-8")
+        self.assertIn("run_installation", setup_main)
 
         # 6. AWG launcher exports SERVER_PUBLIC_HOST
         awg_setup = (ROOT / "src/awg/setup.sh").read_text(encoding="utf-8")
         self.assertIn("SERVER_PUBLIC_HOST", awg_setup)
 
-        steps_sh = (ROOT / "src/installer/steps.sh").read_text(encoding="utf-8")
-        self.assertIn('is_true "${ENABLE_WEB_STACK:-y}"', steps_sh)
 
     def test_get_wan_ip_uses_cache(self):
         """Verify get_wan_ip prefers cached /run/setup_mask_wan_ip or /tmp before calling curl."""
@@ -1328,11 +1308,11 @@ rm -f "$cache_file"
         self.assertEqual(clients[0].get("encryption"), "existing_enc_key", "Client in xHTTP must receive encryption key")
 
     def test_xhttp_templates_and_vlessenc_export_consistency(self):
-        """Verify configure_3xui.sh and update_repair.sh export UNIFIED_VLESS_ENKEY, xPaddingBytes 100-500, xmux, noSSEHeader, firefox."""
-        conf_sh = (ROOT / "configure_3xui.sh").read_text(encoding="utf-8")
-        upd_sh = (ROOT / "update_repair.sh").read_text(encoding="utf-8")
+        """Verify configure-panel.sh and maintain.sh export UNIFIED_VLESS_ENKEY, xPaddingBytes 100-500, xmux, noSSEHeader, firefox."""
+        conf_sh = (ROOT / "configure-panel.sh").read_text(encoding="utf-8")
+        upd_sh = (ROOT / "maintain.sh").read_text(encoding="utf-8")
 
-        for text, name in [(conf_sh, "configure_3xui.sh"), (upd_sh, "update_repair.sh")]:
+        for text, name in [(conf_sh, "configure-panel.sh"), (upd_sh, "maintain.sh")]:
             self.assertIn('"xPaddingBytes": "100-500"', text, f"xPaddingBytes default '100-500' must be in {name}")
             self.assertIn('"noSSEHeader": True', text, f"noSSEHeader: True must be in {name}")
             self.assertIn("UNIFIED_VLESS_ENKEY", text, f"UNIFIED_VLESS_ENKEY must be exported in {name}")
@@ -1341,16 +1321,16 @@ rm -f "$cache_file"
             self.assertIn('"maxConcurrency": "0"', text, f"xmux maxConcurrency: 0 must be in {name}")
             self.assertIn('"fingerprint": "firefox"', text, f"fingerprint: 'firefox' must be in {name}")
 
-        # Ensure configure_3xui.sh does not delete /run/3xui_unified_client.env
+        # Ensure configure-panel.sh does not delete /run/3xui_unified_client.env
         self.assertNotIn('rm -f "$c_env"', conf_sh.split('for c_env in "/run/3xui_unified_client.env"')[1][:200],
-                         "configure_3xui.sh must not delete /run/3xui_unified_client.env")
+                         "configure-panel.sh must not delete /run/3xui_unified_client.env")
 
     def test_nginx_stream_failover_backup_socket(self):
         """Verify Nginx Stream L4 reality_backend contains failover unix backup socket per docs/ARCHITECTURE.md#L114."""
         nginx_conf_sh = (ROOT / "src/nginx/config.sh").read_text(encoding="utf-8")
-        setup_mask_sh = (ROOT / "setup_mask.sh").read_text(encoding="utf-8")
+        setup_mask_sh = (ROOT / "setup.sh").read_text(encoding="utf-8")
 
-        for text, name in [(nginx_conf_sh, "src/nginx/config.sh"), (setup_mask_sh, "setup_mask.sh")]:
+        for text, name in [(nginx_conf_sh, "src/nginx/config.sh"), (setup_mask_sh, "setup.sh")]:
             m = re.search(r'upstream reality_backend_\$\{port\}\s*\{([\s\S]*?\n\s*\})', text)
             self.assertIsNotNone(m, f"upstream reality_backend_${{port}} must be defined in {name}")
             body = m.group(1)
@@ -1417,7 +1397,7 @@ rm -f "$cache_file"
         self.assertTrue(len(p) >= 16)
 
     def test_update_repair_python_reconcile_end_to_end(self):
-        """Verify that the embedded Python reconciliation script from update_repair.sh executes cleanly without NameError."""
+        """Verify that the embedded Python reconciliation script from maintain.sh executes cleanly without NameError."""
         import sys
         import tempfile
         import subprocess
@@ -1441,10 +1421,10 @@ rm -f "$cache_file"
             conn.commit()
             conn.close()
 
-            upd_text = (ROOT / "update_repair.sh").read_text(encoding="utf-8")
+            upd_text = (ROOT / "maintain.sh").read_text(encoding="utf-8")
             marker = "\"$PYTHON_CMD\" - << 'EOF_PYTHON_RECONCILE'"
             py_start = upd_text.find(marker)
-            self.assertNotEqual(py_start, -1, "Python reconcile block marker must exist in update_repair.sh")
+            self.assertNotEqual(py_start, -1, "Python reconcile block marker must exist in maintain.sh")
             py_code = upd_text[py_start + len(marker) + 1:]
             py_end = py_code.find("EOF_PYTHON_RECONCILE")
             self.assertNotEqual(py_end, -1, "EOF_PYTHON_RECONCILE must exist")
@@ -1456,13 +1436,13 @@ rm -f "$cache_file"
             env["DRY_RUN"] = "0"
 
             res = subprocess.run([sys.executable, "-"], input=py_code, env=env, capture_output=True, text=True, encoding="utf-8")
-            self.assertEqual(res.returncode, 0, f"update_repair.sh Python reconcile failed:\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}")
+            self.assertEqual(res.returncode, 0, f"maintain.sh Python reconcile failed:\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}")
         finally:
             if os.path.exists(temp_db):
                 os.unlink(temp_db)
 
     def test_configure_3xui_python_config_end_to_end(self):
-        """Verify that the embedded Python config script from configure_3xui.sh executes cleanly without NameError."""
+        """Verify that the embedded Python config script from configure-panel.sh executes cleanly without NameError."""
         import sys
         import tempfile
         import subprocess
@@ -1486,10 +1466,10 @@ rm -f "$cache_file"
             conn.commit()
             conn.close()
 
-            conf_text = (ROOT / "configure_3xui.sh").read_text(encoding="utf-8")
+            conf_text = (ROOT / "configure-panel.sh").read_text(encoding="utf-8")
             marker = "\"$PYTHON_CMD\" - << 'EOF_PYTHON_CONFIG'"
             py_start = conf_text.find(marker)
-            self.assertNotEqual(py_start, -1, "Python config block marker must exist in configure_3xui.sh")
+            self.assertNotEqual(py_start, -1, "Python config block marker must exist in configure-panel.sh")
             py_code = conf_text[py_start + len(marker) + 1:]
             py_end = py_code.find("EOF_PYTHON_CONFIG")
             self.assertNotEqual(py_end, -1, "EOF_PYTHON_CONFIG must exist")
@@ -1501,7 +1481,7 @@ rm -f "$cache_file"
             env["DRY_RUN"] = "0"
 
             res = subprocess.run([sys.executable, "-"], input=py_code, env=env, capture_output=True, text=True, encoding="utf-8")
-            self.assertEqual(res.returncode, 0, f"configure_3xui.sh Python config failed:\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}")
+            self.assertEqual(res.returncode, 0, f"configure-panel.sh Python config failed:\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}")
         finally:
             if os.path.exists(temp_db):
                 os.unlink(temp_db)
@@ -1512,9 +1492,9 @@ class TestBashScopeRegressions(unittest.TestCase):
     def test_no_illegal_local_outside_function(self):
         """Verify that known top-level variables do not use 'local' keyword outside function scope."""
         files_to_check = [
-            ROOT / "setup_mask.sh",
+            ROOT / "setup.sh",
             ROOT / "src" / "tui" / "wizard.sh",
-            ROOT / "src" / "entrypoints" / "setup_mask.main.sh",
+            ROOT / "src" / "entrypoints" / "setup.main.sh",
         ]
         for f in files_to_check:
             if not f.exists():
@@ -1523,7 +1503,7 @@ class TestBashScopeRegressions(unittest.TestCase):
             self.assertNotIn("local has_saved_config", content, f"'local has_saved_config' found in {f.name}")
             self.assertNotIn("local udp_stack_summary", content, f"'local udp_stack_summary' found in {f.name}")
 
-        setup_sh = (ROOT / "setup_mask.sh").read_text(encoding="utf-8")
+        setup_sh = (ROOT / "setup.sh").read_text(encoding="utf-8")
         # Ensure awg_p in step 3 standalone is not using local outside function
         m_step3_awg = re.search(r'deploy_amneziawg_backend\s+if command -v ufw[^;]*;\s*then\s+([^\n]+)', setup_sh)
         self.assertNotIn("local awg_p=", setup_sh.split("🎉 УСТАНОВКА АВТОНОМНОГО СЕРВЕРА AMNEZIAWG УСПЕШНО ЗАВЕРШЕНА")[0][-500:])
@@ -1582,7 +1562,7 @@ class TestBashScopeRegressions(unittest.TestCase):
             env["SUB_PATH"] = "sub"
             env["PYTHON_CMD"] = sys.executable
 
-            conf_script = (ROOT / "configure_3xui.sh").read_text(encoding="utf-8")
+            conf_script = (ROOT / "configure-panel.sh").read_text(encoding="utf-8")
             m = re.search(r"\$PYTHON_CMD\" - << 'EOF_PYTHON_CONFIG'\n(.*)\nEOF_PYTHON_CONFIG", conf_script, re.DOTALL)
             self.assertIsNotNone(m)
             py_code = m.group(1)
@@ -1608,6 +1588,7 @@ class TestBashScopeRegressions(unittest.TestCase):
         # 1. Defaults -> must generate random paths and tokens
         script_defaults = f"""
 set -e
+source "src/common/secrets.sh"
 source "src/system/env.sh"
 PRIMARY_DOMAIN="example.com"
 ENABLE_WSTUNNEL=1
@@ -1620,9 +1601,9 @@ echo "AGH_CLIENT_ID=$AGH_CLIENT_ID"
         res = run_shell(script_defaults)
         self.assertEqual(res.returncode, 0, f"Error: {res.stderr}")
         out = res.stdout
-        self.assertRegex(out, r"PANEL_PATH=/panel-[a-z0-9]{8}/")
-        self.assertRegex(out, r"WSTUNNEL_PREFIX=/ws-[a-z0-9]{8}/")
-        self.assertRegex(out, r"AGH_CLIENT_ID=client-[a-z0-9]{8}")
+        self.assertRegex(out, r"PANEL_PATH=/panel-[0-9a-f]{32}/")
+        self.assertRegex(out, r"WSTUNNEL_PREFIX=/ws-[0-9a-f]{32}/")
+        self.assertRegex(out, r"AGH_CLIENT_ID=client-[0-9a-f]{32}")
         self.assertNotIn("my-3x-panel", out)
         self.assertNotIn("/wstunnel/", out)
         self.assertNotIn("home-router", out)
@@ -1630,6 +1611,7 @@ echo "AGH_CLIENT_ID=$AGH_CLIENT_ID"
         # 2. Custom values -> must be strictly preserved
         script_custom = f"""
 set -e
+source "src/common/secrets.sh"
 source "src/system/env.sh"
 PRIMARY_DOMAIN="example.com"
 PANEL_PATH="custom-panel-path"

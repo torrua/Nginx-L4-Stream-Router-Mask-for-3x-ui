@@ -16,7 +16,7 @@ trap 'die "Скрипт аварийно прерван на строке $LINEN
 
 show_help() {
     cat << 'EOF_HELP'
-Использование: ./setup_mask.sh [ОПЦИИ]
+Использование: ./setup.sh [ОПЦИИ]
 
 Автоматизированный и интерактивный установщик L4/L7 Nginx Router + 3X-UI
 
@@ -34,11 +34,14 @@ show_help() {
   --naive / --no-naive         Включить / отключить NaïveProxy (Caddy with forwardproxy@naive)
   --dnstt / --no-dnstt         Включить / отключить DNSTT (DoH DNS Tunneling via dnstt-server)
   --all-protocols              Включить все протоколы (включая стек следующего поколения)
+  --rotate-paths               Сменить пути панели, Wstunnel и ClientID DoH; выполнить все шаги заново
   -r, --resume                 Продолжить установку с последнего незавершенного шага
-  --step <N>                   Принудительно начать выполнение с указанного шага (1-8)
+  --step <N>                   Начать с указанного этапа текущего плана (номера выводятся перед установкой)
   --check, --doctor            Запустить быструю диагностику состояния сервисов и выйти
   --express                    Запустить режим Экспресс-настройки (настройка в 2 вопроса)
   --expert                     Запустить Экспертный режим без повторного запроса меню
+  --node-token / --no-node-token Создавать API-ключ ноды 3X-UI (по умолчанию: да) / отключить
+  --node-token-name <NAME>      Имя API-ключа ноды
   --gen-config [FILE]          Сгенерировать шаблон конфигурации (.env.example) и выйти
   --debug                      Режим отладки: отключить спиннеры, вывод команд в реальном времени
   -f, --force                  Игнорировать ошибки и несовпадения DNS в неинтерактивном режиме
@@ -46,37 +49,37 @@ show_help() {
   -h, --help                   Показать справку и выйти
 
 Примеры использования:
-  # Интерактивный режим (введенные параметры автоматически сохраняются в setup_mask.env):
-  ./setup_mask.sh
+  # Интерактивный режим (введенные параметры автоматически сохраняются в server-setup.env):
+  ./setup.sh
 
   # Быстрая экспресс-диагностика всех сервисов и портов:
-  ./setup_mask.sh --check
+  ./setup.sh --check
 
   # Возобновление прерванной установки с последнего незавершенного шага:
-  ./setup_mask.sh --resume
+  ./setup.sh --resume
 
   # Принудительный запуск с определенного шага (напр. Шаг 4: Выпуск SSL):
-  ./setup_mask.sh --step 4 -y
+  ./setup.sh --step 4 -y
 
   # Возобновление после обрыва связи или повторный запуск из сохраненного конфига:
-  ./setup_mask.sh -c setup_mask.env -y
+  ./setup.sh -c server-setup.env -y
 
   # Развертывание через Ansible / Cloud-Init / CI:
-  ./setup_mask.sh --config /etc/setup_mask.env --non-interactive --force
+  ./setup.sh --config /etc/server-setup.env --non-interactive --force
 
   # Генерация файла-шаблона:
-  ./setup_mask.sh --gen-config setup_mask.env.example
+  ./setup.sh --gen-config server-setup.env.example
 EOF_HELP
 }
 
 generate_config_template() {
-    local target_file="${1:-setup_mask.env.example}"
+    local target_file="${1:-server-setup.env.example}"
     cat << 'EOF_CONF' > "$target_file"
 # ==============================================================================
 # КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (__VERSION__ Universal)
 # ==============================================================================
 # Данный файл позволяет выполнять полностью автоматическую установку:
-# ./setup_mask.sh --config setup_mask.env --non-interactive --force
+# ./setup.sh --config server-setup.env --non-interactive --force
 
 # --- 1. ДОМЕНЫ И СЕРТИФИКАТЫ ---
 # Основной домен сервера (для панели, подписок, xHTTP и веб-маски) [ОБЯЗАТЕЛЬНО]
@@ -174,11 +177,11 @@ AWG_SUBNET_CIDR="22"
 DECOY_MODE="1"
 
 # --- 6. АВТОМАТИЧЕСКАЯ НАСТРОЙКА 3X-UI ---
-# Автоматически настроить инбаунды и пути подписок в базе данных 3X-UI через configure_3xui.sh [y/n]
+# Автоматически настроить инбаунды и пути подписок в базе данных 3X-UI через configure-panel.sh [y/n]
 AUTO_SETUP_3XUI="y"
 
 # Создать API-токен для подключения сервера как узла (3X-UI Node) [y/n]
-ENABLE_NODE_TOKEN="n"
+ENABLE_NODE_TOKEN="y"
 # Название API-токена ноды (если не указано, формируется как <SERVER_PREFIX>-Node или Master-Node-Cluster)
 NODE_TOKEN_NAME=""
 
@@ -278,7 +281,7 @@ for arg in "$@"; do
             exit 0
             ;;
         --gen-config)
-            target_gen_file="setup_mask.env.example"
+            target_gen_file="server-setup.env.example"
             args=("$@")
             for ((idx=0; idx<${#args[@]}; idx++)); do
                 if [ "${args[idx]}" = "--gen-config" ] && [ $((idx+1)) -lt ${#args[@]} ]; then

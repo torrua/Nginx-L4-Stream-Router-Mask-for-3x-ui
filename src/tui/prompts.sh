@@ -136,7 +136,7 @@ validate_path_segment() {
 can_use_interactive_tui() {
     [ "${NON_INTERACTIVE:-0}" -eq 1 ] && return 1
     [ -t 1 ] || return 1
-    ([ -t 0 ] || [ -c /dev/tty ]) || return 1
+    ([ -t 0 ] || { : </dev/tty; } 2>/dev/null) || return 1
     local term="${TERM:-dumb}"
     [ "$term" != "dumb" ] && [ -n "$term" ] || return 1
     if command -v tput >/dev/null 2>&1; then
@@ -255,6 +255,8 @@ prompt_multiselect_numeric() {
 }
 
 prompt_multiselect_tui() {
+    # Menu labels are UTF-8; clipping must count characters even on LANG=C hosts.
+    local LC_ALL=C.UTF-8
     local prompt_text="$1"
     local -n _tui_keys="$2"
     local -n _tui_labels="$3"
@@ -277,10 +279,35 @@ prompt_multiselect_tui() {
     local cursor=0
     local total_lines=$((count + 1))
 
+    # Keep one input descriptor open, including curl | bash installations.
+    local input_fd tty_settings=""
+    if { exec {input_fd}</dev/tty; } 2>/dev/null; then
+        :
+    else
+        exec {input_fd}<&0
+    fi
+    if [ -t "$input_fd" ]; then
+        tty_settings=$(stty -g <&"$input_fd" 2>/dev/null) || tty_settings=""
+        if [ -n "$tty_settings" ]; then
+            stty -echo -icanon min 1 time 0 <&"$input_fd" 2>/dev/null || true
+        fi
+    fi
+    local saved_int_trap saved_term_trap
+    saved_int_trap=$(trap -p INT)
+    saved_term_trap=$(trap -p TERM)
     tput civis 2>/dev/null || printf '\033[?25l'
-    trap 'tput cnorm 2>/dev/null || printf "\033[?25h"; exit 130' INT TERM
+    trap '[ -z "${tty_settings:-}" ] || stty "$tty_settings" <&"$input_fd" 2>/dev/null; tput cnorm 2>/dev/null || printf "\033[?25h"; exit 130' INT
+    trap '[ -z "${tty_settings:-}" ] || stty "$tty_settings" <&"$input_fd" 2>/dev/null; tput cnorm 2>/dev/null || printf "\033[?25h"; exit 143' TERM
 
     render_tui_menu() {
+        local cols="${COLUMNS:-}"
+        if [[ ! "$cols" =~ ^[0-9]+$ ]]; then
+            cols=$(tput cols 2>/dev/null || echo 80)
+        fi
+        [[ "$cols" =~ ^[0-9]+$ ]] && [ "$cols" -ge 20 ] || cols=80
+        local num_width="${#count}"
+        local label_width=$((cols - num_width - 12))
+        local i
         for ((i=0; i<count; i++)); do
             local mark=" "
             [ "${sel[$i]}" -eq 1 ] && mark="${GREEN}✔${NC}"
@@ -291,43 +318,52 @@ prompt_multiselect_tui() {
                 color="${CYAN}${BOLD}"
             fi
             local num=$((i+1))
-            printf "\033[2K  %b[${color}%s${NC}] [%b] %b\n" "$prefix" "$num" "$mark" "${_tui_labels[$i]}"
+            local label="${_tui_labels[$i]}"
+            if [ "${#label}" -gt "$label_width" ]; then
+                label="${label:0:label_width-1}…"
+            fi
+            printf "\033[2K  %b[${color}%*s${NC}] [%b] %s\n" "$prefix" "$num_width" "$num" "$mark" "$label"
         done
-        printf "\033[2K  ${DIM}[↑/↓: навигация | Пробел: отметка | 1-%d: перекл | a: все | Enter: готово]${NC}\n" "$count"
+        local hint="↑/↓: курсор | Пробел: выбор | Enter: готово | ?: номера"
+        printf "\033[2K  ${DIM}%s${NC}\n" "${hint:0:cols-3}"
     }
 
     render_tui_menu
 
+    local result=0 numeric_fallback=0 escape=""
     while true; do
         local key=""
-        if [ -c /dev/tty ]; then
-            IFS= read -rsn1 key </dev/tty || key="ERR"
-        else
-            IFS= read -rsn1 key || key="ERR"
+        if ! IFS= read -rsn1 -u "$input_fd" key; then
+            result=1
+            break
         fi
 
-        if [ "$key" = "ERR" ]; then
-            tput cnorm 2>/dev/null || printf '\033[?25h'
-            trap - INT TERM
-            prompt_multiselect_numeric "$prompt_text" _tui_keys _tui_labels
-            return $?
-        fi
-
+        # Preserve escape-parser state between reads; SSH packet boundaries and
+        # latency must not turn the final B of an arrow into the Back shortcut.
         if [ "$key" = $'\x1b' ]; then
-            local rest=""
-            if [ -c /dev/tty ]; then
-                read -rsn2 -t 0.2 rest </dev/tty 2>/dev/null || rest=""
-            else
-                read -rsn2 -t 0.2 rest 2>/dev/null || rest=""
-            fi
-            case "$rest" in
-                "[A"|"OA")
-                    cursor=$(( (cursor - 1 + count) % count ))
-                    ;;
-                "[B"|"OB")
-                    cursor=$(( (cursor + 1) % count ))
-                    ;;
+            escape="$key"
+            continue
+        fi
+        if [ "$escape" = $'\x1b' ]; then
+            case "$key" in
+                '['|O) escape="$key" ;;
+                ''|$'\r') break ;;
+                *) escape="" ;;
             esac
+            continue
+        fi
+        if [ -n "$escape" ]; then
+            escape+="$key"
+            if [ -z "$key" ] || [ "$key" = $'\r' ] || [ "${#escape}" -gt 32 ]; then
+                escape=""
+                continue
+            fi
+            [[ "$key" == [@-~] ]] || continue
+            case "$escape" in
+                '['*A|OA) cursor=$(( (cursor - 1 + count) % count )) ;;
+                '['*B|OB) cursor=$(( (cursor + 1) % count )) ;;
+            esac
+            escape=""
         elif [[ "$key" == "k" || "$key" == "K" ]]; then
             cursor=$(( (cursor - 1 + count) % count ))
         elif [[ "$key" == "j" || "$key" == "J" ]]; then
@@ -349,39 +385,41 @@ prompt_multiselect_tui() {
             for ((i=0; i<count; i++)); do sel[i]=1; done
         elif [[ "$key" == "0" || "$key" == "n" || "$key" == "N" ]]; then
             for ((i=0; i<count; i++)); do sel[i]=0; done
-        elif [ -z "$key" ]; then
+        elif [ -z "$key" ] || [ "$key" = $'\r' ]; then
             break
         elif [[ "$key" == "b" || "$key" == "B" ]]; then
             if [ "${WIZARD_ALLOW_BACK:-0}" -eq 1 ]; then
-                tput cnorm 2>/dev/null || printf '\033[?25h'
-                trap - INT TERM
-                printf "\033[%dA\r" "$total_lines"
-                for ((i=0; i<total_lines; i++)); do printf "\033[2K\n"; done
-                printf "\033[%dA\r" "$total_lines"
-                return 10
+                result=10
+                break
             fi
         elif [ "$key" = "?" ]; then
-            tput cnorm 2>/dev/null || printf '\033[?25h'
-            trap - INT TERM
-            printf "\033[%dA\r" "$total_lines"
-            for ((i=0; i<total_lines; i++)); do printf "\033[2K\n"; done
-            printf "\033[%dA\r" "$total_lines"
-            prompt_multiselect_numeric "$prompt_text" _tui_keys _tui_labels
-            return $?
+            numeric_fallback=1
+            break
         fi
 
         printf "\033[%dA\r" "$total_lines"
         render_tui_menu
     done
 
+    [ -z "$tty_settings" ] || stty "$tty_settings" <&"$input_fd" 2>/dev/null || true
+    exec {input_fd}<&-
     tput cnorm 2>/dev/null || printf '\033[?25h'
     trap - INT TERM
+    # These strings come from Bash's own trap -p, not from external input.
+    [ -z "$saved_int_trap" ] || eval "$saved_int_trap"
+    [ -z "$saved_term_trap" ] || eval "$saved_term_trap"
 
     printf "\033[%dA\r" "$total_lines"
     for ((i=0; i<total_lines; i++)); do
         printf "\033[2K\n"
     done
     printf "\033[%dA\r" "$total_lines"
+
+    [ "$result" -eq 0 ] || return "$result"
+    if [ "$numeric_fallback" -eq 1 ]; then
+        prompt_multiselect_numeric "$prompt_text" "$2" "$3"
+        return $?
+    fi
 
     local chosen=()
     for ((i=0; i<count; i++)); do
@@ -416,11 +454,9 @@ prompt_multiselect() {
         return 0
     fi
 
-    # По умолчанию используем надежный числовой селектор:
-    # 1. 100% стабилен при любых размерах окна терминала и переносе строк
-    # 2. Не зависит от задержек сети и фрагментации пакетов SSH
-    # 3. Поддерживает мгновенный выбор по Enter, список номеров, 'all' и '0'
-    if [ "${ENABLE_TUI_MULTISELECT:-0}" = "1" ] && can_use_interactive_tui; then
+    # Use arrow navigation automatically on an interactive terminal. Setting
+    # ENABLE_TUI_MULTISELECT=0 explicitly retains the numeric selector.
+    if [ "${ENABLE_TUI_MULTISELECT:-1}" != "0" ] && can_use_interactive_tui; then
         prompt_multiselect_tui "$prompt_text" _ms_keys _ms_labels || return $?
     else
         prompt_multiselect_numeric "$prompt_text" _ms_keys _ms_labels || return $?
@@ -435,8 +471,9 @@ EXPERT_MODE=${EXPERT_MODE:-0}
 SHOW_TIPS=${SHOW_TIPS:-}
 CHECK_MODE=0
 GEN_CONFIG=0
+ROTATE_PATHS=0
 FORCE_DNS=${FORCE_DNS:-0}
-SAVED_CONFIG_FILE="setup_mask.env"
+SAVED_CONFIG_FILE="server-setup.env"
 
 CLI_PRIMARY_DOMAIN=""
 CLI_ADD_WWW=""
@@ -448,6 +485,8 @@ CLI_SUB_TITLE=""
 CLI_XHTTP_STREAM_PATH=""
 CLI_ADMIN_USERNAME=""
 CLI_ADMIN_PASSWORD=""
+CLI_ENABLE_NODE_TOKEN=""
+CLI_NODE_TOKEN_NAME=""
 CLI_ENABLE_HY2=""
 CLI_ENABLE_AWG_V3=""
 CLI_AWG_V3_PORT=""
@@ -489,6 +528,23 @@ CLI_ALL_PROTOCOLS=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --node-token)
+            CLI_ENABLE_NODE_TOKEN=y
+            shift
+            ;;
+        --no-node-token)
+            CLI_ENABLE_NODE_TOKEN=n
+            shift
+            ;;
+        --node-token-name)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует имя API-ключа ноды."
+            CLI_NODE_TOKEN_NAME="$2"
+            shift 2
+            ;;
+        --rotate-paths)
+            ROTATE_PATHS=1
+            shift
+            ;;
         -c|--config)
             [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: путь к файлу конфигурации."
             CONFIG_FILE="$2"
@@ -891,7 +947,7 @@ while [[ $# -gt 0 ]]; do
                 TARGET_GEN_FILE="$2"
                 shift 2
             else
-                TARGET_GEN_FILE="setup_mask.env.example"
+                TARGET_GEN_FILE="server-setup.env.example"
                 shift
             fi
             ;;
@@ -917,17 +973,10 @@ done
 # Автообнаружение конфигурационного файла, если путь не передан явно
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
 if [ -z "$CONFIG_FILE" ]; then
-    if [ -f "./setup_mask.env" ]; then
-        CONFIG_FILE="./setup_mask.env"
-        log "Автообнаружен конфигурационный файл: $CONFIG_FILE"
-    elif [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/setup_mask.env" ]; then
-        CONFIG_FILE="$SCRIPT_DIR/setup_mask.env"
-        log "Автообнаружен конфигурационный файл: $CONFIG_FILE"
-    elif [ -f "/etc/setup_mask.env" ]; then
-        CONFIG_FILE="/etc/setup_mask.env"
+    CONFIG_FILE=$(find_config_file "$SCRIPT_DIR" || true)
+    if [ -n "$CONFIG_FILE" ]; then
         log "Автообнаружен конфигурационный файл: $CONFIG_FILE"
     elif [ "$NON_INTERACTIVE" -eq 0 ] && [ -f "./.env" ]; then
-        # В неинтерактивном режиме .env не загружается автоматически — только setup_mask.env
         CONFIG_FILE="./.env"
         warn "Автообнаружен конфигурационный файл: $CONFIG_FILE (убедитесь, что он предназначен для этого скрипта)"
     fi
@@ -948,6 +997,23 @@ fi
 [ -n "${CLI_XHTTP_STREAM_PATH:-}" ] && XHTTP_STREAM_PATH="$CLI_XHTTP_STREAM_PATH"
 [ -n "${CLI_ADMIN_USERNAME:-}" ] && ADMIN_USERNAME="$CLI_ADMIN_USERNAME"
 [ -n "${CLI_ADMIN_PASSWORD:-}" ] && ADMIN_PASSWORD="$CLI_ADMIN_PASSWORD"
+[ -n "${CLI_ENABLE_NODE_TOKEN:-}" ] && ENABLE_NODE_TOKEN="$CLI_ENABLE_NODE_TOKEN"
+[ -n "${CLI_NODE_TOKEN_NAME:-}" ] && NODE_TOKEN_NAME="$CLI_NODE_TOKEN_NAME"
+if [ -n "${CLI_PANEL_PATH:-}" ]; then
+    RAW_PATH="${CLI_PANEL_PATH#/}"; RAW_PATH="${RAW_PATH%/}"
+fi
+if [ -n "${CLI_SUB_PATH:-}" ]; then
+    RAW_SUB_PATH="${CLI_SUB_PATH#/}"; RAW_SUB_PATH="${RAW_SUB_PATH%/}"
+    SUB_PATH="/${RAW_SUB_PATH}/"
+    SUB_JSON_PATH="${SUB_PATH}json/"
+    if [ -z "${CONFIG_EXPLICIT_KEYS[SUB_CLASH_PATH]:-}" ]; then
+        SUB_CLASH_PATH="${SUB_PATH}clash/"
+    fi
+fi
+if [ -n "${CLI_XHTTP_STREAM_PATH:-}" ]; then
+    RAW_XHTTP_STREAM_PATH="${CLI_XHTTP_STREAM_PATH#/}"
+    RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH%/}"
+fi
 [ -n "${CLI_ENABLE_HY2:-}" ]      && ENABLE_HY2="$CLI_ENABLE_HY2"
 [ -n "${CLI_ENABLE_AWG_V3:-}" ]   && ENABLE_AWG_V3="$CLI_ENABLE_AWG_V3"
 [ -n "${CLI_AWG_V3_PORT:-}" ]     && AWG_V3_PORT="$CLI_AWG_V3_PORT"
@@ -987,6 +1053,11 @@ fi
 [ -n "${CLI_DNSTT_PUBKEY:-}" ]       && DNSTT_PUBKEY="$CLI_DNSTT_PUBKEY"
 [ -n "${CLI_ALL_PROTOCOLS:-}" ]      && ALL_PROTOCOLS="$CLI_ALL_PROTOCOLS"
 
+if [ "$ROTATE_PATHS" -eq 1 ]; then
+    rotate_secret_paths || die "Не удалось сгенерировать новые секретные пути."
+    warn "Пути панели, Wstunnel и ClientID DoH изменены. Обновите адреса на клиентах после установки."
+fi
+
 _stls_chk="${ENABLE_SHADOWTLS:-}"
 if [[ "$_stls_chk" == "1" || "${_stls_chk,,}" == "y" ]] && [ -z "${CLI_ENABLE_SS2022:-}" ]; then
     ENABLE_SS2022="y"
@@ -997,6 +1068,6 @@ if [[ "$_dnstt_chk" == "1" || "${_dnstt_chk,,}" == "y" ]] && [ -z "${CLI_ENABLE_
     ENABLE_SS2022="y"
 fi
 
-# Сессия всегда сохраняется в setup_mask.env в текущей папке или рядом со скриптом
-SAVED_CONFIG_FILE="${CONFIG_FILE:-./setup_mask.env}"
+# Сессия всегда сохраняется в server-setup.env в текущей папке или рядом со скриптом
+SAVED_CONFIG_FILE="${CONFIG_FILE:-./server-setup.env}"
 

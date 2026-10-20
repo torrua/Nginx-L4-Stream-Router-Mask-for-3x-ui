@@ -103,7 +103,7 @@ curl -sSL https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-f
    * Установит Nginx mainline, выпустит SSL и развернёт сайт-маскировку.
    * Автоматически создаст готовые подключения с понятным префиксом: `<Префикс> (<Метод>)` (например, `Server (VLESS Steal-Oneself)` или `NL (AmneziaWG v3)`).
    * Синхронизирует клиентов в базе данных 3X-UI, поэтому они сразу видны на вкладке «Клиенты».
-5. В конце в терминале появится красивая табличка с вашим секретным адресом панели, логином и паролем (они также надёжно сохранятся в файл `/root/vpn_credentials.txt` и `setup_mask.env`).
+5. В конце в терминале появится красивая табличка с вашим секретным адресом панели, логином и паролем (они также надёжно сохранятся в файл `/root/vpn_credentials.txt` и `server-setup.env`).
 
 ---
 
@@ -111,12 +111,12 @@ curl -sSL https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-f
 
 Если вы хотите детально контролировать каждый компонент, используйте классическую установку из 3 скриптов:
 
-### Шаг 2.1. Защита сервера и ускорение TCP BBR (`secure-vps.sh`)
+### Шаг 2.1. Защита сервера и ускорение TCP BBR (`prepare-server.sh`)
 
 Сразу после первого входа на чистый сервер выполните команду первичной настройки:
 
 ```bash
-curl -sSLO https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/secure-vps.sh && sudo bash secure-vps.sh
+curl -sSLO https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/prepare-server.sh && sudo bash prepare-server.sh
 ```
 
 ### Как отвечать на вопросы мастера:
@@ -146,12 +146,12 @@ curl -sSLO https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-
 
 ---
 
-## 🎭 Шаг 3. Настройка Nginx, сертификатов и сайта-маскировки (`setup_mask.sh`)
+## 🎭 Шаг 3. Настройка Nginx, сертификатов и сайта-маскировки (`setup.sh`)
 
 Теперь запускаем основной скрипт маршрутизации:
 
 ```bash
-curl -sSLO https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/setup_mask.sh && sudo bash setup_mask.sh
+curl -sSLO https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/setup.sh && sudo bash setup.sh
 ```
 
 ### Ответы на вопросы скрипта:
@@ -160,7 +160,7 @@ curl -sSLO https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-
 2. **Шаг 2: Настройка VLESS REALITY (маскировка под свой сайт):** включение маскировки под свой поддомен (по умолчанию: порт `45443`, поддомен `cdn.myserver.online`).
 3. **Шаг 3: Настройка VLESS REALITY (маскировка под популярные сервисы):** подключение маскируется под доверенные внешние сайты (по умолчанию: порт `46443`, адрес `gateway.icloud.com`).
 4. **Шаг 4: Настройка путей и внутренних портов:** учетные данные администратора панели 3X-UI, порты и секретные URI-пути для панели, подписок и VLESS xHTTP (доступен выбор безопасных значений по умолчанию в 1 клик).
-5. **Шаг 5: Выбор протоколов и транспортов (единый список):** удобный выбор нужных протоколов номерами или через запятую: Hysteria 2 (UDP 443), AmneziaWG v3.1 (UDP 8443), AmneziaWG v2.0 (UDP 8444), Shadowsocks 2022 (TCP/UDP 8388), TUIC v5 (UDP 8448), Telegram MTProxy (TCP 8444 FakeTLS).
+5. **Шаг 5: Выбор протоколов и транспортов (единый список):** перемещайтесь стрелками **↑/↓**, отмечайте несколько протоколов **пробелом** и подтверждайте выбор клавишей **Enter**. Для ввода номеров нажмите **?**; например, `1,3,10`. В терминалах без поддержки интерактивного меню числовой ввод включается автоматически. Доступны Hysteria 2, AmneziaWG v3.1/v2.0, автономный AmneziaWG, TUIC, Shadowsocks 2022, MTProxy, MASQUE, ShadowTLS, Wstunnel, Zapret, NaïveProxy и DNSTT.
 6. **Шаг 6: Настройка приватного AdGuard Home DoH + Split-DNS:** шифрованный DNS с защитой от рекламы и раздельными маршрутами для российских и мировых сайтов.
 7. **Шаг 7: Выбор темы для сайта-маскировки:** DataSphere Analytics, CosmosCloud или стандартная заглушка Nginx.
 8. **Шаг 8: Реестр SSL-сертификатов и дополнительные домены:** список доменов для выпуска SSL (можно добавить дополнительные или нажать Enter для пропуска).
@@ -180,12 +180,12 @@ curl -sSLO https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-
 
 ---
 
-## 🎛️ Шаг 4. Автоматическая генерация подключений (`configure_3xui.sh`)
+## 🎛️ Шаг 4. Автоматическая генерация подключений (`configure-panel.sh`)
 
 Чтобы не настраивать протоколы вручную в веб-интерфейсе, выполните:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/configure_3xui.sh | sudo bash
+curl -sSL https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/configure-panel.sh | sudo bash
 ```
 
 Скрипт сам создаст в панели 3X-UI правильные подключения и синхронизирует клиентов:

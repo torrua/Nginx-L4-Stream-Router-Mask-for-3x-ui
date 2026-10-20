@@ -1,8 +1,6 @@
 # =============================================================
 #  ГЕНЕРАЦИЯ ВЫБРАННОЙ ВЕБ-МАСКИ
 # =============================================================
-if ! should_skip_step 5; then
-    step_begin 5
     log "Формирование выбранного маскировочного портала..."
 
     if [ "$DECOY_MODE" = "1" ]; then
@@ -71,7 +69,7 @@ cat << 'EOF' > $WEBROOT/assets/css/datasphere.css
 body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Google Sans", sans-serif;
     background-color: var(--bg-base);
-    background-image: 
+    background-image:
         radial-gradient(circle at 50% -10%, rgba(66, 133, 244, 0.14) 0%, rgba(155, 114, 207, 0.08) 35%, transparent 70%),
         radial-gradient(circle at 100% 100%, rgba(129, 201, 149, 0.04) 0%, transparent 40%),
         var(--bg-base);
@@ -757,6 +755,3 @@ EOF_ROBOTS
 
     chown -R "$NGINX_USER:$NGINX_USER" "$WEBROOT"
     chmod -R 755 "$WEBROOT"
-    step_finish 5
-fi
-

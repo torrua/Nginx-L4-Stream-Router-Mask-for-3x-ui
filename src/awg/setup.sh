@@ -3,9 +3,6 @@
 
 AMNEZIA_PPA_GPG_B64="xsFNBGV0UhsBEAC33rMndHSN/k+u7gcZbh9/FjgYfGltQAtVe2QDxzn7UV+k/ChXOrYRw6Izw/DrhaapkNCThK2jwJE64e0NjboLH7UrrmSJLXMfOlDFbyGJVRA+1sTBlo7kKHY0xiZ1CHDzjKNV3czbesu80A9nuTZYyWHEn9ax6wsqKG3N8SvzQkUrIOVD2wZjh0p273CCEGkBnax1ghAV3MF8OrsPU6FRJ+ZakzKbu54g68xoV+2813YECme0JKsWfUUe/1uEJOXCvuACURSxnYr0sihJd8QI/jHSGlfeq72e5MflFEOrnu5xaDSJr2W5lvUetG7EGSxtNKd7Jm/KhUV04g7arA0qydRjRToW3QqyzG7VB2nXKz3AOBYNearWAuBcTkfPvRVchxbjiYonKZA5tIlVrpawMZsdxKvYwl6LVnpBcccFWPhpudfy4TpCqCxRoAanOCvSirI3/y7TcZMBw643SaxXi1ifGeg6eyMzrLtP3CeonKBHGzrt1eeKGtEw/PFN4RmwpBePxi+uj0CoTD6zjCQa3c8EeB4Qz7tt6PnpibxdtZE8sBdd51wSA/fPGi2tFph8IVAsws7oxcQxZYl8CyncKDLcoR4dxVHYdFEDDf1GjRjoQ3AinD7fxD5qYzExe50DBVpuUbWcAiGICNxfvzQtUSRRtMoSHDcvzsy03KC6VwARAQABzR5MYXVuY2hwYWQgUFBBIGZvciBJdXJpaSBFZ29yb3bCwY4EEwEKADgWIQR1yd1yx5mHDjEFQuJBZvLCVykIKAUCZXRSGwIbAwULCQgHAgYVCgkICwIEFgIDAQIeAQIXgAAKCRBBZvLCVykIKBu5D/9akmHCHlUqm2RTTBeTMbLNGc0l6YugpPaCM6vz0O9kBFP5PfRaNSRzyF7wHFHNY3JUHcor28my1fD8AE4+C3PwXz8tVYLh57UUsp4wjqHY+MTl/1ngDViPGD3PRjB8ZlO+19yerfplZv1Jaw7FZZv2BZOAXb+ddqUG4EmlzOnCEhcSDdFrzEBB3RGthjIb3QkKWKGbELDiMfogmsO9BE139Raiw23blagDrbnWsG4jReZeu3atjG6AW8eL7m+i7bKKshD2CYVMznI5cYGLMKo9w7sb33uylPj1Vx9O7joP2GFf2rTpCY8wgzk7i1RqsipJ80u1/DY91Xdizv3f2BBe6UY7qHKoK00O11J0y8yUis2Asycy33Wy51pf6rCFUBLQu+c1fEypHF6jqANmQwaH7pPBliy4gGWvrVggzV4mxv7SnRiMi4PFyVwjKWm8dmuMxi/B9s++VG/ed+5aYgJYL58MohG3MUI/L58eitSCDDcQ1iAnBmawnGMKPqzMgRFB3OU3wDwfh7LNVvQqWpQ4q7pr4Cq1CvZvGoggXWDo1/vylPsRmiiuNetfsoVYmrkgtj1om07m5Xp1v4SyXJH11c3dc/xfMmn/4RlMWIpq86IsOjpr3avsw3FVUNCgD5Wf5+rHG+7gNmM6Cm/F8MDfAnnRmsw4h6hgvcJNQT5Dig=="
 
-AWG_PREINSTALL_BG_PID=""
-AWG_PREINSTALL_LOG="/tmp/setup_mask_awg_preinstall.log"
-
 install_amneziawg_packages_task() {
     export DEBIAN_FRONTEND=noninteractive
     local os_id=""
@@ -21,10 +18,7 @@ install_amneziawg_packages_task() {
         return 0
     fi
 
-    # Ожидание освобождения фоновой системной пред-установки и блокировок apt
-    if [ -n "${BG_PREINSTALL_PID:-}" ] && kill -0 "$BG_PREINSTALL_PID" 2>/dev/null; then
-        wait "$BG_PREINSTALL_PID" 2>/dev/null || true
-    fi
+    # Ожидание освобождения блокировок apt другими процессами
     local wait_count=0
     while { command -v fuser >/dev/null 2>&1 && { fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1; }; }; do
         sleep 1
@@ -62,28 +56,6 @@ EOF_PPA
     modprobe amneziawg 2>/dev/null || true
 }
 
-start_amneziawg_preinstall_bg() {
-    # Запускаем фоновую сборку ТОЛЬКО если пользователь включил AWG и awg еще не установлен на хосте
-    if command -v awg >/dev/null 2>&1; then
-        return 0
-    fi
-    if [ -n "${AWG_PREINSTALL_BG_PID:-}" ] && kill -0 "$AWG_PREINSTALL_BG_PID" 2>/dev/null; then
-        return 0
-    fi
-    : > "$AWG_PREINSTALL_LOG"
-    install_amneziawg_packages_task >> "$AWG_PREINSTALL_LOG" 2>&1 &
-    AWG_PREINSTALL_BG_PID=$!
-}
-
-sync_amneziawg_preinstall() {
-    if [ -n "${AWG_PREINSTALL_BG_PID:-}" ]; then
-        if kill -0 "$AWG_PREINSTALL_BG_PID" 2>/dev/null; then
-            wait "$AWG_PREINSTALL_BG_PID" 2>/dev/null || true
-        fi
-        AWG_PREINSTALL_BG_PID=""
-    fi
-}
-
 ensure_amneziawg_installed() {
     # Пропускаем, если бэкенд развернут в Docker-контейнере
     if command -v docker >/dev/null 2>&1; then
@@ -101,11 +73,6 @@ ensure_amneziawg_installed() {
     fi
 
     # 2. Если была запущена фоновая сборка — дожидаемся её
-    if [ -n "${AWG_PREINSTALL_BG_PID:-}" ] && kill -0 "$AWG_PREINSTALL_BG_PID" 2>/dev/null; then
-        run_with_spinner "Ожидание завершения сборки модуля ядра AmneziaWG (DKMS)" sync_amneziawg_preinstall
-    fi
-
-    # 3. Если awg всё ещё нет (например, неинтерактивный режим) — компилируем со спиннером
     if ! command -v awg >/dev/null 2>&1; then
         run_with_spinner "Установка и компиляция модуля ядра AmneziaWG (DKMS)" install_amneziawg_packages_task
     fi
@@ -126,19 +93,19 @@ setup_amneziawg_controller() {
 
     log "Развертывание универсального контроллера AmneziaWG в $awg_dir..."
 
-    # Копирование или запись manage_amneziawg.py
-    local src_py="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/manage_amneziawg.py"
+    # Копирование или запись manage_clients.py
+    local src_py="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/manage_clients.py"
     if [ -f "$src_py" ]; then
-        cp -f "$src_py" "$awg_dir/manage_amneziawg.py"
+        cp -f "$src_py" "$awg_dir/manage_clients.py"
     fi
 
     # Если файл не существует (например, запуск через curl монолита), пишем встроенную версию
-    if [ ! -f "$awg_dir/manage_amneziawg.py" ]; then
-        cat << 'EOF_AWG_PY' > "$awg_dir/manage_amneziawg.py"
-# @include "awg/manage_amneziawg.py"
+    if [ ! -f "$awg_dir/manage_clients.py" ]; then
+        cat << 'EOF_AWG_PY' > "$awg_dir/manage_clients.py"
+# @include "awg/manage_clients.py"
 EOF_AWG_PY
     fi
-    chmod 750 "$awg_dir/manage_amneziawg.py"
+    chmod 750 "$awg_dir/manage_clients.py"
 
     # Настройка порта и хоста
     local awg_port="${AWG_SERVER_PORT:-${AWG_STANDALONE_PORT:-}}"
@@ -152,20 +119,24 @@ EOF_AWG_PY
     local awg_host="${AWG_SERVER_HOST:-${SERVER_PUBLIC_HOST:-}}"
 
     # Запись скрипта-лаунчера
-    cat << EOF_AWG_SH > "$awg_dir/manage_amneziawg.sh"
+    cat << EOF_AWG_SH > "$awg_dir/manage-clients.sh"
 #!/usr/bin/env bash
 set -euo pipefail
 AWG_DIR="\${AWG_DIR:-/root/awg}"
 PYTHON_BIN="\$(command -v python3 2>/dev/null || echo /usr/bin/python3)"
 [ -n "${awg_host}" ] && export SERVER_PUBLIC_HOST="\${SERVER_PUBLIC_HOST:-${awg_host}}"
 [ -n "${awg_port}" ] && export SERVER_PORT="\${SERVER_PORT:-${awg_port}}"
-exec "\$PYTHON_BIN" "\$AWG_DIR/manage_amneziawg.py" "\$@"
+exec "\$PYTHON_BIN" "\$AWG_DIR/manage_clients.py" "\$@"
 EOF_AWG_SH
-    chmod 755 "$awg_dir/manage_amneziawg.sh"
+    chmod 755 "$awg_dir/manage-clients.sh"
+
+    # Existing automation may still call the previous filenames directly.
+    ln -sf manage-clients.sh "$awg_dir/manage_amneziawg.sh"
+    ln -sf manage_clients.py "$awg_dir/manage_amneziawg.py"
 
     # Создание глобальных симлинков для удобного управления из консоли
-    ln -sf "$awg_dir/manage_amneziawg.sh" /usr/local/bin/awg-mgr 2>/dev/null || true
-    ln -sf "$awg_dir/manage_amneziawg.sh" /usr/local/bin/awg-cli 2>/dev/null || true
+    ln -sf "$awg_dir/manage-clients.sh" /usr/local/bin/awg-mgr 2>/dev/null || true
+    ln -sf "$awg_dir/manage-clients.sh" /usr/local/bin/awg-cli 2>/dev/null || true
 
     # Настройка правил файрвола UFW
     if command -v ufw >/dev/null 2>&1; then
@@ -323,12 +294,12 @@ EOF_AWG0
         fi
         ok "Существующий профиль администратора сохранен: $awg_dir/client-1.conf"
     else
-        local client_count=$(/root/awg/manage_amneziawg.sh status 2>/dev/null | grep -o '"total": [0-9]*' | awk '{print $2}' || echo "0")
+        local client_count=$(/root/awg/manage-clients.sh status 2>/dev/null | grep -o '"total": [0-9]*' | awk '{print $2}' || echo "0")
         if [ "$client_count" = "0" ] || [ -z "$client_count" ]; then
             log "Создание первичного профиля администратора (client-1)..."
             export SERVER_PUBLIC_HOST="${AWG_SERVER_HOST:-${SERVER_PUBLIC_HOST:-}}"
             export SERVER_PORT="${awg_port}"
-            if ! /root/awg/manage_amneziawg.sh add client-1 >/dev/null 2>&1; then
+            if ! /root/awg/manage-clients.sh add client-1 >/dev/null 2>&1; then
                 warn "Не удалось автоматически сгенерировать первичного клиента client-1. Попробуйте вручную: awg-mgr add <имя>"
             else
                 ok "Первичный профиль администратора создан: $awg_dir/client-1.conf"

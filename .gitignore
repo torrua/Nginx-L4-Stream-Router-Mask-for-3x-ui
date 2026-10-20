@@ -11,13 +11,13 @@
 *.env.*
 *.env.local
 *.env.production
-setup_mask.env
+server-setup.env
 compose/sing-box-masque/config.json
 compose/naiveproxy/Caddyfile
 !compose/sing-box-masque/config.json.template
 !compose/naiveproxy/Caddyfile.template
 !*.env.example
-!setup_mask.env.example
+!server-setup.env.example
 
 # Tokens, Credentials & Secret JSON/YAML files
 tokens.json
@@ -145,6 +145,8 @@ transcript_*.txt
 /run_remote_install.py
 
 # Standalone AWG bot files (not part of main distribution repo)
+/manage_clients.py
+/manage-clients.sh
 /manage_amneziawg.py
 /manage_amneziawg.sh
 .local_awg_backup/
@@ -195,3 +197,6 @@ htmlcov/
 .DS_Store
 Thumbs.db
 .antigravity/
+AGENTS.md
+*.env.state
+*.env.state.tmp.*

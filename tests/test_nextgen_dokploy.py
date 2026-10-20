@@ -19,7 +19,7 @@ def run_shell(code: str, env: dict | None = None) -> subprocess.CompletedProcess
         full_env.update(env)
     return subprocess.run(
         [str(BASH), "-s"],
-        input="export PATH=/usr/bin:/bin:$PATH\n" + code,
+        input="export PATH=/usr/bin:/bin:$PATH\nsource src/common/config.sh\n" + code,
         cwd=ROOT,
         text=True,
         encoding="utf-8",
@@ -179,6 +179,7 @@ set -euo pipefail
 CYAN=; BOLD=; NC=; DIM=; WHITE=;
 warn(){ :; }; ok(){ :; }; die(){ exit 1; };
 is_true() { local val="${1:-0}"; [[ "$val" == "1" || "${val,,}" == "y" || "${val,,}" == "true" ]]; }
+source src/common/secrets.sh
 source src/system/env.sh
 PRIMARY_DOMAIN="example.com"
 ENABLE_WEB_STACK="y"
@@ -217,11 +218,11 @@ inspect_port_conflicts
         self.assertIn("Коллизия портов: MASQUE и AmneziaWG Standalone", res.stdout)
 
     def test_manage_nextgen_syntax(self):
-        manage_sh = ROOT / "manage_nextgen.sh"
-        self.assertTrue(manage_sh.is_file(), "manage_nextgen.sh must exist")
+        manage_sh = ROOT / "manage-services.sh"
+        self.assertTrue(manage_sh.is_file(), "manage-services.sh must exist")
         if BASH.is_file():
             res = subprocess.run([str(BASH), "-n", str(manage_sh)], capture_output=True, text=True)
-            self.assertEqual(res.returncode, 0, f"manage_nextgen.sh bash -n failed: {res.stderr}")
+            self.assertEqual(res.returncode, 0, f"manage-services.sh bash -n failed: {res.stderr}")
 
 
 if __name__ == "__main__":

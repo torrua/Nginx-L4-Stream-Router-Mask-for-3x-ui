@@ -19,7 +19,7 @@ print_step_bar() {
     local bar=""
     for ((j=0; j<filled; j++)); do bar+="█"; done
     for ((j=0; j<empty; j++)); do bar+="░"; done
-    
+
     echo ""
     echo -e "  ${BLUE}${BOLD}┌─[ Шаг $step_num из $total_steps ] ${WHITE}$step_title${NC}"
     echo -e "  ${BLUE}${BOLD}└─ Прогресс: [${CYAN}$bar${BLUE}${BOLD}] ${WHITE}${percent}%${NC}"

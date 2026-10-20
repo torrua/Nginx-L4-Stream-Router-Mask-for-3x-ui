@@ -1,6 +1,6 @@
 install_certbot_package() {
     export DEBIAN_FRONTEND=noninteractive
-    
+
     # 1. Если certbot уже присутствует в системе и работает — используем его
     if command -v certbot >/dev/null 2>&1 && certbot --version >/dev/null 2>&1; then
         return 0

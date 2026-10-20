@@ -89,17 +89,17 @@ def is_ip_allowed(ip_str: str) -> bool:
 
 
 def get_tracked_files(root_dir: Path = ROOT_DIR) -> list[Path]:
-    """Retrieve all files tracked by Git."""
+    """Return tracked and new non-ignored files present in the working tree."""
     try:
         res = subprocess.run(
-            ["git", "ls-files"],
+            ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
             cwd=root_dir,
             text=True,
             encoding="utf-8",
             capture_output=True,
             check=True,
         )
-        return [root_dir / p.strip() for p in res.stdout.splitlines() if p.strip()]
+        return sorted({root_dir / p for p in res.stdout.split("\0") if p and (root_dir / p).is_file()})
     except Exception as e:
         print(f"[WARN] git ls-files failed: {e}. Falling back to directory scan.")
         tracked = []

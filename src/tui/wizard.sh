@@ -39,9 +39,9 @@ fi
 
 if [ "$SKIP_INTERVIEW" -eq 1 ]; then
     # Восстановление массивов из сохраненных скалярных параметров конфигурации
-    reconstruct_arrays_from_vars
+    if [ "${EXPRESS_MODE:-0}" -eq 1 ] && is_true "${ENABLE_WEB_STACK:-y}"; then apply_express_defaults; else reconstruct_arrays_from_vars; fi
     REALITY_FALLBACK_PORT="9443"
-    if [ "$SSL_ENGINE_CHOICE" = "1" ]; then
+    if [ "${SSL_ENGINE_CHOICE:-1}" = "1" ]; then
         SSL_BASE_DIR="/etc/letsencrypt/live"
     else
         SSL_BASE_DIR="/etc/ssl/acme"
@@ -84,11 +84,11 @@ else
 
         while true; do
             local choice=""
-            echo -ne "  ${WHITE}${ARROW} Начать установку? [${GREEN}Enter = начать${WHITE}, q = отмена]: ${NC}"
+            echo -ne "  ${WHITE}${ARROW} Перейти к проверке плана? [${GREEN}Enter = далее${WHITE}, q = отмена]: ${NC}"
             read -r choice </dev/tty || read -r choice || true
             choice=$(echo "${choice:-}" | tr -d '[:space:]')
             if [ -z "$choice" ] || [[ "${choice,,}" == "y" ]] || [[ "${choice,,}" == "yes" ]]; then
-                save_session_state "$SAVED_CONFIG_FILE" >/dev/null 2>&1 || true
+
                 return 0
             fi
             if [[ "${choice,,}" == "q" || "${choice,,}" == "quit" || "${choice,,}" == "exit" ]]; then
@@ -188,11 +188,7 @@ else
             done
         fi
 
-        # Запуск фоновой пред-установки с учетом выбранных компонентов
-        start_background_preinstall
-        if is_true "${ENABLE_AWG_STANDALONE:-0}"; then
-            start_amneziawg_preinstall_bg
-        fi
+
 
         if ! is_true "${ENABLE_WEB_STACK:-y}"; then
             # Сценарий только автономного сервера AmneziaWG
@@ -210,7 +206,7 @@ else
             echo -e "        ${DIM}• Готовый сайт-маскировка DataSphere Analytics + автогенерация безопасных путей.${NC}\n"
             echo -e "    ${YELLOW}${BOLD}[2] Экспертная детальная настройка${NC} — Полный контроль параметров"
             echo -e "        ${DIM}• Пошаговый выбор всех портов, путей подписок, Hysteria 2 и AmneziaWG.${NC}\n"
-            
+
             while true; do
                 echo -ne "  ${WHITE}${ARROW} Ваш выбор [1/2] (по умолчанию: 1): ${NC}"
                 read -r MODE_INPUT </dev/tty || read -r MODE_INPUT || MODE_INPUT="1"
@@ -229,13 +225,12 @@ else
     fi
 
 if [ "${SKIP_WIZARD_STEPS:-0}" -eq 1 ]; then
-    rebuild_all_domains
-    sync_reality_ports
+    reconstruct_arrays_from_vars
 elif [ "$EXPRESS_MODE" -eq 1 ]; then
     echo ""
     echo -e "  ${GREEN}${STAR} ${BOLD}Включен режим: Экспресс-установка${NC}"
     echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}"
-    
+
     echo -e "  ${YELLOW}[i] Важно о DNS:${NC} ${DIM}Для маскировки требуются A-записи основного домена и поддомена cdn.<домен>${NC}"
     if [ -z "${PRIMARY_DOMAIN:-}" ]; then
         while true; do
@@ -248,105 +243,15 @@ elif [ "$EXPRESS_MODE" -eq 1 ]; then
             echo -e "  ${RED}${CROSS} Некорректный формат домена. Попробуйте еще раз.${NC}"
         done
     fi
-    
+
     if [ -z "${LE_EMAIL:-}" ]; then
         echo -ne "  ${WHITE}${ARROW} Введите Email для сертификатов Let's Encrypt: ${NC}"
         read -r LE_EMAIL </dev/tty || read -r LE_EMAIL || true
         LE_EMAIL=$(echo "${LE_EMAIL:-}" | tr -d '[:space:]')
     fi
-    
-    # Автоматические пресеты для Экспресс-режима
-    ADD_WWW="n"
-    ENABLE_STEAL="y"
-    STEAL_PORT="45443"
-    STEAL_DOMAINS=("cdn.$PRIMARY_DOMAIN")
-    ENABLE_CLASSIC="y"
-    CLASSIC_PORT="46443"
-    CLASSIC_SNI_LIST=("avito.ru")
-    PANEL_PORT="${PANEL_PORT:-10443}"
-    ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
-    ADMIN_PASSWORD="${ADMIN_PASSWORD:-$(head -c 128 /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 12 || echo "Admin1234567")}"
-    SERVER_PREFIX="${SERVER_PREFIX:-Server}"
-    if [ -n "${PANEL_PATH:-}" ] && [ "${PANEL_PATH:-}" != "my-3x-panel" ] && [ "${PANEL_PATH:-}" != "/my-3x-panel/" ]; then
-        RAW_PATH="${PANEL_PATH#/}"
-        RAW_PATH="${RAW_PATH%/}"
-        PANEL_PATH="/${RAW_PATH}/"
-    else
-        RAW_PATH="panel-$(head -c 64 /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "${RANDOM}")"
-        PANEL_PATH="/${RAW_PATH}/"
-    fi
-    SUB_PORT="55443"
-    RAW_SUB_PATH="sub-$(head -c 64 /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 6 || echo "${RANDOM}")"
-    SUB_PATH="/${RAW_SUB_PATH}/"
-    SUB_JSON_PATH="${SUB_PATH%/}/json/"
-    SUB_CLASH_PATH="${SUB_PATH%/}/clash/"
-    XHTTP_STREAM_PORT="50443"
-    RAW_XHTTP_STREAM_PATH="$(head -c 64 /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "xh${RANDOM}")"
-    XHTTP_STREAM_PATH="/${RAW_XHTTP_STREAM_PATH}/"
-    ENABLE_HY2="1"
-    HY2_PORT="443"
-    HY2_DOMAIN="$PRIMARY_DOMAIN"
-    HY2_PORT_HOPPING="${HY2_PORT_HOPPING:-n}"
-    HY2_PORT_HOPPING_RANGE="${HY2_PORT_HOPPING_RANGE:-20000:50000}"
-    ENABLE_AWG_V3="1"
-    AWG_V3_PORT="8443"
-    ENABLE_AWG_V2="0"
-    AWG_V2_PORT=""
-    if is_true "${ENABLE_AWG_STANDALONE:-n}"; then
-        ENABLE_AWG_STANDALONE=1
-        AWG_STANDALONE_PORT="${AWG_STANDALONE_PORT:-8445}"
-        AWG_SERVER_HOST="${AWG_SERVER_HOST:-$PRIMARY_DOMAIN}"
-    else
-        ENABLE_AWG_STANDALONE=0
-        AWG_STANDALONE_PORT=""
-    fi
-    DECOY_MODE="1"
-    SSL_ENGINE_CHOICE="1"
-    AUTO_SETUP_3XUI="y"
-    ENABLE_NODE_TOKEN="${ENABLE_NODE_TOKEN:-n}"
-    NODE_TOKEN_NAME="${NODE_TOKEN_NAME:-}"
-    NODE_TOKEN="${NODE_TOKEN:-}"
-    ENABLE_WARP="${ENABLE_WARP:-y}"
-    WARP_LICENSE_KEY="${WARP_LICENSE_KEY:-}"
-    ENABLE_AGH="${ENABLE_AGH:-y}"
-    AGH_MODE="${AGH_MODE:-1}"
-    AGH_DOMAIN=""
-    AGH_USER="${AGH_USER:-admin}"
-    DEFAULT_AG_PASS="AgHome_$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 8 || echo 'Pass1234')"
-    AGH_PASS="${AGH_PASS:-$DEFAULT_AG_PASS}"
-    if [ -z "${AGH_CLIENT_ID:-}" ] || [ "${AGH_CLIENT_ID:-}" = "home-router" ]; then
-        AGH_CLIENT_ID="client-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "client${RANDOM}")"
-    fi
-    AGH_XRAY_DNS="${AGH_XRAY_DNS:-y}"
-    STEAL_ENABLED=1
-    CLASSIC_ENABLED=1
-    
-    ALL_DOMAINS=("$PRIMARY_DOMAIN")
-    declare -A DOMAIN_TO_PORT=()
-    declare -A EXT_SNI_TO_PORT=()
-    STEAL_PORTS_LIST=("$STEAL_PORT")
-    CLASSIC_PORTS_LIST=("$CLASSIC_PORT")
-    ALL_REALITY_PORTS=("$STEAL_PORT" "$CLASSIC_PORT")
-    REALITY_FALLBACK_PORT="9443"
-    
-    ALL_DOMAINS+=("cdn.$PRIMARY_DOMAIN")
-    DOMAIN_TO_PORT["cdn.$PRIMARY_DOMAIN"]="$STEAL_PORT"
-    
-    ALL_EXT_SNIS=("avito.ru")
-    EXT_SNI_TO_PORT["avito.ru"]="$CLASSIC_PORT"
-    
-    echo -e "  ${GREEN}${CHECK} Экспресс-параметры применены:${NC}"
-    echo -e "    ${DIM}• Домен:${NC}          ${WHITE}${BOLD}$PRIMARY_DOMAIN${NC}"
-    echo -e "    ${DIM}• REALITY (свой сайт):${NC}  ${WHITE}cdn.$PRIMARY_DOMAIN -> 127.0.0.1:$STEAL_PORT${NC}"
-    echo -e "    ${DIM}• REALITY (внешний):${NC}    ${WHITE}avito.ru -> 127.0.0.1:$CLASSIC_PORT${NC}"
-    echo -e "    ${DIM}• VLESS xHTTP:${NC}    ${WHITE}$XHTTP_STREAM_PATH -> 127.0.0.1:$XHTTP_STREAM_PORT${NC}"
-    udp_stack_summary="Hysteria 2 (:443), AWG v3 (:8443)"
-    is_true "${ENABLE_AWG_STANDALONE:-0}" && udp_stack_summary="${udp_stack_summary}, Standalone (:8445)"
-    echo -e "    ${DIM}• UDP Стек:${NC}       ${WHITE}${udp_stack_summary}${NC}"
-    echo -e "    ${DIM}• Cloudflare WARP:${NC} ${WHITE}Активирован (Google, Gemini, AI / YouTube direct)${NC}"
-    echo -e "    ${DIM}• Веб-маска:${NC}      ${WHITE}DataSphere Analytics${NC}"
-    echo ""
-    start_amneziawg_preinstall_bg
+
+    apply_express_defaults
+
 else
     # Инициализация глобальных структур и вспомогательных функций мастера настройки
     [[ -v DOMAIN_TO_PORT ]] || declare -g -A DOMAIN_TO_PORT=()
@@ -510,14 +415,8 @@ for item in res:
         PANEL_PORT="${PANEL_PORT:-10443}"
         ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
         ADMIN_PASSWORD="${ADMIN_PASSWORD:-$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 12 || echo "Admin1234567")}"
-        if [ -n "${PANEL_PATH:-}" ] && [ "${PANEL_PATH:-}" != "my-3x-panel" ] && [ "${PANEL_PATH:-}" != "/my-3x-panel/" ]; then
-            RAW_PATH="${PANEL_PATH#/}"; RAW_PATH="${RAW_PATH%/}"
-        elif [ -z "${RAW_PATH:-}" ] || [ "${RAW_PATH:-}" = "my-3x-panel" ]; then
-            RAW_PATH="panel-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "panel${RANDOM}")"
-        fi
-        RAW_PATH="${RAW_PATH#/}"; RAW_PATH="${RAW_PATH%/}"
+        ensure_panel_path || return 1
         validate_path_segment "$RAW_PATH" "URI панели"
-        PANEL_PATH="/${RAW_PATH#/}"; PANEL_PATH="${PANEL_PATH%/}/"
 
         SUB_PORT="${SUB_PORT:-55443}"
         RAW_SUB_PATH="${RAW_SUB_PATH:-${SUB_PATH:-sub-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "sub${RANDOM}")}}"
@@ -607,13 +506,7 @@ for item in res:
         if [[ "${ENABLE_WSTUNNEL,,}" == "y" || "${ENABLE_WSTUNNEL:-}" == "1" ]]; then
             ENABLE_WSTUNNEL=1
             WSTUNNEL_PORT="${WSTUNNEL_PORT:-8080}"
-            local _wst_pref="${WSTUNNEL_PREFIX:-}"
-            _wst_pref="${_wst_pref#/}"
-            _wst_pref="${_wst_pref%/}"
-            if [ -z "$_wst_pref" ] || [ "$_wst_pref" = "wstunnel" ] || [ "$_wst_pref" = "secret-ws" ]; then
-                _wst_pref="ws-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "ws${RANDOM}")"
-            fi
-            WSTUNNEL_PREFIX="/${_wst_pref}/"
+            ensure_wstunnel_prefix || return 1
         else
             ENABLE_WSTUNNEL=0
         fi
@@ -641,9 +534,6 @@ for item in res:
             ENABLE_DNSTT=0
         fi
 
-        if is_true "${ENABLE_AWG_V3:-0}" || is_true "${ENABLE_AWG_V2:-0}" || is_true "${ENABLE_AWG_STANDALONE:-0}"; then
-            start_amneziawg_preinstall_bg
-        fi
 
         # AdGuard Home
         if [[ "${ENABLE_AGH,,}" == "y" || "${ENABLE_AGH:-}" == "1" ]]; then
@@ -652,9 +542,7 @@ for item in res:
             [ "$AGH_MODE" = "2" ] && AGH_DOMAIN="${AGH_DOMAIN:-dns.$PRIMARY_DOMAIN}" || AGH_DOMAIN=""
             AGH_USER="${AGH_USER:-admin}"
             AGH_PASS="${AGH_PASS:-AgHome_$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 8 || echo 'Pass1234')}"
-            if [ -z "${AGH_CLIENT_ID:-}" ] || [ "${AGH_CLIENT_ID:-}" = "home-router" ]; then
-        AGH_CLIENT_ID="client-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "client${RANDOM}")"
-    fi
+            ensure_agh_client_id || return 1
             [[ "${AGH_XRAY_DNS,,}" == "y" || "${AGH_XRAY_DNS:-}" == "1" ]] && AGH_XRAY_DNS="y" || AGH_XRAY_DNS="n"
         else
             ENABLE_AGH=0
@@ -964,10 +852,8 @@ for item in res:
             local def_pass="${ADMIN_PASSWORD:-$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 12 || echo "Admin1234567")}"
             prompt_default "  Пароль администратора 3X-UI" "$def_pass" ADMIN_PASSWORD || return $?
 
-            local rand_p_path="panel-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "panel${RANDOM}")"
-            local r_path="${RAW_PATH:-${PANEL_PATH:-$rand_p_path}}"
-            r_path="${r_path#/}"; r_path="${r_path%/}"
-            [ "$r_path" = "my-3x-panel" ] && r_path="$rand_p_path"
+            ensure_panel_path || return 1
+            local r_path="$RAW_PATH"
             prompt_default "  Секретный URI-путь к веб-панели (без слэшей)" "$r_path" RAW_PATH || return $?
             validate_path_segment "$RAW_PATH" "URI панели"
             PANEL_PATH="/${RAW_PATH#/}"; PANEL_PATH="${PANEL_PATH%/}/"
@@ -995,13 +881,8 @@ for item in res:
             ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
             [ -n "${ADMIN_PASSWORD:-}" ] || ADMIN_PASSWORD="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 12 || echo "Admin1234567")"
 
-            if [ -n "${PANEL_PATH:-}" ] && [ "${PANEL_PATH:-}" != "my-3x-panel" ] && [ "${PANEL_PATH:-}" != "/my-3x-panel/" ]; then
-                RAW_PATH="${PANEL_PATH#/}"; RAW_PATH="${RAW_PATH%/}"
-            elif [ -z "${RAW_PATH:-}" ] || [ "${RAW_PATH:-}" = "my-3x-panel" ]; then
-                RAW_PATH="panel-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "panel${RANDOM}")"
-            fi
-            RAW_PATH="${RAW_PATH#/}"; RAW_PATH="${RAW_PATH%/}"
-            PANEL_PATH="/${RAW_PATH#/}"; PANEL_PATH="${PANEL_PATH%/}/"
+            ensure_panel_path || return 1
+            validate_path_segment "$RAW_PATH" "URI панели"
 
             SUB_PORT="${SUB_PORT:-55443}"
             [ -n "${RAW_SUB_PATH:-}" ] || RAW_SUB_PATH="sub-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "sub${RANDOM}")"
@@ -1128,9 +1009,6 @@ for item in res:
             AWG_STANDALONE_PORT=""
         fi
 
-        if is_true "$ENABLE_AWG_V3" || is_true "$ENABLE_AWG_V2" || is_true "$ENABLE_AWG_STANDALONE"; then
-            start_amneziawg_preinstall_bg
-        fi
 
         if is_true "$ENABLE_TUIC"; then
             [ -n "${TUIC_PORT:-}" ] || TUIC_PORT="8448"
@@ -1194,12 +1072,7 @@ for item in res:
 
         if is_true "$ENABLE_WSTUNNEL"; then
             [ -n "${WSTUNNEL_PORT:-}" ] || WSTUNNEL_PORT="8080"
-            local _wp="${WSTUNNEL_PREFIX:-}"
-            _wp="${_wp#/}"; _wp="${_wp%/}"
-            if [ -z "$_wp" ] || [ "$_wp" = "wstunnel" ] || [ "$_wp" = "secret-ws" ]; then
-                _wp="ws-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "ws${RANDOM}")"
-            fi
-            WSTUNNEL_PREFIX="/${_wp}/"
+            ensure_wstunnel_prefix || return 1
             [ -n "${WSTUNNEL_SECRET:-}" ] || WSTUNNEL_SECRET="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "wst${RANDOM}")"
             if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
                 prompt_default "  Локальный порт для Wstunnel daemon" "$WSTUNNEL_PORT" WSTUNNEL_PORT || return $?
@@ -1262,7 +1135,7 @@ for item in res:
         prompt_yes_no "Установить и настроить AmneziaWG v3.1 (инбаунд 3X-UI)?" "${ENABLE_AWG_V3:-y}" ENABLE_AWG_V3 || return $?
         if is_true "${ENABLE_AWG_V3:-y}"; then
             ENABLE_AWG_V3=1
-            start_amneziawg_preinstall_bg
+
             prompt_default "  Внешний UDP-порт для AmneziaWG v3.1 (3X-UI)" "${AWG_V3_PORT:-8443}" AWG_V3_PORT || return $?
         else
             ENABLE_AWG_V3=0
@@ -1275,7 +1148,7 @@ for item in res:
         prompt_yes_no "Установить и настроить AmneziaWG v2.0 (для роутеров Keenetic / OpenWrt, инбаунд 3X-UI)?" "${ENABLE_AWG_V2:-n}" ENABLE_AWG_V2 || return $?
         if is_true "${ENABLE_AWG_V2:-y}"; then
             ENABLE_AWG_V2=1
-            start_amneziawg_preinstall_bg
+
             prompt_default "  Внешний UDP-порт для AmneziaWG v2.0 (3X-UI)" "${AWG_V2_PORT:-8444}" AWG_V2_PORT || return $?
         else
             ENABLE_AWG_V2=0
@@ -1288,7 +1161,7 @@ for item in res:
         prompt_yes_no "Установить автономный сервер AmneziaWG (awg-mgr / системная служба на хосте)?" "${ENABLE_AWG_STANDALONE:-n}" ENABLE_AWG_STANDALONE || return $?
         if is_true "${ENABLE_AWG_STANDALONE:-y}"; then
             ENABLE_AWG_STANDALONE=1
-            start_amneziawg_preinstall_bg
+
             prompt_default "  Внешний UDP-порт для автономного сервера AmneziaWG" "${AWG_STANDALONE_PORT:-8445}" AWG_STANDALONE_PORT || return $?
             prompt_default "  Домен или IP-адрес для подключения клиентов (Endpoint)" "${AWG_SERVER_HOST:-${PRIMARY_DOMAIN:-$WAN_IP}}" AWG_SERVER_HOST || return $?
         else
@@ -1331,10 +1204,8 @@ for item in res:
             prompt_default "  Логин администратора AdGuard Home" "${AGH_USER:-admin}" AGH_USER || return $?
             local def_ag_pass="${AGH_PASS:-AgHome_$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 8 || echo 'Pass1234')}"
             prompt_default "  Пароль администратора AdGuard Home" "$def_ag_pass" AGH_PASS || return $?
-            local def_agh_cid="${AGH_CLIENT_ID:-}"
-            if [ -z "$def_agh_cid" ] || [ "$def_agh_cid" = "home-router" ]; then
-                def_agh_cid="client-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "client${RANDOM}")"
-            fi
+            ensure_agh_client_id || return 1
+            local def_agh_cid="$AGH_CLIENT_ID"
             prompt_default "  Секретный ClientID токен для роутера" "$def_agh_cid" AGH_CLIENT_ID || return $?
             prompt_yes_no "  Использовать AdGuard Home как DNS для VPN-клиентов (Xray)?" "${AGH_XRAY_DNS:-y}" AGH_XRAY_DNS || return $?
             ok "AdGuard Home настроен (Режим: $AGH_MODE, ClientID: $AGH_CLIENT_ID)"
@@ -1481,7 +1352,7 @@ for item in res:
                 echo
             fi
 
-            prompt_yes_no "Создать API-токен для подключения сервера как узла (3X-UI Node)?" "${ENABLE_NODE_TOKEN:-n}" ENABLE_NODE_TOKEN || return $?
+            prompt_yes_no "Создать API-токен для подключения сервера как узла (3X-UI Node)?" "${ENABLE_NODE_TOKEN:-y}" ENABLE_NODE_TOKEN || return $?
             if [[ "${ENABLE_NODE_TOKEN,,}" == "y" || "${ENABLE_NODE_TOKEN:-}" == "1" ]]; then
                 ENABLE_NODE_TOKEN="y"
                 local def_token_name="${SERVER_PREFIX:+$SERVER_PREFIX-Node}"
@@ -1800,7 +1671,7 @@ for item in res:
 
         echo
         echo -e "${YELLOW}════════════════════════════════════════════════════════════════════════════════${NC}"
-        echo -e "  ${GREEN}[Enter]${NC} или ${GREEN}[y]${NC}  ${BOLD}Начать установку с выбранными параметрами${NC}"
+        echo -e "  ${GREEN}[Enter]${NC} или ${GREEN}[y]${NC}  ${BOLD}Проверить параметры и перейти к плану установки${NC}"
         echo -e "  ${CYAN}[1 - 12]${NC}        ${BOLD}Изменить соответствующий раздел конфигурации${NC}"
         echo -e "  ${RED}[q]${NC}             ${BOLD}Отмена и выход${NC}"
         echo -e "${YELLOW}════════════════════════════════════════════════════════════════════════════════${NC}"
@@ -1808,15 +1679,12 @@ for item in res:
 
         while true; do
             local choice=""
-            echo -ne "  ${WHITE}${ARROW} Ваш выбор [${GREEN}Enter = начать${WHITE}]: ${NC}"
+            echo -ne "  ${WHITE}${ARROW} Ваш выбор [${GREEN}Enter = далее${WHITE}]: ${NC}"
             read -r choice </dev/tty || read -r choice || true
             choice=$(echo "${choice:-}" | tr -d '[:space:]')
 
             if [ -z "$choice" ] || [[ "${choice,,}" == "y" ]] || [[ "${choice,,}" == "yes" ]]; then
-                save_session_state "$SAVED_CONFIG_FILE" >/dev/null 2>&1 || true
-                if is_true "${ENABLE_AWG_V3:-0}" || is_true "${ENABLE_AWG_V2:-0}" || is_true "${ENABLE_AWG_STANDALONE:-0}"; then
-                    start_amneziawg_preinstall_bg
-                fi
+
                 return 0
             fi
 
@@ -2014,7 +1882,4 @@ if is_true "${ENABLE_WEB_STACK:-y}"; then
         ALL_DOMAINS=("${valid_domains[@]}")
     fi
 fi
-
-# Сохраняем состояние сессии в файл конфигурации для защиты от обрыва SSH или повторного вызова
-save_session_state "$SAVED_CONFIG_FILE"
 

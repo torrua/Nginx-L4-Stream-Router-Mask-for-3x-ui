@@ -27,7 +27,7 @@ def run_shell(code: str, env: dict | None = None) -> subprocess.CompletedProcess
         full_env.update(env)
     return subprocess.run(
         [str(BASH), "-s"],
-        input="export PATH=/usr/bin:/bin:$PATH\n" + code,
+        input="export PATH=/usr/bin:/bin:$PATH\nsource src/common/config.sh\n" + code,
         cwd=ROOT,
         text=True,
         encoding="utf-8",
@@ -511,6 +511,7 @@ PRIMARY_DOMAIN="example.com"
 ENABLE_SHADOWTLS=1
 ENABLE_SS2022=0
 CLI_ENABLE_SS2022=""
+source src/common/secrets.sh
 source src/system/env.sh
 reconstruct_arrays_from_vars
 echo "FINAL_ENABLE_SS2022: $ENABLE_SS2022"
@@ -528,6 +529,7 @@ PRIMARY_DOMAIN="example.com"
 ENABLE_DNSTT=1
 ENABLE_SS2022=0
 CLI_ENABLE_SS2022=""
+source src/common/secrets.sh
 source src/system/env.sh
 reconstruct_arrays_from_vars
 echo "FINAL_ENABLE_SS2022: $ENABLE_SS2022"
@@ -613,7 +615,7 @@ echo "CLI_ENABLE_DNSTT: $CLI_ENABLE_DNSTT"
 
     def test_ss2022_udp_over_tcp_configured(self):
         """Shadowsocks 2022 inbound must have udpOverTcp and udp_over_tcp configured."""
-        conf_py = (ROOT / "src/entrypoints/configure_3xui.main.sh").read_text(encoding="utf-8")
+        conf_py = (ROOT / "src/entrypoints/configure-panel.main.sh").read_text(encoding="utf-8")
         inbounds_py = (ROOT / "src/xray/inbounds.py").read_text(encoding="utf-8")
         self.assertIn('"udpOverTcp": True', conf_py)
         self.assertIn('"udp_over_tcp": True', conf_py)
@@ -621,9 +623,9 @@ echo "CLI_ENABLE_DNSTT: $CLI_ENABLE_DNSTT"
         self.assertIn('target_settings["udp_over_tcp"] = True', inbounds_py)
 
     def test_zapret_integrated_in_os_hardening_and_secure_vps(self):
-        """Zapret service must be called in step_os_hardening and secure-vps.sh."""
+        """Zapret service must be called in step_os_hardening and prepare-server.sh."""
         steps_sh = (ROOT / "src/installer/steps.sh").read_text(encoding="utf-8")
-        sec_vps_sh = (ROOT / "secure-vps.sh").read_text(encoding="utf-8")
+        sec_vps_sh = (ROOT / "prepare-server.sh").read_text(encoding="utf-8")
         self.assertIn("setup_zapret_service", steps_sh)
         self.assertIn("zapret-server.service", sec_vps_sh)
         self.assertIn("connbytes 1:6", sec_vps_sh)
@@ -710,21 +712,11 @@ rm -rf "$MOCK_ROOT"
         self.assertIn("DNSTT DoH Tunnel", preflight_sh)
 
     def test_step_configure_inbounds_deploys_services_before_configure_3xui(self):
-        """deploy_native_nextgen_services must run before configure_3xui.sh to export credentials."""
-        steps_sh = (ROOT / "src/installer/steps.sh").read_text(encoding="utf-8")
-        summary_sh = (ROOT / "src/tui/summary.sh").read_text(encoding="utf-8")
-        inbounds_body = steps_sh.split("step_configure_inbounds()")[1]
-        idx_deploy = inbounds_body.find("deploy_native_nextgen_services")
-        idx_conf = inbounds_body.find("./configure_3xui.sh")
-        self.assertNotEqual(idx_deploy, -1)
-        self.assertNotEqual(idx_conf, -1)
-        self.assertLess(idx_deploy, idx_conf)
+        """deploy_native_nextgen_services must run before configure-panel.sh to export credentials."""
+        panel_sh = (ROOT / "src/installer/panel.sh").read_text(encoding="utf-8")
+        self.assertLess(panel_sh.index("deploy_native_nextgen_services"), panel_sh.index('bash "$CONFIG_EXEC"'))
+        self.assertEqual(panel_sh.count('bash "$CONFIG_EXEC"'), 1)
 
-        sum_deploy = summary_sh.find("deploy_native_nextgen_services")
-        sum_conf = summary_sh.find('bash "$CONFIG_EXEC"')
-        self.assertNotEqual(sum_deploy, -1)
-        self.assertNotEqual(sum_conf, -1)
-        self.assertLess(sum_deploy, sum_conf)
 
 
 if __name__ == "__main__":

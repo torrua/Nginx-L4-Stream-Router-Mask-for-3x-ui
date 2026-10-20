@@ -4,6 +4,89 @@
 # Примечание: show_help() и generate_config_template() определены выше (до проверки root/OS),
 # чтобы --help и --gen-config работали без привилегий суперпользователя.
 
+# @include "common/secrets.sh"
+# @include "common/config.sh"
+# @include "common/node-token.sh"
+
+if ! declare -f generate_secret_token >/dev/null 2>&1 || ! declare -f is_true >/dev/null 2>&1 || ! declare -f normalize_node_token_config >/dev/null 2>&1; then
+    _env_src_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || pwd)"
+    [ -f "$_env_src_dir/../common/secrets.sh" ] && source "$_env_src_dir/../common/secrets.sh"
+    [ -f "$_env_src_dir/../common/config.sh" ] && source "$_env_src_dir/../common/config.sh"
+    [ -f "$_env_src_dir/../common/node-token.sh" ] && source "$_env_src_dir/../common/node-token.sh"
+fi
+
+# Remember explicit inputs before normalization adds defaults.
+declare -A CONFIG_EXPLICIT_KEYS=()
+while IFS= read -r _input_name; do CONFIG_EXPLICIT_KEYS[$_input_name]=1; done < <(compgen -v)
+
+ensure_panel_path() {
+    local path="${PANEL_PATH:-${RAW_PATH:-}}"
+    path="${path#/}"; path="${path%/}"
+    if [ -z "$path" ]; then
+        path=$(read_existing_panel_path) || return 1
+        path="${path#/}"; path="${path%/}"
+    fi
+    if [ -z "$path" ]; then
+        path="panel-$(generate_secret_token)" || return 1
+    fi
+    RAW_PATH="$path"
+    PANEL_PATH="/${path}/"
+}
+
+read_existing_panel_path() {
+    local db candidate python_cmd=""
+    for db in "${DB_PATH:-/etc/x-ui/x-ui.db}" /usr/local/x-ui/bin/x-ui.db /etc/x-ui/db/x-ui.db; do
+        [ -f "$db" ] || continue
+        for candidate in "${PYTHON_CMD:-python3}" python; do
+            if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c 'import sqlite3' >/dev/null 2>&1; then
+                python_cmd="$candidate"
+                break
+            fi
+        done
+        [ -n "$python_cmd" ] || { warn "Для чтения действующего пути панели требуется Python 3."; return 1; }
+        "$python_cmd" - "$db" << 'EOF_PANEL_PATH'
+import sqlite3
+import sys
+from pathlib import Path
+
+with sqlite3.connect(Path(sys.argv[1]).resolve().as_uri() + "?mode=ro", uri=True) as conn:
+    row = conn.execute("SELECT value FROM settings WHERE key='webBasePath'").fetchone()
+    print((row[0] if row else "") or "")
+EOF_PANEL_PATH
+        return $?
+    done
+}
+
+ensure_agh_client_id() {
+    if [ -z "${AGH_CLIENT_ID:-}" ]; then
+        AGH_CLIENT_ID="client-$(generate_secret_token)" || return 1
+    fi
+}
+
+ensure_wstunnel_prefix() {
+    local prefix="${WSTUNNEL_PREFIX:-}"
+    prefix="${prefix#/}"; prefix="${prefix%/}"
+    if [ -z "$prefix" ]; then
+        prefix="ws-$(generate_secret_token)" || return 1
+    fi
+    WSTUNNEL_PREFIX="/${prefix}/"
+}
+
+rotate_secret_paths() {
+    # Only the full installer may rotate paths; companion scripts preserve them.
+    local panel_token ws_token client_token
+    panel_token=$(generate_secret_token) || return 1
+    ws_token=$(generate_secret_token) || return 1
+    client_token=$(generate_secret_token) || return 1
+    RAW_PATH="panel-${panel_token}"
+    PANEL_PATH="/${RAW_PATH}/"
+    WSTUNNEL_PREFIX="/ws-${ws_token}/"
+    AGH_CLIENT_ID="client-${client_token}"
+    AUTO_SETUP_3XUI=y
+    LAST_COMPLETED_STEP=0
+    RESUME_STEP=1
+}
+
 reconstruct_arrays_from_vars() {
     [ -n "${PRIMARY_DOMAIN:-}" ] || return 0
 
@@ -77,16 +160,7 @@ reconstruct_arrays_from_vars() {
     for p in "${CLASSIC_PORTS_LIST[@]:-}"; do [ -n "$p" ] && ALL_REALITY_PORTS+=("$p"); done
 
     PANEL_PORT="${PANEL_PORT:-10443}"
-    if [ -z "${RAW_PATH:-}" ] || [ "${RAW_PATH:-}" = "my-3x-panel" ]; then
-        if [ -n "${PANEL_PATH:-}" ] && [ "${PANEL_PATH:-}" != "my-3x-panel" ] && [ "${PANEL_PATH:-}" != "/my-3x-panel/" ]; then
-            RAW_PATH="${PANEL_PATH}"
-        else
-            RAW_PATH="panel-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "panel${RANDOM}")"
-        fi
-    fi
-    RAW_PATH="${RAW_PATH#/}"
-    RAW_PATH="${RAW_PATH%/}"
-    PANEL_PATH="/${RAW_PATH}/"
+    ensure_panel_path || return 1
 
     SUB_PORT="${SUB_PORT:-55443}"
     if [ -z "${RAW_SUB_PATH:-}" ] || [ "${RAW_SUB_PATH:-}" = "my-post-key" ]; then
@@ -165,15 +239,13 @@ reconstruct_arrays_from_vars() {
         ENABLE_AGH=0
     fi
     _v="${ENABLE_WARP:-n}"; if is_true "$_v"; then ENABLE_WARP="y"; else ENABLE_WARP="n"; fi
-    _v="${ENABLE_NODE_TOKEN:-n}"; if is_true "$_v"; then ENABLE_NODE_TOKEN="y"; else ENABLE_NODE_TOKEN="n"; fi
+    normalize_node_token_config
     _v="${AGH_XRAY_DNS:-n}"; if is_true "$_v"; then AGH_XRAY_DNS="y"; else AGH_XRAY_DNS="n"; fi
     HY2_PORT_HOPPING="${HY2_PORT_HOPPING:-n}"
     AUTO_SETUP_3XUI="${AUTO_SETUP_3XUI:-y}"
     _v="${SHOW_MANUAL_STEPS:-n}"; if is_true "$_v"; then SHOW_MANUAL_STEPS=1; else SHOW_MANUAL_STEPS=0; fi
     PORT_AGH_WEB="${PORT_AGH_WEB:-3000}"
-    if [ -z "${AGH_CLIENT_ID:-}" ] || [ "${AGH_CLIENT_ID:-}" = "home-router" ]; then
-        AGH_CLIENT_ID="client-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "client${RANDOM}")"
-    fi
+    ensure_agh_client_id || return 1
 
     # Сосуществование с Dokploy и протоколы следующего поколения
     _v="${DOKPLOY_COEXISTENCE:-n}"; if is_true "$_v"; then DOKPLOY_COEXISTENCE="y"; else DOKPLOY_COEXISTENCE="n"; fi
@@ -231,13 +303,7 @@ reconstruct_arrays_from_vars() {
     ZAPRET_FOOLING="${ZAPRET_FOOLING:-md5sig,badseq}"
     _v="${ENABLE_WSTUNNEL:-n}"; if is_true "$_v"; then ENABLE_WSTUNNEL=1; else ENABLE_WSTUNNEL=0; fi
     WSTUNNEL_DOMAIN="${WSTUNNEL_DOMAIN:-}"
-    local _wst_pref="${WSTUNNEL_PREFIX:-}"
-    _wst_pref="${_wst_pref#/}"
-    _wst_pref="${_wst_pref%/}"
-    if [ -z "$_wst_pref" ] || [ "$_wst_pref" = "wstunnel" ] || [ "$_wst_pref" = "secret-ws" ]; then
-        _wst_pref="ws-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "ws${RANDOM}")"
-    fi
-    WSTUNNEL_PREFIX="/${_wst_pref}/"
+    ensure_wstunnel_prefix || return 1
     WSTUNNEL_PORT="${WSTUNNEL_PORT:-8080}"
     if [ "$ENABLE_WSTUNNEL" -eq 1 ] && [ -z "${WSTUNNEL_SECRET:-}" ]; then
         WSTUNNEL_SECRET="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "wst${RANDOM}")"
@@ -258,6 +324,7 @@ load_env_file() {
     local re_dquote='^"(.*)"$'
     local re_squote="^'(.*)'\$"
     while IFS= read -r line || [ -n "$line" ]; do
+        line="${line%$'\r'}"
         [[ "$line" =~ ^[[:space:]]*# ]] && continue
         [[ -z "${line// }" ]] && continue
         if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
@@ -267,13 +334,41 @@ load_env_file() {
                 val="${BASH_REMATCH[1]}"
             fi
             declare -g "$key=$val"
+            CONFIG_EXPLICIT_KEYS[$key]=1
         fi
     done < "$env_file"
     reconstruct_arrays_from_vars
 }
 
+finalize_installation_config() {
+    if is_true "${ENABLE_WEB_STACK:-y}"; then
+        REALITY_FALLBACK_PORT="${REALITY_FALLBACK_PORT:-9443}"
+        normalize_node_token_config
+        ensure_panel_path || return 1
+        ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
+        ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
+        if is_true "${AUTO_SETUP_3XUI:-y}" && [ -z "$ADMIN_PASSWORD" ] &&
+           [ ! -s "${DB_PATH:-/etc/x-ui/x-ui.db}" ] && [ ! -s /usr/local/x-ui/bin/x-ui.db ]; then
+            ADMIN_PASSWORD=$(generate_secret_token) || return 1
+        fi
+        if is_true "${ENABLE_AGH:-n}"; then
+            AGH_MODE="${AGH_MODE:-1}"
+            AGH_DOMAIN="${AGH_DOMAIN:-}"
+            AGH_USER="${AGH_USER:-admin}"
+            if [ -z "${AGH_PASS:-}" ]; then AGH_PASS=$(generate_secret_token) || return 1; fi
+            ensure_agh_client_id || return 1
+        fi
+    fi
+}
+
 save_session_state() {
-    local save_path="${1:-setup_mask.env}"
+    local save_path="${1:-server-setup.env}"
+    # Resolve once in the caller's state before serializing it.
+    ensure_panel_path || return 1
+    ensure_agh_client_id || return 1
+    if is_true "${ENABLE_WSTUNNEL:-n}"; then
+        ensure_wstunnel_prefix || return 1
+    fi
     # Защита от утечки секретов: ограничиваем права доступа при создании файла
     local old_umask
     old_umask=$(umask)
@@ -309,7 +404,7 @@ save_session_state() {
     local auto_setup_3xui_save="n"
     v="${AUTO_SETUP_3XUI:-n}"; is_true "$v" && auto_setup_3xui_save="y"
     local node_token_save="n"
-    v="${ENABLE_NODE_TOKEN:-n}"; is_true "$v" && node_token_save="y"
+    v="${ENABLE_NODE_TOKEN:-y}"; is_true "$v" && node_token_save="y"
     local warp_save="n"
     v="${ENABLE_WARP:-n}"; is_true "$v" && warp_save="y"
     local agh_save="n"
@@ -337,12 +432,9 @@ save_session_state() {
     local force_close_old_save="n"
     v="${FORCE_CLOSE_OLD_SSH:-n}"; is_true "$v" && force_close_old_save="y"
 
-    local _save_panel_path="${RAW_PATH:-${PANEL_PATH:-}}"
+    local _save_panel_path="${PANEL_PATH}"
     _save_panel_path="${_save_panel_path#/}"
     _save_panel_path="${_save_panel_path%/}"
-    if [ -z "$_save_panel_path" ] || [ "$_save_panel_path" = "my-3x-panel" ]; then
-        _save_panel_path="panel-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "panel${RANDOM}")"
-    fi
 
     local _save_sub_path="${RAW_SUB_PATH:-${SUB_PATH:-my-post-key}}"
     _save_sub_path="${_save_sub_path#/}"
@@ -359,11 +451,13 @@ save_session_state() {
         _save_xhttp_path="$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "xh${RANDOM}")"
     fi
 
-    cat << EOF_SAVE > "$save_path"
+    local save_tmp
+    save_tmp=$(mktemp "${save_path}.tmp.XXXXXX") || { umask "$old_umask"; return 1; }
+    if ! cat << EOF_SAVE > "$save_tmp"
 
 # ==============================================================================
 # АВТОМАТИЧЕСКИ СОХРАНЕННАЯ КОНФИГУРАЦИЯ СЕССИИ
-# Для перезапуска без вопросов: ./setup_mask.sh --config $save_path --non-interactive
+# Для перезапуска без вопросов: ./setup.sh --config $save_path --non-interactive
 # ==============================================================================
 ENABLE_WEB_STACK="$web_stack_save"
 PRIMARY_DOMAIN="${PRIMARY_DOMAIN:-}"
@@ -394,13 +488,13 @@ SERVER_PREFIX="${SERVER_PREFIX:-Server}"
 SUB_PORT="${SUB_PORT:-55443}"
 SUB_PATH="${_save_sub_path}"
 SUB_CLASH_PATH="${_save_sub_clash_path}"
-SUB_TITLE="${SUB_TITLE:-$SERVER_PREFIX}"
+SUB_TITLE="${SUB_TITLE:-${SERVER_PREFIX:-Server}}"
 XHTTP_STREAM_PORT="${XHTTP_STREAM_PORT:-50443}"
 XHTTP_STREAM_PATH="${_save_xhttp_path}"
 
 ENABLE_HY2="$hy2_save"
 HY2_PORT="${HY2_PORT:-443}"
-HY2_DOMAIN="${HY2_DOMAIN:-$PRIMARY_DOMAIN}"
+HY2_DOMAIN="${HY2_DOMAIN:-${PRIMARY_DOMAIN:-}}"
 HY2_PORT_HOPPING="${HY2_PORT_HOPPING:-n}"
 HY2_PORT_HOPPING_RANGE="${HY2_PORT_HOPPING_RANGE:-20000:50000}"
 
@@ -445,7 +539,7 @@ AGH_MODE="${AGH_MODE:-1}"
 AGH_DOMAIN="${AGH_DOMAIN:-}"
 AGH_USER="${AGH_USER:-admin}"
 AGH_PASS="${AGH_PASS:-}"
-AGH_CLIENT_ID="${AGH_CLIENT_ID:-client-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "client${RANDOM}")}"
+AGH_CLIENT_ID="${AGH_CLIENT_ID}"
 PORT_AGH_WEB="${PORT_AGH_WEB:-3000}"
 AGH_XRAY_DNS="$agh_xray_save"
 SHOW_TIPS="${SHOW_TIPS:-y}"
@@ -482,7 +576,7 @@ ZAPRET_DESYNC="${ZAPRET_DESYNC:-split2}"
 ZAPRET_FOOLING="${ZAPRET_FOOLING:-md5sig,badseq}"
 ENABLE_WSTUNNEL="$wstunnel_save"
 WSTUNNEL_DOMAIN="${WSTUNNEL_DOMAIN:-}"
-WSTUNNEL_PREFIX="${WSTUNNEL_PREFIX:-/${_wst_pref}/}"
+WSTUNNEL_PREFIX="${WSTUNNEL_PREFIX:-}"
 WSTUNNEL_PORT="${WSTUNNEL_PORT:-8080}"
 WSTUNNEL_SECRET="${WSTUNNEL_SECRET:-}"
 
@@ -495,10 +589,26 @@ FORCE_CLOSE_OLD_SSH="$force_close_old_save"
 
 LAST_COMPLETED_STEP="${LAST_COMPLETED_STEP:-0}"
 EOF_SAVE
-    chmod 600 "$save_path" 2>/dev/null || true
-    if [ "$save_path" != "/etc/setup_mask.env" ]; then
-        cp -f "$save_path" /etc/setup_mask.env 2>/dev/null || true
-        chmod 600 /etc/setup_mask.env 2>/dev/null || true
+    then
+        rm -f -- "$save_tmp"
+        umask "$old_umask"
+        return 1
+    fi
+    if ! chmod 600 "$save_tmp" || ! mv -f -- "$save_tmp" "$save_path"; then
+        rm -f -- "$save_tmp"
+        umask "$old_umask"
+        return 1
+    fi
+    if [ "$save_path" != "/etc/server-setup.env" ]; then
+        local mirror_tmp
+        if mirror_tmp=$(mktemp /etc/server-setup.env.tmp.XXXXXX 2>/dev/null); then
+            if ! cp -f -- "$save_path" "$mirror_tmp" || ! chmod 600 "$mirror_tmp" || ! mv -f -- "$mirror_tmp" /etc/server-setup.env; then
+                rm -f -- "$mirror_tmp"
+                warn "Не удалось обновить /etc/server-setup.env; текущая сессия сохранена в $save_path."
+            fi
+        else
+            warn "Не удалось обновить /etc/server-setup.env; текущая сессия сохранена в $save_path."
+        fi
     fi
     umask "$old_umask"
     ok "Конфигурация текущей сессии сохранена в '$save_path' (chmod 600)."

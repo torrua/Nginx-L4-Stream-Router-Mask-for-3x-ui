@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  CONFIGURE 3X-UI INBOUNDS & SETTINGS (__VERSION__ Universal Companion & Smart Reconcile)
+#  CONFIGURE 3X-UI INBOUNDS & SETTINGS (v9.0.0 Universal Companion & Smart Reconcile)
 # ==============================================================================
 #  Скрипт автоматического конфигурирования и самовосстановления базы 3X-UI.
 #  Безопасен для повторного запуска:
@@ -14,24 +14,454 @@
 
 set -euo pipefail
 
-# @include "common/colors.sh"
-# @include "common/logger.sh"
+# Terminal Colors & Styles
+RED=$'\033[0;31m'
+GREEN=$'\033[0;32m'
+YELLOW=$'\033[1;33m'
+BLUE=$'\033[0;34m'
+MAGENTA=$'\033[0;35m'
+CYAN=$'\033[0;36m'
+WHITE=$'\033[1;37m'
+DIM=$'\033[2m'
+BOLD=$'\033[1m'
+NC=$'\033[0m'
+RESET=$'\033[0m'
 
-# @include "common/backup.sh"
+# Status Symbols
+CHECK="✔"
+CROSS="✖"
+ARROW="➜"
+STAR="★"
+INFO="ℹ"
+LOCK="🔒"
+SHIELD="🛡"
+# Standard Logging Functions
+log()  { echo -e "  ${CYAN}[+]${NC} $*"; }
+ok()   { echo -e "  ${GREEN}${CHECK:-✔}${NC} $*"; }
+warn() { echo -e "  ${YELLOW}[!]${NC} $*"; }
+die()  { echo -e "  ${RED}${CROSS:-✖} $*${NC}" >&2; exit 1; }
+# Discover the closest saved configuration without renaming existing user files.
+is_true() {
+    local val="${1:-0}"
+    [[ "$val" == "1" || "${val,,}" == "y" || "${val,,}" == "true" ]]
+}
+
+find_config_file() {
+    local script_dir="${1:-.}" directory candidate
+    for directory in . "$script_dir" /etc /root; do
+        for candidate in "$directory/server-setup.env" "$directory/setup_mask.env"; do
+            if [ -f "$candidate" ]; then
+                printf '%s\n' "$candidate"
+                return 0
+            fi
+        done
+    done
+    return 1
+}
+normalize_node_token_config() {
+    local enabled="${CLI_ENABLE_NODE_TOKEN:-${ENABLE_NODE_TOKEN:-y}}"
+    NODE_TOKEN="${NODE_TOKEN:-}"
+    NODE_TOKEN_NAME="${CLI_NODE_TOKEN_NAME:-${NODE_TOKEN_NAME:-}}"
+    case "${enabled,,}" in y|1|true) ENABLE_NODE_TOKEN=y ;; *) ENABLE_NODE_TOKEN=n; return 0 ;; esac
+    case "${AUTO_SETUP_3XUI:-y}" in n|0|false) ENABLE_NODE_TOKEN=n; return 0 ;; esac
+    if [ -z "$NODE_TOKEN_NAME" ]; then
+        local prefix="${SERVER_PREFIX-Server}"
+        case "${prefix,,}" in ''|-|none|off|no) NODE_TOKEN_NAME=Master-Node-Cluster ;; *) NODE_TOKEN_NAME="${prefix}-Node" ;; esac
+    fi
+}
+
+node_token_runtime_file() {
+    if [ -n "${NODE_ENV_FILE:-}" ]; then printf '%s' "$NODE_ENV_FILE";
+    elif [ -d /run ]; then printf '/run/3xui_node_token.env';
+    else printf '/tmp/3xui_node_token.env'; fi
+}
+
+load_node_token_result() {
+    local file="$1" line key value
+    NODE_TOKEN=""
+    [ -f "$file" ] || return 1
+    local double_quote='^"(.*)"$' single_quote="^'(.*)'\$"
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line%$'\r'}"
+        [[ "$line" =~ ^(NODE_TOKEN_NAME|NODE_TOKEN)=(.*)$ ]] || continue
+        key="${BASH_REMATCH[1]}"; value="${BASH_REMATCH[2]}"
+        if [[ "$value" =~ $double_quote ]] || [[ "$value" =~ $single_quote ]]; then value="${BASH_REMATCH[1]}"; fi
+        printf -v "$key" '%s' "$value"
+    done < "$file"
+    [ -n "${NODE_TOKEN:-}" ]
+}
+
+node_token_operation() {
+    "$PYTHON_CMD" - "$@" <<'EOF_NODE_TOKEN_PY'
+"""Local node-token lifecycle for the 3X-UI API-token SQLite schema."""
+from contextlib import closing
+import hashlib
+import hmac
+import os
+from pathlib import Path
+import secrets
+import sqlite3
+import sys
+import tempfile
+import time
 
 
-# @include "common/spinner.sh"
+def connect(path):
+    return sqlite3.connect(Path(path).resolve().as_uri() + "?mode=rw", uri=True, timeout=10)
+
+
+def verify(path, name, token):
+    if not token:
+        return False
+    try:
+        with closing(connect(path)) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT * FROM api_tokens WHERE name=?", (name,)).fetchone()
+        if row is None or not row["enabled"]:
+            return False
+        if "expires_at" in row.keys():
+            expiry = int(row["expires_at"] or 0)
+            if expiry > 100_000_000_000:
+                expiry //= 1000
+            if expiry and expiry <= int(time.time()):
+                return False
+        if "scope" in row.keys() and row["scope"] not in ("admin", "node-admin", "node-sync"):
+            return False
+        return hmac.compare_digest(hashlib.sha256(token.encode()).hexdigest(), row["token"])
+    except (sqlite3.Error, ValueError, TypeError):
+        return False
+
+
+def create(path, name):
+    with closing(connect(path)) as conn, conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(api_tokens)")}
+        if not {"name", "token", "enabled"} <= columns:
+            raise ValueError("Unsupported 3X-UI API-token schema")
+        token = secrets.token_hex(32)
+        values = {"name": name, "token": hashlib.sha256(token.encode()).hexdigest(), "enabled": 1}
+        for column, value in (("scope", "admin"), ("created_at", int(time.time())), ("expires_at", 0)):
+            if column in columns:
+                values[column] = value
+        if conn.execute("SELECT 1 FROM api_tokens WHERE name=?", (name,)).fetchone():
+            update = {key: value for key, value in values.items() if key != "name"}
+            conn.execute("UPDATE api_tokens SET " + ",".join(key + "=?" for key in update) + " WHERE name=?",
+                         [*update.values(), name])
+        else:
+            conn.execute("INSERT INTO api_tokens (" + ",".join(values) + ") VALUES ("
+                         + ",".join("?" for _ in values) + ")", list(values.values()))
+    return token
+
+
+def atomic_write(path, text):
+    path = Path(path)
+    descriptor, temporary = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def persist(runtime_path, config_path, name, token):
+    values = {"ENABLE_NODE_TOKEN": "y", "NODE_TOKEN_NAME": name, "NODE_TOKEN": token}
+    if any("\n" in value or "\r" in value for value in values.values()):
+        raise ValueError("Node-token values must be single-line strings")
+    # These files are read as literal KEY=value data, never evaluated as shell code.
+    lines = [f'{key}="{value}"' for key, value in values.items()]
+    atomic_write(runtime_path, "\n".join(lines) + "\n")
+    if config_path and Path(config_path).is_file():
+        previous = Path(config_path).read_text(encoding="utf-8").splitlines()
+        previous = [line for line in previous if line.partition("=")[0] not in values]
+        atomic_write(config_path, "\n".join([*previous, *lines]) + "\n")
+
+
+def main(args):
+    action, *values = args
+    if action == "verify":
+        return 0 if verify(*values) else 1
+    if action == "create":
+        print(create(*values))
+    elif action == "persist":
+        persist(*values)
+    else:
+        raise ValueError("Unknown node-token operation")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main(sys.argv[1:]))
+    except (OSError, ValueError, sqlite3.Error) as error:
+        print(f"Node API token: {error}", file=sys.stderr)
+        raise SystemExit(1)
+EOF_NODE_TOKEN_PY
+}
+
+ensure_node_token() {
+    case "${ENABLE_NODE_TOKEN:-y}" in n|0|false) return 0 ;; esac
+    NODE_TOKEN="${NODE_TOKEN:-}"
+    if node_token_operation verify "$DB_PATH" "$NODE_TOKEN_NAME" "$NODE_TOKEN"; then
+        ok "Действующий API-ключ ноды '$NODE_TOKEN_NAME' сохранён."
+    else
+        NODE_TOKEN=""
+        local token_out="" attempt
+        local -a arguments=()
+        if [ -n "${XUI_BIN:-}" ]; then
+            for attempt in 1 2; do
+                case "$attempt" in
+                    1) arguments=(-tokenName "$NODE_TOKEN_NAME" -tokenScope admin) ;;
+                    2) arguments=(-tokenName "$NODE_TOKEN_NAME") ;;
+                esac
+                token_out=$("$XUI_BIN" setting -getApiToken "${arguments[@]}" 2>&1 || true)
+                NODE_TOKEN=$(printf '%s\n' "$token_out" | awk '$1 == "apiToken:" {gsub(/\r/, "", $2); print $2; exit}')
+                [ -z "$NODE_TOKEN" ] || break
+            done
+        fi
+        # Also handles CLI versions without named-token flags, without renaming other tokens.
+        if ! node_token_operation verify "$DB_PATH" "$NODE_TOKEN_NAME" "$NODE_TOKEN"; then
+            NODE_TOKEN=$(node_token_operation create "$DB_PATH" "$NODE_TOKEN_NAME") || die "Не удалось создать API-ключ ноды 3X-UI."
+        fi
+        [ -n "$NODE_TOKEN" ] || die "3X-UI не вернул API-ключ ноды."
+        ok "API-ключ ноды '$NODE_TOKEN_NAME' создан."
+    fi
+    local runtime_file
+    runtime_file=$(node_token_runtime_file)
+    node_token_operation persist "$runtime_file" "${CONFIG_FILE:-}" "$NODE_TOKEN_NAME" "$NODE_TOKEN" || die "Не удалось сохранить API-ключ ноды."
+}
+
+# SQLite WAL-safe live database backup and verification
+get_sqlite_backup_python() {
+    if [ -n "${PYTHON_CMD:-}" ] && "$PYTHON_CMD" -c "import sqlite3" 2>/dev/null; then
+        echo "$PYTHON_CMD"
+        return 0
+    fi
+    if python3 -c "import sqlite3" 2>/dev/null; then
+        echo "python3"
+        return 0
+    fi
+    if python -c "import sqlite3" 2>/dev/null; then
+        echo "python"
+        return 0
+    fi
+    return 1
+}
+
+verify_sqlite_backup() {
+    local bkp="$1"
+    local py_cmd="$2"
+    if [ ! -s "$bkp" ]; then
+        return 1
+    fi
+    if [ -n "$py_cmd" ]; then
+        "$py_cmd" -c "
+import sqlite3, sys
+try:
+    conn = sqlite3.connect(sys.argv[1])
+    res = conn.execute('PRAGMA integrity_check;').fetchall()
+    conn.close()
+    if res and res[0][0] == 'ok':
+        sys.exit(0)
+    sys.exit(1)
+except Exception:
+    sys.exit(1)
+" "$bkp" 2>/dev/null && return 0
+    elif command -v sqlite3 >/dev/null 2>&1; then
+        local check
+        check=$(sqlite3 "$bkp" "PRAGMA integrity_check;" 2>/dev/null || true)
+        [ "$check" = "ok" ] && return 0
+    fi
+    return 1
+}
+
+backup_sqlite_db() {
+    local src="$1"
+    local dst="$2"
+    if [ ! -f "$src" ]; then
+        return 1
+    fi
+    local py_cmd
+    py_cmd=$(get_sqlite_backup_python || true)
+
+    local backup_ok=0
+
+    # 1. Primary: Python SQLite Online Backup API (atomic, WAL-safe)
+    if [ -n "$py_cmd" ]; then
+        if "$py_cmd" -c "
+import sqlite3, sys
+src_p, dst_p = sys.argv[1], sys.argv[2]
+try:
+    try:
+        src_conn = sqlite3.connect(f'file:{src_p}?mode=ro', uri=True)
+    except Exception:
+        src_conn = sqlite3.connect(src_p)
+    dst_conn = sqlite3.connect(dst_p)
+    with dst_conn:
+        src_conn.backup(dst_conn)
+    dst_conn.close()
+    src_conn.close()
+    sys.exit(0)
+except Exception:
+    sys.exit(1)
+" "$src" "$dst" 2>/dev/null; then
+            if verify_sqlite_backup "$dst" "$py_cmd"; then
+                backup_ok=1
+            fi
+        fi
+    fi
+
+    # 2. Secondary: sqlite3 CLI .backup command (atomic, WAL-safe)
+    if [ "$backup_ok" -eq 0 ] && command -v sqlite3 >/dev/null 2>&1; then
+        if sqlite3 "$src" ".backup '$dst'" 2>/dev/null; then
+            if verify_sqlite_backup "$dst" "$py_cmd"; then
+                backup_ok=1
+            fi
+        fi
+    fi
+
+    if [ "$backup_ok" -eq 1 ]; then
+        chmod 600 "$dst" 2>/dev/null || true
+        return 0
+    fi
+
+    # Never silently downgrade to raw cp of a live WAL database; fail safe and clean up
+    rm -f "$dst" 2>/dev/null || true
+    return 1
+}
+
+
+# Execute in a fresh Bash so a caller's `if`/`||` cannot suppress errexit.
+# A private snapshot preserves Bash functions and unexported variables in both modes.
+execute_install_task() (
+    umask 077
+    task_dir=$(mktemp -d "${TMPDIR:-/tmp}/server-task.XXXXXX") || exit 1
+    trap 'rm -f -- "$task_dir/task.sh"; rmdir -- "$task_dir"' EXIT
+    {
+        declare -p | grep -vE '^declare -[^ ]*r|^declare [^ ]+ (BASH[^ =]*|FUNCNAME|DIRSTACK|GROUPS|PIPESTATUS|LINENO|RANDOM|SRANDOM|SECONDS|EPOCHSECONDS|EPOCHREALTIME|_)='
+        declare -f
+        printf '%s\n' 'shopt -s inherit_errexit 2>/dev/null || true' 'set -Eeuo pipefail' '"$@"'
+    } > "$task_dir/task.sh" || exit 1
+    bash --noprofile --norc "$task_dir/task.sh" "$@"
+)
+
+# Interactive Terminal Spinner & Task Runner
+# Supports:
+#   - Animated spinner in interactive TTY
+#   - Plain output in non-interactive / CI / piped runs
+#   - DEBUG_MODE=1 passthrough (full stdout/stderr in real-time)
+#   - Required tasks support Retry / Abort; failures cannot be marked as success
+
+run_with_spinner() {
+    local task_name="$1"
+    shift
+    local log_file="${SETUP_MASK_LOG:-${INSTALL_LOG:-${SPINNER_LOG_FILE:-}}}"
+    local temporary_log=0
+    if [ -z "$log_file" ]; then
+        log_file=$(umask 077; mktemp "${TMPDIR:-/tmp}/server-task-log.XXXXXX") || return 1
+        temporary_log=1
+    fi
+
+    while true; do
+        local exit_code=0
+
+        # ── DEBUG MODE: без фона, весь вывод сразу в stdout ──
+        if [ "${DEBUG_MODE:-0}" -eq 1 ]; then
+            echo -e "\n  ${CYAN}[DEBUG]${NC} ${WHITE}▶ $task_name${NC}"
+            echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
+            execute_install_task "$@" &
+            local debug_pid=$!
+            if wait "$debug_pid"; then exit_code=0; else exit_code=$?; fi
+            if [ $exit_code -eq 0 ]; then
+                echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
+                echo -e "  ${GREEN}${CHECK:-✔}${NC}  ${WHITE}$task_name${NC} ${GREEN}[ГОТОВО]${NC}\n"
+                [ "$temporary_log" -eq 0 ] || rm -f -- "$log_file"
+                return 0
+            else
+                echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
+            fi
+        else
+            # ── Нормальный режим: фоновый процесс + спиннер ──
+            local spin_chars=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+            local delay=0.08
+
+            (umask 077; : > "$log_file") || return 1
+            chmod 600 "$log_file" || return 1
+
+            execute_install_task "$@" >> "$log_file" 2>&1 &
+            local pid=$!
+
+            if [ ! -t 1 ]; then
+                echo -e "  ${CYAN}*${NC}  ${WHITE}${task_name}...${NC}"
+                if wait "$pid"; then exit_code=0; else exit_code=$?; fi
+            else
+                tput civis 2>/dev/null || echo -ne "\033[?25l"
+                local i=0
+                while kill -0 "$pid" 2>/dev/null; do
+                    i=$(( (i + 1) % 10 ))
+                    printf "\r  ${CYAN}${spin_chars[$i]}${NC}  ${WHITE}%-54s${NC}" "$task_name..."
+                    sleep "$delay"
+                done
+                if wait "$pid"; then exit_code=0; else exit_code=$?; fi
+                tput cnorm 2>/dev/null || echo -ne "\033[?25h"
+            fi
+
+            if [ $exit_code -eq 0 ]; then
+                if [ ! -t 1 ]; then
+                    printf "  ${GREEN}${CHECK:-✔}${NC}  ${WHITE}%-54s${NC} ${GREEN}[ГОТОВО]${NC}\n" "$task_name"
+                else
+                    printf "\r  ${GREEN}${CHECK:-✔}${NC}  ${WHITE}%-54s${NC} ${GREEN}[ГОТОВО]${NC}\n" "$task_name"
+                fi
+                [ "$temporary_log" -eq 0 ] || rm -f -- "$log_file"
+                return 0
+            fi
+
+            if [ ! -t 1 ]; then
+                printf "  ${RED}${CROSS:-✖}${NC}  ${WHITE}%-54s${NC} ${RED}[ОШИБКА]${NC}\n" "$task_name"
+            else
+                printf "\r  ${RED}${CROSS:-✖}${NC}  ${WHITE}%-54s${NC} ${RED}[ОШИБКА]${NC}\n" "$task_name"
+            fi
+            echo -e "\n  ${RED}${BOLD}Полный лог ошибки:${NC}"
+            echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
+            [ -f "$log_file" ] && cat "$log_file" | sed 's/^/    /' || true
+            echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
+            echo -e "  ${DIM}Совет: запустите с флагом ${WHITE}--debug${DIM} для подробного вывода в реальном времени.${NC}\n"
+        fi
+
+        # ── Обязательный этап: повторить или прервать ──
+        if [ "${NON_INTERACTIVE:-0}" -eq 0 ] && [ -t 1 ]; then
+            echo -e "  ${YELLOW}${BOLD}Действия при сбое:${NC}"
+            echo -e "    ${CYAN}${BOLD}[1] Повторить попытку (Retry)${NC} — после исправления причин (напр. DNS)"
+            echo -e "    ${RED}[3] Прервать установку (Abort)${NC}"
+            local retry_ans=""
+            read -rp "  Ваш выбор [1/3] (по умолчанию: 1): " retry_ans </dev/tty || read -r retry_ans || retry_ans="1"
+            retry_ans=$(echo "${retry_ans:-1}" | tr -d '[:space:]')
+            case "$retry_ans" in
+                3)
+                    die "Шаг завершился с ошибкой (exit $exit_code): $task_name"
+                    ;;
+                *)
+                    echo -e "  ${CYAN}${ARROW:-➜} Повторная попытка: $task_name...${NC}\n"
+                    continue
+                    ;;
+            esac
+        else
+            return $exit_code
+        fi
+    done
+}
 
 
 show_help() {
     cat << 'EOF_HELP'
-Использование: ./configure_3xui.sh [ОПЦИИ]
+Использование: ./configure-panel.sh [ОПЦИИ]
 
 Скрипт автоматического конфигурирования и самовосстановления базы 3X-UI (инбаунды, пути, подписки).
 Безопасен для повторного запуска: сохраняет существующих клиентов, ключи и кастомные подписки.
 
 Опции:
-  -c, --config <FILE>     Путь к файлу параметров (.env) (по умолчанию: ./setup_mask.env)
+  -c, --config <FILE>     Путь к файлу параметров (.env) (по умолчанию: ./server-setup.env)
   --db <PATH>             Путь к файлу базы данных SQLite 3X-UI (по умолчанию: /etc/x-ui/x-ui.db)
   --dry-run               Только аудит и проверка (без внесения изменений)
   --force-sub             Принудительно перезаписать кастомные параметры подписки из .env
@@ -47,10 +477,10 @@ show_help() {
 
 Примеры использования:
   # 1. Обычная настройка / обновление:
-  ./configure_3xui.sh --config ./setup_mask.env -y
+  ./configure-panel.sh --config ./server-setup.env -y
 
   # 2. Безопасный аудит (посмотреть, что изменится, без записи):
-  ./configure_3xui.sh --dry-run
+  ./configure-panel.sh --dry-run
 EOF_HELP
 }
 
@@ -146,14 +576,8 @@ fi
 
 # Автопоиск конфигурационного файла, если не передан
 if [ -z "$CONFIG_FILE" ]; then
-    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo "/root")"
-    if [ -f "$script_dir/setup_mask.env" ]; then
-        CONFIG_FILE="$script_dir/setup_mask.env"
-    elif [ -f "./setup_mask.env" ]; then
-        CONFIG_FILE="./setup_mask.env"
-    elif [ -f "/root/setup_mask.env" ]; then
-        CONFIG_FILE="/root/setup_mask.env"
-    fi
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo /root)"
+    CONFIG_FILE=$(find_config_file "$script_dir" || true)
 fi
 
 # Загрузка переменных из .env файла
@@ -162,6 +586,7 @@ if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
     re_dquote='^"(.*)"$'
     re_squote="^'(.*)'\$"
     while IFS= read -r line || [ -n "$line" ]; do
+        line="${line%$'\r'}"
         [[ "$line" =~ ^[[:space:]]*# ]] && continue
         [[ -z "${line// }" ]] && continue
         if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
@@ -180,9 +605,7 @@ fi
 # Дефолтные значения переменных, если не определены в .env
 PRIMARY_DOMAIN="${PRIMARY_DOMAIN:-yourdomain.online}"
 PANEL_PORT="${PANEL_PORT:-10443}"
-if [ -z "${PANEL_PATH:-}" ] || [ "${PANEL_PATH:-}" = "my-3x-panel" ] || [ "${PANEL_PATH:-}" = "/my-3x-panel/" ]; then
-    PANEL_PATH="panel-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "panel${RANDOM}")"
-fi
+PANEL_PATH="${PANEL_PATH:-}"
 SUB_PORT="${SUB_PORT:-55443}"
 SUB_PATH="${SUB_PATH:-}"
 SUB_CLASH_PATH="${SUB_CLASH_PATH:-${SUB_PATH%/}/clash}"
@@ -248,21 +671,7 @@ AWG_RANDOM_TRAILERS="${AWG_RANDOM_TRAILERS:-false}"
 ENABLE_WARP="${CLI_ENABLE_WARP:-${ENABLE_WARP:-n}}"
 WARP_LICENSE_KEY="${CLI_WARP_KEY:-${WARP_LICENSE_KEY:-}}"
 
-ENABLE_NODE_TOKEN="${CLI_ENABLE_NODE_TOKEN:-${ENABLE_NODE_TOKEN:-n}}"
-NODE_TOKEN_NAME="${CLI_NODE_TOKEN_NAME:-${NODE_TOKEN_NAME:-}}"
-NODE_TOKEN="${NODE_TOKEN:-}"
-
-if [[ "${ENABLE_NODE_TOKEN,,}" == "y" || "${ENABLE_NODE_TOKEN:-}" == "1" ]]; then
-    ENABLE_NODE_TOKEN="y"
-    if [ -z "$NODE_TOKEN_NAME" ]; then
-        local_prefix="${SERVER_PREFIX:-}"
-        if [[ -z "$local_prefix" || "${local_prefix,,}" =~ ^(-|none|off|no)$ ]]; then
-            NODE_TOKEN_NAME="Master-Node-Cluster"
-        else
-            NODE_TOKEN_NAME="${local_prefix}-Node"
-        fi
-    fi
-fi
+normalize_node_token_config
 
 # Определение системного часового пояса
 SYSTEM_TZ=""
@@ -457,6 +866,9 @@ export TIME_LOCATION
 export SUB_UPDATES
 export SUB_ENCRYPT
 export BLOCK_SMTP
+export ENABLE_WSTUNNEL="${ENABLE_WSTUNNEL:-n}"
+export WSTUNNEL_PREFIX="${WSTUNNEL_PREFIX:-}"
+export WSTUNNEL_PORT="${WSTUNNEL_PORT:-8080}"
 export BLOCK_LAN
 export WEB_LISTEN
 export SUB_LISTEN
@@ -519,16 +931,36 @@ except Exception as e:
 
 domain = os.environ.get("PRIMARY_DOMAIN") or existing_settings.get("subDomain") or "localhost"
 panel_port = os.environ.get("PANEL_PORT") or existing_settings.get("webPort") or "10443"
-panel_env = (os.environ.get("PANEL_PATH") or "").strip("/")
-if panel_env and panel_env != "my-3x-panel":
-    panel_path = panel_env
-else:
-    panel_db = (existing_settings.get("webBasePath") or "").strip("/")
-    if panel_db and panel_db != "my-3x-panel":
-        panel_path = panel_db
-    else:
-        import secrets
-        panel_path = "panel-" + secrets.token_hex(4)
+"""Path resolution shared by the standalone configuration and repair tools."""
+import secrets
+import shlex
+from pathlib import Path
+
+
+def resolve_panel_path(configured, existing):
+    """Preserve explicit and existing paths, including legacy installation paths."""
+    return ((configured or "").strip().strip("/")
+            or (existing or "").strip().strip("/")
+            or "panel-" + secrets.token_hex(16))
+
+
+def resolve_wstunnel_prefix(configured, service_file="/etc/systemd/system/wstunnel.service"):
+    """Read the applied prefix; reporting must never create a new server secret."""
+    try:
+        for line in Path(service_file).read_text(encoding="utf-8").splitlines():
+            if not line.strip().startswith("ExecStart="):
+                continue
+            args = shlex.split(line.strip().split("=", 1)[1])
+            for index, arg in enumerate(args):
+                if arg == "--restrict-http-upgrade-path-prefix" and index + 1 < len(args):
+                    return args[index + 1].strip("/")
+                if arg.startswith("--restrict-http-upgrade-path-prefix="):
+                    return arg.split("=", 1)[1].strip("/")
+    except (OSError, ValueError):
+        pass
+    return (configured or "").strip().strip("/")
+
+panel_path = resolve_panel_path(os.environ.get("PANEL_PATH"), existing_settings.get("webBasePath"))
 
 sub_port = os.environ.get("SUB_PORT") or existing_settings.get("subPort") or "55443"
 sub_env = (os.environ.get("SUB_PATH") or "").strip("/")
@@ -676,9 +1108,330 @@ client_traffics_cols = get_table_columns("client_traffics")
 clients_cols = get_table_columns("clients")
 client_inbounds_cols = get_table_columns("client_inbounds")
 
-# @include "xray/clients.py"
+def sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_stream=None):
+    clients = target_settings.get("clients", [])
+    if not clients:
+        return
+    
+    import time
+    now_ms = int(time.time() * 1000)
+    for idx, client in enumerate(clients):
+        # 1. Email (уникальный ключ клиента в 3X-UI)
+        email = client.get("email") or client.get("Email") or ""
+        if not email:
+            safe_remark = remark.lower().replace(" ", "-").replace("_", "-")
+            email = f"client-{safe_remark}" if idx == 0 else f"client-{safe_remark}-{idx+1}"
+            client["email"] = email
+        
+        # 2. subId для персональной подписки
+        sub_id = client.get("subId") or client.get("sub_id") or ""
+        if not sub_id:
+            sub_id = secrets.token_hex(8)
+            client["subId"] = sub_id
+            
+        # 3. Статус активности
+        if "enable" not in client:
+            client["enable"] = True
+            
+        client_flow = client.get("flow", "")
+        client_secret = client.get("secret", "")
+        client_adtag = client.get("adTag") or client.get("ad_tag") or ""
+        if protocol in ("vless", "vmess"):
+            client_uuid = client.get("id", "") or client.get("uuid", "")
+            client_pass = client.get("password", "")
+        elif protocol == "hysteria":
+            client_uuid = client.get("uuid", "")
+            client_pass = client.get("auth") or client.get("password") or client.get("id", "")
+        elif protocol == "tuic":
+            client_uuid = client.get("uuid", "") or client.get("id", "")
+            client_pass = client.get("password", "")
+        elif protocol == "shadowsocks":
+            client_uuid = client.get("uuid", "") or client.get("id", "")
+            client_pass = client.get("password", "")
+        elif protocol == "mtproto":
+            client_uuid = client.get("uuid", "")
+            client_pass = client.get("password", "")
+            if not client_pass and "secret" not in clients_cols and client_secret:
+                client_pass = client_secret
+        else:
+            client_uuid = client.get("uuid", "")
+            client_pass = client.get("password", "")
+        
+        if dry_run:
+            continue
+            
+        # A. Таблица client_traffics (статистика, статус и отображение в панели 3X-UI)
+        if "client_traffics" in all_tables and "email" in client_traffics_cols:
+            cur.execute("SELECT id FROM client_traffics WHERE email = ?", (email,))
+            ct_row = cur.fetchone()
+            if not ct_row:
+                ct_data = {
+                    "inbound_id": inbound_id,
+                    "enable": 1 if client.get("enable", True) else 0,
+                    "email": email,
+                    "up": 0, "down": 0, "expiry_time": 0, "total": 0, "reset": 0
+                }
+                for opt_col in ["uuid", "sub_id", "subId"]:
+                    if opt_col in client_traffics_cols:
+                        ct_data[opt_col] = client_uuid if opt_col == "uuid" else sub_id
+                valid_ct = {k: v for k, v in ct_data.items() if k in client_traffics_cols}
+                if valid_ct:
+                    cols = ", ".join(valid_ct.keys())
+                    placeholders = ", ".join(["?"] * len(valid_ct))
+                    cur.execute(f"INSERT INTO client_traffics ({cols}) VALUES ({placeholders})", list(valid_ct.values()))
+            else:
+                ct_updates = {}
+                if "enable" in client and "enable" in client_traffics_cols:
+                    ct_updates["enable"] = 1 if client["enable"] else 0
+                for opt_col in ["uuid", "sub_id", "subId"]:
+                    if opt_col in client_traffics_cols:
+                        val = client_uuid if opt_col == "uuid" else sub_id
+                        if val: ct_updates[opt_col] = val
+                valid_ct_up = {k: v for k, v in ct_updates.items() if k in client_traffics_cols}
+                if valid_ct_up:
+                    set_ct = ", ".join(f"{k} = ?" for k in valid_ct_up.keys())
+                    cur.execute(f"UPDATE client_traffics SET {set_ct} WHERE email = ?", list(valid_ct_up.values()) + [email])
+                
+        # B. Таблица clients (единый реестр клиентов в 3X-UI v2.5+)
+        client_db_id = None
+        if "clients" in all_tables and "email" in clients_cols:
+            cur.execute("SELECT id FROM clients WHERE email = ?", (email,))
+            c_row = cur.fetchone()
+            if not c_row:
+                c_data = {
+                    "email": email,
+                    "enable": 1 if client.get("enable", True) else 0,
+                    "created_at": now_ms,
+                    "updated_at": now_ms
+                }
+                if "sub_id" in clients_cols and sub_id: c_data["sub_id"] = sub_id
+                if "subId" in clients_cols and sub_id: c_data["subId"] = sub_id
+                if "uuid" in clients_cols and client_uuid: c_data["uuid"] = client_uuid
+                if "password" in clients_cols and client_pass and protocol != "hysteria": c_data["password"] = client_pass
+                if "auth" in clients_cols and client_pass and protocol == "hysteria": c_data["auth"] = client_pass
+                if "flow" in clients_cols and client_flow: c_data["flow"] = client_flow
+                if "secret" in clients_cols and client_secret: c_data["secret"] = client_secret
+                if "ad_tag" in clients_cols and client_adtag: c_data["ad_tag"] = client_adtag
+                if "adTag" in clients_cols and client_adtag: c_data["adTag"] = client_adtag
+                if "encryption" in clients_cols and client.get("encryption"): c_data["encryption"] = client["encryption"]
+                if protocol == "amneziawg":
+                    if "wg_private_key" in clients_cols and client.get("privateKey"):
+                        c_data["wg_private_key"] = client.get("privateKey")
+                    if "wg_public_key" in clients_cols and client.get("publicKey"):
+                        c_data["wg_public_key"] = client.get("publicKey")
+                    if "wg_allowed_ips" in clients_cols and client.get("allowedIPs"):
+                        ips = client.get("allowedIPs")
+                        c_data["wg_allowed_ips"] = ", ".join(ips) if isinstance(ips, list) else str(ips).strip("[]'\"")
+                valid_c = {k: v for k, v in c_data.items() if k in clients_cols}
+                if valid_c:
+                    cols = ", ".join(valid_c.keys())
+                    placeholders = ", ".join(["?"] * len(valid_c))
+                    cur.execute(f"INSERT INTO clients ({cols}) VALUES ({placeholders})", list(valid_c.values()))
+                    client_db_id = cur.lastrowid
+            else:
+                client_db_id = c_row[0]
+                c_updates = {}
+                if "updated_at" in clients_cols:
+                    c_updates["updated_at"] = now_ms
+                if "enable" in client and "enable" in clients_cols:
+                    c_updates["enable"] = 1 if client["enable"] else 0
+                if "sub_id" in clients_cols and sub_id: c_updates["sub_id"] = sub_id
+                if "uuid" in clients_cols and client_uuid: c_updates["uuid"] = client_uuid
+                if "password" in clients_cols and client_pass and protocol != "hysteria": c_updates["password"] = client_pass
+                if "auth" in clients_cols and client_pass and protocol == "hysteria": c_updates["auth"] = client_pass
+                if "flow" in clients_cols and client_flow: c_updates["flow"] = client_flow
+                if "secret" in clients_cols and client_secret: c_updates["secret"] = client_secret
+                if "ad_tag" in clients_cols and client_adtag: c_updates["ad_tag"] = client_adtag
+                if "adTag" in clients_cols and client_adtag: c_updates["adTag"] = client_adtag
+                if "encryption" in clients_cols and client.get("encryption"): c_updates["encryption"] = client["encryption"]
+                if protocol == "amneziawg":
+                    if "wg_private_key" in clients_cols and client.get("privateKey"):
+                        c_updates["wg_private_key"] = client.get("privateKey")
+                    if "wg_public_key" in clients_cols and client.get("publicKey"):
+                        c_updates["wg_public_key"] = client.get("publicKey")
+                    if "wg_allowed_ips" in clients_cols and client.get("allowedIPs"):
+                        ips = client.get("allowedIPs")
+                        clean_ip = ", ".join(ips) if isinstance(ips, list) else str(ips).strip("[]'\"")
+                        is_legacy_v2 = "v2" in remark.lower() or "legacy" in remark.lower()
+                        cur.execute("SELECT wg_allowed_ips FROM clients WHERE id = ?", (client_db_id,))
+                        curr_wg_ip_row = cur.fetchone()
+                        curr_wg_ip = curr_wg_ip_row[0] if curr_wg_ip_row and curr_wg_ip_row[0] else ""
+                        if not is_legacy_v2 or not curr_wg_ip or curr_wg_ip.startswith("["):
+                            c_updates["wg_allowed_ips"] = clean_ip
+                valid_c_up = {k: v for k, v in c_updates.items() if k in clients_cols}
+                if valid_c_up:
+                    set_clause = ", ".join(f"{k} = ?" for k in valid_c_up.keys())
+                    cur.execute(f"UPDATE clients SET {set_clause} WHERE id = ?", list(valid_c_up.values()) + [client_db_id])
+                
+        # C. Таблица client_inbounds (связь клиент <-> инбаунд в 3X-UI v2.5+)
+        if "client_inbounds" in all_tables and client_db_id is not None:
+            cur.execute("SELECT 1 FROM client_inbounds WHERE client_id = ? AND inbound_id = ?", (client_db_id, inbound_id))
+            if not cur.fetchone():
+                ci_data = {
+                    "client_id": client_db_id,
+                    "inbound_id": inbound_id,
+                    "flow_override": client_flow,
+                    "created_at": now_ms
+                }
+                valid_ci = {k: v for k, v in ci_data.items() if k in client_inbounds_cols}
+                cols = ", ".join(valid_ci.keys())
+                placeholders = ", ".join(["?"] * len(valid_ci))
+                cur.execute(f"INSERT INTO client_inbounds ({cols}) VALUES ({placeholders})", list(valid_ci.values()))
+            else:
+                if "flow_override" in client_inbounds_cols:
+                    cur.execute("UPDATE client_inbounds SET flow_override = ? WHERE client_id = ? AND inbound_id = ?", (client_flow, client_db_id, inbound_id))
 
-# @include "xray/keys.py"
+import base64
+import os
+import re
+import secrets
+import subprocess
+import uuid
+
+# Curve25519 helper (RFC 7748) для генерации, валидации и починки ключей
+P = 2**255 - 19
+A24 = 121665
+
+def clamp(k_bytes):
+    b = bytearray(k_bytes)
+    b[0] &= 248
+    b[31] &= 127
+    b[31] |= 64
+    return int.from_bytes(b, "little")
+
+def x25519(k, u=9):
+    x1 = u
+    x2, z2 = 1, 0
+    x3, z3 = u, 1
+    for i in range(254, -1, -1):
+        bit = (k >> i) & 1
+        if bit:
+            x2, x3 = x3, x2
+            z2, z3 = z3, z2
+        A = (x2 + z2) % P
+        AA = (A * A) % P
+        B = (x2 - z2) % P
+        BB = (B * B) % P
+        E = (AA - BB) % P
+        C = (x3 + z3) % P
+        D = (x3 - z3) % P
+        DA = (D * A) % P
+        CB = (C * B) % P
+        x3 = pow(DA + CB, 2, P)
+        z3 = (x1 * pow(DA - CB, 2, P)) % P
+        x2 = (AA * BB) % P
+        z2 = (E * (AA + A24 * E)) % P
+        if bit:
+            x2, x3 = x3, x2
+            z2, z3 = z3, z2
+    return (x2 * pow(z2, P - 2, P)) % P
+
+def curve25519_pubkey(priv_b64):
+    try:
+        raw_priv = base64.b64decode(priv_b64)
+        k = clamp(raw_priv)
+        pub_raw = x25519(k, 9).to_bytes(32, "little")
+        return base64.b64encode(pub_raw).decode()
+    except Exception:
+        return None
+
+def curve25519_reality_pubkey(priv_b64url):
+    try:
+        padding = "=" * ((4 - len(priv_b64url) % 4) % 4)
+        raw_priv = base64.urlsafe_b64decode(priv_b64url + padding)
+        k = clamp(raw_priv)
+        pub_raw = x25519(k, 9).to_bytes(32, "little")
+        return base64.urlsafe_b64encode(pub_raw).decode().rstrip("=")
+    except Exception:
+        return None
+
+def generate_reality_keypair():
+    priv_raw = os.urandom(32)
+    k = clamp(priv_raw)
+    pub_raw = x25519(k, 9).to_bytes(32, "little")
+    priv_b64 = base64.urlsafe_b64encode(priv_raw).decode().rstrip("=")
+    pub_b64 = base64.urlsafe_b64encode(pub_raw).decode().rstrip("=")
+    return priv_b64, pub_b64
+
+def generate_wg_keypair():
+    priv_raw = os.urandom(32)
+    k = clamp(priv_raw)
+    pub_raw = x25519(k, 9).to_bytes(32, "little")
+    priv_b64 = base64.b64encode(priv_raw).decode()
+    pub_b64 = base64.b64encode(pub_raw).decode()
+    return priv_b64, pub_b64
+
+def generate_vlessenc_keypair():
+    for candidate in ["/usr/local/x-ui/bin/xray-linux-amd64", "/usr/local/x-ui/bin/xray-linux-arm64", "/usr/local/x-ui/bin/xray", "xray"]:
+        try:
+            res = subprocess.run([candidate, "vlessenc"], capture_output=True, text=True, timeout=5)
+            if res.returncode == 0:
+                out = res.stdout
+                de_m = re.search(r'"decryption":\s*"([^"]+)"', out)
+                en_m = re.search(r'"encryption":\s*"([^"]+)"', out)
+                if de_m and en_m:
+                    return de_m.group(1), en_m.group(1)
+        except Exception:
+            pass
+    return None, None
+
+def generate_ss2022_key(method="2022-blake3-aes-256-gcm"):
+    raw_len = 16 if "128" in method else 32
+    return base64.b64encode(os.urandom(raw_len)).decode()
+
+def validate_ss2022_key(key_b64, method="2022-blake3-aes-256-gcm"):
+    try:
+        if not isinstance(key_b64, str) or not key_b64.strip():
+            return False
+        k = key_b64.strip().replace('-', '+').replace('_', '/')
+        padding = "=" * ((4 - len(k) % 4) % 4)
+        raw = base64.b64decode(k + padding, validate=True)
+        expected_len = 16 if "128" in method else 32
+        return len(raw) == expected_len
+    except Exception:
+        return False
+
+def generate_mtproto_secret(fake_tls_domain="gateway.icloud.com"):
+    domain = fake_tls_domain.strip().lower() if fake_tls_domain else "gateway.icloud.com"
+    token = secrets.token_hex(16)
+    domain_hex = domain.encode("utf-8").hex()
+    return f"ee{token}{domain_hex}"
+
+def validate_mtproto_secret(secret_hex):
+    if not isinstance(secret_hex, str):
+        return False
+    s = secret_hex.strip().lower()
+    return s.startswith("ee") and len(s) >= 38 and all(c in "0123456789abcdef" for c in s[2:])
+
+def validate_mtproto_adtag(adtag):
+    return bool(isinstance(adtag, str) and re.match(r"^[0-9a-fA-F]{32}$", adtag.strip()))
+
+def generate_shadowtls_password():
+    return secrets.token_urlsafe(16)
+
+def validate_shadowtls_password(pw):
+    return bool(isinstance(pw, str) and len(pw.strip()) >= 8)
+
+def generate_masque_credentials(default_user="client"):
+    return default_user, secrets.token_urlsafe(16)
+
+def generate_naiveproxy_credentials(default_user="user"):
+    return default_user, secrets.token_urlsafe(16)
+
+def generate_tuic_credentials(default_uuid=None):
+    return default_uuid or str(uuid.uuid4()), secrets.token_urlsafe(16)
+
+def generate_dnstt_keypair():
+    priv_raw = os.urandom(32)
+    k = clamp(priv_raw)
+    pub_raw = ((x25519(k, 9)) % P).to_bytes(32, "little")
+    return priv_raw.hex(), pub_raw.hex()
+
+def validate_dnstt_pubkey(pubkey):
+    if not isinstance(pubkey, str):
+        return False
+    s = pubkey.strip().lower()
+    return len(s) == 64 and all(c in "0123456789abcdef" for c in s)
 
 # ----------------- 1. Настройки панели и подписок (settings) -----------------
 print("\n[+] Синхронизация системных настроек панели и подписок...")
@@ -1455,7 +2208,534 @@ unified_awg_random_trailers = awg_random_trailers_env
 obsolete_emails = []
 print(f"  [ЕДИНЫЙ КЛИЕНТ] Профиль: '{unified_email}' (привязка ко всем инбаундам, subId: {unified_sub_id[:6]}...)")
 
-# @include "xray/inbounds.py"
+def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, default_stream, listen="127.0.0.1"):
+    cur.execute("SELECT id, settings, stream_settings, protocol, tag, remark, listen, enable FROM inbounds WHERE port = ? OR tag = ?", (port, tag))
+    row = cur.fetchone()
+    
+    if not row:
+        # Инбаунд отсутствует -> создаем под ключ
+        target_settings = json.loads(json.dumps(default_settings))
+        target_stream = json.loads(json.dumps(default_stream))
+        if protocol == "mtproto" and "preferIp" not in target_settings:
+            target_settings["preferIp"] = "prefer-ipv4"
+        if "externalProxy" in target_stream and isinstance(target_stream["externalProxy"], list) and len(target_stream["externalProxy"]) > 0:
+            if protocol in ("shadowsocks", "mtproto", "amneziawg"):
+                target_stream["externalProxy"][0]["forceTls"] = "none"
+            elif protocol == "vless" and "realitySettings" in target_stream:
+                target_stream["externalProxy"][0]["forceTls"] = "same"
+            elif "forceTls" not in target_stream["externalProxy"][0]:
+                target_stream["externalProxy"][0]["forceTls"] = "tls"
+
+        settings_json = json.dumps(target_settings, ensure_ascii=False)
+        stream_json = json.dumps(target_stream, ensure_ascii=False)
+        sniffing_json = json.dumps({"enabled": True, "destOverride": ["http", "tls", "quic", "fakedns"]})
+        new_inbound_id = None
+        if not dry_run:
+            cur.execute("""
+                INSERT INTO inbounds (
+                    user_id, up, down, total, remark, enable, expiry_time,
+                    listen, port, protocol, settings, stream_settings, tag, sniffing
+                ) VALUES (?, 0, 0, 0, ?, 1, 0, ?, ?, ?, ?, ?, ?, ?)
+            """, (admin_id, remark, listen, port, protocol, settings_json, stream_json, tag, sniffing_json))
+            new_inbound_id = cur.lastrowid
+            if "sync_inbound_clients" in globals():
+                sync_inbound_clients(new_inbound_id, protocol, remark, target_settings, target_stream)
+                settings_json = json.dumps(target_settings, ensure_ascii=False)
+                cur.execute("UPDATE inbounds SET settings = ? WHERE id = ?", (settings_json, new_inbound_id))
+        print(f"  [СОЗДАНО] Отсутствующий инбаунд: {remark} ({protocol.upper()} на порту {port}) добавлен и зарегистрирован в реестре клиентов.")
+        return new_inbound_id
+
+    inbound_id, raw_s, raw_st, proto, cur_tag, cur_remark, cur_listen, cur_enable = row
+    cur_enable = 1 if cur_enable is None else cur_enable
+    try:
+        cur_settings = json.loads(raw_s) if raw_s else {}
+    except Exception:
+        cur_settings = {}
+    try:
+        cur_stream = json.loads(raw_st) if raw_st else {}
+    except Exception:
+        cur_stream = {}
+
+    target_settings = json.loads(json.dumps(default_settings))
+    target_stream = json.loads(json.dumps(default_stream))
+    repairs = []
+    preserved = []
+
+    # Сохранение пользовательского названия инбаунда (remark), если оно было изменено
+    final_remark = remark
+    force_remarks_flag = globals().get("force_remarks", False)
+    if not force_remarks_flag and cur_remark and str(cur_remark).strip():
+        final_remark = str(cur_remark).strip()
+        if final_remark != remark:
+            preserved.append(f"пользовательское название '{final_remark}'")
+
+    # А. Сохранение и консолидация клиентов (единый реестр)
+    existing_clients = cur_settings.get("clients", [])
+    if "unified_email" in globals() and globals().get("unified_email"):
+        u_email = globals()["unified_email"]
+        consolidated_clients = []
+        has_unified = False
+        default_client = default_settings.get("clients", [])[0] if default_settings.get("clients") else None
+        
+        for ec in existing_clients:
+            ec_email = ec.get("email") or ec.get("Email") or ""
+            if ec_email == u_email:
+                if not has_unified and default_client:
+                    merged_c = json.loads(json.dumps(default_client))
+                    for limit_field in ["totalGB", "expiryTime", "limitIp", "tgId", "reset", "resetDay", "resetMax", "enable"]:
+                        if limit_field in ec:
+                            merged_c[limit_field] = ec[limit_field]
+                    if protocol == "shadowsocks" and ec.get("password"):
+                        if "validate_ss2022_key" in globals() and validate_ss2022_key(ec["password"], target_settings.get("method", "2022-blake3-aes-256-gcm")):
+                            merged_c["password"] = ec["password"]
+                        else:
+                            repairs.append("исправлен невалидный ключ единого клиента SS-2022")
+                    elif protocol == "tuic":
+                        if ec.get("uuid"): merged_c["uuid"] = ec["uuid"]
+                        if ec.get("password"): merged_c["password"] = ec["password"]
+                    elif protocol == "mtproto":
+                        if ec.get("secret"):
+                            if "validate_mtproto_secret" not in globals() or validate_mtproto_secret(ec["secret"]):
+                                merged_c["secret"] = ec["secret"]
+                            else:
+                                repairs.append("исправлен невалидный FakeTLS секрет MTProto единого клиента")
+                        if ec.get("adTag") or ec.get("ad_tag"):
+                            ad_cand = ec.get("adTag") or ec.get("ad_tag")
+                            if "validate_mtproto_adtag" in globals() and not validate_mtproto_adtag(ad_cand):
+                                merged_c["adTag"] = ""
+                                repairs.append("очищен невалидный adTag MTProto")
+                            else:
+                                merged_c["adTag"] = ad_cand
+                    elif protocol == "vless" and "xhttpSettings" in target_stream:
+                        enc_cand = ec.get("encryption") or cur_settings.get("encryption") or target_settings.get("encryption")
+                        if enc_cand:
+                            merged_c["encryption"] = enc_cand
+                    consolidated_clients.append(merged_c)
+                    has_unified = True
+                    preserved.append(f"единый клиент '{u_email}'")
+            else:
+                consolidated_clients.append(ec)
+                preserved.append(f"клиент '{ec_email}'")
+                
+        if not has_unified and default_client:
+            consolidated_clients.insert(0, json.loads(json.dumps(default_client)))
+            repairs.append(f"добавлен единый клиент '{u_email}'")
+            
+        target_settings["clients"] = consolidated_clients
+    else:
+        if existing_clients and len(existing_clients) > 0:
+            target_settings["clients"] = existing_clients
+            preserved.append(f"клиенты ({len(existing_clients)} польз.)")
+        else:
+            repairs.append("добавлен клиент по умолчанию")
+
+    # Б. Проверка и ремонт VLESS REALITY
+    if protocol == "vless" and "realitySettings" in target_stream:
+        cur_reality = cur_stream.get("realitySettings", {})
+        
+        # Сохранение privateKey
+        priv = cur_reality.get("privateKey")
+        if priv:
+            target_stream["realitySettings"]["privateKey"] = priv
+            preserved.append("privateKey Reality")
+        
+        # Сохранение shortIds
+        sids = cur_reality.get("shortIds")
+        if sids:
+            target_stream["realitySettings"]["shortIds"] = sids
+            preserved.append("shortIds")
+
+        # Ремонт / сохранение settings.publicKey
+        pub = cur_reality.get("settings", {}).get("publicKey") or cur_reality.get("publicKey")
+        if pub:
+            target_stream["realitySettings"]["settings"]["publicKey"] = pub
+            if not cur_reality.get("settings", {}).get("publicKey"):
+                repairs.append("исправлен отсутствующий settings.publicKey (устранена ошибка empty password)")
+            else:
+                preserved.append("publicKey")
+        else:
+            derived_pub = curve25519_reality_pubkey(target_stream["realitySettings"]["privateKey"])
+            if derived_pub:
+                target_stream["realitySettings"]["settings"]["publicKey"] = derived_pub
+                repairs.append("восстановлен settings.publicKey по x25519")
+
+        # Ремонт мертвого swdist.microsoft.com SNI или пустых значений
+        old_snis = cur_reality.get("serverNames", [])
+        old_dest = str(cur_reality.get("dest", "")).strip()
+        if any("swdist.microsoft.com" in s for s in old_snis) or "swdist.microsoft.com" in old_dest:
+            repairs.append(f"заменен мертвый SNI swdist.microsoft.com -> {classic_sni}")
+            target_stream["realitySettings"]["serverNames"] = [classic_sni]
+            target_stream["realitySettings"]["dest"] = f"{classic_sni}:443"
+            target_stream["realitySettings"]["xver"] = 0
+        elif old_snis:
+            target_stream["realitySettings"]["serverNames"] = old_snis
+            target_stream["realitySettings"]["dest"] = old_dest or target_stream["realitySettings"]["dest"]
+            preserved.append(f"SNI ({','.join(old_snis)})")
+
+        # Строгая гарантия параметров VLESS REALITY (маскировка под свой сайт: Nginx Fallback + Xver=1 + target)
+        s_port = globals().get("steal_port", 45443)
+        rf_port = globals().get("reality_fallback_port", 9443)
+        if port == s_port or tag == "in-steal-reality" or cur_tag == "in-steal-reality":
+            fallback_dest = f"127.0.0.1:{rf_port}"
+            if not target_stream["realitySettings"].get("dest") or target_stream["realitySettings"]["dest"] != fallback_dest:
+                target_stream["realitySettings"]["dest"] = fallback_dest
+                repairs.append(f"установлен dest: {fallback_dest} (Nginx SSL Fallback, защита от сброса)")
+            else:
+                preserved.append(f"anti-loop dest {rf_port}")
+            target_stream["realitySettings"]["target"] = fallback_dest
+            if target_stream["realitySettings"].get("xver") != 1:
+                target_stream["realitySettings"]["xver"] = 1
+                repairs.append("установлен xver: 1 (Proxy Protocol для Nginx Anti-Loop)")
+
+        # Строгая гарантия параметров VLESS REALITY (маскировка под внешние сервисы: xver=0, dest: 443, target: 443)
+        c_port = globals().get("classic_port", 46443)
+        c_sni = globals().get("classic_sni", "avito.ru")
+        if port == c_port or tag == "in-classic-reality" or cur_tag == "in-classic-reality":
+            if not target_stream["realitySettings"].get("dest"):
+                target_stream["realitySettings"]["dest"] = f"{c_sni}:443"
+                repairs.append(f"восстановлен пустой dest -> {c_sni}:443")
+            target_stream["realitySettings"]["target"] = target_stream["realitySettings"]["dest"]
+            target_stream["realitySettings"]["xver"] = 0
+
+    # В. Проверка и ремонт xHTTP
+    if protocol == "vless" and "xhttpSettings" in target_stream:
+        cur_xh = cur_stream.get("xhttpSettings", {})
+        if cur_xh.get("path"):
+            target_stream["xhttpSettings"]["path"] = cur_xh["path"]
+            preserved.append(f"path ({cur_xh['path']})")
+        target_stream["xhttpSettings"]["mode"] = "stream-one"
+        if cur_settings.get("decryption") and cur_settings["decryption"] != "none":
+            target_settings["decryption"] = cur_settings["decryption"]
+            preserved.append("decryption xHTTP")
+        if cur_settings.get("encryption"):
+            target_settings["encryption"] = cur_settings["encryption"]
+            preserved.append("encryption xHTTP")
+        elif not target_settings.get("encryption"):
+            for c in cur_settings.get("clients", []):
+                if c.get("encryption"):
+                    target_settings["encryption"] = c["encryption"]
+                    preserved.append("encryption xHTTP (из клиентов)")
+                    break
+        if cur_xh.get("xmux") and isinstance(cur_xh["xmux"], dict):
+            target_stream["xhttpSettings"]["xmux"] = cur_xh["xmux"]
+            preserved.append("xmux xHTTP")
+        if cur_xh.get("noSSEHeader") is not None:
+            target_stream["xhttpSettings"]["noSSEHeader"] = cur_xh["noSSEHeader"]
+            preserved.append("noSSEHeader xHTTP")
+        if cur_xh.get("xPaddingBytes"):
+            target_stream["xhttpSettings"]["xPaddingBytes"] = cur_xh["xPaddingBytes"]
+            preserved.append(f"xPaddingBytes ({cur_xh['xPaddingBytes']})")
+        if target_settings.get("encryption"):
+            for c in target_settings.get("clients", []):
+                c["encryption"] = target_settings["encryption"]
+
+    # Г. Проверка и ремонт Hysteria 2
+    if protocol == "hysteria":
+        if cur_settings.get("clients"):
+            target_settings["clients"] = cur_settings["clients"]
+            preserved.append("пароль Hysteria 2")
+        
+        cur_certs = cur_stream.get("tlsSettings", {}).get("certificates", [])
+        if cur_certs and cur_certs[0].get("certificateFile") and os.path.exists(cur_certs[0]["certificateFile"]):
+            target_stream["tlsSettings"]["certificates"] = cur_certs
+            preserved.append("действующие SSL-сертификаты Hy2")
+
+    # Д. Проверка и ремонт AmneziaWG
+    if protocol == "amneziawg":
+        cur_srv = cur_settings.get("server", {})
+        if cur_srv.get("privateKey"):
+            target_settings["server"]["privateKey"] = cur_srv["privateKey"]
+            preserved.append("серверный privateKey AWG")
+            
+            # Валидация Curve25519
+            expected_pub = curve25519_pubkey(cur_srv["privateKey"])
+            actual_pub = cur_srv.get("publicKey")
+            if actual_pub and expected_pub and actual_pub == expected_pub:
+                target_settings["server"]["publicKey"] = actual_pub
+                preserved.append("валидный publicKey AWG (Handshake OK)")
+            elif expected_pub:
+                target_settings["server"]["publicKey"] = expected_pub
+                repairs.append("исправлен поврежденный publicKey сервера Curve25519")
+        
+        # Сохранение параметров обфускации
+        for param in [
+            "jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "h1", "h2", "h3", "h4",
+            "headerProtectionKey", "randomTrailers", "disableCookies", "mtu", "subnetIp", "subnetCidr",
+            "keepaliveTimeout", "rekeyAfterTime", "rekeyTimeout", "rejectAfterTime", "maxHandshakeAttempts",
+            "i1", "i2", "i3", "i4", "i5", "contentPaddingAddition", "cpa"
+        ]:
+            if param in cur_srv:
+                target_settings["server"][param] = cur_srv[param]
+        if cur_srv.get("headerProtectionKey"):
+            preserved.append("HeaderProtectionKey AWG")
+        if cur_srv.get("contentPaddingAddition") or cur_srv.get("cpa"):
+            preserved.append("ContentPaddingAddition (CPA)")
+
+        # Аудит и оптимизация AmneziaWG (v3.1 и v2.0):
+        # 1. RandomTrailers:
+        # Для новых профилей по умолчанию отключен (off/False).
+        # На существующем инбаунде сохраняем действующее значение сервера, чтобы не нарушать wire-формат клиентов.
+        # Принудительно отключается только при явном указании AWG_DISABLE_RANDOM_TRAILERS=1.
+        disable_rt = os.environ.get("AWG_DISABLE_RANDOM_TRAILERS", "").strip().lower() in ("1", "y", "true")
+        if disable_rt and target_settings["server"].get("randomTrailers"):
+            target_settings["server"]["randomTrailers"] = False
+            repairs.append("отключен randomTrailers по флагу AWG_DISABLE_RANDOM_TRAILERS")
+
+        # 1.1 Коррекция граничного условия таймингов в 3X-UI: строго max(rekey) < min(reject)
+        rekey_val = str(target_settings["server"].get("rekeyAfterTime", ""))
+        reject_val = str(target_settings["server"].get("rejectAfterTime", ""))
+        if "-" in rekey_val and "-" in reject_val:
+            try:
+                r_parts = [int(x.strip()) for x in rekey_val.split("-", 1)]
+                rej_parts = [int(x.strip()) for x in reject_val.split("-", 1)]
+                if r_parts[1] >= rej_parts[0]:
+                    new_r_max = max(r_parts[0], rej_parts[0] - 10)
+                    target_settings["server"]["rekeyAfterTime"] = f"{r_parts[0]}-{new_r_max}"
+                    repairs.append(f"исправлен rekeyAfterTime='{r_parts[0]}-{new_r_max}' (обеспечение max(rekey) < min(reject) для валидатора 3X-UI)")
+            except (ValueError, IndexError):
+                pass
+
+        # 2. Фиксация базового MTU 1280 (уменьшение риска фрагментации)
+        cur_mtu = target_settings["server"].get("mtu")
+        try:
+            cur_mtu_int = int(cur_mtu) if cur_mtu is not None else 1280
+        except (TypeError, ValueError):
+            cur_mtu_int = 1280
+        if cur_mtu_int > 1280:
+            target_settings["server"]["mtu"] = 1280
+            repairs.append(f"исправлен MTU={cur_mtu_int} -> 1280 (базовый MTU)")
+
+        # 3. Аудит смещений S1-S4: должны быть >= 12 при активном HeaderProtectionKey
+        has_hpk = bool(target_settings["server"].get("headerProtectionKey"))
+        if has_hpk:
+            s_defaults = {"s1": 16, "s2": 16, "s3": 16, "s4": 16}
+            for s_param, min_val in [("s1", 12), ("s2", 12), ("s3", 12), ("s4", 12)]:
+                val = target_settings["server"].get(s_param)
+                try:
+                    val_int = int(val)
+                except (TypeError, ValueError):
+                    val_int = 0
+                if val_int < min_val:
+                    target_settings["server"][s_param] = s_defaults[s_param]
+                    repairs.append(f"исправлен {s_param}={val} -> {s_defaults[s_param]} (требование HPK: S >= 12)")
+
+        # 4. Валидация мусорных пакетов Jc / Jmin / Jmax (допустимый диапазон Jc: 0-128, J: 0-1280)
+        cur_jc = target_settings["server"].get("jc")
+        if cur_jc is not None:
+            try:
+                jc_int = int(cur_jc)
+                if jc_int < 0 or jc_int > 128:
+                    target_settings["server"]["jc"] = 4
+                    repairs.append(f"исправлен Jc={cur_jc} -> 4 (выход за пределы протокола 0-128)")
+            except (TypeError, ValueError):
+                target_settings["server"]["jc"] = 4
+                repairs.append(f"исправлен Jc={cur_jc} -> 4 (некорректное значение)")
+
+        cur_jmin = target_settings["server"].get("jmin")
+        cur_jmax = target_settings["server"].get("jmax")
+        if cur_jmin is not None and cur_jmax is not None:
+            try:
+                jmin_int = int(cur_jmin)
+                jmax_int = int(cur_jmax)
+                if jmin_int < 0 or jmax_int < 0 or jmin_int > jmax_int or jmax_int > 1280:
+                    target_settings["server"]["jmin"] = 40
+                    target_settings["server"]["jmax"] = 70
+                    repairs.append("исправлены некорректные Jmin/Jmax -> Jmin=40, Jmax=70")
+            except (TypeError, ValueError):
+                target_settings["server"]["jmin"] = 40
+                target_settings["server"]["jmax"] = 70
+                repairs.append("исправлены нечисловые Jmin/Jmax -> Jmin=40, Jmax=70")
+
+    # Е. Проверка и ремонт Shadowsocks 2022
+    if protocol == "shadowsocks":
+        ss_method = cur_settings.get("method") or target_settings.get("method", "2022-blake3-aes-256-gcm")
+        target_settings["method"] = ss_method
+        target_settings["network"] = "tcp,udp"
+        target_settings["udpOverTcp"] = True
+        target_settings["udp_over_tcp"] = True
+        if target_stream.get("network") in ("tcp,udp", "udp"):
+            target_stream["network"] = "tcp"
+            repairs.append("исправлен network в stream_settings -> 'tcp'")
+
+        # Валидация / сохранение серверного пароля (PSK)
+        cur_srv_pwd = cur_settings.get("password")
+        if cur_srv_pwd and "validate_ss2022_key" in globals() and validate_ss2022_key(cur_srv_pwd, ss_method):
+            target_settings["password"] = cur_srv_pwd
+            preserved.append("серверный ключ SS-2022")
+        elif "generate_ss2022_key" in globals():
+            target_settings["password"] = generate_ss2022_key(ss_method)
+            repairs.append("сгенерирован валидный серверный ключ SS-2022 (исправлена ошибка длины)")
+
+        # Аудит клиентов: валидация ключей и очистка устаревшего поля 'method'
+        c_repaired = False
+        method_removed = False
+        for c in target_settings.get("clients", []):
+            if "method" in c:
+                c.pop("method", None)
+                method_removed = True
+            c_pwd = c.get("password")
+            if not c_pwd or ("validate_ss2022_key" in globals() and not validate_ss2022_key(c_pwd, ss_method)):
+                if "generate_ss2022_key" in globals():
+                    c["password"] = generate_ss2022_key(ss_method)
+                    c_repaired = True
+        if method_removed:
+            repairs.append("удалено устаревшее поле client.method")
+        if c_repaired:
+            repairs.append("исправлен невалидный ключ клиента SS-2022")
+        elif not any("невалидный ключ" in r for r in repairs):
+            preserved.append("ключи клиентов SS-2022")
+
+    # Ж. Проверка и ремонт TUIC v5
+    if protocol == "tuic":
+        tuic_cert = cur_settings.get("certificate") or target_settings.get("certificate") or globals().get("ssl_cert") or ""
+        tuic_key = cur_settings.get("private_key") or target_settings.get("private_key") or globals().get("ssl_key") or ""
+        if cur_settings.get("certificate") and cur_settings.get("private_key"):
+            target_settings["certificate"] = tuic_cert
+            target_settings["private_key"] = tuic_key
+            preserved.append("SSL-сертификаты TUIC")
+        else:
+            target_settings["certificate"] = tuic_cert
+            target_settings["private_key"] = tuic_key
+            repairs.append("добавлены пути сертификатов в settings TUIC")
+
+        target_settings["congestion_control"] = cur_settings.get("congestion_control") or target_settings.get("congestion_control", "bbr")
+        target_settings["alpn"] = cur_settings.get("alpn") or target_settings.get("alpn", ["h3", "spdy/3.1"])
+        for tuic_opt in ["udp_relay_mode", "zero_rtt_handshake", "max_idle_time", "authentication_timeout", "max_udp_relay_packet_size", "sni"]:
+            if tuic_opt in cur_settings:
+                target_settings[tuic_opt] = cur_settings[tuic_opt]
+        if cur_settings.get("congestion_control"):
+            preserved.append(f"congestion_control ({target_settings['congestion_control']})")
+        if cur_settings.get("alpn"):
+            preserved.append(f"alpn ({target_settings['alpn']})")
+
+        target_stream["network"] = "quic"
+        target_stream["security"] = "tls"
+
+    # З. Проверка и ремонт Telegram MTProxy (FakeTLS)
+    if protocol == "mtproto":
+        root_cleaned = False
+        for obsolete_field in ["secret", "adTag", "ad_tag"]:
+            if obsolete_field in cur_settings or obsolete_field in target_settings:
+                target_settings.pop(obsolete_field, None)
+                root_cleaned = True
+        if root_cleaned:
+            repairs.append("очищены устаревшие корневые поля secret/adTag в settings MTProto")
+
+        if cur_settings.get("domainFronting"):
+            target_settings["domainFronting"] = cur_settings["domainFronting"]
+            preserved.append("domainFronting MTProto")
+
+        target_settings["preferIp"] = cur_settings.get("preferIp") or target_settings.get("preferIp") or "prefer-ipv4"
+        if target_settings.get("preferIp") == "prefer-ipv4":
+            preserved.append("preferIp (prefer-ipv4)")
+
+        mtp_faketls = globals().get("mtproto_faketls_domain") or target_settings.get("domainFronting", {}).get("ip") or "gateway.icloud.com"
+        for c in target_settings.get("clients", []):
+            c_sec = c.get("secret")
+            if not c_sec or ("validate_mtproto_secret" in globals() and not validate_mtproto_secret(c_sec)):
+                if "generate_mtproto_secret" in globals():
+                    c["secret"] = generate_mtproto_secret(mtp_faketls)
+                    repairs.append("исправлен/сгенерирован FakeTLS секрет MTProto")
+            else:
+                preserved.append("секрет FakeTLS MTProto")
+            c_ad = c.get("adTag") or c.get("ad_tag")
+            if c_ad:
+                if "validate_mtproto_adtag" in globals() and not validate_mtproto_adtag(c_ad):
+                    c["adTag"] = ""
+                    c.pop("ad_tag", None)
+                    repairs.append("очищен невалидный adTag MTProto")
+                else:
+                    c["adTag"] = c_ad
+                    c.pop("ad_tag", None)
+                    preserved.append("промо-тег adTag MTProto")
+
+    # И. Проверка и сохранение externalProxy (:443, SNI и кастомных хостов узлов)
+    cur_ext = cur_stream.get("externalProxy", [])
+    expected_ext_port = 443 if protocol in ("vless", "hysteria") and port != hy2_port else (hy2_port if protocol == "hysteria" else port)
+
+    def_ext = default_stream.get("externalProxy", [])
+    def_dest = def_ext[0].get("dest") if (def_ext and isinstance(def_ext, list) and def_ext[0].get("dest")) else domain
+    def_sni = def_ext[0].get("sni", "") if (def_ext and isinstance(def_ext, list) and def_ext[0].get("sni")) else ""
+
+    # Сохраняем кастомный хост узла (dest), если он был настроен и не равен localhost
+    target_dest = def_dest
+    if cur_ext and len(cur_ext) > 0 and cur_ext[0].get("dest"):
+        ext_dest = str(cur_ext[0]["dest"]).strip()
+        if ext_dest and ext_dest not in ("127.0.0.1", "localhost", "0.0.0.0"):
+            target_dest = ext_dest
+            if ext_dest != domain and ext_dest != def_dest:
+                preserved.append(f"кастомный хост узла ({ext_dest})")
+
+    # Сохраняем SNI для externalProxy (критично для VLESS REALITY и маршрутизации Nginx Stream L4)
+    target_sni = def_sni
+    if cur_ext and len(cur_ext) > 0 and cur_ext[0].get("sni"):
+        ext_sni = str(cur_ext[0]["sni"]).strip()
+        if ext_sni:
+            target_sni = ext_sni
+            if target_sni != def_sni:
+                preserved.append(f"кастомный externalProxy SNI ({ext_sni})")
+
+    if protocol in ("shadowsocks", "mtproto", "amneziawg"):
+        force_tls_val = "none"
+    elif protocol == "vless" and "realitySettings" in target_stream:
+        force_tls_val = "same"
+    else:
+        force_tls_val = "tls"
+
+    ext_entry = {
+        "dest": target_dest,
+        "port": expected_ext_port,
+        "forceTls": force_tls_val,
+        "remark": final_remark
+    }
+    if target_sni:
+        ext_entry["sni"] = target_sni
+    if def_ext and isinstance(def_ext, list):
+        if def_ext[0].get("fingerprint"):
+            ext_entry["fingerprint"] = def_ext[0]["fingerprint"]
+        if def_ext[0].get("alpn"):
+            ext_entry["alpn"] = def_ext[0]["alpn"]
+
+    needs_ext_repair = (
+        not cur_ext
+        or cur_ext[0].get("port") != expected_ext_port
+        or cur_ext[0].get("dest") != target_dest
+        or cur_ext[0].get("remark") != final_remark
+        or cur_ext[0].get("forceTls") != force_tls_val
+        or (target_sni and cur_ext[0].get("sni") != target_sni)
+    )
+
+    if needs_ext_repair:
+        target_stream["externalProxy"] = [ext_entry]
+        sni_desc = f", sni: {target_sni}" if target_sni else ""
+        repairs.append(f"исправлен externalProxy -> {target_dest}:{expected_ext_port}{sni_desc}")
+    else:
+        target_stream["externalProxy"] = cur_ext
+        preserved.append(f"externalProxy :{expected_ext_port}")
+
+    # Синхронизация клиентов в реестре (client_traffics, clients, client_inbounds)
+    if "sync_inbound_clients" in globals():
+        sync_inbound_clients(inbound_id, protocol, final_remark, target_settings, target_stream)
+
+    # Запись в SQLite
+    settings_json = json.dumps(target_settings, ensure_ascii=False)
+    stream_json = json.dumps(target_stream, ensure_ascii=False)
+    sniffing_json = json.dumps({"enabled": True, "destOverride": ["http", "tls", "quic", "fakedns"]})
+
+    if not dry_run:
+        cur.execute("""
+            UPDATE inbounds
+            SET protocol = ?, tag = ?, remark = ?, settings = ?, stream_settings = ?, listen = ?, sniffing = ?, enable = ?
+            WHERE id = ?
+        """, (protocol, tag, final_remark, settings_json, stream_json, listen, sniffing_json, cur_enable, inbound_id))
+
+    status_str = f"  [ОБНОВЛЕН] {final_remark} (порт {port}):"
+    if repairs:
+        status_str += f"\n    -> Исправлено: {', '.join(repairs)}"
+    if preserved:
+        status_str += f"\n    -> Сохранено: {', '.join(preserved)}"
+    print(status_str)
+    return inbound_id
 
 
 # --- Применение эталонных конфигураций инбаундов с единым клиентом ---
@@ -1805,11 +3085,7 @@ ss_shadowtls_uri = f"ss://{b64_ss_userinfo}@{domain}:443?plugin=shadow-tls;host=
 
 enable_wstunnel = os.environ.get("ENABLE_WSTUNNEL", "n").lower() in ("1", "y", "true")
 wstunnel_port = int(os.environ.get("WSTUNNEL_PORT") or "8080")
-wstunnel_raw = (os.environ.get("WSTUNNEL_PREFIX") or "").strip().strip("/")
-if not wstunnel_raw or wstunnel_raw in ("wstunnel", "secret-ws"):
-    import secrets
-    wstunnel_raw = "ws-" + secrets.token_hex(4)
-wstunnel_prefix = wstunnel_raw
+wstunnel_prefix = resolve_wstunnel_prefix(os.environ.get("WSTUNNEL_PREFIX"))
 wstunnel_cli = f"wstunnel client -L socks5://127.0.0.1:1080 --http-upgrade-path-prefix {wstunnel_prefix} wss://{domain}:443"
 wstunnel_uri = f"wstunnel://{domain}:443/{wstunnel_prefix}"
 
@@ -1893,6 +3169,8 @@ if not dry_run:
         run_file = "/run/3xui_unified_client.env" if os.path.isdir("/run") else "/tmp/3xui_unified_client.env"
         old_umask = os.umask(0o077)
         with open(run_file, "w") as f:
+            f.write(f"PRIMARY_DOMAIN={shlex.quote(domain)}\n")
+            f.write(f"PANEL_PATH={shlex.quote(panel_path)}\n")
             f.write(f"UNIFIED_CLIENT_TAG='{unified_email}'\n")
             f.write(f"UNIFIED_SUB_ID='{unified_sub_id}'\n")
             f.write(f"UNIFIED_UUID='{unified_uuid}'\n")
@@ -1923,7 +3201,7 @@ if not dry_run:
                 f.write(f"SHADOWTLS_PORT='{shadowtls_port}'\n")
                 f.write(f"SHADOWTLS_SNI='{shadowtls_sni}'\n")
                 f.write(f"SHADOWTLS_PASSWORD='{shadowtls_password}'\n")
-            if enable_wstunnel:
+            if enable_wstunnel and wstunnel_prefix:
                 f.write(f"WSTUNNEL_CLI='{wstunnel_cli}'\n")
                 f.write(f"WSTUNNEL_URI='{wstunnel_uri}'\n")
                 f.write(f"WSTUNNEL_PREFIX='{wstunnel_prefix}'\n")
@@ -1979,114 +3257,7 @@ if [ "$DRY_RUN" -eq 0 ]; then
         fi
     fi
 
-    # Генерация API-токена ноды (3X-UI Node)
-    if [[ "${ENABLE_NODE_TOKEN,,}" == "y" || "${ENABLE_NODE_TOKEN:-}" == "1" ]]; then
-        log "Генерация API-токена для подключения сервера как узла ('$NODE_TOKEN_NAME')..."
-        NODE_TOKEN=""
-        if [ -n "$XUI_BIN" ]; then
-            # 1. Попытка с флагами -tokenName и -tokenScope admin (3X-UI v3.9.0+ / PR #6700)
-            token_out=$("$XUI_BIN" setting -getApiToken -tokenName "$NODE_TOKEN_NAME" -tokenScope admin 2>&1 || true)
-            NODE_TOKEN=$(echo "$token_out" | grep -Eo 'apiToken: [^ ]+' | awk '{print $2}' || true)
-
-            # 2. Попытка только с флагом -tokenName (PR #6405)
-            if [ -z "$NODE_TOKEN" ]; then
-                token_out=$("$XUI_BIN" setting -getApiToken -tokenName "$NODE_TOKEN_NAME" 2>&1 || true)
-                NODE_TOKEN=$(echo "$token_out" | grep -Eo 'apiToken: [^ ]+' | awk '{print $2}' || true)
-            fi
-
-            # 3. Если флаги не поддерживаются, вызываем без них и обновляем имя в SQLite
-            if [ -z "$NODE_TOKEN" ]; then
-                token_out=$("$XUI_BIN" setting -getApiToken 2>&1 || true)
-                NODE_TOKEN=$(echo "$token_out" | grep -Eo 'apiToken: [^ ]+' | awk '{print $2}' || true)
-                if [ -n "$NODE_TOKEN" ] && [ -f "$DB_PATH" ]; then
-                    "$PYTHON_CMD" -c "
-import sqlite3
-try:
-    conn = sqlite3.connect('$DB_PATH')
-    cur = conn.cursor()
-    cur.execute(\"UPDATE api_tokens SET name = ? WHERE name IN ('install', 'cli-fallback')\", ('$NODE_TOKEN_NAME',))
-    conn.commit()
-    conn.close()
-except Exception:
-    pass
-" 2>/dev/null || true
-                fi
-            fi
-        fi
-
-        # 4. Резервный Python-метод, если CLI не вернул токен
-        if [ -z "$NODE_TOKEN" ] && [ -f "$DB_PATH" ]; then
-            NODE_TOKEN=$("$PYTHON_CMD" -c "
-import sqlite3, secrets, hashlib, time
-try:
-    conn = sqlite3.connect('$DB_PATH')
-    cur = conn.cursor()
-    cur.execute(\"SELECT name FROM sqlite_master WHERE type='table' AND name='api_tokens'\")
-    if cur.fetchone():
-        cur.execute(\"PRAGMA table_info(api_tokens)\")
-        cols = set(r[1] for r in cur.fetchall())
-        plain_token = secrets.token_hex(32)
-        token_hash = hashlib.sha256(plain_token.encode('utf-8')).hexdigest()
-        cur.execute(\"SELECT id FROM api_tokens WHERE name = ?\", ('$NODE_TOKEN_NAME',))
-        row = cur.fetchone()
-        now_ts = int(time.time())
-        if row:
-            cur.execute(\"UPDATE api_tokens SET token = ?, enabled = 1 WHERE id = ?\", (token_hash, row[0]))
-        else:
-            ins_cols = ['name', 'token', 'enabled']
-            ins_vals = ['$NODE_TOKEN_NAME', token_hash, 1]
-            if 'scope' in cols:
-                ins_cols.append('scope')
-                ins_vals.append('admin')
-            if 'created_at' in cols:
-                ins_cols.append('created_at')
-                ins_vals.append(now_ts)
-            placeholders = ', '.join(['?'] * len(ins_cols))
-            cur.execute(f\"INSERT INTO api_tokens ({', '.join(ins_cols)}) VALUES ({placeholders})\", ins_vals)
-        conn.commit()
-        conn.close()
-        print(plain_token)
-    else:
-        conn.close()
-except Exception:
-    pass
-" 2>/dev/null || true)
-        fi
-
-        if [ -n "$NODE_TOKEN" ]; then
-            ok "API-токен ноды '$NODE_TOKEN_NAME' успешно сгенерирован!"
-            # Экспорт для setup_mask.sh (в /run или /tmp)
-            NODE_ENV_FILE="/run/3xui_node_token.env"
-            [ -d "/run" ] || NODE_ENV_FILE="/tmp/3xui_node_token.env"
-            cat << EOF_NODE_ENV > "$NODE_ENV_FILE"
-ENABLE_NODE_TOKEN="y"
-NODE_TOKEN_NAME="$NODE_TOKEN_NAME"
-NODE_TOKEN="$NODE_TOKEN"
-EOF_NODE_ENV
-            chmod 600 "$NODE_ENV_FILE" 2>/dev/null || true
-
-            # Сохранение в .env файл, если он указан
-            if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
-                if grep -q "^ENABLE_NODE_TOKEN=" "$CONFIG_FILE"; then
-                    sed -i "s/^ENABLE_NODE_TOKEN=.*/ENABLE_NODE_TOKEN=\"y\"/" "$CONFIG_FILE"
-                else
-                    echo 'ENABLE_NODE_TOKEN="y"' >> "$CONFIG_FILE"
-                fi
-                if grep -q "^NODE_TOKEN_NAME=" "$CONFIG_FILE"; then
-                    sed -i "s/^NODE_TOKEN_NAME=.*/NODE_TOKEN_NAME=\"$NODE_TOKEN_NAME\"/" "$CONFIG_FILE"
-                else
-                    echo "NODE_TOKEN_NAME=\"$NODE_TOKEN_NAME\"" >> "$CONFIG_FILE"
-                fi
-                if grep -q "^NODE_TOKEN=" "$CONFIG_FILE"; then
-                    sed -i "s/^NODE_TOKEN=.*/NODE_TOKEN=\"$NODE_TOKEN\"/" "$CONFIG_FILE"
-                else
-                    echo "NODE_TOKEN=\"$NODE_TOKEN\"" >> "$CONFIG_FILE"
-                fi
-            fi
-        else
-            warn "Не удалось автоматически создать API-токен ноды в 3X-UI."
-        fi
-    fi
+    ensure_node_token
 
     # Очистка устаревших/невалидных geosite меток в bin/config.json во избежание сбоя парсинга ядра Xray
     for cfg_candidate in "/usr/local/x-ui/bin/config.json" "/etc/x-ui/bin/config.json"; do
@@ -2233,7 +3404,7 @@ echo -e "${GREEN}===============================================================
 if [ "$DRY_RUN" -eq 1 ]; then
     echo -e "${YELLOW}               АУДИТ УСПЕШНО ЗАВЕРШЕН (DRY-RUN)                      ${NC}"
     echo -e "${CYAN}  Для применения изменений выполните:                                ${NC}"
-    echo -e "  ${BOLD}./configure_3xui.sh --config \"${CONFIG_FILE:-./setup_mask.env}\" -y${NC}"
+    echo -e "  ${BOLD}./configure-panel.sh --config \"${CONFIG_FILE:-./server-setup.env}\" -y${NC}"
 else
     echo -e "${GREEN}      БАЗА ДАННЫХ 3X-UI УСПЕШНО СКОНФИГУРИРОВАНА И ИСЦЕЛЕНА!         ${NC}"
     echo -e "  - ${BOLD}Единый клиент:${NC}         ${GREEN}${UNIFIED_CLIENT_TAG:-Client}${NC} (объединяет до 9 протоколов в 1 профиль)"

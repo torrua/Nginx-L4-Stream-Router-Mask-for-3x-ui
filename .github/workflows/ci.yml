@@ -11,7 +11,7 @@ on:
       - 'tests/**'
       - '.github/workflows/**'
       - 'VERSION'
-      - 'setup_mask.env.example'
+      - 'server-setup.env.example'
   pull_request:
     branches: [ main ]
     paths:
@@ -22,7 +22,7 @@ on:
       - 'tests/**'
       - '.github/workflows/**'
       - 'VERSION'
-      - 'setup_mask.env.example'
+      - 'server-setup.env.example'
   workflow_dispatch:
 
 concurrency:
@@ -73,14 +73,14 @@ jobs:
           VERSION_FILE=$(cat VERSION | tr -d '[:space:]')
           echo "Версия из файла VERSION: $VERSION_FILE"
           
-          SETUP_VER=$(grep -E '^SCRIPT_VERSION=' setup_mask.sh | cut -d'"' -f2)
+          SETUP_VER=$(grep -E '^SCRIPT_VERSION=' setup.sh | cut -d'"' -f2)
           INSTALL_VER=$(grep -E '^SCRIPT_VERSION=' install.sh | cut -d'"' -f2)
           
-          echo "Версия в setup_mask.sh: $SETUP_VER"
+          echo "Версия в setup.sh: $SETUP_VER"
           echo "Версия в install.sh:    $INSTALL_VER"
           
           if [ "$VERSION_FILE" != "$SETUP_VER" ]; then
-            echo "::error::Несовпадение версий: VERSION ($VERSION_FILE) != setup_mask.sh ($SETUP_VER)"
+            echo "::error::Несовпадение версий: VERSION ($VERSION_FILE) != setup.sh ($SETUP_VER)"
             exit 1
           fi
           if [ "$VERSION_FILE" != "$INSTALL_VER" ]; then
@@ -100,20 +100,20 @@ jobs:
       - name: Test --help flag
         run: |
           chmod +x *.sh
-          ./setup_mask.sh --help > /dev/null
+          ./setup.sh --help > /dev/null
           echo "Флаг --help работает корректно (код возврата 0)"
 
       - name: Test --version flag
         run: |
-          VER_OUT=$(./setup_mask.sh --version)
-          echo "Вывод setup_mask.sh --version: $VER_OUT"
+          VER_OUT=$(./setup.sh --version)
+          echo "Вывод setup.sh --version: $VER_OUT"
           EXPECTED_VER=$(cat VERSION | tr -d '[:space:]')
           echo "$VER_OUT" | grep -F "$EXPECTED_VER" || exit 1
           echo "Флаг --version корректно возвращает актуальную версию"
 
       - name: Test Config Generator (--gen-config)
         run: |
-          ./setup_mask.sh --gen-config test_generated.env
+          ./setup.sh --gen-config test_generated.env
           [ -f test_generated.env ] || { echo "::error::Файл test_generated.env не был создан"; exit 1; }
           
           grep -q "PRIMARY_DOMAIN" test_generated.env || exit 1
@@ -144,10 +144,10 @@ jobs:
 
       - name: Test preflight checks and config validation in container
         run: |
-          chmod +x setup_mask.sh
-          ./setup_mask.sh --help > /dev/null
-          ./setup_mask.sh --version > /dev/null
-          ./setup_mask.sh --gen-config ci_dryrun.env
+          chmod +x setup.sh
+          ./setup.sh --help > /dev/null
+          ./setup.sh --version > /dev/null
+          ./setup.sh --gen-config ci_dryrun.env
           bash -n ci_dryrun.env
           echo "Чистый контейнер ${{ matrix.os }} успешно валидирует синтаксис и запуск скрипта!"
 

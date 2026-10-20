@@ -31,7 +31,7 @@ if [[ "${ENABLE_HY2:-0}" == "1" || "${ENABLE_HY2,,}" == "y" ]] && \
             insert_before="*filter"
             grep -q '^\*mangle' /etc/ufw/before.rules 2>/dev/null && insert_before="*mangle"
             grep -q '^# TCP MSS Clamping' /etc/ufw/before.rules 2>/dev/null && insert_before="# TCP MSS Clamping"
-            sed -i "/${insert_before}/i\\# Port Hopping for Hysteria 2 (added by setup_mask.sh)\n*nat\n:PREROUTING ACCEPT [0:0]\n# Hy2 Port Hopping\n-A PREROUTING -p udp --dport ${PH_RANGE} -j REDIRECT --to-ports ${HY2_PORT}\nCOMMIT\n" /etc/ufw/before.rules
+            sed -i "/${insert_before}/i\\# Port Hopping for Hysteria 2 (added by setup.sh)\n*nat\n:PREROUTING ACCEPT [0:0]\n# Hy2 Port Hopping\n-A PREROUTING -p udp --dport ${PH_RANGE} -j REDIRECT --to-ports ${HY2_PORT}\nCOMMIT\n" /etc/ufw/before.rules
         fi
     fi
 
@@ -41,7 +41,7 @@ if [[ "${ENABLE_HY2:-0}" == "1" || "${ENABLE_HY2,,}" == "y" ]] && \
             sed -i "/^\*nat/,/^COMMIT/{/^COMMIT/i\\# Hy2 Port Hopping\n-A PREROUTING -p udp --dport ${PH_RANGE} -j REDIRECT --to-ports ${HY2_PORT}
             }" /etc/ufw/before6.rules
         else
-            sed -i '/^\*filter/i\# Port Hopping for Hysteria 2 - IPv6 (added by setup_mask.sh)\n*nat\n:PREROUTING ACCEPT [0:0]\n# Hy2 Port Hopping\n-A PREROUTING -p udp --dport '"${PH_RANGE}"' -j REDIRECT --to-ports '"${HY2_PORT}"'\nCOMMIT\n' /etc/ufw/before6.rules
+            sed -i '/^\*filter/i\# Port Hopping for Hysteria 2 - IPv6 (added by setup.sh)\n*nat\n:PREROUTING ACCEPT [0:0]\n# Hy2 Port Hopping\n-A PREROUTING -p udp --dport '"${PH_RANGE}"' -j REDIRECT --to-ports '"${HY2_PORT}"'\nCOMMIT\n' /etc/ufw/before6.rules
         fi
     fi
 else

@@ -14,7 +14,7 @@ Usage:
     python scripts/build.py               # Assemble all available targets
     python scripts/build.py --check       # Verify that root files match src/ (exit 1 on drift)
     python scripts/build.py --lint        # Run syntax validation (bash -n and Python AST)
-    python scripts/build.py --target NAME # Build only a specific target (e.g. setup_mask.sh)
+    python scripts/build.py --target NAME # Build only a specific target (e.g. setup.sh)
     python scripts/build.py --bump 8.1.0  # Bump version, sync docs, and rebuild all targets
     python scripts/build.py --sync-version# Sync current VERSION to docs and rebuild targets
 """
@@ -34,10 +34,17 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 SRC_DIR = ROOT_DIR / "src"
 
 ENTRYPOINTS: dict[str, str] = {
-    "setup_mask.sh": "entrypoints/setup_mask.main.sh",
-    "configure_3xui.sh": "entrypoints/configure_3xui.main.sh",
-    "update_repair.sh": "entrypoints/update_repair.main.sh",
     "install.sh": "entrypoints/install.main.sh",
+    "setup.sh": "entrypoints/setup.main.sh",
+    "configure-panel.sh": "entrypoints/configure-panel.main.sh",
+    "maintain.sh": "entrypoints/maintain.main.sh",
+    "prepare-server.sh": "entrypoints/prepare-server.main.sh",
+    "manage-services.sh": "entrypoints/manage-services.main.sh",
+    "setup_mask.sh": "entrypoints/compat/setup.main.sh",
+    "configure_3xui.sh": "entrypoints/compat/configure-panel.main.sh",
+    "update_repair.sh": "entrypoints/compat/maintain.main.sh",
+    "secure-vps.sh": "entrypoints/compat/prepare-server.main.sh",
+    "manage_nextgen.sh": "entrypoints/compat/manage-services.main.sh",
 }
 
 INCLUDE_PATTERN = re.compile(r"^(\s*)#\s*@include\s+[\"']([^\"']+)[\"']\s*$")
@@ -252,8 +259,9 @@ def build_all(
                 else:
                     print(f"[OK] {dest_rel} is in sync with src/{src_rel}")
         else:
-            # Write to disk
-            dest_path.write_text(bundled, encoding="utf-8", newline="\n")
+            # Leave unchanged files alone, including compatibility launchers.
+            if not dest_path.is_file() or dest_path.read_text(encoding="utf-8") != bundled:
+                dest_path.write_text(bundled, encoding="utf-8", newline="\n")
             # Preserve executable permissions
             try:
                 dest_path.chmod(0o755)

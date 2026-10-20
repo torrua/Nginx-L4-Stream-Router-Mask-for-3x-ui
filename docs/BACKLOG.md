@@ -9,11 +9,11 @@
 
 | ID | Задача | Приоритет | Статус | Целевой модуль |
 |:---|:---|:---:|:---:|:---|
-| **TASK-01** | [Полноценная интеграция ссылок `vpn://` (Amnezia URI)](#task-01-полноценная-интеграция-ссылок-vpn-amnezia-uri) | **P1 (Критический)** | 🚀 **Внедрено** | `src/awg/`, `manage_amneziawg.py`, `src/installer/` |
+| **TASK-01** | [Полноценная интеграция ссылок `vpn://` (Amnezia URI)](#task-01-полноценная-интеграция-ссылок-vpn-amnezia-uri) | **P1 (Критический)** | 🚀 **Внедрено** | `src/awg/`, `manage_clients.py`, `src/installer/` |
 | **TASK-02** | [Серверный Split-Routing для РФ (Банки, Госуслуги, VK мимо VPN)](#task-02-серверный-split-routing-для-рф-банки-госуслуги-vk-мимо-vpn) | **P1 (Критический)** | ⏳ Запланировано | `src/xray/routing.py`, `src/adguard/setup.sh` |
-| **TASK-03** | [Архитектура «Каскад» (RuVPS ➔ Зарубежный VPS)](#task-03-архитектура-каскад-ruvps--зарубежный-vps) | **P1 (Критический)** | ⏳ Запланировано | `compose/`, `manage_nextgen.sh`, `src/installer/` |
+| **TASK-03** | [Архитектура «Каскад» (RuVPS ➔ Зарубежный VPS)](#task-03-архитектура-каскад-ruvps--зарубежный-vps) | **P1 (Критический)** | ⏳ Запланировано | `compose/`, `manage-services.sh`, `src/installer/` |
 | **TASK-04** | [Селективный Cloudflare WARP Outbound (ChatGPT, Claude, анти-капча)](#task-04-селективный-cloudflare-warp-outbound-chatgpt-claude-анти-капча) | **P2 (Высокий)** | ⏳ Запланировано | `src/system/`, `src/xray/routing.py` |
-| **TASK-05** | [Экспорт и оптимизация для роутеров (KeeneticOS, OpenWrt / Podkop)](#task-05-экспорт-и-оптимизация-для-роутеров-keeneticos-openwrt--podkop) | **P2 (Высокий)** | ⏳ Запланировано | `src/awg/manage_amneziawg.py` |
+| **TASK-05** | [Экспорт и оптимизация для роутеров (KeeneticOS, OpenWrt / Podkop)](#task-05-экспорт-и-оптимизация-для-роутеров-keeneticos-openwrt--podkop) | **P2 (Высокий)** | ⏳ Запланировано | `src/awg/manage_clients.py` |
 | **TASK-06** | [ACME DNS-01 через Cloudflare API (SSL без порта 80 и Wildcard)](#task-06-acme-dns-01-через-cloudflare-api-ssl-без-порта-80-и-wildcard) | **P2 (Высокий)** | ⏳ Запланировано | `src/ssl/certs.sh` |
 | **TASK-07** | [Аварийный туннель Cloudflare Argo / CDN (Спасение при ковровом бане подсетей)](#task-07-аварийный-туннель-cloudflare-argo--cdn-спасение-при-ковровом-бане-подсетей) | **P3 (Средний)** | ⏳ Запланировано | `compose/`, `src/nginx/config.sh` |
 | **TASK-08** | [Легковесный Telegram-бот мониторинга и выдачи ключей](#task-08-легковесный-telegram-бот-мониторинга-и-выдачи-ключей) | **P3 (Средний)** | ⏳ Запланировано | `scripts/bot/`, `src/system/` |
@@ -30,7 +30,7 @@
 * **Техническое решение:**
   1. Реализовать кодирование и декодирование спецификации Amnezia URI (`vpn://...`) на чистом Python (формат: 4-байтный префикс длины Big-Endian + zlib level 8 компрессия JSON-манифеста с `awg` контейнером + URL-safe Base64).
   2. Добавить команду `awg-cli uri <client> [--raw]` для мгновенного получения готовой ссылки в терминале.
-  3. Обеспечить вывод `vpn://` ссылки в сводном файле реквизитов `/root/vpn_credentials.txt` и в финальном дашборде инсталлятора (`install.sh`, `setup_mask.sh`).
+  3. Обеспечить вывод `vpn://` ссылки в сводном файле реквизитов `/root/vpn_credentials.txt` и в финальном дашборде инсталлятора (`install.sh`, `setup.sh`).
   4. Поддержать генерацию терминального ASCII и графического PNG QR-кода на базе `vpn://` для сканирования мобильным приложением Amnezia VPN.
 * **Критерии приемки (DoD):**
   - [x] Команда `awg-cli uri client-1` возвращает валидный JSON с ключом `vpnuri`.

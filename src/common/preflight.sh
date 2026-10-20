@@ -1,6 +1,7 @@
 # =============================================================
 #  ФУНКЦИИ ДИАГНОСТИКИ, РЕЗЕРВНОГО КОПИРОВАНИЯ И SMOKE-TEST
 # =============================================================
+# @include "common/protocols.sh"
 
 backup_nginx_configs() {
     local bkp_dir="/var/backups/nginx_mask"
@@ -367,149 +368,76 @@ inspect_port_conflicts() {
     echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}\n"
 }
 
+check_required_service() {
+    if systemctl is-active --quiet "$1"; then ok "Service $1: active";
+    else warn "Service $1: inactive"; return 1; fi
+}
+
+check_required_file() {
+    [ -s "$1" ] || { warn "Missing required file: $1"; return 1; }
+}
+
+check_required_port() {
+    local protocol="$1" port="$2" listeners
+    if [ "$protocol" = udp ]; then
+        listeners=$(ss -H -lun "sport = :$port" 2>/dev/null) || return 1
+    else
+        listeners=$(ss -H -ltn "sport = :$port" 2>/dev/null) || return 1
+    fi
+    [ -n "$listeners" ] || { warn "Port $port/$protocol is not listening"; return 1; }
+    ok "Port $port/$protocol: listening"
+}
+
 post_install_sanity_check() {
-    echo ""
-    echo -e "  ${CYAN}${BOLD}🔍  ПРОВЕРКА РАБОТОСПОСОБНОСТИ СЕРВИСОВ (SMOKE TEST)${NC}"
-    echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}"
-
-    local all_ok=1
-
-    # 1. Nginx служба и порт 443 TCP
-    if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet nginx 2>/dev/null; then
-        ok "Служба Nginx: активна (running)"
-    else
-        warn "Служба Nginx: НЕ АКТИВНА!"
-        all_ok=0
-    fi
-
-    if timeout 2 bash -c '</dev/tcp/127.0.0.1/443' 2>/dev/null; then
-        ok "Порт 443 TCP (Nginx Stream Router): отвечает"
-    else
-        warn "Порт 443 TCP (Nginx Stream Router): НЕ ОТВЕЧАЕТ на 127.0.0.1!"
-        all_ok=0
-    fi
-
-    if timeout 2 bash -c '</dev/tcp/127.0.0.1/80' 2>/dev/null; then
-        ok "Порт 80 TCP (HTTP / ACME Redirect): отвечает"
-    else
-        warn "Порт 80 TCP (HTTP): НЕ ОТВЕЧАЕТ на 127.0.0.1!"
-    fi
-
-    # 2. Xray / 3X-UI
-    if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet x-ui 2>/dev/null; then
-        ok "Служба 3X-UI: активна (running)"
-    else
-        warn "Служба 3X-UI: НЕ АКТИВНА!"
-        all_ok=0
-    fi
-
-    local steal_p="${STEAL_PORTS_LIST[0]:-${STEAL_PORT:-45443}}"
-    local classic_p="${CLASSIC_PORTS_LIST[0]:-${CLASSIC_PORT:-46443}}"
-    local xhttp_p="${XHTTP_STREAM_PORT:-50443}"
-    local panel_p="${PANEL_PORT:-10443}"
-    local sub_p="${SUB_PORT:-55443}"
-
-    if [[ "${ENABLE_STEAL,,}" == "y" || "${ENABLE_STEAL:-}" == "1" ]]; then
-        if timeout 2 bash -c "</dev/tcp/127.0.0.1/$steal_p" 2>/dev/null; then
-            ok "Подключение REALITY (свой сайт, порт $steal_p): отвечает"
-        else
-            warn "Подключение REALITY (свой сайт, порт $steal_p): НЕ ОТВЕЧАЕТ!"
+    local all_ok=1 flag protocol variable fallback port
+    if is_true "${ENABLE_WEB_STACK:-y}"; then
+        check_required_service nginx || all_ok=0
+        nginx -t >/dev/null 2>&1 || all_ok=0
+        check_required_port tcp 443 || all_ok=0
+        if is_true "${AUTO_SETUP_3XUI:-y}"; then
+            check_required_service x-ui || all_ok=0
+            check_required_port tcp "${PANEL_PORT:-10443}" || all_ok=0
+            check_required_port tcp "${SUB_PORT:-55443}" || all_ok=0
+            check_required_port tcp "${XHTTP_STREAM_PORT:-50443}" || all_ok=0
+            if is_true "${ENABLE_STEAL:-n}"; then
+                for port in "${STEAL_PORTS_LIST[@]:-${STEAL_PORT:-45443}}"; do
+                    check_required_port tcp "$port" || all_ok=0
+                done
+            fi
+            if is_true "${ENABLE_CLASSIC:-n}"; then
+                for port in "${CLASSIC_PORTS_LIST[@]:-${CLASSIC_PORT:-46443}}"; do
+                    check_required_port tcp "$port" || all_ok=0
+                done
+            fi
+            while read -r flag protocol port; do
+                [ "$flag" = AWG-standalone ] && continue
+                check_required_port "$protocol" "$port" || all_ok=0
+            done < <(selected_protocol_ports)
+        fi
+        if is_true "${ENABLE_AGH:-n}"; then
+            check_required_service AdGuardHome || all_ok=0
+            check_required_port tcp "${PORT_AGH_WEB:-3000}" || all_ok=0
+            check_required_port udp 53 || all_ok=0
+        fi
+        # curl validates the certificate and hostname as well as HTTPS availability.
+        if ! curl -fLsS --connect-timeout 3 --max-time 10 -o /dev/null \
+            --resolve "${PRIMARY_DOMAIN}:443:127.0.0.1" "https://${PRIMARY_DOMAIN}/"; then
+            warn "HTTPS/certificate check failed: ${PRIMARY_DOMAIN}"
             all_ok=0
         fi
     fi
-
-    if [[ "${ENABLE_CLASSIC,,}" == "y" || "${ENABLE_CLASSIC:-}" == "1" ]]; then
-        if timeout 2 bash -c "</dev/tcp/127.0.0.1/$classic_p" 2>/dev/null; then
-            ok "Подключение REALITY (внешние сервисы, порт $classic_p): отвечает"
-        else
-            warn "Подключение REALITY (внешние сервисы, порт $classic_p): НЕ ОТВЕЧАЕТ!"
-            all_ok=0
-        fi
+    if is_true "${ENABLE_AWG_STANDALONE:-n}"; then
+        check_required_service awg-quick@awg0 || all_ok=0
+        check_required_port udp "${AWG_STANDALONE_PORT:-8445}" || all_ok=0
+        check_required_file /etc/amnezia/amneziawg/awg0.conf || all_ok=0
+        check_required_file /root/awg/client-1.conf || all_ok=0
     fi
-
-    if timeout 2 bash -c "</dev/tcp/127.0.0.1/$xhttp_p" 2>/dev/null; then
-        ok "Инбаунд VLESS xHTTP (порт $xhttp_p): отвечает"
-    else
-        warn "Инбаунд VLESS xHTTP (порт $xhttp_p): НЕ ОТВЕЧАЕТ!"
-        all_ok=0
-    fi
-
-    if timeout 2 bash -c "</dev/tcp/127.0.0.1/$panel_p" 2>/dev/null; then
-        ok "Панель 3X-UI (порт $panel_p): отвечает"
-    else
-        warn "Панель 3X-UI (порт $panel_p): НЕ ОТВЕЧАЕТ!"
-    fi
-
-    if timeout 2 bash -c "</dev/tcp/127.0.0.1/$sub_p" 2>/dev/null; then
-        ok "Канал подписок 3X-UI (порт $sub_p): отвечает"
-    else
-        warn "Канал подписок 3X-UI (порт $sub_p): НЕ ОТВЕЧАЕТ!"
-    fi
-
-    # 3. UDP сервисы (Hysteria 2 / AmneziaWG)
-    if [[ "${ENABLE_HY2,,}" == "y" || "${ENABLE_HY2:-}" == "1" ]]; then
-        if ss -ulpn 2>/dev/null | grep -q ":${HY2_PORT:-443} "; then
-            ok "Hysteria 2 UDP (порт ${HY2_PORT:-443}): слушает"
-        fi
-    fi
-    if [[ "${ENABLE_AWG_V3,,}" == "y" || "${ENABLE_AWG_V3:-}" == "1" ]]; then
-        if ss -ulpn 2>/dev/null | grep -q ":${AWG_V3_PORT:-8443} "; then
-            ok "AmneziaWG v3.1 UDP (порт ${AWG_V3_PORT:-8443}): слушает"
-        fi
-    fi
-
-    # 4. AdGuard Home
-    if [[ "${ENABLE_AGH,,}" == "y" || "${ENABLE_AGH:-}" == "1" ]]; then
-        if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet AdGuardHome 2>/dev/null; then
-            ok "Служба AdGuard Home: активна (running)"
-        else
-            warn "Служба AdGuard Home: НЕ АКТИВНА!"
-        fi
-        if timeout 2 bash -c '</dev/tcp/127.0.0.1/53' 2>/dev/null || ss -ulpn 2>/dev/null | grep -q ':53 '; then
-            ok "AdGuard Home DNS (порт 53): слушает"
-        fi
-    fi
-
-    # 5. SSL сертификат
-    local main_cert=""
-    if [ "${SSL_ENGINE_CHOICE:-1}" = "1" ]; then
-        main_cert="/etc/letsencrypt/live/${PRIMARY_DOMAIN:-}/fullchain.pem"
-    else
-        main_cert="/etc/ssl/acme/${PRIMARY_DOMAIN:-}/fullchain.pem"
-    fi
-    if [ -f "$main_cert" ] && command -v openssl >/dev/null 2>&1; then
-        local exp_date
-        exp_date=$(openssl x509 -enddate -noout -in "$main_cert" 2>/dev/null | cut -d= -f2 || true)
-        local exp_epoch
-        exp_epoch=$(date -d "$exp_date" +%s 2>/dev/null || echo 0)
-        local now_epoch
-        now_epoch=$(date +%s)
-        local days_left=$(( (exp_epoch - now_epoch) / 86400 ))
-        if [ "$days_left" -gt 0 ]; then
-            ok "SSL-сертификат $PRIMARY_DOMAIN: действителен (осталось $days_left дн., до $exp_date)"
-        else
-            warn "SSL-сертификат $PRIMARY_DOMAIN: ИСТЕК ИЛИ НЕВАЛИДЕН!"
-            all_ok=0
-        fi
-    fi
-
-    # 6. Decoy сайт
-    if [ -n "${PRIMARY_DOMAIN:-}" ] && command -v curl >/dev/null 2>&1; then
-        local http_code
-        http_code=$(curl -sk -o /dev/null -w "%{http_code}" --resolve "${PRIMARY_DOMAIN}:443:127.0.0.1" "https://${PRIMARY_DOMAIN}/" 2>/dev/null || echo "ERR")
-        if [ "$http_code" = "200" ]; then
-            ok "Веб-маска (HTTPS GET /): HTTP $http_code OK"
-        else
-            warn "Веб-маска (HTTPS GET /): вернула код $http_code"
-        fi
-    fi
-
-    echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}"
     if [ "$all_ok" -eq 1 ]; then
-        echo -e "  ${GREEN}${BOLD}✔ Все ключевые компоненты работают штатно!${NC}\n"
-    else
-        echo -e "  ${YELLOW}${BOLD}⚠️  Обнаружены предупреждения при проверке компонентов (см. выше).${NC}\n"
+        ok "All selected components passed verification."
+        return 0
     fi
+    warn "Installation verification failed. Fix the reported services and resume installation."
+    return 1
 }
 
 run_doctor_check() {

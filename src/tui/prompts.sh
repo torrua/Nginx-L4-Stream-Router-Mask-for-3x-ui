@@ -958,6 +958,14 @@ while [[ $# -gt 0 ]]; do
             DEBUG_MODE=1
             shift
             ;;
+        --uninstall)
+            if command -v run_uninstall >/dev/null 2>&1; then
+                run_uninstall
+                exit 0
+            else
+                die "Модуль деинсталляции недоступен."
+            fi
+            ;;
         -f|--force)
             FORCE_DNS=1
             shift

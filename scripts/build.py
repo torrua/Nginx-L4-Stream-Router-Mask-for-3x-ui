@@ -36,6 +36,7 @@ SRC_DIR = ROOT_DIR / "src"
 ENTRYPOINTS: dict[str, str] = {
     "install.sh": "entrypoints/install.main.sh",
     "setup.sh": "entrypoints/setup.main.sh",
+    "uninstall.sh": "entrypoints/uninstall.main.sh",
     "configure-panel.sh": "entrypoints/configure-panel.main.sh",
     "maintain.sh": "entrypoints/maintain.main.sh",
     "prepare-server.sh": "entrypoints/prepare-server.main.sh",

@@ -40,6 +40,9 @@ SCRIPT_VERSION="__VERSION__"
 
 # @include "system/env.sh"
 
+# @include "system/snapshot.sh"
+# @include "system/uninstall.sh"
+
 # @include "tui/prompts.sh"
 
 # @include "common/preflight.sh"

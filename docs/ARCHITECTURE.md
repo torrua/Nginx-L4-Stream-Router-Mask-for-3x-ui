@@ -1226,12 +1226,14 @@ src/
 │   ├── prompts.sh
 │   ├── summary.sh
 │   └── wizard.sh
-├── system/             # Системное администрирование: переменные окружения, sysctl, пакеты, firewall
+├── system/             # Системное администрирование: переменные окружения, sysctl, пакеты, firewall, снимок и откат
 │   ├── env.sh
 │   ├── firewall.sh
 │   ├── packages.sh
 │   ├── preinstall.sh
-│   └── sysctl.sh
+│   ├── snapshot.sh
+│   ├── sysctl.sh
+│   └── uninstall.sh
 ├── nginx/              # Конфигурация Nginx: установка, генератор стрим/HTTP-роутера, сайты-приманки
 │   ├── config.sh
 │   ├── decoys.sh
@@ -1253,6 +1255,7 @@ src/
     ├── configure-panel.main.sh
     ├── install.main.sh
     ├── setup.main.sh
+    ├── uninstall.main.sh
     └── maintain.main.sh
 ```
 

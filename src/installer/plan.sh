@@ -102,6 +102,9 @@ run_installation() {
     build_installation_plan
     confirm_installation_plan
     save_session_state "${SAVED_CONFIG_FILE:-server-setup.env}"
+    if command -v create_initial_state_snapshot >/dev/null 2>&1; then
+        create_initial_state_snapshot || true
+    fi
     WEBROOT="/var/www/html"
     NGINX_USER=nginx
     if ! id -u nginx >/dev/null 2>&1; then NGINX_USER=www-data; fi

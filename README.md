@@ -171,6 +171,7 @@ flowchart TD
 | :--- | :--- |
 | [`install.sh`](install.sh) | Основной установщик: запуск Express или пошаговой настройки. |
 | [`setup.sh`](setup.sh) | Пошаговая настройка сервера, диагностика и продолжение установки. |
+| [`uninstall.sh`](uninstall.sh) | Полное удаление стека и возврат сервера к исходному состоянию из снимка. |
 | [`configure-panel.sh`](configure-panel.sh) | Настройка подключений и параметров панели. |
 | [`maintain.sh`](maintain.sh) | Проверка, восстановление настроек и откат к резервной копии. |
 | [`prepare-server.sh`](prepare-server.sh) | Первичная подготовка ОС, SSH и файрвола. |
@@ -301,6 +302,11 @@ sudo ./setup.sh --step 4 -y
 
 # Режим отладки (вывод всех команд в консоль без спиннеров)
 sudo ./setup.sh --debug
+
+# Полное удаление и возврат сервера к исходному состоянию (по снимку)
+sudo ./uninstall.sh
+# или через флаг установщика:
+sudo ./setup.sh --uninstall
 
 # Развёртывание через файл конфигурации (.env) / CI / Ansible
 sudo ./setup.sh -c server-setup.env -y --force

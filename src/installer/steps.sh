@@ -89,8 +89,15 @@ setup_masque_service() {
     local bin_dir="${LOCAL_BIN_DIR:-/usr/local/bin}"
     [ -d "$bin_dir" ] || mkdir -p "$bin_dir" 2>/dev/null || true
 
+    local sb_ver="1.15.0-alpha.12"
+    if [ -x "${bin_dir}/sing-box" ]; then
+        local cur_sb_ver="$("${bin_dir}/sing-box" version 2>/dev/null | head -n1 || echo "")"
+        if [[ "$cur_sb_ver" == *"1.11"* ]] || [[ "$cur_sb_ver" == *"1.12"* ]] || [[ "$cur_sb_ver" == *"1.13"* ]] || [[ "$cur_sb_ver" == *"1.14"* ]]; then
+            rm -f "${bin_dir}/sing-box"
+        fi
+    fi
+
     if [ ! -x "${bin_dir}/sing-box" ]; then
-        local sb_ver="1.11.4"
         local sb_tmp="/tmp/sing-box_${sb_ver}"
         mkdir -p "$sb_tmp"
         if curl -fsSL --connect-timeout 15 "https://github.com/SagerNet/sing-box/releases/download/v${sb_ver}/sing-box-${sb_ver}-linux-${sb_arch}.tar.gz" -o "$sb_tmp/sb.tar.gz" 2>/dev/null || \
@@ -112,23 +119,39 @@ setup_masque_service() {
     local masque_pw="${MASQUE_PASSWORD:-}"
     local cert_file="${SSL_BASE_DIR:-/etc/letsencrypt/live}/${PRIMARY_DOMAIN}/fullchain.pem"
     local key_file="${SSL_BASE_DIR:-/etc/letsencrypt/live}/${PRIMARY_DOMAIN}/privkey.pem"
+    if [ ! -f "$cert_file" ] && [ -f "/etc/ssl/acme/${PRIMARY_DOMAIN}/fullchain.pem" ]; then
+        cert_file="/etc/ssl/acme/${PRIMARY_DOMAIN}/fullchain.pem"
+        key_file="/etc/ssl/acme/${PRIMARY_DOMAIN}/privkey.pem"
+    elif [ ! -f "$cert_file" ] && [ -f "/etc/letsencrypt/live/${PRIMARY_DOMAIN}/fullchain.pem" ]; then
+        cert_file="/etc/letsencrypt/live/${PRIMARY_DOMAIN}/fullchain.pem"
+        key_file="/etc/letsencrypt/live/${PRIMARY_DOMAIN}/privkey.pem"
+    fi
 
     mkdir -p /etc/sing-box
+    if [ ! -f "$cert_file" ] || [ ! -f "$key_file" ]; then
+        mkdir -p /etc/sing-box/ssl
+        if [ ! -f /etc/sing-box/ssl/fullchain.pem ]; then
+            openssl req -x509 -newkey rsa:2048 -nodes \
+                -keyout /etc/sing-box/ssl/privkey.pem \
+                -out /etc/sing-box/ssl/fullchain.pem \
+                -days 365 -subj "/CN=${PRIMARY_DOMAIN:-localhost}" 2>/dev/null || true
+        fi
+        cert_file="/etc/sing-box/ssl/fullchain.pem"
+        key_file="/etc/sing-box/ssl/privkey.pem"
+    fi
+
     cat << EOF > /etc/sing-box/masque.json
 {
   "log": {
     "level": "warn",
     "timestamp": true
   },
-  "inbounds": [
+  "endpoints": [
     {
-      "type": "masque",
+      "type": "masque-server",
       "tag": "masque-in",
       "listen": "::",
       "listen_port": ${masque_p},
-      "tcp_fast_open": true,
-      "sniff": true,
-      "sniff_override_destination": true,
       "users": [
         {
           "username": "${masque_u}",
@@ -142,39 +165,15 @@ setup_masque_service() {
         "key_path": "${key_file}",
         "alpn": ["h3"]
       },
-      "connect_udp": {
-        "enabled": true,
-        "uri_template": "/.well-known/masque/udp/{target_host}/{target_port}/"
-      },
-      "connect_ip": {
-        "enabled": true,
-        "uri_template": "/.well-known/masque/ip/"
-      }
+      "address": ["10.138.0.1/24"]
     }
   ],
   "outbounds": [
     {
       "type": "direct",
       "tag": "direct"
-    },
-    {
-      "type": "block",
-      "tag": "block"
     }
-  ],
-  "route": {
-    "rules": [
-      {
-        "port": 25,
-        "outbound": "block"
-      },
-      {
-        "ip_is_private": true,
-        "outbound": "block"
-      }
-    ],
-    "final": "direct"
-  }
+  ]
 }
 EOF
 
@@ -200,7 +199,13 @@ EOF
         systemctl enable sing-box-masque >/dev/null 2>&1 || true
         if [ -x "${bin_dir}/sing-box" ]; then
             systemctl restart sing-box-masque 2>/dev/null || true
-            ok "Служба Sing-box MASQUE активирована (порт ${masque_p}/udp, H3/QUIC)."
+            sleep 1
+            if systemctl is-active --quiet sing-box-masque; then
+                ok "Служба Sing-box MASQUE активирована (порт ${masque_p}/udp, H3/QUIC)."
+            else
+                warn "Служба sing-box-masque не перешла в статус active. Проверьте: journalctl -u sing-box-masque -n 20"
+                journalctl -u sing-box-masque -n 15 --no-pager 2>/dev/null || true
+            fi
         else
             warn "Бинарник ${bin_dir}/sing-box не найден, запуск sing-box-masque отложен."
         fi
@@ -342,26 +347,39 @@ setup_naive_service() {
     [ -d "$bin_dir" ] || mkdir -p "$bin_dir" 2>/dev/null || true
 
     local caddy_bin="${bin_dir}/caddy-naive"
-    if [ ! -x "$caddy_bin" ] && [ -x "${bin_dir}/caddy" ]; then
-        caddy_bin="${bin_dir}/caddy"
+    if [ -x "$caddy_bin" ] && ! "$caddy_bin" list-modules 2>/dev/null | grep -q 'forward_proxy'; then
+        rm -f "$caddy_bin"
     fi
     if [ ! -x "$caddy_bin" ] && command -v caddy-naive >/dev/null 2>&1; then
-        caddy_bin="$(command -v caddy-naive)"
+        local cand="$(command -v caddy-naive)"
+        if "$cand" list-modules 2>/dev/null | grep -q 'forward_proxy'; then
+            caddy_bin="$cand"
+        fi
+    fi
+    if [ ! -x "$caddy_bin" ] && [ -x "${bin_dir}/caddy" ]; then
+        if "${bin_dir}/caddy" list-modules 2>/dev/null | grep -q 'forward_proxy'; then
+            caddy_bin="${bin_dir}/caddy"
+        fi
     fi
     if [ ! -x "$caddy_bin" ] && command -v caddy >/dev/null 2>&1; then
-        caddy_bin="$(command -v caddy)"
+        local cand="$(command -v caddy)"
+        if "$cand" list-modules 2>/dev/null | grep -q 'forward_proxy'; then
+            caddy_bin="$cand"
+        fi
     fi
 
     if [ ! -x "$caddy_bin" ]; then
         local caddy_tmp="/tmp/caddy_naive_$$"
         mkdir -p "$caddy_tmp"
-        local rel_ver="${SCRIPT_VERSION:-v8.1.0}"
-        [[ "$rel_ver" == "__VERSION__" ]] && rel_ver="v8.1.0"
+        local rel_ver="${SCRIPT_VERSION:-v9.1.0}"
+        [[ "$rel_ver" == "__VERSION__" ]] && rel_ver="v9.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/caddy-naive-linux-${caddy_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
+        local dl_fallback="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/v9.1.0/caddy-naive-linux-${caddy_arch}.tar.gz"
         if curl -fsSL --connect-timeout 15 "$dl_url" -o "$caddy_tmp/caddy.tar.gz" 2>/dev/null || \
-           curl -fsSL --connect-timeout 15 "$dl_mirror" -o "$caddy_tmp/caddy.tar.gz" 2>/dev/null; then
+           curl -fsSL --connect-timeout 15 "$dl_mirror" -o "$caddy_tmp/caddy.tar.gz" 2>/dev/null || \
+           curl -fsSL --connect-timeout 15 "$dl_fallback" -o "$caddy_tmp/caddy.tar.gz" 2>/dev/null; then
             tar -zxf "$caddy_tmp/caddy.tar.gz" -C "$caddy_tmp" 2>/dev/null || true
             if [ -f "$caddy_tmp/caddy-naive" ]; then
                 cp "$caddy_tmp/caddy-naive" "${bin_dir}/caddy-naive"
@@ -421,6 +439,7 @@ setup_naive_service() {
 {
   order forward_proxy before reverse_proxy
   admin off
+  auto_https disable_redirects
 }
 
 :${naive_port} {
@@ -463,7 +482,13 @@ EOF
         systemctl enable caddy-naive >/dev/null 2>&1 || true
         if [ -x "$caddy_bin" ]; then
             systemctl restart caddy-naive 2>/dev/null || true
-            ok "Служба NaïveProxy активирована (порт ${naive_port}, user: ${naive_user})."
+            sleep 1
+            if systemctl is-active --quiet caddy-naive; then
+                ok "Служба NaïveProxy активирована (порт ${naive_port}, user: ${naive_user})."
+            else
+                warn "Служба caddy-naive не перешла в статус active. Проверьте: journalctl -u caddy-naive -n 20"
+                journalctl -u caddy-naive -n 15 --no-pager 2>/dev/null || true
+            fi
         else
             warn "Бинарник ${caddy_bin} не найден, запуск caddy-naive отложен."
         fi
@@ -492,13 +517,15 @@ setup_dnstt_service() {
     if [ ! -x "$dnstt_bin" ]; then
         local dnstt_tmp="/tmp/dnstt_$$"
         mkdir -p "$dnstt_tmp"
-        local rel_ver="${SCRIPT_VERSION:-v8.1.0}"
-        [[ "$rel_ver" == "__VERSION__" ]] && rel_ver="v8.1.0"
+        local rel_ver="${SCRIPT_VERSION:-v9.1.0}"
+        [[ "$rel_ver" == "__VERSION__" ]] && rel_ver="v9.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/dnstt-server-linux-${dnstt_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
+        local dl_fallback="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/v9.1.0/dnstt-server-linux-${dnstt_arch}.tar.gz"
         if curl -fsSL --connect-timeout 15 "$dl_url" -o "$dnstt_tmp/dnstt.tar.gz" 2>/dev/null || \
-           curl -fsSL --connect-timeout 15 "$dl_mirror" -o "$dnstt_tmp/dnstt.tar.gz" 2>/dev/null; then
+           curl -fsSL --connect-timeout 15 "$dl_mirror" -o "$dnstt_tmp/dnstt.tar.gz" 2>/dev/null || \
+           curl -fsSL --connect-timeout 15 "$dl_fallback" -o "$dnstt_tmp/dnstt.tar.gz" 2>/dev/null; then
             tar -zxf "$dnstt_tmp/dnstt.tar.gz" -C "$dnstt_tmp" 2>/dev/null || true
             if [ -f "$dnstt_tmp/dnstt-server" ]; then
                 cp "$dnstt_tmp/dnstt-server" "${bin_dir}/dnstt-server"
@@ -507,6 +534,18 @@ setup_dnstt_service() {
             fi
         fi
         rm -rf "$dnstt_tmp" 2>/dev/null || true
+    fi
+
+    if [ ! -x "$dnstt_bin" ] && command -v go >/dev/null 2>&1; then
+        log "Компиляция dnstt-server из исходников (Go)..."
+        if CGO_ENABLED=0 go install -ldflags='-s -w' www.bamsoftware.com/git/dnstt.git/dnstt-server@latest 2>/dev/null; then
+            local gopath="$(go env GOPATH 2>/dev/null || echo "$HOME/go")"
+            if [ -f "${gopath}/bin/dnstt-server" ]; then
+                cp "${gopath}/bin/dnstt-server" "${bin_dir}/dnstt-server"
+                chmod +x "${bin_dir}/dnstt-server"
+                dnstt_bin="${bin_dir}/dnstt-server"
+            fi
+        fi
     fi
 
     local dnstt_port="${DNSTT_PORT:-53053}"
@@ -581,7 +620,13 @@ EOF
         systemctl enable dnstt-server >/dev/null 2>&1 || true
         if [ -x "$dnstt_bin" ]; then
             systemctl restart dnstt-server 2>/dev/null || true
-            ok "Служба DNSTT активирована (порт ${dnstt_port}/udp, домен: ${dnstt_domain})."
+            sleep 1
+            if systemctl is-active --quiet dnstt-server; then
+                ok "Служба DNSTT активирована (порт ${dnstt_port}/udp, домен: ${dnstt_domain})."
+            else
+                warn "Служба dnstt-server не перешла в статус active. Проверьте: journalctl -u dnstt-server -n 20"
+                journalctl -u dnstt-server -n 15 --no-pager 2>/dev/null || true
+            fi
         else
             warn "Бинарник ${dnstt_bin} не найден, запуск dnstt-server отложен."
         fi
@@ -684,7 +729,7 @@ for path in ['/etc/mita/config.json', '/etc/mita_server_config.json']:
 " 2>/dev/null || true
 
     chown mita:mita /etc/mita/config.json /etc/mita_server_config.json 2>/dev/null || true
-    chmod 600 /etc/mita/config.json /etc/mita_server_config.json 2>/dev/null || true
+    chmod 644 /etc/mita/config.json /etc/mita_server_config.json 2>/dev/null || true
 
     mkdir -p /etc/systemd/system
     cat << EOF > /etc/systemd/system/mita.service
@@ -701,7 +746,8 @@ User=mita
 Group=mita
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 Environment="MITA_LOG_NO_TIMESTAMP=true"
-ExecStartPre=+/bin/sh -c 'mkdir -p /var/run/mita && chown -R mita:mita /var/run/mita && chmod 775 /var/run/mita'
+Environment="MITA_CONFIG_JSON_FILE=/etc/mita/config.json"
+ExecStartPre=+/bin/sh -c 'mkdir -p /var/run/mita /var/lib/mita && chown -R mita:mita /var/run/mita /var/lib/mita /etc/mita && chmod 775 /var/run/mita /var/lib/mita /etc/mita'
 ExecStart=${mita_bin} run
 Nice=-10
 Restart=on-failure
@@ -725,18 +771,24 @@ EOF
     if command -v systemctl >/dev/null 2>&1; then
         systemctl daemon-reload 2>/dev/null || true
         systemctl enable mita >/dev/null 2>&1 || true
-        if systemctl restart mita 2>/dev/null; then
+        systemctl restart mita 2>/dev/null || true
+        sleep 1
+        if [ -x "$mita_bin" ] && [ -f /etc/mita/config.json ]; then
+            "$mita_bin" apply config /etc/mita/config.json 2>/dev/null || true
+            "$mita_bin" start 2>/dev/null || true
+        fi
+        sleep 1
+        if systemctl is-active --quiet mita; then
+            ok "Служба Mieru (mita) успешно запущена (порт ${m_port}, XChaCha20-Poly1305)."
+        else
+            systemctl restart mita 2>/dev/null || true
             sleep 1
-            if [ -x "$mita_bin" ] && [ -f /etc/mita_server_config.json ]; then
-                "$mita_bin" apply config /etc/mita_server_config.json 2>/dev/null || true
-            fi
             if systemctl is-active --quiet mita; then
                 ok "Служба Mieru (mita) успешно запущена (порт ${m_port}, XChaCha20-Poly1305)."
             else
                 warn "Служба Mieru не перешла в статус active. Проверьте: journalctl -u mita -n 20"
+                journalctl -u mita -n 15 --no-pager 2>/dev/null || true
             fi
-        else
-            warn "Ошибка запуска службы mita.service. Проверьте: journalctl -u mita -n 20"
         fi
     fi
 

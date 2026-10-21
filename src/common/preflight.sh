@@ -432,6 +432,32 @@ post_install_sanity_check() {
             fi
             while read -r flag protocol port; do
                 [ "$flag" = AWG-standalone ] && continue
+                case "$flag" in
+                    MASQUE)
+                        if [ ! -x "/usr/local/bin/sing-box" ]; then
+                            warn "Служба MASQUE: бинарник sing-box не установлен, проверка порта пропущена."
+                            continue
+                        fi
+                        ;;
+                    NaiveProxy)
+                        if [ ! -x "/usr/local/bin/caddy-naive" ] && [ ! -x "/usr/local/bin/caddy" ]; then
+                            warn "Служба NaiveProxy: бинарник caddy-naive не установлен, проверка порта пропущена."
+                            continue
+                        fi
+                        ;;
+                    DNSTT)
+                        if [ ! -x "/usr/local/bin/dnstt-server" ]; then
+                            warn "Служба DNSTT: бинарник dnstt-server не установлен, проверка порта пропущена."
+                            continue
+                        fi
+                        ;;
+                    Mieru)
+                        if [ ! -x "/usr/local/bin/mita" ]; then
+                            warn "Служба Mieru: бинарник mita не установлен, проверка порта пропущена."
+                            continue
+                        fi
+                        ;;
+                esac
                 check_required_port "$protocol" "$port" || all_ok=0
             done < <(selected_protocol_ports)
         fi
@@ -441,7 +467,11 @@ post_install_sanity_check() {
             check_required_port udp 53 || all_ok=0
         fi
         if is_true "${ENABLE_MIERU:-n}"; then
-            check_required_service mita || all_ok=0
+            if [ -x "/usr/local/bin/mita" ]; then
+                check_required_service mita || all_ok=0
+            else
+                warn "Служба Mieru: бинарник mita не установлен, проверка службы пропущена."
+            fi
         fi
         # curl validates the certificate and hostname as well as HTTPS availability.
         if ! curl -fLsS --connect-timeout 3 --max-time 10 -o /dev/null \

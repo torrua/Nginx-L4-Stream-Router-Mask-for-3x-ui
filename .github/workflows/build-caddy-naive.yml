@@ -61,13 +61,35 @@ jobs:
           sha256sum caddy-naive-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz > caddy-naive-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz.sha256
           ls -lh
 
+      - name: Build DNSTT Server
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: |
+          mkdir -p dist/dnstt-tmp
+          go install -ldflags='-s -w' www.bamsoftware.com/git/dnstt.git/dnstt-server@latest
+          if [ "${{ matrix.goos }}" = "linux" ] && [ "${{ matrix.goarch }}" = "arm64" ]; then
+            cp "$(go env GOPATH)/bin/linux_arm64/dnstt-server" dist/dnstt-tmp/dnstt-server
+          else
+            cp "$(go env GOPATH)/bin/dnstt-server" dist/dnstt-tmp/dnstt-server
+          fi
+          cd dist/dnstt-tmp
+          tar -czf ../dnstt-server-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz dnstt-server
+          cd ..
+          rm -rf dnstt-tmp
+          sha256sum dnstt-server-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz > dnstt-server-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz.sha256
+          ls -lh
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v7
         with:
-          name: caddy-naive-${{ matrix.goos }}-${{ matrix.goarch }}
+          name: binaries-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
             dist/caddy-naive-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
             dist/caddy-naive-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz.sha256
+            dist/dnstt-server-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
+            dist/dnstt-server-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz.sha256
           if-no-files-found: error
 
       - name: Upload to GitHub Release
@@ -78,5 +100,7 @@ jobs:
           files: |
             dist/caddy-naive-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
             dist/caddy-naive-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz.sha256
+            dist/dnstt-server-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
+            dist/dnstt-server-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

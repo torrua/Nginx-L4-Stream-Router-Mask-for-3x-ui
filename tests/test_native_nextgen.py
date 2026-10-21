@@ -339,13 +339,12 @@ rm -rf "$MOCK_ROOT"
         raw = res.stdout
         json_str = raw[raw.find("{"):] if "{" in raw else raw
         data = json.loads(json_str)
-        ib = data["inbounds"][0]
-        self.assertEqual(ib["type"], "masque")
-        self.assertEqual(ib["listen_port"], 8449)
-        self.assertEqual(ib["tls"]["alpn"], ["h3"])
-        self.assertTrue(ib["connect_udp"]["enabled"])
-        self.assertTrue(ib["connect_ip"]["enabled"])
-        self.assertEqual(ib["users"][0]["username"], "client1")
+        ep = data["endpoints"][0]
+        self.assertEqual(ep["type"], "masque-server")
+        self.assertEqual(ep["listen_port"], 8449)
+        self.assertEqual(ep["tls"]["alpn"], ["h3"])
+        self.assertEqual(ep["address"], ["10.138.0.1/24"])
+        self.assertEqual(ep["users"][0]["username"], "client1")
 
     def test_setup_wstunnel_service_real_invocation(self):
         """Invoke setup_wstunnel_service from src/installer/steps.sh and inspect generated unit."""

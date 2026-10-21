@@ -15489,60 +15489,51 @@ else
             esac
         fi
 
-        if [ "$START_AT_REVIEW" -eq 0 ]; then
-            echo
-            echo -e "  ${WHITE}${BOLD}Шаг 0: Выбор компонентов для установки:${NC}\n"
-            echo -e "  ${CYAN}${BOLD}[1] Комплекс веб-маскировки Nginx + панель 3X-UI${NC}"
-            echo -e "      ${DIM}• VLESS REALITY, VLESS xHTTP, Trojan, Hysteria 2, инбаунды 3X-UI${NC}"
-            echo -e "      ${DIM}• Автоматический выпуск SSL (Let's Encrypt / Cloudflare), веб-маскировка${NC}"
-            prompt_yes_no "  Установить комплекс веб-маскировки Nginx + 3X-UI?" "${ENABLE_WEB_STACK:-y}" ENABLE_WEB_STACK
-            echo
-            echo -e "  ${CYAN}${BOLD}[2] Автономный сервер AmneziaWG (awg-mgr)${NC}"
-            echo -e "      ${DIM}• Работает как системная служба ядра Linux (awg-quick@awg0)${NC}"
-            echo -e "      ${DIM}• Управление клиентами через CLI: awg-mgr add/list/qr/remove${NC}"
-            echo -e "      ${DIM}• Защита от блокировок по протоколу AmneziaWG (Junk packets, S1-S4, H1-H4)${NC}"
-            prompt_yes_no "  Установить автономный сервер AmneziaWG (awg-mgr)?" "${ENABLE_AWG_STANDALONE:-y}" ENABLE_AWG_STANDALONE
-
-            while ! is_true "${ENABLE_WEB_STACK:-y}" && ! is_true "${ENABLE_AWG_STANDALONE:-y}"; do
-                echo
-                warn "Не выбран ни один компонент для установки! Выберите хотя бы один сервис."
-                prompt_yes_no "  Установить комплекс веб-маскировки Nginx + 3X-UI?" "y" ENABLE_WEB_STACK
-                prompt_yes_no "  Установить автономный сервер AmneziaWG (awg-mgr)?" "y" ENABLE_AWG_STANDALONE
-            done
-        fi
-
-
-
         if ! is_true "${ENABLE_WEB_STACK:-y}"; then
             # Сценарий только автономного сервера AmneziaWG
             EXPRESS_MODE=0
             EXPERT_MODE=0
+            ENABLE_AWG_STANDALONE="y"
             run_standalone_awg_wizard
             SKIP_WIZARD_STEPS=1
         fi
 
-        if [ "${SKIP_WIZARD_STEPS:-0}" -eq 0 ] && [ -z "${PRIMARY_DOMAIN:-}" ] && [ "$EXPRESS_MODE" -eq 0 ] && [ "$EXPERT_MODE" -eq 0 ]; then
+        if [ "$START_AT_REVIEW" -eq 0 ] && [ "${SKIP_WIZARD_STEPS:-0}" -eq 0 ] && [ -z "${PRIMARY_DOMAIN:-}" ] && [ "$EXPRESS_MODE" -eq 0 ] && [ "$EXPERT_MODE" -eq 0 ]; then
+            echo
             echo -e "  ${WHITE}${BOLD}Выберите режим настройки:${NC}\n"
             echo -e "    ${CYAN}${BOLD}[1] Экспресс-установка (Рекомендуется)${NC} — Настройка в 2 вопроса"
             echo -e "        ${DIM}• Ввод только домена и email для Let's Encrypt.${NC}"
-            echo -e "        ${DIM}• Автоматический выбор лучших протоколов (VLESS REALITY, VLESS xHTTP, AmneziaWG).${NC}"
+            echo -e "        ${DIM}• Автоматический выбор лучших протоколов (VLESS REALITY, VLESS xHTTP, Hysteria 2, AmneziaWG).${NC}"
             echo -e "        ${DIM}• Готовый сайт-маскировка DataSphere Analytics + автогенерация безопасных путей.${NC}\n"
             echo -e "    ${YELLOW}${BOLD}[2] Экспертная детальная настройка${NC} — Полный контроль параметров"
-            echo -e "        ${DIM}• Пошаговый выбор всех портов, путей подписок, Hysteria 2 и AmneziaWG.${NC}\n"
+            echo -e "        ${DIM}• Единый выбор протоколов, пошаговая настройка портов, путей подписок и параметров.${NC}\n"
+            echo -e "    ${GREEN}${BOLD}[3] Только автономный AmneziaWG (awg-mgr)${NC} — Без домена и веб-маскировки"
+            echo -e "        ${DIM}• Работает как системная служба ядра Linux (awg-quick@awg0).${NC}"
+            echo -e "        ${DIM}• Управление через CLI awg-mgr, подключение напрямую по IP (домен и SSL не нужны).${NC}\n"
 
             while true; do
-                echo -ne "  ${WHITE}${ARROW} Ваш выбор [1/2] (по умолчанию: 1): ${NC}"
+                echo -ne "  ${WHITE}${ARROW} Ваш выбор [1/2/3] (по умолчанию: 1): ${NC}"
                 read -r MODE_INPUT </dev/tty || read -r MODE_INPUT || MODE_INPUT="1"
                 MODE_INPUT=$(echo "${MODE_INPUT:-1}" | tr -d '[:space:]')
                 if [ "$MODE_INPUT" = "1" ]; then
                     EXPRESS_MODE=1
+                    ENABLE_WEB_STACK="y"
                     break
                 elif [ "$MODE_INPUT" = "2" ]; then
                     EXPRESS_MODE=0
                     EXPERT_MODE=1
+                    ENABLE_WEB_STACK="y"
+                    break
+                elif [ "$MODE_INPUT" = "3" ]; then
+                    EXPRESS_MODE=0
+                    EXPERT_MODE=0
+                    ENABLE_WEB_STACK="n"
+                    ENABLE_AWG_STANDALONE="y"
+                    run_standalone_awg_wizard
+                    SKIP_WIZARD_STEPS=1
                     break
                 fi
-                echo -e "  ${RED}Пожалуйста, введите 1 или 2.${NC}"
+                echo -e "  ${RED}Пожалуйста, введите 1, 2 или 3.${NC}"
             done
         fi
     fi

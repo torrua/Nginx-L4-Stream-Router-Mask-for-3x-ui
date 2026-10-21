@@ -1184,9 +1184,9 @@ echo "AUTO_A=$PROTO_A AUTO_B=$PROTO_B"
         self.assertIn("--no-web-stack", banner_sh)
         self.assertIn("--awg-host", banner_sh)
 
-        # 3. Wizard Step 0 and standalone flow
+        # 3. Wizard Standalone flow
         wizard_sh = (ROOT / "src/tui/wizard.sh").read_text(encoding="utf-8")
-        self.assertIn("Шаг 0: Выбор компонентов для установки", wizard_sh)
+        self.assertIn("Только автономный AmneziaWG (awg-mgr)", wizard_sh)
         self.assertIn("run_standalone_awg_wizard", wizard_sh)
         self.assertIn("Endpoint", wizard_sh)
         self.assertIn("AWG_SERVER_HOST", wizard_sh)

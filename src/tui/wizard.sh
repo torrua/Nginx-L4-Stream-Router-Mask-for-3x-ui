@@ -966,10 +966,10 @@ for item in res:
             echo
         fi
 
-        # По умолчанию все инбаунды панели 3X-UI включены, если не были заданы ранее
+        # Инбаунды панели 3X-UI: основные включены по умолчанию, v2.0 для старых роутеров отключен
         ENABLE_HY2="${ENABLE_HY2:-y}"
         ENABLE_AWG_V3="${ENABLE_AWG_V3:-y}"
-        ENABLE_AWG_V2="${ENABLE_AWG_V2:-y}"
+        ENABLE_AWG_V2="${ENABLE_AWG_V2:-n}"
         ENABLE_TUIC="${ENABLE_TUIC:-y}"
         ENABLE_SS2022="${ENABLE_SS2022:-y}"
         ENABLE_MTPROTO="${ENABLE_MTPROTO:-y}"

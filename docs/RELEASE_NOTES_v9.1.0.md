@@ -48,8 +48,8 @@
 
 ### 5. Оптимизация мастера выбора протоколов (UX Improvement)
 * **Разделение на 3X-UI и внешние сервисы:** Список протоколов в мастере установки (`src/tui/wizard.sh`) и Express-режиме (`src/installer/express.sh`) реорганизован:
-  * **По умолчанию включены все инбаунды 3X-UI:** Hysteria 2, AmneziaWG v3.1, AmneziaWG v2.0, TUIC v5, Shadowsocks 2022, Telegram MTProxy.
-  * **Дополнительные протоколы подключаются по желанию:** MASQUE, ShadowTLS v4, Wstunnel, Server-Side Zapret, NaïveProxy, DNSTT, Mieru Proxy, автономный AmneziaWG хоста.
+  * **По умолчанию включены основные инбаунды 3X-UI:** Hysteria 2, AmneziaWG v3.1, TUIC v5, Shadowsocks 2022, Telegram MTProxy.
+  * **Отключены по умолчанию (выбираются по желанию):** AmneziaWG v2.0 (для старых роутеров), а также все внешние протоколы (MASQUE, ShadowTLS v4, Wstunnel, Server-Side Zapret, NaïveProxy, DNSTT, Mieru Proxy, автономный AmneziaWG).
 * Отсутствие внутренних конфликтов портов между предустановленными протоколами (AWG v2 на `8444/udp`, MTProxy на `8444/tcp`).
 
 ---

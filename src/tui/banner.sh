@@ -162,7 +162,7 @@ AWG_HEADER_PROTECTION_KEY=""
 AWG_RANDOM_TRAILERS="false"
 
 # AmneziaWG v2.0 (Для роутеров Keenetic / OpenWrt) [y/n]
-ENABLE_AWG_V2="y"
+ENABLE_AWG_V2="n"
 AWG_V2_PORT="8444"
 
 # TUIC v5 (QUIC 0-RTT, BBR Congestion Control) [y/n]

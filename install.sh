@@ -703,7 +703,7 @@ AWG_HEADER_PROTECTION_KEY=""
 AWG_RANDOM_TRAILERS="false"
 
 # AmneziaWG v2.0 (Для роутеров Keenetic / OpenWrt) [y/n]
-ENABLE_AWG_V2="y"
+ENABLE_AWG_V2="n"
 AWG_V2_PORT="8444"
 
 # TUIC v5 (QUIC 0-RTT, BBR Congestion Control) [y/n]
@@ -8453,7 +8453,7 @@ apply_express_defaults() {
     express_default HY2_DOMAIN "$PRIMARY_DOMAIN"
     express_default ENABLE_AWG_V3 y
     express_default AWG_V3_PORT 8443
-    express_default ENABLE_AWG_V2 y
+    express_default ENABLE_AWG_V2 n
     express_default ENABLE_TUIC y
     express_default ENABLE_SS2022 y
     express_default ENABLE_MTPROTO y
@@ -16263,10 +16263,10 @@ for item in res:
             echo
         fi
 
-        # По умолчанию все инбаунды панели 3X-UI включены, если не были заданы ранее
+        # Инбаунды панели 3X-UI: основные включены по умолчанию, v2.0 для старых роутеров отключен
         ENABLE_HY2="${ENABLE_HY2:-y}"
         ENABLE_AWG_V3="${ENABLE_AWG_V3:-y}"
-        ENABLE_AWG_V2="${ENABLE_AWG_V2:-y}"
+        ENABLE_AWG_V2="${ENABLE_AWG_V2:-n}"
         ENABLE_TUIC="${ENABLE_TUIC:-y}"
         ENABLE_SS2022="${ENABLE_SS2022:-y}"
         ENABLE_MTPROTO="${ENABLE_MTPROTO:-y}"

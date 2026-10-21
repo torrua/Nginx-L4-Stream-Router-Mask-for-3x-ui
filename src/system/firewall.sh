@@ -24,7 +24,44 @@ if [[ "${ENABLE_HY2:-0}" == "1" || "${ENABLE_HY2,,}" == "y" ]] && \
 
     # 2. Персистентность через /etc/ufw/before.rules (IPv4, секция *nat)
     if [ -f /etc/ufw/before.rules ] && ! grep -q "Hy2 Port Hopping" /etc/ufw/before.rules 2>/dev/null; then
-        if grep -q '^\*nat' /etc/ufw/before.rules 2>/dev/null; then
+        if command -v python3 >/dev/null 2>&1; then
+            if grep -q '^\*nat' /etc/ufw/before.rules 2>/dev/null; then
+                python3 - "/etc/ufw/before.rules" "${PH_RANGE}" "${HY2_PORT}" << 'EOF_UFW_PY' 2>/dev/null || true
+import sys
+rule_file, r_range, r_port = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(rule_file, "r", encoding="utf-8") as f:
+    lines = f.readlines()
+out = []
+in_nat = False
+inserted = False
+for line in lines:
+    if line.strip() == "*nat":
+        in_nat = True
+    if in_nat and line.strip() == "COMMIT" and not inserted:
+        out.append("# Hy2 Port Hopping\n")
+        out.append(f"-A PREROUTING -p udp --dport {r_range} -j REDIRECT --to-ports {r_port}\n")
+        inserted = True
+        in_nat = False
+    out.append(line)
+with open(rule_file, "w", encoding="utf-8") as f:
+    f.writelines(out)
+EOF_UFW_PY
+            else
+                python3 - "/etc/ufw/before.rules" "${PH_RANGE}" "${HY2_PORT}" << 'EOF_UFW_PY2' 2>/dev/null || true
+import sys
+rule_file, r_range, r_port = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(rule_file, "r", encoding="utf-8") as f:
+    content = f.read()
+nat_block = f"# Port Hopping for Hysteria 2 (added by setup.sh)\n*nat\n:PREROUTING ACCEPT [0:0]\n# Hy2 Port Hopping\n-A PREROUTING -p udp --dport {r_range} -j REDIRECT --to-ports {r_port}\nCOMMIT\n\n"
+if "*filter" in content:
+    content = content.replace("*filter", nat_block + "*filter", 1)
+else:
+    content = nat_block + content
+with open(rule_file, "w", encoding="utf-8") as f:
+    f.write(content)
+EOF_UFW_PY2
+            fi
+        elif grep -q '^\*nat' /etc/ufw/before.rules 2>/dev/null; then
             sed -i "/^\*nat/,/^COMMIT/{/^COMMIT/i\\# Hy2 Port Hopping\n-A PREROUTING -p udp --dport ${PH_RANGE} -j REDIRECT --to-ports ${HY2_PORT}
             }" /etc/ufw/before.rules
         else
@@ -37,7 +74,44 @@ if [[ "${ENABLE_HY2:-0}" == "1" || "${ENABLE_HY2,,}" == "y" ]] && \
 
     # 3. Персистентность через /etc/ufw/before6.rules (IPv6, секция *nat, если IPv6 включен в UFW)
     if [ -f /etc/ufw/before6.rules ] && grep -q '^IPV6=yes' /etc/default/ufw 2>/dev/null && ! grep -q "Hy2 Port Hopping" /etc/ufw/before6.rules 2>/dev/null; then
-        if grep -q '^\*nat' /etc/ufw/before6.rules 2>/dev/null; then
+        if command -v python3 >/dev/null 2>&1; then
+            if grep -q '^\*nat' /etc/ufw/before6.rules 2>/dev/null; then
+                python3 - "/etc/ufw/before6.rules" "${PH_RANGE}" "${HY2_PORT}" << 'EOF_UFW6_PY' 2>/dev/null || true
+import sys
+rule_file, r_range, r_port = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(rule_file, "r", encoding="utf-8") as f:
+    lines = f.readlines()
+out = []
+in_nat = False
+inserted = False
+for line in lines:
+    if line.strip() == "*nat":
+        in_nat = True
+    if in_nat and line.strip() == "COMMIT" and not inserted:
+        out.append("# Hy2 Port Hopping\n")
+        out.append(f"-A PREROUTING -p udp --dport {r_range} -j REDIRECT --to-ports {r_port}\n")
+        inserted = True
+        in_nat = False
+    out.append(line)
+with open(rule_file, "w", encoding="utf-8") as f:
+    f.writelines(out)
+EOF_UFW6_PY
+            else
+                python3 - "/etc/ufw/before6.rules" "${PH_RANGE}" "${HY2_PORT}" << 'EOF_UFW6_PY2' 2>/dev/null || true
+import sys
+rule_file, r_range, r_port = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(rule_file, "r", encoding="utf-8") as f:
+    content = f.read()
+nat_block = f"# Port Hopping for Hysteria 2 - IPv6 (added by setup.sh)\n*nat\n:PREROUTING ACCEPT [0:0]\n# Hy2 Port Hopping\n-A PREROUTING -p udp --dport {r_range} -j REDIRECT --to-ports {r_port}\nCOMMIT\n\n"
+if "*filter" in content:
+    content = content.replace("*filter", nat_block + "*filter", 1)
+else:
+    content = nat_block + content
+with open(rule_file, "w", encoding="utf-8") as f:
+    f.write(content)
+EOF_UFW6_PY2
+            fi
+        elif grep -q '^\*nat' /etc/ufw/before6.rules 2>/dev/null; then
             sed -i "/^\*nat/,/^COMMIT/{/^COMMIT/i\\# Hy2 Port Hopping\n-A PREROUTING -p udp --dport ${PH_RANGE} -j REDIRECT --to-ports ${HY2_PORT}
             }" /etc/ufw/before6.rules
         else

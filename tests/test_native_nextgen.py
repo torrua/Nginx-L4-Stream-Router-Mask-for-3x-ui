@@ -615,7 +615,8 @@ echo "CLI_ENABLE_DNSTT: $CLI_ENABLE_DNSTT"
 
     def test_ss2022_udp_over_tcp_configured(self):
         """Shadowsocks 2022 inbound must have udpOverTcp and udp_over_tcp configured."""
-        conf_py = (ROOT / "src/entrypoints/configure-panel.main.sh").read_text(encoding="utf-8")
+        reconcile_py = ROOT / "src/panel/reconcile.py"
+        conf_py = reconcile_py.read_text(encoding="utf-8") if reconcile_py.exists() else (ROOT / "configure-panel.sh").read_text(encoding="utf-8")
         inbounds_py = (ROOT / "src/xray/inbounds.py").read_text(encoding="utf-8")
         self.assertIn('"udpOverTcp": True', conf_py)
         self.assertIn('"udp_over_tcp": True', conf_py)

@@ -58,6 +58,49 @@ find_config_file() {
     done
     return 1
 }
+
+resolve_ssl_cert_paths() {
+    local domain="$1"
+    local prefix="${2:-SSL}"
+    local cert_var="${prefix}_CERT_PATH"
+    local key_var="${prefix}_KEY_PATH"
+
+    local custom_cert="${!cert_var:-}"
+    local custom_key="${!key_var:-}"
+
+    if [ -n "$custom_cert" ] && [ -n "$custom_key" ] && [ -s "$custom_cert" ] && [ -s "$custom_key" ]; then
+        return 0
+    fi
+
+    # 1. Let's Encrypt (/etc/letsencrypt/live)
+    if [ -s "/etc/letsencrypt/live/$domain/fullchain.pem" ] && [ -s "/etc/letsencrypt/live/$domain/privkey.pem" ]; then
+        printf -v "$cert_var" '%s' "/etc/letsencrypt/live/$domain/fullchain.pem"
+        printf -v "$key_var" '%s' "/etc/letsencrypt/live/$domain/privkey.pem"
+        declare -g "$cert_var=/etc/letsencrypt/live/$domain/fullchain.pem" 2>/dev/null || true
+        declare -g "$key_var=/etc/letsencrypt/live/$domain/privkey.pem" 2>/dev/null || true
+        return 0
+    fi
+
+    # 2. ACME (/etc/ssl/acme)
+    if [ -s "/etc/ssl/acme/$domain/fullchain.pem" ] && [ -s "/etc/ssl/acme/$domain/privkey.pem" ]; then
+        printf -v "$cert_var" '%s' "/etc/ssl/acme/$domain/fullchain.pem"
+        printf -v "$key_var" '%s' "/etc/ssl/acme/$domain/privkey.pem"
+        declare -g "$cert_var=/etc/ssl/acme/$domain/fullchain.pem" 2>/dev/null || true
+        declare -g "$key_var=/etc/ssl/acme/$domain/privkey.pem" 2>/dev/null || true
+        return 0
+    fi
+
+    # 3. Fallback based on SSL_ENGINE_CHOICE / SSL_BASE_DIR
+    local base_dir="/etc/letsencrypt/live"
+    if [ "${SSL_ENGINE_CHOICE:-1}" = "2" ] || [ "${SSL_BASE_DIR:-}" = "/etc/ssl/acme" ]; then
+        base_dir="/etc/ssl/acme"
+    fi
+    printf -v "$cert_var" '%s' "$base_dir/$domain/fullchain.pem"
+    printf -v "$key_var" '%s' "$base_dir/$domain/privkey.pem"
+    declare -g "$cert_var=$base_dir/$domain/fullchain.pem" 2>/dev/null || true
+    declare -g "$key_var=$base_dir/$domain/privkey.pem" 2>/dev/null || true
+    return 0
+}
 normalize_node_token_config() {
     local enabled="${CLI_ENABLE_NODE_TOKEN:-${ENABLE_NODE_TOKEN:-y}}"
     NODE_TOKEN="${NODE_TOKEN:-}"
@@ -231,7 +274,6 @@ ensure_node_token() {
     runtime_file=$(node_token_runtime_file)
     node_token_operation persist "$runtime_file" "${CONFIG_FILE:-}" "$NODE_TOKEN_NAME" "$NODE_TOKEN" || die "Не удалось сохранить API-ключ ноды."
 }
-
 # SQLite WAL-safe live database backup and verification
 get_sqlite_backup_python() {
     if [ -n "${PYTHON_CMD:-}" ] && "$PYTHON_CMD" -c "import sqlite3" 2>/dev/null; then
@@ -330,8 +372,590 @@ except Exception:
     rm -f "$dst" 2>/dev/null || true
     return 1
 }
+# Execute in a fresh Bash so a caller's `if`/`||` cannot suppress errexit.
+# A private snapshot preserves Bash functions and unexported variables in both modes.
+execute_install_task() (
+    umask 077
+    task_dir=$(mktemp -d "${TMPDIR:-/tmp}/server-task.XXXXXX") || exit 1
+    trap 'rm -f -- "$task_dir/task.sh"; rmdir -- "$task_dir"' EXIT
+    {
+        declare -p | grep -vE '^declare -[^ ]*r|^declare [^ ]+ (BASH[^ =]*|FUNCNAME|DIRSTACK|GROUPS|PIPESTATUS|LINENO|RANDOM|SRANDOM|SECONDS|EPOCHSECONDS|EPOCHREALTIME|_)='
+        declare -f
+        cat << 'EOF_TASK_TRAP'
+__task_err_handler() {
+    local ec=$?
+    local cmd="${BASH_COMMAND:-unknown}"
+    local line="${BASH_LINENO[0]:-unknown}"
+    local fn="${FUNCNAME[1]:-main}"
+    printf '\n[ERROR-TRACE] Сбой команды: %s (строка: %s, функция: %s, код: %s)\n' "$cmd" "$line" "$fn" "$ec" >&2
+}
+trap '__task_err_handler' ERR
+EOF_TASK_TRAP
+        printf '%s\n' 'shopt -s inherit_errexit 2>/dev/null || true' 'set -Eeuo pipefail' '"$@"'
+    } > "$task_dir/task.sh" || exit 1
+    bash --noprofile --norc "$task_dir/task.sh" "$@"
+)
+
+# Инициализация единого системного журнала установки
+init_server_setup_log() {
+    if [ -n "${SERVER_SETUP_LOG:-}" ]; then
+        return 0
+    fi
+    local cand
+    for cand in "${TARGET_ROOT:-}/var/log/server-setup.log" \
+                "${SETUP_MASK_LOG:-}" \
+                "${INSTALL_LOG:-}" \
+                "${TMPDIR:-/tmp}/server-setup.log"; do
+        [ -n "$cand" ] || continue
+        local pdir
+        pdir="$(dirname "$cand" 2>/dev/null || echo ".")"
+        if [ -d "$pdir" ] && [ -w "$pdir" ]; then
+            SERVER_SETUP_LOG="$cand"
+            break
+        fi
+    done
+    [ -n "${SERVER_SETUP_LOG:-}" ] || SERVER_SETUP_LOG="${TMPDIR:-/tmp}/server-setup.log"
+    if [ ! -f "$SERVER_SETUP_LOG" ]; then
+        touch "$SERVER_SETUP_LOG" 2>/dev/null && chmod 600 "$SERVER_SETUP_LOG" 2>/dev/null || true
+    fi
+}
+
+# Извлечение журналов systemd при сбое служб
+get_systemd_diagnostic_logs() {
+    command -v journalctl >/dev/null 2>&1 || return 0
+    [ -d /run/systemd/system ] || return 0
+
+    local diag=""
+    if command -v systemctl >/dev/null 2>&1; then
+        local failed_units
+        failed_units=$(systemctl --failed --no-legend --plain 2>/dev/null | awk '{print $1}' || true)
+        if [ -n "$failed_units" ]; then
+            diag="${diag}  [systemd: аварийные службы]: ${failed_units}"$'\n'
+            for u in $failed_units; do
+                local u_logs
+                u_logs=$(journalctl -u "$u" -n 15 --no-pager 2>/dev/null || true)
+                if [ -n "$u_logs" ]; then
+                    diag="${diag}  --- journalctl -u ${u} (последние 15 строк) ---"$'\n'
+                    diag="${diag}$(echo "$u_logs" | sed 's/^/    /')"$'\n'
+                fi
+            done
+        fi
+    fi
+
+    if [ -z "$diag" ]; then
+        local recent_errs
+        recent_errs=$(journalctl --since "1 minute ago" -p err..emerg --no-pager -n 15 2>/dev/null || true)
+        if [ -n "$recent_errs" ]; then
+            diag="${diag}  --- Системные ошибки journalctl (за последнюю минуту) ---"$'\n'
+            diag="${diag}$(echo "$recent_errs" | sed 's/^/    /')"$'\n'
+        fi
+    fi
+
+    if [ -n "$diag" ]; then
+        echo -e "\n  ${YELLOW}${BOLD}Диагностика системных служб (journalctl):${NC}"
+        echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
+        echo "$diag"
+        echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
+    fi
+}
+
+# Interactive Terminal Spinner & Task Runner
+# Supports:
+#   - Animated spinner in interactive TTY
+#   - Plain output in non-interactive / CI / piped runs
+#   - Smart Implicit Debug: full output and ERR-traces captured automatically
+#   - Explicit DEBUG_MODE=1 passthrough (full stdout/stderr in real-time)
+#   - Required tasks support Retry / Abort; failures cannot be marked as success
+
+run_with_spinner() {
+    local task_name="$1"
+    shift
+    init_server_setup_log
+
+    local log_file="${SPINNER_LOG_FILE:-}"
+    local temporary_log=0
+    if [ -z "$log_file" ]; then
+        log_file=$(umask 077; mktemp "${TMPDIR:-/tmp}/server-task-log.XXXXXX") || return 1
+        temporary_log=1
+    fi
+
+    while true; do
+        local exit_code=0
+        local task_start_ts
+        task_start_ts="$(date -u +"%Y-%m-%d %H:%M:%SZ" 2>/dev/null || date)"
+        printf "\n[%s] === START TASK: %s ===\n" "$task_start_ts" "$task_name" >> "$SERVER_SETUP_LOG" 2>/dev/null || true
+
+        # ── DEBUG MODE: трансляция в реальном времени с одновременной записью в лог ──
+        if [ "${DEBUG_MODE:-0}" -eq 1 ]; then
+            echo -e "\n  ${CYAN}[DEBUG]${NC} ${WHITE}▶ $task_name${NC}"
+            echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
+            (umask 077; : > "$log_file") || true
+            chmod 600 "$log_file" 2>/dev/null || true
+
+            local prev_e="0"
+            case "$-" in *e*) prev_e="1" ;; esac
+            set +e
+            execute_install_task "$@" 2>&1 | tee -a "$log_file"
+            exit_code=${PIPESTATUS[0]}
+            if [ "$prev_e" = "1" ]; then set -e; fi
+
+            if [ -s "$log_file" ] && [ -f "$SERVER_SETUP_LOG" ]; then
+                cat "$log_file" >> "$SERVER_SETUP_LOG" 2>/dev/null || true
+            fi
+            printf "[%s] === END TASK: %s (exit: %s) ===\n" "$(date -u +"%Y-%m-%d %H:%M:%SZ" 2>/dev/null || date)" "$task_name" "$exit_code" >> "$SERVER_SETUP_LOG" 2>/dev/null || true
+
+            if [ $exit_code -eq 0 ]; then
+                echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
+                echo -e "  ${GREEN}${CHECK:-✔}${NC}  ${WHITE}$task_name${NC} ${GREEN}[ГОТОВО]${NC}\n"
+                [ "$temporary_log" -eq 0 ] || rm -f -- "$log_file"
+                return 0
+            else
+                echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
+                get_systemd_diagnostic_logs
+                echo -e "  ${DIM}Полный журнал выполнения: ${WHITE}${SERVER_SETUP_LOG}${NC}\n"
+            fi
+        else
+            # ── Нормальный режим («Умный неявный Debug»): спиннер + фоновая запись ──
+            local spin_chars=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+            local delay=0.08
+
+            (umask 077; : > "$log_file") || return 1
+            chmod 600 "$log_file" || return 1
+
+            execute_install_task "$@" >> "$log_file" 2>&1 &
+            local pid=$!
+
+            if [ ! -t 1 ]; then
+                echo -e "  ${CYAN}*${NC}  ${WHITE}${task_name}...${NC}"
+                if wait "$pid"; then exit_code=0; else exit_code=$?; fi
+            else
+                tput civis 2>/dev/null || echo -ne "\033[?25l"
+                local i=0
+                while kill -0 "$pid" 2>/dev/null; do
+                    i=$(( (i + 1) % 10 ))
+                    printf "\r  ${CYAN}${spin_chars[$i]}${NC}  ${WHITE}%-54s${NC}" "$task_name..."
+                    sleep "$delay"
+                done
+                if wait "$pid"; then exit_code=0; else exit_code=$?; fi
+                tput cnorm 2>/dev/null || echo -ne "\033[?25h"
+            fi
+
+            if [ -s "$log_file" ] && [ -f "$SERVER_SETUP_LOG" ]; then
+                cat "$log_file" >> "$SERVER_SETUP_LOG" 2>/dev/null || true
+            fi
+            printf "[%s] === END TASK: %s (exit: %s) ===\n" "$(date -u +"%Y-%m-%d %H:%M:%SZ" 2>/dev/null || date)" "$task_name" "$exit_code" >> "$SERVER_SETUP_LOG" 2>/dev/null || true
+
+            if [ $exit_code -eq 0 ]; then
+                if [ ! -t 1 ]; then
+                    printf "  ${GREEN}${CHECK:-✔}${NC}  ${WHITE}%-54s${NC} ${GREEN}[ГОТОВО]${NC}\n" "$task_name"
+                else
+                    printf "\r  ${GREEN}${CHECK:-✔}${NC}  ${WHITE}%-54s${NC} ${GREEN}[ГОТОВО]${NC}\n" "$task_name"
+                fi
+                [ "$temporary_log" -eq 0 ] || rm -f -- "$log_file"
+                return 0
+            fi
+
+            if [ ! -t 1 ]; then
+                printf "  ${RED}${CROSS:-✖}${NC}  ${WHITE}%-54s${NC} ${RED}[ОШИБКА]${NC}\n" "$task_name"
+            else
+                printf "\r  ${RED}${CROSS:-✖}${NC}  ${WHITE}%-54s${NC} ${RED}[ОШИБКА]${NC}\n" "$task_name"
+            fi
+            echo -e "\n  ${RED}${BOLD}Полный лог ошибки:${NC}"
+            echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
+            [ -f "$log_file" ] && cat "$log_file" | sed 's/^/    /' || true
+            echo -e "  ${DIM}────────────────────────────────────────────────────────${NC}"
+            get_systemd_diagnostic_logs
+            echo -e "  ${DIM}Полный журнал выполнения сохранен в: ${WHITE}${SERVER_SETUP_LOG}${NC}\n"
+        fi
+
+        # ── Обязательный этап: повторить или прервать ──
+        if [ "${NON_INTERACTIVE:-0}" -eq 0 ] && [ -t 1 ]; then
+            echo -e "  ${YELLOW}${BOLD}Действия при сбое:${NC}"
+            echo -e "    ${CYAN}${BOLD}[1] Повторить попытку (Retry)${NC} — после исправления причин (напр. DNS)"
+            echo -e "    ${RED}[2] Прервать установку (Abort)${NC}"
+            local retry_ans=""
+            read -rp "  Ваш выбор [1/2] (по умолчанию: 1): " retry_ans </dev/tty || read -r retry_ans || retry_ans="1"
+            retry_ans=$(echo "${retry_ans:-1}" | tr -d '[:space:]')
+            case "$retry_ans" in
+                2|3)
+                    die "Шаг завершился с ошибкой (exit $exit_code): $task_name"
+                    ;;
+                *)
+                    echo -e "  ${CYAN}${ARROW:-➜} Повторная попытка: $task_name...${NC}\n"
+                    continue
+                    ;;
+            esac
+        else
+            return $exit_code
+        fi
+    done
+}
+#!/usr/bin/env bash
+# ==============================================================================
+#  PANEL CONFIGURATION ENGINE
+# ==============================================================================
+#  Automated configuration, self-healing, and inbound reconciliation for 3X-UI.
+#  Shared between configure-panel.sh entrypoint and setup.sh (fully autonomous).
+# ==============================================================================
+
+# Terminal Colors & Styles
+RED=$'\033[0;31m'
+GREEN=$'\033[0;32m'
+YELLOW=$'\033[1;33m'
+BLUE=$'\033[0;34m'
+MAGENTA=$'\033[0;35m'
+CYAN=$'\033[0;36m'
+WHITE=$'\033[1;37m'
+DIM=$'\033[2m'
+BOLD=$'\033[1m'
+NC=$'\033[0m'
+RESET=$'\033[0m'
+
+# Status Symbols
+CHECK="✔"
+CROSS="✖"
+ARROW="➜"
+STAR="★"
+INFO="ℹ"
+LOCK="🔒"
+SHIELD="🛡"
+# Standard Logging Functions
+log()  { echo -e "  ${CYAN}[+]${NC} $*"; }
+ok()   { echo -e "  ${GREEN}${CHECK:-✔}${NC} $*"; }
+warn() { echo -e "  ${YELLOW}[!]${NC} $*"; }
+die()  { echo -e "  ${RED}${CROSS:-✖} $*${NC}" >&2; exit 1; }
+# Discover the closest saved configuration without renaming existing user files.
+is_true() {
+    local val="${1:-0}"
+    [[ "$val" == "1" || "${val,,}" == "y" || "${val,,}" == "true" ]]
+}
+
+find_config_file() {
+    local script_dir="${1:-.}" directory candidate
+    for directory in . "$script_dir" /etc /root; do
+        for candidate in "$directory/server-setup.env" "$directory/setup_mask.env"; do
+            if [ -f "$candidate" ]; then
+                printf '%s\n' "$candidate"
+                return 0
+            fi
+        done
+    done
+    return 1
+}
+
+resolve_ssl_cert_paths() {
+    local domain="$1"
+    local prefix="${2:-SSL}"
+    local cert_var="${prefix}_CERT_PATH"
+    local key_var="${prefix}_KEY_PATH"
+
+    local custom_cert="${!cert_var:-}"
+    local custom_key="${!key_var:-}"
+
+    if [ -n "$custom_cert" ] && [ -n "$custom_key" ] && [ -s "$custom_cert" ] && [ -s "$custom_key" ]; then
+        return 0
+    fi
+
+    # 1. Let's Encrypt (/etc/letsencrypt/live)
+    if [ -s "/etc/letsencrypt/live/$domain/fullchain.pem" ] && [ -s "/etc/letsencrypt/live/$domain/privkey.pem" ]; then
+        printf -v "$cert_var" '%s' "/etc/letsencrypt/live/$domain/fullchain.pem"
+        printf -v "$key_var" '%s' "/etc/letsencrypt/live/$domain/privkey.pem"
+        declare -g "$cert_var=/etc/letsencrypt/live/$domain/fullchain.pem" 2>/dev/null || true
+        declare -g "$key_var=/etc/letsencrypt/live/$domain/privkey.pem" 2>/dev/null || true
+        return 0
+    fi
+
+    # 2. ACME (/etc/ssl/acme)
+    if [ -s "/etc/ssl/acme/$domain/fullchain.pem" ] && [ -s "/etc/ssl/acme/$domain/privkey.pem" ]; then
+        printf -v "$cert_var" '%s' "/etc/ssl/acme/$domain/fullchain.pem"
+        printf -v "$key_var" '%s' "/etc/ssl/acme/$domain/privkey.pem"
+        declare -g "$cert_var=/etc/ssl/acme/$domain/fullchain.pem" 2>/dev/null || true
+        declare -g "$key_var=/etc/ssl/acme/$domain/privkey.pem" 2>/dev/null || true
+        return 0
+    fi
+
+    # 3. Fallback based on SSL_ENGINE_CHOICE / SSL_BASE_DIR
+    local base_dir="/etc/letsencrypt/live"
+    if [ "${SSL_ENGINE_CHOICE:-1}" = "2" ] || [ "${SSL_BASE_DIR:-}" = "/etc/ssl/acme" ]; then
+        base_dir="/etc/ssl/acme"
+    fi
+    printf -v "$cert_var" '%s' "$base_dir/$domain/fullchain.pem"
+    printf -v "$key_var" '%s' "$base_dir/$domain/privkey.pem"
+    declare -g "$cert_var=$base_dir/$domain/fullchain.pem" 2>/dev/null || true
+    declare -g "$key_var=$base_dir/$domain/privkey.pem" 2>/dev/null || true
+    return 0
+}
+normalize_node_token_config() {
+    local enabled="${CLI_ENABLE_NODE_TOKEN:-${ENABLE_NODE_TOKEN:-y}}"
+    NODE_TOKEN="${NODE_TOKEN:-}"
+    NODE_TOKEN_NAME="${CLI_NODE_TOKEN_NAME:-${NODE_TOKEN_NAME:-}}"
+    case "${enabled,,}" in y|1|true) ENABLE_NODE_TOKEN=y ;; *) ENABLE_NODE_TOKEN=n; return 0 ;; esac
+    case "${AUTO_SETUP_3XUI:-y}" in n|0|false) ENABLE_NODE_TOKEN=n; return 0 ;; esac
+    if [ -z "$NODE_TOKEN_NAME" ]; then
+        local prefix="${SERVER_PREFIX-Server}"
+        case "${prefix,,}" in ''|-|none|off|no) NODE_TOKEN_NAME=Master-Node-Cluster ;; *) NODE_TOKEN_NAME="${prefix}-Node" ;; esac
+    fi
+}
+
+node_token_runtime_file() {
+    if [ -n "${NODE_ENV_FILE:-}" ]; then printf '%s' "$NODE_ENV_FILE";
+    elif [ -d /run ]; then printf '/run/3xui_node_token.env';
+    else printf '/tmp/3xui_node_token.env'; fi
+}
+
+load_node_token_result() {
+    local file="$1" line key value
+    NODE_TOKEN=""
+    [ -f "$file" ] || return 1
+    local double_quote='^"(.*)"$' single_quote="^'(.*)'\$"
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line%$'\r'}"
+        [[ "$line" =~ ^(NODE_TOKEN_NAME|NODE_TOKEN)=(.*)$ ]] || continue
+        key="${BASH_REMATCH[1]}"; value="${BASH_REMATCH[2]}"
+        if [[ "$value" =~ $double_quote ]] || [[ "$value" =~ $single_quote ]]; then value="${BASH_REMATCH[1]}"; fi
+        printf -v "$key" '%s' "$value"
+    done < "$file"
+    [ -n "${NODE_TOKEN:-}" ]
+}
+
+node_token_operation() {
+    "$PYTHON_CMD" - "$@" <<'EOF_NODE_TOKEN_PY'
+"""Local node-token lifecycle for the 3X-UI API-token SQLite schema."""
+from contextlib import closing
+import hashlib
+import hmac
+import os
+from pathlib import Path
+import secrets
+import sqlite3
+import sys
+import tempfile
+import time
 
 
+def connect(path):
+    return sqlite3.connect(Path(path).resolve().as_uri() + "?mode=rw", uri=True, timeout=10)
+
+
+def verify(path, name, token):
+    if not token:
+        return False
+    try:
+        with closing(connect(path)) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute("SELECT * FROM api_tokens WHERE name=?", (name,)).fetchone()
+        if row is None or not row["enabled"]:
+            return False
+        if "expires_at" in row.keys():
+            expiry = int(row["expires_at"] or 0)
+            if expiry > 100_000_000_000:
+                expiry //= 1000
+            if expiry and expiry <= int(time.time()):
+                return False
+        if "scope" in row.keys() and row["scope"] not in ("admin", "node-admin", "node-sync"):
+            return False
+        return hmac.compare_digest(hashlib.sha256(token.encode()).hexdigest(), row["token"])
+    except (sqlite3.Error, ValueError, TypeError):
+        return False
+
+
+def create(path, name):
+    with closing(connect(path)) as conn, conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(api_tokens)")}
+        if not {"name", "token", "enabled"} <= columns:
+            raise ValueError("Unsupported 3X-UI API-token schema")
+        token = secrets.token_hex(32)
+        values = {"name": name, "token": hashlib.sha256(token.encode()).hexdigest(), "enabled": 1}
+        for column, value in (("scope", "admin"), ("created_at", int(time.time())), ("expires_at", 0)):
+            if column in columns:
+                values[column] = value
+        if conn.execute("SELECT 1 FROM api_tokens WHERE name=?", (name,)).fetchone():
+            update = {key: value for key, value in values.items() if key != "name"}
+            conn.execute("UPDATE api_tokens SET " + ",".join(key + "=?" for key in update) + " WHERE name=?",
+                         [*update.values(), name])
+        else:
+            conn.execute("INSERT INTO api_tokens (" + ",".join(values) + ") VALUES ("
+                         + ",".join("?" for _ in values) + ")", list(values.values()))
+    return token
+
+
+def atomic_write(path, text):
+    path = Path(path)
+    descriptor, temporary = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def persist(runtime_path, config_path, name, token):
+    values = {"ENABLE_NODE_TOKEN": "y", "NODE_TOKEN_NAME": name, "NODE_TOKEN": token}
+    if any("\n" in value or "\r" in value for value in values.values()):
+        raise ValueError("Node-token values must be single-line strings")
+    # These files are read as literal KEY=value data, never evaluated as shell code.
+    lines = [f'{key}="{value}"' for key, value in values.items()]
+    atomic_write(runtime_path, "\n".join(lines) + "\n")
+    if config_path and Path(config_path).is_file():
+        previous = Path(config_path).read_text(encoding="utf-8").splitlines()
+        previous = [line for line in previous if line.partition("=")[0] not in values]
+        atomic_write(config_path, "\n".join([*previous, *lines]) + "\n")
+
+
+def main(args):
+    action, *values = args
+    if action == "verify":
+        return 0 if verify(*values) else 1
+    if action == "create":
+        print(create(*values))
+    elif action == "persist":
+        persist(*values)
+    else:
+        raise ValueError("Unknown node-token operation")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main(sys.argv[1:]))
+    except (OSError, ValueError, sqlite3.Error) as error:
+        print(f"Node API token: {error}", file=sys.stderr)
+        raise SystemExit(1)
+EOF_NODE_TOKEN_PY
+}
+
+ensure_node_token() {
+    case "${ENABLE_NODE_TOKEN:-y}" in n|0|false) return 0 ;; esac
+    NODE_TOKEN="${NODE_TOKEN:-}"
+    if node_token_operation verify "$DB_PATH" "$NODE_TOKEN_NAME" "$NODE_TOKEN"; then
+        ok "Действующий API-ключ ноды '$NODE_TOKEN_NAME' сохранён."
+    else
+        NODE_TOKEN=""
+        local token_out="" attempt
+        local -a arguments=()
+        if [ -n "${XUI_BIN:-}" ]; then
+            for attempt in 1 2; do
+                case "$attempt" in
+                    1) arguments=(-tokenName "$NODE_TOKEN_NAME" -tokenScope admin) ;;
+                    2) arguments=(-tokenName "$NODE_TOKEN_NAME") ;;
+                esac
+                token_out=$("$XUI_BIN" setting -getApiToken "${arguments[@]}" 2>&1 || true)
+                NODE_TOKEN=$(printf '%s\n' "$token_out" | awk '$1 == "apiToken:" {gsub(/\r/, "", $2); print $2; exit}')
+                [ -z "$NODE_TOKEN" ] || break
+            done
+        fi
+        # Also handles CLI versions without named-token flags, without renaming other tokens.
+        if ! node_token_operation verify "$DB_PATH" "$NODE_TOKEN_NAME" "$NODE_TOKEN"; then
+            NODE_TOKEN=$(node_token_operation create "$DB_PATH" "$NODE_TOKEN_NAME") || die "Не удалось создать API-ключ ноды 3X-UI."
+        fi
+        [ -n "$NODE_TOKEN" ] || die "3X-UI не вернул API-ключ ноды."
+        ok "API-ключ ноды '$NODE_TOKEN_NAME' создан."
+    fi
+    local runtime_file
+    runtime_file=$(node_token_runtime_file)
+    node_token_operation persist "$runtime_file" "${CONFIG_FILE:-}" "$NODE_TOKEN_NAME" "$NODE_TOKEN" || die "Не удалось сохранить API-ключ ноды."
+}
+# SQLite WAL-safe live database backup and verification
+get_sqlite_backup_python() {
+    if [ -n "${PYTHON_CMD:-}" ] && "$PYTHON_CMD" -c "import sqlite3" 2>/dev/null; then
+        echo "$PYTHON_CMD"
+        return 0
+    fi
+    if python3 -c "import sqlite3" 2>/dev/null; then
+        echo "python3"
+        return 0
+    fi
+    if python -c "import sqlite3" 2>/dev/null; then
+        echo "python"
+        return 0
+    fi
+    return 1
+}
+
+verify_sqlite_backup() {
+    local bkp="$1"
+    local py_cmd="$2"
+    if [ ! -s "$bkp" ]; then
+        return 1
+    fi
+    if [ -n "$py_cmd" ]; then
+        "$py_cmd" -c "
+import sqlite3, sys
+try:
+    conn = sqlite3.connect(sys.argv[1])
+    res = conn.execute('PRAGMA integrity_check;').fetchall()
+    conn.close()
+    if res and res[0][0] == 'ok':
+        sys.exit(0)
+    sys.exit(1)
+except Exception:
+    sys.exit(1)
+" "$bkp" 2>/dev/null && return 0
+    elif command -v sqlite3 >/dev/null 2>&1; then
+        local check
+        check=$(sqlite3 "$bkp" "PRAGMA integrity_check;" 2>/dev/null || true)
+        [ "$check" = "ok" ] && return 0
+    fi
+    return 1
+}
+
+backup_sqlite_db() {
+    local src="$1"
+    local dst="$2"
+    if [ ! -f "$src" ]; then
+        return 1
+    fi
+    local py_cmd
+    py_cmd=$(get_sqlite_backup_python || true)
+
+    local backup_ok=0
+
+    # 1. Primary: Python SQLite Online Backup API (atomic, WAL-safe)
+    if [ -n "$py_cmd" ]; then
+        if "$py_cmd" -c "
+import sqlite3, sys
+src_p, dst_p = sys.argv[1], sys.argv[2]
+try:
+    try:
+        src_conn = sqlite3.connect(f'file:{src_p}?mode=ro', uri=True)
+    except Exception:
+        src_conn = sqlite3.connect(src_p)
+    dst_conn = sqlite3.connect(dst_p)
+    with dst_conn:
+        src_conn.backup(dst_conn)
+    dst_conn.close()
+    src_conn.close()
+    sys.exit(0)
+except Exception:
+    sys.exit(1)
+" "$src" "$dst" 2>/dev/null; then
+            if verify_sqlite_backup "$dst" "$py_cmd"; then
+                backup_ok=1
+            fi
+        fi
+    fi
+
+    # 2. Secondary: sqlite3 CLI .backup command (atomic, WAL-safe)
+    if [ "$backup_ok" -eq 0 ] && command -v sqlite3 >/dev/null 2>&1; then
+        if sqlite3 "$src" ".backup '$dst'" 2>/dev/null; then
+            if verify_sqlite_backup "$dst" "$py_cmd"; then
+                backup_ok=1
+            fi
+        fi
+    fi
+
+    if [ "$backup_ok" -eq 1 ]; then
+        chmod 600 "$dst" 2>/dev/null || true
+        return 0
+    fi
+
+    # Never silently downgrade to raw cp of a live WAL database; fail safe and clean up
+    rm -f "$dst" 2>/dev/null || true
+    return 1
+}
 # Execute in a fresh Bash so a caller's `if`/`||` cannot suppress errexit.
 # A private snapshot preserves Bash functions and unexported variables in both modes.
 execute_install_task() (
@@ -551,9 +1175,9 @@ run_with_spinner() {
     done
 }
 
-
-show_help() {
-    cat << 'EOF_HELP'
+configure_3xui_panel() {
+    show_configure_panel_help() {
+        cat << 'EOF_HELP'
 Использование: ./configure-panel.sh [ОПЦИИ]
 
 Скрипт автоматического конфигурирования и самовосстановления базы 3X-UI (инбаунды, пути, подписки).
@@ -581,298 +1205,246 @@ show_help() {
   # 2. Безопасный аудит (посмотреть, что изменится, без записи):
   ./configure-panel.sh --dry-run
 EOF_HELP
-}
+    }
 
-CONFIG_FILE=""
-DB_PATH="/etc/x-ui/x-ui.db"
-DRY_RUN=0
-FORCE_SUB=0
-FORCE_REMARKS=0
-NON_INTERACTIVE=0
-CLI_ENABLE_WARP=""
-CLI_WARP_KEY=""
-CLI_ENABLE_NODE_TOKEN=""
-CLI_NODE_TOKEN_NAME=""
+    local CONFIG_FILE=""
+    local DB_PATH="/etc/x-ui/x-ui.db"
+    local DRY_RUN=0
+    local FORCE_SUB=0
+    local FORCE_REMARKS=0
+    local NON_INTERACTIVE=0
+    local CLI_ENABLE_WARP=""
+    local CLI_WARP_KEY=""
+    local CLI_ENABLE_NODE_TOKEN=""
+    local CLI_NODE_TOKEN_NAME=""
 
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        -c|--config)
-            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: путь к файлу конфигурации."
-            CONFIG_FILE="$2"
-            shift 2
-            ;;
-        --db)
-            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: путь к базе данных x-ui.db."
-            DB_PATH="$2"
-            shift 2
-            ;;
-        --domain)
-            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: домен."
-            PRIMARY_DOMAIN="$2"
-            shift 2
-            ;;
-        --dry-run)
-            DRY_RUN=1
-            shift
-            ;;
-        --force-sub)
-            FORCE_SUB=1
-            shift
-            ;;
-        --force-remarks)
-            FORCE_REMARKS=1
-            shift
-            ;;
-        --warp)
-            CLI_ENABLE_WARP="y"
-            shift
-            ;;
-        --no-warp)
-            CLI_ENABLE_WARP="n"
-            shift
-            ;;
-        --warp-key)
-            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: лицензионный ключ WARP+."
-            CLI_WARP_KEY="$2"
-            shift 2
-            ;;
-        --node-token)
-            CLI_ENABLE_NODE_TOKEN="y"
-            shift
-            ;;
-        --no-node-token)
-            CLI_ENABLE_NODE_TOKEN="n"
-            shift
-            ;;
-        --node-token-name)
-            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: имя API-токена ноды."
-            CLI_NODE_TOKEN_NAME="$2"
-            shift 2
-            ;;
-        -y|--yes|--non-interactive)
-            NON_INTERACTIVE=1
-            shift
-            ;;
-        -h|--help)
-            show_help
-            exit 0
-            ;;
-        *)
-            warn "Неизвестный параметр: $1"
-            shift
-            ;;
-    esac
-done
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -c|--config)
+                [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: путь к файлу конфигурации."
+                CONFIG_FILE="$2"
+                shift 2
+                ;;
+            --db)
+                [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: путь к базе данных x-ui.db."
+                DB_PATH="$2"
+                shift 2
+                ;;
+            --domain)
+                [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: домен."
+                PRIMARY_DOMAIN="$2"
+                shift 2
+                ;;
+            --dry-run)
+                DRY_RUN=1
+                shift
+                ;;
+            --force-sub)
+                FORCE_SUB=1
+                shift
+                ;;
+            --force-remarks)
+                FORCE_REMARKS=1
+                shift
+                ;;
+            --warp)
+                CLI_ENABLE_WARP="y"
+                shift
+                ;;
+            --no-warp)
+                CLI_ENABLE_WARP="n"
+                shift
+                ;;
+            --warp-key)
+                [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: лицензионный ключ WARP+."
+                CLI_WARP_KEY="$2"
+                shift 2
+                ;;
+            --node-token)
+                CLI_ENABLE_NODE_TOKEN="y"
+                shift
+                ;;
+            --no-node-token)
+                CLI_ENABLE_NODE_TOKEN="n"
+                shift
+                ;;
+            --node-token-name)
+                [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: имя токена ноды."
+                CLI_NODE_TOKEN_NAME="$2"
+                shift 2
+                ;;
+            -y|--yes)
+                NON_INTERACTIVE=1
+                shift
+                ;;
+            -h|--help)
+                show_configure_panel_help
+                return 0
+                ;;
+            *)
+                warn "Неизвестный параметр: $1"
+                show_configure_panel_help
+                return 1
+                ;;
+        esac
+    done
 
-# Проверка root
-if [ "${EUID:-$(id -u)}" -ne 0 ] && [ "$DRY_RUN" -eq 0 ]; then
-    warn "Для записи в базу данных /etc/x-ui/x-ui.db могут потребоваться права суперпользователя (sudo)."
-fi
-
-if [ "$DRY_RUN" -eq 1 ]; then
-    echo -e "${YELLOW}>>> РЕЖИМ ПРЕДВАРИТЕЛЬНОГО АУДИТА (--dry-run). ИЗМЕНЕНИЯ НЕ ЗАПИСЫВАЮТСЯ <<<${NC}\n"
-fi
-
-# Автопоиск конфигурационного файла, если не передан
-if [ -z "$CONFIG_FILE" ]; then
-    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo /root)"
-    CONFIG_FILE=$(find_config_file "$script_dir" || true)
-fi
-
-# Загрузка переменных из .env файла
-if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
-    log "Загрузка параметров из $CONFIG_FILE..."
-    re_dquote='^"(.*)"$'
-    re_squote="^'(.*)'\$"
-    while IFS= read -r line || [ -n "$line" ]; do
-        line="${line%$'\r'}"
-        [[ "$line" =~ ^[[:space:]]*# ]] && continue
-        [[ -z "${line// }" ]] && continue
-        if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
-            key="${BASH_REMATCH[1]}"
-            val="${BASH_REMATCH[2]}"
-            if [[ "$val" =~ $re_dquote ]] || [[ "$val" =~ $re_squote ]]; then
-                val="${BASH_REMATCH[1]}"
-            fi
-            declare -g "$key=$val"
+    # Поиск конфигурационного файла (.env)
+    if [ -n "$CONFIG_FILE" ]; then
+        if [ ! -f "$CONFIG_FILE" ]; then
+            die "Указанный файл конфигурации не найден: $CONFIG_FILE"
         fi
-    done < "$CONFIG_FILE"
-else
-    warn "Конфигурационный файл .env не найден. Параметры будут считаны из базы данных 3X-UI."
-fi
-
-# Дефолтные значения переменных, если не определены в .env
-PRIMARY_DOMAIN="${PRIMARY_DOMAIN:-yourdomain.online}"
-PANEL_PORT="${PANEL_PORT:-10443}"
-PANEL_PATH="${PANEL_PATH:-}"
-SUB_PORT="${SUB_PORT:-55443}"
-SUB_PATH="${SUB_PATH:-}"
-SUB_CLASH_PATH="${SUB_CLASH_PATH:-${SUB_PATH%/}/clash}"
-SERVER_PREFIX="${SERVER_PREFIX:-Server}"
-SUB_TITLE="${SUB_TITLE:-$SERVER_PREFIX}"
-XHTTP_STREAM_PORT="${XHTTP_STREAM_PORT:-50443}"
-XHTTP_STREAM_PATH="${XHTTP_STREAM_PATH:-}"
-
-ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
-ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
-
-ENABLE_STEAL="${ENABLE_STEAL:-y}"
-STEAL_PORT="${STEAL_PORT:-45443}"
-STEAL_DOMAINS="${STEAL_DOMAINS:-cdn.$PRIMARY_DOMAIN}"
-
-ENABLE_CLASSIC="${ENABLE_CLASSIC:-y}"
-CLASSIC_PORT="${CLASSIC_PORT:-46443}"
-CLASSIC_SNI="${CLASSIC_SNI:-avito.ru}"
-
-ENABLE_HY2="${ENABLE_HY2:-y}"
-HY2_PORT="${HY2_PORT:-443}"
-HY2_DOMAIN="${HY2_DOMAIN:-$PRIMARY_DOMAIN}"
-
-ENABLE_AWG_V3="${ENABLE_AWG_V3:-y}"
-AWG_V3_PORT="${AWG_V3_PORT:-8443}"
-
-ENABLE_AWG_V2="${ENABLE_AWG_V2:-n}"
-AWG_V2_PORT="${AWG_V2_PORT:-8444}"
-
-ENABLE_SS2022="${ENABLE_SS2022:-n}"
-SS2022_PORT="${SS2022_PORT:-8388}"
-ENABLE_SHADOWTLS="${ENABLE_SHADOWTLS:-n}"
-SHADOWTLS_PORT="${SHADOWTLS_PORT:-8543}"
-SHADOWTLS_SNI="${SHADOWTLS_SNI:-gateway.icloud.com}"
-SHADOWTLS_PASSWORD="${SHADOWTLS_PASSWORD:-}"
-
-ENABLE_NAIVE="${ENABLE_NAIVE:-n}"
-NAIVE_PORT="${NAIVE_PORT:-8446}"
-NAIVE_DOMAIN="${NAIVE_DOMAIN:-}"
-NAIVE_USER="${NAIVE_USER:-user}"
-NAIVE_PASS="${NAIVE_PASS:-}"
-
-ENABLE_DNSTT="${ENABLE_DNSTT:-n}"
-DNSTT_PORT="${DNSTT_PORT:-53053}"
-DNSTT_DOMAIN="${DNSTT_DOMAIN:-}"
-DNSTT_PUBKEY="${DNSTT_PUBKEY:-}"
-
-ENABLE_TUIC="${ENABLE_TUIC:-n}"
-TUIC_PORT="${TUIC_PORT:-8448}"
-
-ENABLE_MTPROTO="${ENABLE_MTPROTO:-n}"
-MTPROTO_PORT="${MTPROTO_PORT:-8444}"
-MTPROTO_FAKETLS_DOMAIN="${MTPROTO_FAKETLS_DOMAIN:-gateway.icloud.com}"
-MTPROTO_ADTAG="${MTPROTO_ADTAG:-}"
-
-AWG_PRIMARY_DNS="${AWG_PRIMARY_DNS:-9.9.9.9}"
-AWG_SECONDARY_DNS="${AWG_SECONDARY_DNS:-76.76.2.0}"
-AWG_SUBNET_IP="${AWG_SUBNET_IP:-10.8.0.0}"
-AWG_SUBNET_CIDR="${AWG_SUBNET_CIDR:-22}"
-AWG_HEADER_PROTECTION_KEY="${AWG_HEADER_PROTECTION_KEY:-}"
-AWG_RANDOM_TRAILERS="${AWG_RANDOM_TRAILERS:-false}"
-
-ENABLE_WARP="${CLI_ENABLE_WARP:-${ENABLE_WARP:-n}}"
-WARP_LICENSE_KEY="${CLI_WARP_KEY:-${WARP_LICENSE_KEY:-}}"
-
-normalize_node_token_config
-
-# Определение системного часового пояса
-SYSTEM_TZ=""
-if [ -f /etc/timezone ]; then
-    SYSTEM_TZ="$(cat /etc/timezone 2>/dev/null | tr -d '[:space:]')"
-elif command -v timedatectl >/dev/null 2>&1; then
-    SYSTEM_TZ="$(timedatectl show --property=Timezone --value 2>/dev/null | tr -d '[:space:]')"
-fi
-if [ -z "$SYSTEM_TZ" ] && [ -L /etc/localtime ]; then
-    SYSTEM_TZ="$(readlink /etc/localtime 2>/dev/null | sed -E 's/.*zoneinfo\///')"
-fi
-TIME_LOCATION="${TIME_LOCATION:-${SYSTEM_TZ:-Europe/Moscow}}"
-
-SUB_UPDATES="${SUB_UPDATES:-1}"
-SUB_ENCRYPT="${SUB_ENCRYPT:-true}"
-BLOCK_SMTP="${BLOCK_SMTP:-y}"
-BLOCK_LAN="${BLOCK_LAN:-y}"
-ENABLE_AGH="${ENABLE_AGH:-n}"
-AGH_XRAY_DNS="${AGH_XRAY_DNS:-n}"
-
-# Проверяем, активен ли Nginx или сконфигурирован ли он в качестве L4/L7 прокси
-HAS_NGINX=0
-if command -v nginx >/dev/null 2>&1 && { systemctl is-active --quiet nginx 2>/dev/null || [ -d /etc/nginx/stream.d ]; }; then
-    HAS_NGINX=1
-fi
-
-if [ -n "${WEB_LISTEN:-}" ]; then
-    WEB_LISTEN="$WEB_LISTEN"
-elif [ "$HAS_NGINX" -eq 1 ]; then
-    WEB_LISTEN="127.0.0.1"
-else
-    WEB_LISTEN=""
-fi
-
-if [ -n "${SUB_LISTEN:-}" ]; then
-    SUB_LISTEN="$SUB_LISTEN"
-elif [ "$HAS_NGINX" -eq 1 ]; then
-    SUB_LISTEN="127.0.0.1"
-else
-    SUB_LISTEN=""
-fi
-
-SSL_ENGINE_CHOICE="${SSL_ENGINE_CHOICE:-1}"
-if [ "$SSL_ENGINE_CHOICE" = "1" ]; then
-    SSL_CERT_PATH="/etc/letsencrypt/live/$PRIMARY_DOMAIN/fullchain.pem"
-    SSL_KEY_PATH="/etc/letsencrypt/live/$PRIMARY_DOMAIN/privkey.pem"
-    HY2_CERT_PATH="/etc/letsencrypt/live/$HY2_DOMAIN/fullchain.pem"
-    HY2_KEY_PATH="/etc/letsencrypt/live/$HY2_DOMAIN/privkey.pem"
-else
-    SSL_CERT_PATH="/etc/ssl/acme/$PRIMARY_DOMAIN/fullchain.pem"
-    SSL_KEY_PATH="/etc/ssl/acme/$PRIMARY_DOMAIN/privkey.pem"
-    HY2_CERT_PATH="/etc/ssl/acme/$HY2_DOMAIN/fullchain.pem"
-    HY2_KEY_PATH="/etc/ssl/acme/$HY2_DOMAIN/privkey.pem"
-fi
-
-# Определение работоспособной команды Python
-PYTHON_CMD=""
-for candidate in python3 python; do
-    if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c "import sys" >/dev/null 2>&1; then
-        PYTHON_CMD="$candidate"
-        break
-    fi
-done
-
-if [ -z "$PYTHON_CMD" ]; then
-    if [ "$DRY_RUN" -eq 0 ]; then
-        log "Установка python3..."
-        apt-get update -q && apt-get install -y python3 python3-bcrypt -q 2>/dev/null || apt-get install -y python3 -q || die "Не удалось установить python3."
-        PYTHON_CMD="python3"
     else
-        die "Работоспособный Python 3 не найден в системе. Необходим для анализа базы SQLite."
+        script_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo ".")"
+        if CONFIG_FILE="$(find_config_file "$script_dir")"; then
+            log "Обнаружен файл параметров: $CONFIG_FILE"
+        else
+            CONFIG_FILE=""
+        fi
     fi
-elif [ "$DRY_RUN" -eq 0 ]; then
-    if command -v apt-get >/dev/null 2>&1 && ! "$PYTHON_CMD" -c "import bcrypt" >/dev/null 2>&1; then
-        export DEBIAN_FRONTEND=noninteractive
-        apt-get install -y python3-bcrypt -q 2>/dev/null || true
-    fi
-fi
 
-# Проверка наличия базы данных 3X-UI
-if [ ! -f "$DB_PATH" ]; then
-    alt_paths=("/usr/local/x-ui/bin/x-ui.db" "/etc/x-ui/db/x-ui.db")
-    found=0
-    for p in "${alt_paths[@]}"; do
-        if [ -f "$p" ]; then
-            DB_PATH="$p"
-            found=1
+    if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
+        log "Загрузка параметров из $CONFIG_FILE..."
+        set -a
+        # shellcheck disable=SC1090
+        source "$CONFIG_FILE"
+        set +a
+    fi
+
+    # CLI-аргументы имеют наивысший приоритет над файлом конфигурации
+    [ -n "$CLI_ENABLE_WARP" ] && ENABLE_WARP="$CLI_ENABLE_WARP"
+    [ -n "$CLI_WARP_KEY" ] && WARP_LICENSE_KEY="$CLI_WARP_KEY"
+    [ -n "$CLI_ENABLE_NODE_TOKEN" ] && ENABLE_NODE_TOKEN="$CLI_ENABLE_NODE_TOKEN"
+    [ -n "$CLI_NODE_TOKEN_NAME" ] && NODE_TOKEN_NAME="$CLI_NODE_TOKEN_NAME"
+
+    # Дефолтные значения переменных, если не определены в .env
+    PRIMARY_DOMAIN="${PRIMARY_DOMAIN:-yourdomain.online}"
+    PANEL_PORT="${PANEL_PORT:-10443}"
+    PANEL_PATH="${PANEL_PATH:-}"
+    SUB_PORT="${SUB_PORT:-55443}"
+    SUB_PATH="${SUB_PATH:-}"
+    SUB_CLASH_PATH="${SUB_CLASH_PATH:-${SUB_PATH%/}/clash}"
+    SERVER_PREFIX="${SERVER_PREFIX:-$PRIMARY_DOMAIN}"
+    ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
+    ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
+    NODE_TOKEN_NAME="${NODE_TOKEN_NAME:-${SERVER_PREFIX}-Node}"
+
+    STEAL_PORT="${STEAL_PORT:-45443}"
+    STEAL_SNI="${STEAL_SNI:-gateway.icloud.com}"
+    XHTTP_PORT="${XHTTP_PORT:-47443}"
+    XHTTP_PATH="${XHTTP_PATH:-xhttp}"
+    XHTTP_SNI="${XHTTP_SNI:-gateway.icloud.com}"
+    CLASSIC_PORT="${CLASSIC_PORT:-46443}"
+    CLASSIC_SNI="${CLASSIC_SNI:-avito.ru}"
+    HY2_PORT="${HY2_PORT:-443}"
+    HY2_DOMAIN="${HY2_DOMAIN:-$PRIMARY_DOMAIN}"
+    AWG_V3_PORT="${AWG_V3_PORT:-8443}"
+    AWG_V2_PORT="${AWG_V2_PORT:-8444}"
+    AWG_PRIMARY_DNS="${AWG_PRIMARY_DNS:-9.9.9.9}"
+    AWG_SECONDARY_DNS="${AWG_SECONDARY_DNS:-76.76.2.0}"
+    AWG_SUBNET_IP="${AWG_SUBNET_IP:-10.8.0.0}"
+    AWG_SUBNET_CIDR="${AWG_SUBNET_CIDR:-22}"
+    AWG_HEADER_PROTECTION_KEY="${AWG_HEADER_PROTECTION_KEY:-}"
+    AWG_RANDOM_TRAILERS="${AWG_RANDOM_TRAILERS:-false}"
+    SS2022_PORT="${SS2022_PORT:-8388}"
+    SHADOWTLS_PORT="${SHADOWTLS_PORT:-8543}"
+    SHADOWTLS_SNI="${SHADOWTLS_SNI:-gateway.icloud.com}"
+    SHADOWTLS_PASSWORD="${SHADOWTLS_PASSWORD:-}"
+    WSTUNNEL_PORT="${WSTUNNEL_PORT:-8080}"
+    WSTUNNEL_PREFIX="${WSTUNNEL_PREFIX:-}"
+    ZAPRET_QNUM="${ZAPRET_QNUM:-1}"
+    ZAPRET_DESYNC="${ZAPRET_DESYNC:-fake,split2}"
+    ZAPRET_FOOLING="${ZAPRET_FOOLING:-badsum}"
+    NAIVE_PORT="${NAIVE_PORT:-9443}"
+    NAIVE_DOMAIN="${NAIVE_DOMAIN:-$PRIMARY_DOMAIN}"
+    NAIVE_USER="${NAIVE_USER:-admin}"
+    NAIVE_PASS="${NAIVE_PASS:-}"
+    DNSTT_PORT="${DNSTT_PORT:-5300}"
+    DNSTT_DOMAIN="${DNSTT_DOMAIN:-}"
+    DNSTT_PUBKEY="${DNSTT_PUBKEY:-}"
+    TUIC_PORT="${TUIC_PORT:-8445}"
+    MTPROTO_PORT="${MTPROTO_PORT:-8446}"
+    MTPROTO_FAKETLS_DOMAIN="${MTPROTO_FAKETLS_DOMAIN:-gateway.icloud.com}"
+    MTPROTO_ADTAG="${MTPROTO_ADTAG:-}"
+
+    ENABLE_STEAL="${ENABLE_STEAL:-y}"
+    ENABLE_XHTTP="${ENABLE_XHTTP:-y}"
+    ENABLE_CLASSIC="${ENABLE_CLASSIC:-y}"
+    ENABLE_HY2="${ENABLE_HY2:-y}"
+    ENABLE_AWG_V3="${ENABLE_AWG_V3:-y}"
+    ENABLE_AWG_V2="${ENABLE_AWG_V2:-n}"
+    ENABLE_SS2022="${ENABLE_SS2022:-n}"
+    ENABLE_SHADOWTLS="${ENABLE_SHADOWTLS:-n}"
+    ENABLE_WSTUNNEL="${ENABLE_WSTUNNEL:-n}"
+    ENABLE_ZAPRET="${ENABLE_ZAPRET:-n}"
+    ENABLE_NAIVE="${ENABLE_NAIVE:-n}"
+    ENABLE_DNSTT="${ENABLE_DNSTT:-n}"
+    ENABLE_TUIC="${ENABLE_TUIC:-n}"
+    ENABLE_MTPROTO="${ENABLE_MTPROTO:-n}"
+
+    ENABLE_WARP="${ENABLE_WARP:-n}"
+    WARP_LICENSE_KEY="${WARP_LICENSE_KEY:-}"
+    TIME_LOCATION="${TIME_LOCATION:-Europe/Moscow}"
+    SUB_UPDATES="${SUB_UPDATES:-12}"
+    SUB_ENCRYPT="${SUB_ENCRYPT:-true}"
+    BLOCK_SMTP="${BLOCK_SMTP:-true}"
+    BLOCK_LAN="${BLOCK_LAN:-true}"
+    ENABLE_AGH="${ENABLE_AGH:-n}"
+    AGH_XRAY_DNS="${AGH_XRAY_DNS:-127.0.0.1:53}"
+
+    HAS_NGINX=0
+    if command -v nginx >/dev/null 2>&1 && [ -d /etc/nginx ]; then
+        HAS_NGINX=1
+    fi
+
+    if [ -n "${WEB_LISTEN:-}" ]; then
+        WEB_LISTEN="$WEB_LISTEN"
+    elif [ "$HAS_NGINX" -eq 1 ]; then
+        WEB_LISTEN="127.0.0.1"
+    else
+        WEB_LISTEN=""
+    fi
+
+    if [ -n "${SUB_LISTEN:-}" ]; then
+        SUB_LISTEN="$SUB_LISTEN"
+    elif [ "$HAS_NGINX" -eq 1 ]; then
+        SUB_LISTEN="127.0.0.1"
+    else
+        SUB_LISTEN=""
+    fi
+
+    resolve_ssl_cert_paths "$PRIMARY_DOMAIN" "SSL"
+    resolve_ssl_cert_paths "${HY2_DOMAIN:-$PRIMARY_DOMAIN}" "HY2"
+
+    # Определение работоспособной команды Python
+    PYTHON_CMD=""
+    for candidate in python3 python; do
+        if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c "import sys" >/dev/null 2>&1; then
+            PYTHON_CMD="$candidate"
             break
         fi
     done
-    if [ "$found" -eq 0 ]; then
-        if [ "$DRY_RUN" -eq 1 ]; then
-            die "База данных 3X-UI ($DB_PATH) не найдена. Убедитесь, что панель 3X-UI установлена."
+
+    if [ -z "$PYTHON_CMD" ]; then
+        if [ "$DRY_RUN" -eq 0 ]; then
+            log "Установка python3..."
+            apt-get update -q && apt-get install -y python3 python3-bcrypt -q 2>/dev/null || apt-get install -y python3 -q || die "Не удалось установить python3."
+            PYTHON_CMD="python3"
+        else
+            die "Работоспособный Python 3 не найден в системе. Необходим для анализа базы SQLite."
         fi
-        log "Служба 3X-UI не обнаружена на сервере. Автоматическая установка..."
-        install_3xui_task() {
+    elif [ "$DRY_RUN" -eq 0 ]; then
+        if command -v apt-get >/dev/null 2>&1 && ! "$PYTHON_CMD" -c "import bcrypt" >/dev/null 2>&1; then
             export DEBIAN_FRONTEND=noninteractive
-            curl -Ls --connect-timeout 15 https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh -o /tmp/install_3xui.sh
-            printf "n\n" | bash /tmp/install_3xui.sh
-        }
-        run_with_spinner "Установка официального ядра 3X-UI (mhsanaei)" install_3xui_task
-        for p in "$DB_PATH" "/usr/local/x-ui/bin/x-ui.db" "/etc/x-ui/db/x-ui.db"; do
+            apt-get install -y python3-bcrypt -q 2>/dev/null || true
+        fi
+    fi
+
+    # Проверка наличия базы данных 3X-UI
+    if [ ! -f "$DB_PATH" ]; then
+        alt_paths=("/usr/local/x-ui/bin/x-ui.db" "/etc/x-ui/db/x-ui.db")
+        found=0
+        for p in "${alt_paths[@]}"; do
             if [ -f "$p" ]; then
                 DB_PATH="$p"
                 found=1
@@ -880,121 +1452,137 @@ if [ ! -f "$DB_PATH" ]; then
             fi
         done
         if [ "$found" -eq 0 ]; then
-            die "Не удалось найти базу данных 3X-UI после установки. Установите вручную: bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh)"
+            if [ "$DRY_RUN" -eq 1 ]; then
+                die "База данных 3X-UI ($DB_PATH) не найдена. Убедитесь, что панель 3X-UI установлена."
+            fi
+            log "Служба 3X-UI не обнаружена на сервере. Автоматическая установка..."
+            install_3xui_task() {
+                export DEBIAN_FRONTEND=noninteractive
+                curl -Ls --connect-timeout 15 https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh -o /tmp/install_3xui.sh
+                printf "n\n" | bash /tmp/install_3xui.sh
+            }
+            run_with_spinner "Установка официального ядра 3X-UI (mhsanaei)" install_3xui_task
+            for p in "$DB_PATH" "/usr/local/x-ui/bin/x-ui.db" "/etc/x-ui/db/x-ui.db"; do
+                if [ -f "$p" ]; then
+                    DB_PATH="$p"
+                    found=1
+                    break
+                fi
+            done
+            if [ "$found" -eq 0 ]; then
+                die "Не удалось найти базу данных 3X-UI после установки. Установите вручную: bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh)"
+            fi
+            ok "Панель 3X-UI успешно установлена!"
+            WAS_ACTIVE=1
         fi
-        ok "Панель 3X-UI успешно установлена!"
-        WAS_ACTIVE=1
     fi
-fi
 
-log "Используется база данных 3X-UI: $DB_PATH"
+    log "Используется база данных 3X-UI: $DB_PATH"
 
-if [ "$DRY_RUN" -eq 0 ]; then
-    BACKUP_TS="$(date +%Y%m%d_%H%M%S)"
-    BACKUP_DB="${DB_PATH}.bak.${BACKUP_TS}"
-    if ! backup_sqlite_db "$DB_PATH" "$BACKUP_DB"; then
-        die "Критическая ошибка: невозможно создать проверенную резервную копию базы данных $DB_PATH. Внесение изменений отменено во избежание повреждения данных."
+    if [ "$DRY_RUN" -eq 0 ]; then
+        BACKUP_TS="$(date +%Y%m%d_%H%M%S)"
+        BACKUP_DB="${DB_PATH}.bak.${BACKUP_TS}"
+        if ! backup_sqlite_db "$DB_PATH" "$BACKUP_DB"; then
+            die "Критическая ошибка: невозможно создать проверенную резервную копию базы данных $DB_PATH. Внесение изменений отменено во избежание повреждения данных."
+        fi
     fi
-    chmod 600 "$BACKUP_DB" 2>/dev/null || true
-    ok "Создана проверенная резервная копия базы данных: $BACKUP_DB"
-fi
 
-# Экспорт переменных окружения для Python
-export DB_PATH
-export DRY_RUN
-export FORCE_SUB
-export PRIMARY_DOMAIN
-export PANEL_PORT
-export PANEL_PATH
-export SUB_PORT
-export SUB_PATH
-export SUB_CLASH_PATH
-export SUB_TITLE
-export XHTTP_STREAM_PORT
-export XHTTP_STREAM_PATH
-export ENABLE_STEAL
-export STEAL_PORT
-export STEAL_DOMAINS
-export ENABLE_CLASSIC
-export CLASSIC_PORT
-export CLASSIC_SNI
-export ENABLE_HY2
-export HY2_PORT
-export HY2_DOMAIN
-export HY2_CERT_PATH
-export HY2_KEY_PATH
-export ENABLE_AWG_V3
-export AWG_V3_PORT
-export ENABLE_AWG_V2
-export AWG_V2_PORT
-export AWG_PRIMARY_DNS
-export AWG_SECONDARY_DNS
-export AWG_SUBNET_IP
-export AWG_SUBNET_CIDR
-export AWG_HEADER_PROTECTION_KEY
-export AWG_RANDOM_TRAILERS
-export ENABLE_SS2022
-export SS2022_PORT
-export ENABLE_SHADOWTLS
-export SHADOWTLS_PORT
-export SHADOWTLS_SNI
-export SHADOWTLS_PASSWORD
-export ENABLE_NAIVE
-export NAIVE_PORT
-export NAIVE_DOMAIN
-export NAIVE_USER
-export NAIVE_PASS
-export ENABLE_DNSTT
-export DNSTT_PORT
-export DNSTT_DOMAIN
-export DNSTT_PUBKEY
-export ENABLE_TUIC
-export TUIC_PORT
-export ENABLE_MTPROTO
-export MTPROTO_PORT
-export MTPROTO_FAKETLS_DOMAIN
-export MTPROTO_ADTAG
-export SSL_CERT_PATH
-export SSL_KEY_PATH
-export ADMIN_USERNAME
-export ADMIN_PASSWORD
-export SERVER_PREFIX
-export ENABLE_WARP
-export WARP_LICENSE_KEY
-export TIME_LOCATION
-export SUB_UPDATES
-export SUB_ENCRYPT
-export BLOCK_SMTP
-export ENABLE_WSTUNNEL="${ENABLE_WSTUNNEL:-n}"
-export WSTUNNEL_PREFIX="${WSTUNNEL_PREFIX:-}"
-export WSTUNNEL_PORT="${WSTUNNEL_PORT:-8080}"
-export BLOCK_LAN
-export WEB_LISTEN
-export SUB_LISTEN
-export ENABLE_AGH
-export AGH_XRAY_DNS
-export FORCE_REMARKS
+    export DB_PATH
+    export DRY_RUN
+    export FORCE_SUB
+    export PRIMARY_DOMAIN
+    export PANEL_PORT
+    export PANEL_PATH
+    export SUB_PORT
+    export SUB_PATH
+    export SUB_CLASH_PATH
+    export ENABLE_STEAL
+    export STEAL_PORT
+    export STEAL_SNI
+    export ENABLE_XHTTP
+    export XHTTP_PORT
+    export XHTTP_PATH
+    export XHTTP_SNI
+    export ENABLE_CLASSIC
+    export CLASSIC_PORT
+    export CLASSIC_SNI
+    export ENABLE_HY2
+    export HY2_PORT
+    export HY2_DOMAIN
+    export HY2_CERT_PATH
+    export HY2_KEY_PATH
+    export ENABLE_AWG_V3
+    export AWG_V3_PORT
+    export ENABLE_AWG_V2
+    export AWG_V2_PORT
+    export AWG_PRIMARY_DNS
+    export AWG_SECONDARY_DNS
+    export AWG_SUBNET_IP
+    export AWG_SUBNET_CIDR
+    export AWG_HEADER_PROTECTION_KEY
+    export AWG_RANDOM_TRAILERS
+    export ENABLE_SS2022
+    export SS2022_PORT
+    export ENABLE_SHADOWTLS
+    export SHADOWTLS_PORT
+    export SHADOWTLS_SNI
+    export SHADOWTLS_PASSWORD
+    export ENABLE_NAIVE
+    export NAIVE_PORT
+    export NAIVE_DOMAIN
+    export NAIVE_USER
+    export NAIVE_PASS
+    export ENABLE_DNSTT
+    export DNSTT_PORT
+    export DNSTT_DOMAIN
+    export DNSTT_PUBKEY
+    export ENABLE_TUIC
+    export TUIC_PORT
+    export ENABLE_MTPROTO
+    export MTPROTO_PORT
+    export MTPROTO_FAKETLS_DOMAIN
+    export MTPROTO_ADTAG
+    export SSL_CERT_PATH
+    export SSL_KEY_PATH
+    export ADMIN_USERNAME
+    export ADMIN_PASSWORD
+    export SERVER_PREFIX
+    export ENABLE_WARP
+    export WARP_LICENSE_KEY
+    export TIME_LOCATION
+    export SUB_UPDATES
+    export SUB_ENCRYPT
+    export BLOCK_SMTP
+    export ENABLE_WSTUNNEL="${ENABLE_WSTUNNEL:-n}"
+    export WSTUNNEL_PREFIX="${WSTUNNEL_PREFIX:-}"
+    export WSTUNNEL_PORT="${WSTUNNEL_PORT:-8080}"
+    export BLOCK_LAN
+    export WEB_LISTEN
+    export SUB_LISTEN
+    export ENABLE_AGH
+    export AGH_XRAY_DNS
+    export FORCE_REMARKS
 
-# Приостановка службы x-ui на время реальной транзакции во избежание блокировок SQLite
-WAS_ACTIVE=0
-cleanup_xui() {
-    if [ "${WAS_ACTIVE:-0}" -eq 1 ]; then
-        systemctl start x-ui 2>/dev/null || true
+    # Приостановка службы x-ui на время реальной транзакции во избежание блокировок SQLite
+    WAS_ACTIVE=0
+    cleanup_xui() {
+        if [ "${WAS_ACTIVE:-0}" -eq 1 ]; then
+            systemctl start x-ui 2>/dev/null || true
+        fi
+    }
+    trap cleanup_xui EXIT
+
+    if [ "$DRY_RUN" -eq 0 ]; then
+        if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet x-ui 2>/dev/null; then
+            log "Приостановка службы 3X-UI на время обновления конфигурации базы..."
+            systemctl stop x-ui
+            WAS_ACTIVE=1
+        fi
     fi
-}
-trap cleanup_xui EXIT
 
-if [ "$DRY_RUN" -eq 0 ]; then
-    if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet x-ui 2>/dev/null; then
-        log "Приостановка службы 3X-UI на время обновления конфигурации базы..."
-        systemctl stop x-ui
-        WAS_ACTIVE=1
-    fi
-fi
+    log "Конфигурирование таблиц settings и inbounds (Smart Reconcile Engine)..."
 
-log "Конфигурирование таблиц settings и inbounds (Smart Reconcile Engine)..."
-
-"$PYTHON_CMD" - << 'EOF_PYTHON_CONFIG'
+    "$PYTHON_CMD" - << 'EOF_PYTHON_CONFIG'
 import os
 import sys
 
@@ -1111,14 +1699,31 @@ classic_port = int(os.environ.get("CLASSIC_PORT") or "46443")
 classic_sni = os.environ.get("CLASSIC_SNI") or "avito.ru"
 classic_sni = classic_sni.split()[0] if classic_sni.strip() else "avito.ru"
 
-ssl_cert = os.environ.get("SSL_CERT_PATH", "")
-ssl_key = os.environ.get("SSL_KEY_PATH", "")
+def resolve_cert_key_paths(target_dom: str, env_cert: str = "", env_key: str = "") -> tuple:
+    """
+    Unified SSL certificate resolver: returns (cert_path, key_path).
+    Prioritizes explicit valid files, then Let's Encrypt (/etc/letsencrypt/live),
+    then ACME (/etc/ssl/acme for Cloudflare DNS-01 API).
+    """
+    if env_cert and env_key and os.path.isfile(env_cert) and os.path.isfile(env_key):
+        return env_cert, env_key
+    le_cert = f"/etc/letsencrypt/live/{target_dom}/fullchain.pem"
+    le_key = f"/etc/letsencrypt/live/{target_dom}/privkey.pem"
+    if os.path.isfile(le_cert) and os.path.isfile(le_key):
+        return le_cert, le_key
+    acme_cert = f"/etc/ssl/acme/{target_dom}/fullchain.pem"
+    acme_key = f"/etc/ssl/acme/{target_dom}/privkey.pem"
+    if os.path.isfile(acme_cert) and os.path.isfile(acme_key):
+        return acme_cert, acme_key
+    return env_cert or le_cert, env_key or le_key
+
+
+ssl_cert, ssl_key = resolve_cert_key_paths(domain, os.environ.get("SSL_CERT_PATH", ""), os.environ.get("SSL_KEY_PATH", ""))
 
 enable_hy2 = os.environ.get("ENABLE_HY2", "y").lower() in ("1", "y", "true")
 hy2_port = int(os.environ.get("HY2_PORT") or "443")
 hy2_domain = (os.environ.get("HY2_DOMAIN") or domain).strip()
-hy2_cert = os.environ.get("HY2_CERT_PATH") or ssl_cert
-hy2_key = os.environ.get("HY2_KEY_PATH") or ssl_key
+hy2_cert, hy2_key = resolve_cert_key_paths(hy2_domain, os.environ.get("HY2_CERT_PATH", ""), os.environ.get("HY2_KEY_PATH", ""))
 
 enable_awg_v3 = os.environ.get("ENABLE_AWG_V3", "y").lower() in ("1", "y", "true")
 awg_v3_port = int(os.environ.get("AWG_V3_PORT") or "8443")
@@ -2270,8 +2875,7 @@ unified_tuic_uuid = harvested_tuic_uuid or unified_uuid
 # ВАЖНО: Пароль TUIC v5 должен строго совпадать с clients.password (unified_ss_client_pass),
 # чтобы прямая ссылка tuic:// и экспорт подписки Clash/Mihomo содержали один и тот же пароль
 unified_tuic_pass = unified_ss_client_pass
-tuic_cert = os.environ.get("TUIC_CERT_PATH") or ssl_cert
-tuic_key = os.environ.get("TUIC_KEY_PATH") or ssl_key
+tuic_cert, tuic_key = resolve_cert_key_paths(domain, os.environ.get("TUIC_CERT_PATH", ""), os.environ.get("TUIC_KEY_PATH", ""))
 
 # Реквизиты Telegram MTProxy
 if harvested_mtp_secret and validate_mtproto_secret(harvested_mtp_secret):
@@ -3325,251 +3929,270 @@ if not dry_run:
 conn.close()
 EOF_PYTHON_CONFIG
 
-# Нормализация прав доступа и перезапуск служб (Hardened: chmod 600 для защиты от локальной утечки)
-if [ "$DRY_RUN" -eq 0 ]; then
-    chmod 600 "$DB_PATH" 2>/dev/null || true
+    # Нормализация прав доступа и перезапуск служб (Hardened: chmod 600 для защиты от локальной утечки)
+    if [ "$DRY_RUN" -eq 0 ]; then
+        chmod 600 "$DB_PATH" 2>/dev/null || true
 
-    # Обнаружение исполняемого файла CLI 3X-UI
-    XUI_BIN=""
-    for candidate in "/usr/local/x-ui/x-ui" "/usr/bin/x-ui" "/usr/local/bin/x-ui"; do
-        if [ -x "$candidate" ]; then
-            XUI_BIN="$candidate"
+        # Обнаружение исполняемого файла CLI 3X-UI
+        XUI_BIN=""
+        for candidate in "/usr/local/x-ui/x-ui" "/usr/bin/x-ui" "/usr/local/bin/x-ui"; do
+            if [ -x "$candidate" ]; then
+                XUI_BIN="$candidate"
+                break
+            fi
+        done
+        if [ -z "$XUI_BIN" ] && command -v x-ui >/dev/null 2>&1; then
+            XUI_BIN="$(command -v x-ui)"
+        fi
+
+        # Синхронизация учетных данных администратора через нативный CLI 3X-UI (bcrypt + сброс login_epoch)
+        if [ -n "${ADMIN_USERNAME:-}" ] || [ -n "${ADMIN_PASSWORD:-}" ]; then
+            if [ -n "$XUI_BIN" ]; then
+                xui_user_args=()
+                [ -n "${ADMIN_USERNAME:-}" ] && xui_user_args+=("-username" "$ADMIN_USERNAME")
+                [ -n "${ADMIN_PASSWORD:-}" ] && xui_user_args+=("-password" "$ADMIN_PASSWORD")
+                log "Синхронизация учетных данных администратора через '$XUI_BIN setting' (bcrypt)..."
+                if "$XUI_BIN" setting "${xui_user_args[@]}" >/tmp/xui_setting.log 2>&1; then
+                    ok "Учетные данные администратора успешно синхронизированы в 3X-UI (bcrypt)!"
+                else
+                    warn "Предупреждение при вызове '$XUI_BIN setting': $(cat /tmp/xui_setting.log 2>/dev/null)"
+                fi
+            fi
+        fi
+
+        ensure_node_token
+
+        # Очистка устаревших/невалидных geosite меток в bin/config.json с помощью безопасного JSON парсера
+        for cfg_candidate in "/usr/local/x-ui/bin/config.json" "/etc/x-ui/bin/config.json"; do
+            if [ -f "$cfg_candidate" ]; then
+                "$PYTHON_CMD" - "$cfg_candidate" << 'EOF_CLEAN_JSON' 2>/dev/null || true
+import json, sys
+cfg_path = sys.argv[1]
+try:
+    with open(cfg_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    bad_prefixes = ("geosite:ru", "geosite:yandex", "geosite:vk", "geosite:youtube",
+                    "geosite:openai", "geosite:google-gemini", "geosite:anthropic", "geosite:cloudflare")
+    def clean_obj(obj):
+        if isinstance(obj, dict):
+            return {k: clean_obj(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [clean_obj(x) for x in obj if not (isinstance(x, str) and any(x.startswith(b) for b in bad_prefixes))]
+        return obj
+    cleaned = clean_obj(data)
+    with open(cfg_path, 'w', encoding='utf-8') as f:
+        json.dump(cleaned, f, indent=2, ensure_ascii=False)
+except Exception:
+    pass
+EOF_CLEAN_JSON
+            fi
+        done
+
+        # Обновление ядра Xray-core до последней актуальной версии (v26.9.30+)
+        INSTALLED_XRAY_VER=""
+        if [[ "${UPDATE_XRAY_CORE:-y}" =~ ^[Yy1] ]]; then
+            XRAY_BIN_DIR="/usr/local/x-ui/bin"
+            [ -d "$XRAY_BIN_DIR" ] || XRAY_BIN_DIR="/etc/x-ui/bin"
+            
+            ARCH=$(uname -m 2>/dev/null || echo "x86_64")
+            case "$ARCH" in
+                x86_64|amd64)   XRAY_ARCH="64"; BIN_NAME="xray-linux-amd64" ;;
+                aarch64|arm64)  XRAY_ARCH="arm64-v8a"; BIN_NAME="xray-linux-arm64-v8a" ;;
+                armv7*|armhf)   XRAY_ARCH="arm32-v7a"; BIN_NAME="xray-linux-arm32-v7a" ;;
+                *)              XRAY_ARCH="64"; BIN_NAME="xray-linux-amd64" ;;
+            esac
+            
+            TARGET_BIN="$XRAY_BIN_DIR/$BIN_NAME"
+            [ -f "$TARGET_BIN" ] || TARGET_BIN="$XRAY_BIN_DIR/xray"
+            
+            CURRENT_VER=""
+            if [ -x "$TARGET_BIN" ]; then
+                CURRENT_VER=$("$TARGET_BIN" -version 2>/dev/null | { head -n 1 || true; } | { awk '{print $2}' || true; }) || CURRENT_VER=""
+            fi
+
+            LATEST_TAG=""
+            if command -v curl >/dev/null 2>&1; then
+                gh_resp=$(curl -fsSL --connect-timeout 5 "https://api.github.com/repos/XTLS/Xray-core/releases/latest" 2>/dev/null || true)
+                if [ -n "$gh_resp" ]; then
+                    LATEST_TAG=$(echo "$gh_resp" | { grep -m1 '"tag_name":' || true; } | { cut -d '"' -f 4 || true; }) || LATEST_TAG=""
+                fi
+            fi
+            [ -n "$LATEST_TAG" ] || LATEST_TAG="v26.9.30"
+            CLEAN_LATEST="${LATEST_TAG#v}"
+
+            if [ -z "$CURRENT_VER" ] || [ "$CURRENT_VER" != "$CLEAN_LATEST" ]; then
+                log "Обновление ядра Xray до последней версии ($CURRENT_VER -> $LATEST_TAG)..."
+                TMP_XRAY_DIR="/tmp/xray_update_$$"
+                mkdir -p "$TMP_XRAY_DIR"
+                XRAY_ZIP="$TMP_XRAY_DIR/xray.zip"
+                
+                DL_URL="https://github.com/XTLS/Xray-core/releases/download/${LATEST_TAG}/Xray-linux-${XRAY_ARCH}.zip"
+                if curl -fsSL --connect-timeout 15 "$DL_URL" -o "$XRAY_ZIP" 2>/dev/null; then
+                    python3 -c "import zipfile; zipfile.ZipFile('$XRAY_ZIP').extractall('$TMP_XRAY_DIR')" 2>/dev/null || true
+                    if [ -f "$TMP_XRAY_DIR/xray" ]; then
+                        chmod +x "$TMP_XRAY_DIR/xray"
+                        if "$TMP_XRAY_DIR/xray" -version >/dev/null 2>&1; then
+                            mkdir -p "$XRAY_BIN_DIR"
+                            [ -f "$TARGET_BIN" ] && cp -f "$TARGET_BIN" "$TARGET_BIN.bak"
+                            install -m 755 "$TMP_XRAY_DIR/xray" "$TARGET_BIN.tmp.$$"
+                            mv -f "$TARGET_BIN.tmp.$$" "$TARGET_BIN"
+                            
+                            if "$TARGET_BIN" -version >/dev/null 2>&1; then
+                                [ -f "$TARGET_BIN.bak" ] && rm -f "$TARGET_BIN.bak"
+                                [ -f "$TMP_XRAY_DIR/geosite.dat" ] && cp -f "$TMP_XRAY_DIR/geosite.dat" "$XRAY_BIN_DIR/geosite.dat"
+                                [ -f "$TMP_XRAY_DIR/geoip.dat" ] && cp -f "$TMP_XRAY_DIR/geoip.dat" "$XRAY_BIN_DIR/geoip.dat"
+                                
+                                INSTALLED_XRAY_VER="$LATEST_TAG"
+                                ok "Ядро Xray успешно обновлено до последней версии $LATEST_TAG (было: ${CURRENT_VER:-неизвестно})!"
+                            else
+                                warn "Установленный бинарник Xray не запустился, выполняется откат."
+                                [ -f "$TARGET_BIN.bak" ] && mv -f "$TARGET_BIN.bak" "$TARGET_BIN"
+                                INSTALLED_XRAY_VER="${CURRENT_VER:-v26.7.28}"
+                            fi
+                        else
+                            warn "Скачанный бинарник Xray $LATEST_TAG не прошел валидацию, сохранен текущий $CURRENT_VER."
+                            INSTALLED_XRAY_VER="${CURRENT_VER:-v26.7.28}"
+                        fi
+                    fi
+                else
+                    warn "Не удалось скачать обновление Xray $LATEST_TAG с GitHub, используется $CURRENT_VER."
+                    INSTALLED_XRAY_VER="${CURRENT_VER:-v26.7.28}"
+                fi
+                rm -rf "$TMP_XRAY_DIR"
+            else
+                INSTALLED_XRAY_VER="$LATEST_TAG"
+                ok "Ядро Xray уже актуальной версии ($LATEST_TAG)."
+            fi
+        fi
+
+        # Возобновление/перезапуск службы 3X-UI
+        if [ "${WAS_ACTIVE:-0}" -eq 1 ] || (command -v systemctl >/dev/null 2>&1 && systemctl is-enabled --quiet x-ui 2>/dev/null); then
+            log "Перезапуск службы 3X-UI..."
+            systemctl restart x-ui && ok "Служба 3X-UI успешно перезапущена." || warn "Не удалось перезапустить службу x-ui."
+        fi
+
+        # Проверка Nginx на наличие мертвого SNI и мягкий reload
+        if command -v nginx >/dev/null 2>&1; then
+            if [ -d /etc/nginx ] && grep -rq "swdist\.microsoft\.com" /etc/nginx/ 2>/dev/null; then
+                log "Обновление устаревшего SNI в конфигурационных файлах Nginx..."
+                find /etc/nginx/ -type f -name "*.conf" -exec sed -i 's/swdist\.microsoft\.com/gateway\.icloud\.com/g' {} + 2>/dev/null || true
+                ok "Nginx: SNI swdist.microsoft.com заменен на gateway.icloud.com."
+            fi
+
+            if nginx -t >/dev/null 2>&1; then
+                systemctl reload nginx 2>/dev/null && ok "Nginx успешно применил конфигурацию (Zero Downtime reload)." || true
+            fi
+        fi
+    fi
+
+    # Чтение параметров единого клиента, экспортированных из Python
+    UNIFIED_CLIENT_TAG=""
+    UNIFIED_SUB_ID=""
+    UNIFIED_VLESS_ENKEY=""
+    SS2022_URI=""
+    TUIC_URI=""
+    MTPROTO_TG_URI=""
+    MTPROTO_HTTPS_URI=""
+    MTPROTO_SECRET=""
+    MTPROTO_BOT_SECRET=""
+    MASQUE_URI=""
+    SHADOWTLS_URI=""
+    SS_SHADOWTLS_URI=""
+    WSTUNNEL_CLI=""
+    WSTUNNEL_URI=""
+    ZAPRET_INFO=""
+    NAIVE_URI=""
+    DNSTT_CLI=""
+    DNSTT_PUBKEY=""
+    for c_env in "/run/3xui_unified_client.env" "/tmp/3xui_unified_client.env"; do
+        if [ -f "$c_env" ]; then
+            # shellcheck disable=SC1090
+            source "$c_env"
             break
         fi
     done
-    if [ -z "$XUI_BIN" ] && command -v x-ui >/dev/null 2>&1; then
-        XUI_BIN="$(command -v x-ui)"
+
+    if [ -z "${DNSTT_PUBKEY:-}" ] && [ -f "/etc/dnstt/server.pub" ]; then
+        DNSTT_PUBKEY="$(cat /etc/dnstt/server.pub 2>/dev/null | tr -d '[:space:]')"
+    fi
+    if [ -n "${DNSTT_PUBKEY:-}" ]; then
+        if [ -n "${DNSTT_CLI:-}" ] && [[ "$DNSTT_CLI" == *"-pubkey  "* ]]; then
+            DNSTT_CLI="${DNSTT_CLI/-pubkey  /-pubkey ${DNSTT_PUBKEY} }"
+        fi
     fi
 
-    # Синхронизация учетных данных администратора через нативный CLI 3X-UI (bcrypt + сброс login_epoch)
-    if [ -n "${ADMIN_USERNAME:-}" ] || [ -n "${ADMIN_PASSWORD:-}" ]; then
-        if [ -n "$XUI_BIN" ]; then
-            xui_user_args=()
-            [ -n "${ADMIN_USERNAME:-}" ] && xui_user_args+=("-username" "$ADMIN_USERNAME")
-            [ -n "${ADMIN_PASSWORD:-}" ] && xui_user_args+=("-password" "$ADMIN_PASSWORD")
-            log "Синхронизация учетных данных администратора через '$XUI_BIN setting' (bcrypt)..."
-            if "$XUI_BIN" setting "${xui_user_args[@]}" >/tmp/xui_setting.log 2>&1; then
-                ok "Учетные данные администратора успешно синхронизированы в 3X-UI (bcrypt)!"
-            else
-                warn "Предупреждение при вызове '$XUI_BIN setting': $(cat /tmp/xui_setting.log 2>/dev/null)"
+    echo
+    echo -e "${GREEN}=====================================================================${NC}"
+    if [ "$DRY_RUN" -eq 1 ]; then
+        echo -e "${YELLOW}               АУДИТ УСПЕШНО ЗАВЕРШЕН (DRY-RUN)                      ${NC}"
+        echo -e "${CYAN}  Для применения изменений выполните:                                ${NC}"
+        echo -e "  ${BOLD}./configure-panel.sh --config \"${CONFIG_FILE:-./server-setup.env}\" -y${NC}"
+    else
+        echo -e "${GREEN}      БАЗА ДАННЫХ 3X-UI УСПЕШНО СКОНФИГУРИРОВАНА И ИСЦЕЛЕНА!         ${NC}"
+        echo -e "  - ${BOLD}Единый клиент:${NC}         ${GREEN}${UNIFIED_CLIENT_TAG:-Client}${NC} (объединяет до 9 протоколов в 1 профиль)"
+        if [ -n "$INSTALLED_XRAY_VER" ]; then
+            echo -e "  - ${BOLD}Ядро Xray-core:${NC}        ${GREEN}${INSTALLED_XRAY_VER}${NC} (Latest Official Release)"
+        fi
+        echo -e "  - ${BOLD}Панель управления:${NC}      ${CYAN}https://${PRIMARY_DOMAIN}/${PANEL_PATH}/${NC}"
+        echo -e "  - ${BOLD}Логин панели:${NC}           ${WHITE}${ADMIN_USERNAME:-admin}${NC}"
+        if [ -n "${ADMIN_PASSWORD:-}" ]; then
+            echo -e "  - ${BOLD}Пароль панели:${NC}          ${WHITE}${ADMIN_PASSWORD}${NC}"
+        fi
+        echo -e "  - ${BOLD}Канал подписок:${NC}        ${CYAN}https://${PRIMARY_DOMAIN}/${SUB_PATH#/}/${NC}"
+        echo -e "  - ${BOLD}Канал подписок (Clash):${NC}  ${CYAN}https://${PRIMARY_DOMAIN}/${SUB_CLASH_PATH#/}/${NC}"
+        if [ -n "${UNIFIED_SUB_ID:-}" ]; then
+            echo -e "  - ${BOLD}Прямая подписка:${NC}       ${GREEN}https://${PRIMARY_DOMAIN}/${SUB_PATH#/}/${UNIFIED_SUB_ID}${NC}"
+            echo -e "  - ${BOLD}Прямая подписка (Clash):${NC} ${GREEN}https://${PRIMARY_DOMAIN}/${SUB_CLASH_PATH#/}/${UNIFIED_SUB_ID}${NC}"
+        fi
+        if [ -n "${UNIFIED_VLESS_ENKEY:-}" ]; then
+            echo -e "  - ${BOLD}VLESS xHTTP EnKey:${NC}     ${YELLOW}${UNIFIED_VLESS_ENKEY}${NC} (ML-KEM-768)"
+        fi
+        if [ -n "${UNIFIED_AWG_HPK:-}" ]; then
+            echo -e "  - ${BOLD}AmneziaWG v3.1 HPK:${NC}     ${YELLOW}${UNIFIED_AWG_HPK}${NC} (UDP :${UNIFIED_AWG_PORT:-8443})"
+        fi
+        if [ -n "${SS2022_URI:-}" ]; then
+            echo -e "  - ${BOLD}Shadowsocks 2022:${NC}    ${CYAN}${SS2022_URI}${NC}"
+        fi
+        if [ -n "${TUIC_URI:-}" ]; then
+            echo -e "  - ${BOLD}TUIC v5 (QUIC+BBR):${NC}  ${CYAN}${TUIC_URI}${NC}"
+        fi
+        if [ -n "${MTPROTO_TG_URI:-}" ]; then
+            echo -e "  - ${BOLD}Telegram MTProxy:${NC}     ${CYAN}${MTPROTO_TG_URI}${NC}"
+            echo -e "  - ${BOLD}MTProxy Web Link:${NC}     ${CYAN}${MTPROTO_HTTPS_URI}${NC}"
+            if [ -n "${MTPROTO_BOT_SECRET:-}" ]; then
+                echo -e "  - ${BOLD}Ключ для @MTProxybot:${NC} ${YELLOW}${MTPROTO_BOT_SECRET}${NC} (боту передавать строго эти 32 символа!)"
             fi
         fi
-    fi
-
-    ensure_node_token
-
-    # Очистка устаревших/невалидных geosite меток в bin/config.json во избежание сбоя парсинга ядра Xray
-    for cfg_candidate in "/usr/local/x-ui/bin/config.json" "/etc/x-ui/bin/config.json"; do
-        if [ -f "$cfg_candidate" ]; then
-            sed -i 's/"geosite:ru",*//g; s/"geosite:yandex",*//g; s/"geosite:vk",*//g; s/"geosite:youtube",*//g; s/"geosite:openai",*//g; s/"geosite:google-gemini",*//g; s/"geosite:anthropic",*//g; s/"geosite:cloudflare",*//g' "$cfg_candidate" 2>/dev/null || true
-            sed -i 's/,\s*]/]/g; s/,\s*}/}/g' "$cfg_candidate" 2>/dev/null || true
+        if [ -n "${MASQUE_URI:-}" ]; then
+            echo -e "  - ${BOLD}MASQUE (RFC 9484):${NC}    ${CYAN}${MASQUE_URI}${NC}"
         fi
-    done
-
-    # Обновление ядра Xray-core до последней актуальной версии (v26.9.30+)
-    INSTALLED_XRAY_VER=""
-    if [[ "${UPDATE_XRAY_CORE:-y}" =~ ^[Yy1] ]]; then
-        XRAY_BIN_DIR="/usr/local/x-ui/bin"
-        [ -d "$XRAY_BIN_DIR" ] || XRAY_BIN_DIR="/etc/x-ui/bin"
-        
-        ARCH=$(uname -m 2>/dev/null || echo "x86_64")
-        case "$ARCH" in
-            x86_64|amd64)   XRAY_ARCH="64"; BIN_NAME="xray-linux-amd64" ;;
-            aarch64|arm64)  XRAY_ARCH="arm64-v8a"; BIN_NAME="xray-linux-arm64-v8a" ;;
-            armv7*|armhf)   XRAY_ARCH="arm32-v7a"; BIN_NAME="xray-linux-arm32-v7a" ;;
-            *)              XRAY_ARCH="64"; BIN_NAME="xray-linux-amd64" ;;
-        esac
-        
-        TARGET_BIN="$XRAY_BIN_DIR/$BIN_NAME"
-        [ -f "$TARGET_BIN" ] || TARGET_BIN="$XRAY_BIN_DIR/xray"
-        
-        CURRENT_VER=""
-        if [ -x "$TARGET_BIN" ]; then
-            CURRENT_VER=$("$TARGET_BIN" -version 2>/dev/null | { head -n 1 || true; } | { awk '{print $2}' || true; }) || CURRENT_VER=""
+        if [ -n "${SHADOWTLS_URI:-}" ]; then
+            echo -e "  - ${BOLD}ShadowTLS v4:${NC}         ${CYAN}${SHADOWTLS_URI}${NC}"
+            echo -e "  - ${BOLD}ShadowTLS + SS-2022:${NC}  ${CYAN}${SS_SHADOWTLS_URI}${NC}"
         fi
-
-        LATEST_TAG=""
-        if command -v curl >/dev/null 2>&1; then
-            gh_resp=$(curl -fsSL --connect-timeout 5 "https://api.github.com/repos/XTLS/Xray-core/releases/latest" 2>/dev/null || true)
-            if [ -n "$gh_resp" ]; then
-                LATEST_TAG=$(echo "$gh_resp" | { grep -m1 '"tag_name":' || true; } | { cut -d '"' -f 4 || true; }) || LATEST_TAG=""
-            fi
+        if [ -n "${WSTUNNEL_CLI:-}" ]; then
+            echo -e "  - ${BOLD}Wstunnel CLI:${NC}         ${CYAN}${WSTUNNEL_CLI}${NC}"
         fi
-        [ -n "$LATEST_TAG" ] || LATEST_TAG="v26.9.30"
-        CLEAN_LATEST="${LATEST_TAG#v}"
-
-        if [ -z "$CURRENT_VER" ] || [ "$CURRENT_VER" != "$CLEAN_LATEST" ]; then
-            log "Обновление ядра Xray до последней версии ($CURRENT_VER -> $LATEST_TAG)..."
-            TMP_XRAY_DIR="/tmp/xray_update_$$"
-            mkdir -p "$TMP_XRAY_DIR"
-            XRAY_ZIP="$TMP_XRAY_DIR/xray.zip"
-            
-            DL_URL="https://github.com/XTLS/Xray-core/releases/download/${LATEST_TAG}/Xray-linux-${XRAY_ARCH}.zip"
-            if curl -fsSL --connect-timeout 15 "$DL_URL" -o "$XRAY_ZIP" 2>/dev/null; then
-                python3 -c "import zipfile; zipfile.ZipFile('$XRAY_ZIP').extractall('$TMP_XRAY_DIR')" 2>/dev/null || true
-                if [ -f "$TMP_XRAY_DIR/xray" ]; then
-                    chmod +x "$TMP_XRAY_DIR/xray"
-                    if "$TMP_XRAY_DIR/xray" -version >/dev/null 2>&1; then
-                        mkdir -p "$XRAY_BIN_DIR"
-                        [ -f "$TARGET_BIN" ] && cp -f "$TARGET_BIN" "$TARGET_BIN.bak"
-                        install -m 755 "$TMP_XRAY_DIR/xray" "$TARGET_BIN.tmp.$$"
-                        mv -f "$TARGET_BIN.tmp.$$" "$TARGET_BIN"
-                        
-                        if "$TARGET_BIN" -version >/dev/null 2>&1; then
-                            [ -f "$TARGET_BIN.bak" ] && rm -f "$TARGET_BIN.bak"
-                            [ -f "$TMP_XRAY_DIR/geosite.dat" ] && cp -f "$TMP_XRAY_DIR/geosite.dat" "$XRAY_BIN_DIR/geosite.dat"
-                            [ -f "$TMP_XRAY_DIR/geoip.dat" ] && cp -f "$TMP_XRAY_DIR/geoip.dat" "$XRAY_BIN_DIR/geoip.dat"
-                            
-                            INSTALLED_XRAY_VER="$LATEST_TAG"
-                            ok "Ядро Xray успешно обновлено до последней версии $LATEST_TAG (было: ${CURRENT_VER:-неизвестно})!"
-                        else
-                            warn "Установленный бинарник Xray не запустился, выполняется откат."
-                            [ -f "$TARGET_BIN.bak" ] && mv -f "$TARGET_BIN.bak" "$TARGET_BIN"
-                            INSTALLED_XRAY_VER="${CURRENT_VER:-v26.7.28}"
-                        fi
-                    else
-                        warn "Скачанный бинарник Xray $LATEST_TAG не прошел валидацию, сохранен текущий $CURRENT_VER."
-                        INSTALLED_XRAY_VER="${CURRENT_VER:-v26.7.28}"
-                    fi
-                fi
-            else
-                warn "Не удалось скачать обновление Xray $LATEST_TAG с GitHub, используется $CURRENT_VER."
-                INSTALLED_XRAY_VER="${CURRENT_VER:-v26.7.28}"
-            fi
-            rm -rf "$TMP_XRAY_DIR"
-        else
-            INSTALLED_XRAY_VER="$LATEST_TAG"
-            ok "Ядро Xray уже актуальной версии ($LATEST_TAG)."
+        if [ -n "${ZAPRET_INFO:-}" ]; then
+            echo -e "  - ${BOLD}Server-Side Zapret:${NC}   ${GREEN}${ZAPRET_INFO}${NC}"
+        fi
+        if [ -n "${NAIVE_URI:-}" ]; then
+            echo -e "  - ${BOLD}NaïveProxy:${NC}          ${CYAN}${NAIVE_URI}${NC}"
+        fi
+        if [ -n "${DNSTT_CLI:-}" ]; then
+            echo -e "  - ${BOLD}DNSTT DoH Tunnel:${NC}    ${CYAN}${DNSTT_CLI}${NC}"
+        fi
+        if [[ "${ENABLE_NODE_TOKEN,,}" == "y" || "${ENABLE_NODE_TOKEN:-}" == "1" ]] && [ -n "${NODE_TOKEN:-}" ]; then
+            echo -e "  - ${BOLD}3X-UI Node API:${NC}         ${GREEN}${NODE_TOKEN_NAME}${NC} (Host: ${CYAN}${PRIMARY_DOMAIN}:443${NC}, Path: ${CYAN}/${PANEL_PATH#/}/${NC})"
+            echo -e "  - ${BOLD}API Bearer Token:${NC}       ${YELLOW}${NODE_TOKEN}${NC}"
         fi
     fi
 
-    # Возобновление/перезапуск службы 3X-UI
-    if [ "${WAS_ACTIVE:-0}" -eq 1 ] || (command -v systemctl >/dev/null 2>&1 && systemctl is-enabled --quiet x-ui 2>/dev/null); then
-        log "Перезапуск службы 3X-UI..."
-        systemctl restart x-ui && ok "Служба 3X-UI успешно перезапущена." || warn "Не удалось перезапустить службу x-ui."
-    fi
-
-    # Проверка Nginx на наличие мертвого SNI и мягкий reload
-    if command -v nginx >/dev/null 2>&1; then
-        if [ -d /etc/nginx ] && grep -rq "swdist\.microsoft\.com" /etc/nginx/ 2>/dev/null; then
-            log "Обновление устаревшего SNI в конфигурационных файлах Nginx..."
-            find /etc/nginx/ -type f -name "*.conf" -exec sed -i 's/swdist\.microsoft\.com/gateway\.icloud\.com/g' {} + 2>/dev/null || true
-            ok "Nginx: SNI swdist.microsoft.com заменен на gateway.icloud.com."
-        fi
-
-        if nginx -t >/dev/null 2>&1; then
-            systemctl reload nginx 2>/dev/null && ok "Nginx успешно применил конфигурацию (Zero Downtime reload)." || true
-        fi
-    fi
-fi
-
-# Чтение параметров единого клиента, экспортированных из Python
-UNIFIED_CLIENT_TAG=""
-UNIFIED_SUB_ID=""
-UNIFIED_VLESS_ENKEY=""
-SS2022_URI=""
-TUIC_URI=""
-MTPROTO_TG_URI=""
-MTPROTO_HTTPS_URI=""
-MTPROTO_SECRET=""
-MTPROTO_BOT_SECRET=""
-MASQUE_URI=""
-SHADOWTLS_URI=""
-SS_SHADOWTLS_URI=""
-WSTUNNEL_CLI=""
-WSTUNNEL_URI=""
-ZAPRET_INFO=""
-NAIVE_URI=""
-DNSTT_CLI=""
-DNSTT_PUBKEY=""
-for c_env in "/run/3xui_unified_client.env" "/tmp/3xui_unified_client.env"; do
-    if [ -f "$c_env" ]; then
-        source "$c_env"
-        break
-    fi
-done
-
-if [ -z "${DNSTT_PUBKEY:-}" ] && [ -f "/etc/dnstt/server.pub" ]; then
-    DNSTT_PUBKEY="$(cat /etc/dnstt/server.pub 2>/dev/null | tr -d '[:space:]')"
-fi
-if [ -n "${DNSTT_PUBKEY:-}" ]; then
-    if [ -n "${DNSTT_CLI:-}" ] && [[ "$DNSTT_CLI" == *"-pubkey  "* ]]; then
-        DNSTT_CLI="${DNSTT_CLI/-pubkey  /-pubkey ${DNSTT_PUBKEY} }"
-    fi
-fi
-
-echo
-echo -e "${GREEN}=====================================================================${NC}"
-if [ "$DRY_RUN" -eq 1 ]; then
-    echo -e "${YELLOW}               АУДИТ УСПЕШНО ЗАВЕРШЕН (DRY-RUN)                      ${NC}"
-    echo -e "${CYAN}  Для применения изменений выполните:                                ${NC}"
-    echo -e "  ${BOLD}./configure-panel.sh --config \"${CONFIG_FILE:-./server-setup.env}\" -y${NC}"
-else
-    echo -e "${GREEN}      БАЗА ДАННЫХ 3X-UI УСПЕШНО СКОНФИГУРИРОВАНА И ИСЦЕЛЕНА!         ${NC}"
-    echo -e "  - ${BOLD}Единый клиент:${NC}         ${GREEN}${UNIFIED_CLIENT_TAG:-Client}${NC} (объединяет до 9 протоколов в 1 профиль)"
-    if [ -n "$INSTALLED_XRAY_VER" ]; then
-        echo -e "  - ${BOLD}Ядро Xray-core:${NC}        ${GREEN}${INSTALLED_XRAY_VER}${NC} (Latest Official Release)"
-    fi
-    echo -e "  - ${BOLD}Панель управления:${NC}      ${CYAN}https://${PRIMARY_DOMAIN}/${PANEL_PATH}/${NC}"
-    echo -e "  - ${BOLD}Логин панели:${NC}           ${WHITE}${ADMIN_USERNAME:-admin}${NC}"
-    if [ -n "${ADMIN_PASSWORD:-}" ]; then
-        echo -e "  - ${BOLD}Пароль панели:${NC}          ${WHITE}${ADMIN_PASSWORD}${NC}"
-    fi
-    echo -e "  - ${BOLD}Канал подписок:${NC}        ${CYAN}https://${PRIMARY_DOMAIN}/${SUB_PATH#/}/${NC}"
-    echo -e "  - ${BOLD}Канал подписок (Clash):${NC}  ${CYAN}https://${PRIMARY_DOMAIN}/${SUB_CLASH_PATH#/}/${NC}"
-    if [ -n "${UNIFIED_SUB_ID:-}" ]; then
-        echo -e "  - ${BOLD}Прямая подписка:${NC}       ${GREEN}https://${PRIMARY_DOMAIN}/${SUB_PATH#/}/${UNIFIED_SUB_ID}${NC}"
-        echo -e "  - ${BOLD}Прямая подписка (Clash):${NC} ${GREEN}https://${PRIMARY_DOMAIN}/${SUB_CLASH_PATH#/}/${UNIFIED_SUB_ID}${NC}"
-    fi
-    if [ -n "${UNIFIED_VLESS_ENKEY:-}" ]; then
-        echo -e "  - ${BOLD}VLESS xHTTP EnKey:${NC}     ${YELLOW}${UNIFIED_VLESS_ENKEY}${NC} (ML-KEM-768)"
-    fi
-    if [ -n "${UNIFIED_AWG_HPK:-}" ]; then
-        echo -e "  - ${BOLD}AmneziaWG v3.1 HPK:${NC}     ${YELLOW}${UNIFIED_AWG_HPK}${NC} (UDP :${UNIFIED_AWG_PORT:-8443})"
-    fi
-    if [ -n "${SS2022_URI:-}" ]; then
-        echo -e "  - ${BOLD}Shadowsocks 2022:${NC}    ${CYAN}${SS2022_URI}${NC}"
-    fi
-    if [ -n "${TUIC_URI:-}" ]; then
-        echo -e "  - ${BOLD}TUIC v5 (QUIC+BBR):${NC}  ${CYAN}${TUIC_URI}${NC}"
-    fi
-    if [ -n "${MTPROTO_TG_URI:-}" ]; then
-        echo -e "  - ${BOLD}Telegram MTProxy:${NC}     ${CYAN}${MTPROTO_TG_URI}${NC}"
-        echo -e "  - ${BOLD}MTProxy Web Link:${NC}     ${CYAN}${MTPROTO_HTTPS_URI}${NC}"
-        if [ -n "${MTPROTO_BOT_SECRET:-}" ]; then
-            echo -e "  - ${BOLD}Ключ для @MTProxybot:${NC} ${YELLOW}${MTPROTO_BOT_SECRET}${NC} (боту передавать строго эти 32 символа!)"
-        fi
-    fi
-    if [ -n "${MASQUE_URI:-}" ]; then
-        echo -e "  - ${BOLD}MASQUE (RFC 9484):${NC}    ${CYAN}${MASQUE_URI}${NC}"
-    fi
-    if [ -n "${SHADOWTLS_URI:-}" ]; then
-        echo -e "  - ${BOLD}ShadowTLS v4:${NC}         ${CYAN}${SHADOWTLS_URI}${NC}"
-        echo -e "  - ${BOLD}ShadowTLS + SS-2022:${NC}  ${CYAN}${SS_SHADOWTLS_URI}${NC}"
-    fi
-    if [ -n "${WSTUNNEL_CLI:-}" ]; then
-        echo -e "  - ${BOLD}Wstunnel CLI:${NC}         ${CYAN}${WSTUNNEL_CLI}${NC}"
-    fi
-    if [ -n "${ZAPRET_INFO:-}" ]; then
-        echo -e "  - ${BOLD}Server-Side Zapret:${NC}   ${GREEN}${ZAPRET_INFO}${NC}"
-    fi
-    if [ -n "${NAIVE_URI:-}" ]; then
-        echo -e "  - ${BOLD}NaïveProxy:${NC}          ${CYAN}${NAIVE_URI}${NC}"
-    fi
-    if [ -n "${DNSTT_CLI:-}" ]; then
-        echo -e "  - ${BOLD}DNSTT DoH Tunnel:${NC}    ${CYAN}${DNSTT_CLI}${NC}"
-    fi
-    if [[ "${ENABLE_NODE_TOKEN,,}" == "y" || "${ENABLE_NODE_TOKEN:-}" == "1" ]] && [ -n "${NODE_TOKEN:-}" ]; then
-        echo -e "  - ${BOLD}3X-UI Node API:${NC}         ${GREEN}${NODE_TOKEN_NAME}${NC} (Host: ${CYAN}${PRIMARY_DOMAIN}:443${NC}, Path: ${CYAN}/${PANEL_PATH#/}/${NC})"
-        echo -e "  - ${BOLD}API Bearer Token:${NC}       ${YELLOW}${NODE_TOKEN}${NC}"
-    fi
-fi
-
-# Сохранение учетных данных в защищенный файл
-if [ "$DRY_RUN" -eq 0 ]; then
-    CRED_FILE="/root/vpn_credentials.txt"
-    if [ -n "${ADMIN_PASSWORD:-}" ]; then
-        cat << EOF_CRED > "$CRED_FILE"
+    # Сохранение учетных данных в защищенный файл
+    if [ "$DRY_RUN" -eq 0 ]; then
+        CRED_FILE="/root/vpn_credentials.txt"
+        if [ -n "${ADMIN_PASSWORD:-}" ]; then
+            cat << EOF_CRED > "$CRED_FILE"
 =====================================================================
 УЧЕТНЫЕ ДАННЫЕ ПАНЕЛИ И СЕРВИСОВ 3X-UI
 Файл обновлен: $(date '+%Y-%m-%d %H:%M:%S')
@@ -3599,32 +4222,35 @@ $([ -n "${NODE_TOKEN:-}" ] && printf "3X-UI Node Token:      %s\nИмя ноды
 (Объединяет все конфигурации: Steal REALITY, Classic REALITY, xHTTP, Hysteria 2, AWG v3, AWG v2, SS-2022, TUIC v5, MTProxy, MASQUE, ShadowTLS, Wstunnel, Zapret, NaïveProxy, DNSTT)
 =====================================================================
 EOF_CRED
-        echo -e "  - ${BOLD}Файл с паролями:${NC}        ${CYAN}$CRED_FILE${NC} (chmod 600)"
-    elif [ -f "$CRED_FILE" ]; then
-        if [ -n "${MASQUE_URI:-}" ] && ! grep -q "MASQUE (RFC 9484):" "$CRED_FILE" 2>/dev/null; then
-            echo "MASQUE (RFC 9484):       ${MASQUE_URI}" >> "$CRED_FILE"
+            echo -e "  - ${BOLD}Файл с паролями:${NC}        ${CYAN}$CRED_FILE${NC} (chmod 600)"
+        elif [ -f "$CRED_FILE" ]; then
+            if [ -n "${MASQUE_URI:-}" ] && ! grep -q "MASQUE (RFC 9484):" "$CRED_FILE" 2>/dev/null; then
+                echo "MASQUE (RFC 9484):       ${MASQUE_URI}" >> "$CRED_FILE"
+            fi
+            if [ -n "${SHADOWTLS_URI:-}" ] && ! grep -q "ShadowTLS v4:" "$CRED_FILE" 2>/dev/null; then
+                echo "ShadowTLS v4:            ${SHADOWTLS_URI}" >> "$CRED_FILE"
+                echo "ShadowTLS + SS-2022:     ${SS_SHADOWTLS_URI}" >> "$CRED_FILE"
+            fi
+            if [ -n "${WSTUNNEL_CLI:-}" ] && ! grep -q "Wstunnel Client CLI:" "$CRED_FILE" 2>/dev/null; then
+                echo "Wstunnel Client CLI:     ${WSTUNNEL_CLI}" >> "$CRED_FILE"
+            fi
+            if [ -n "${ZAPRET_INFO:-}" ] && ! grep -q "Server-Side Zapret:" "$CRED_FILE" 2>/dev/null; then
+                echo "Server-Side Zapret:      ${ZAPRET_INFO}" >> "$CRED_FILE"
+            fi
+            if [ -n "${NAIVE_URI:-}" ] && ! grep -q "NaïveProxy (Chrome HTTPS):" "$CRED_FILE" 2>/dev/null; then
+                echo "NaïveProxy (Chrome HTTPS): ${NAIVE_URI}" >> "$CRED_FILE"
+            fi
+            if [ -n "${DNSTT_CLI:-}" ] && ! grep -q "DNSTT DoH Tunnel:" "$CRED_FILE" 2>/dev/null; then
+                echo "DNSTT DoH Tunnel:        ${DNSTT_CLI}" >> "$CRED_FILE"
+                echo "DNSTT Public Key:        ${DNSTT_PUBKEY}" >> "$CRED_FILE"
+            fi
+            echo -e "  - ${BOLD}Файл с паролями:${NC}        ${CYAN}$CRED_FILE${NC} (обновлен, chmod 600)"
         fi
-        if [ -n "${SHADOWTLS_URI:-}" ] && ! grep -q "ShadowTLS v4:" "$CRED_FILE" 2>/dev/null; then
-            echo "ShadowTLS v4:            ${SHADOWTLS_URI}" >> "$CRED_FILE"
-            echo "ShadowTLS + SS-2022:     ${SS_SHADOWTLS_URI}" >> "$CRED_FILE"
-        fi
-        if [ -n "${WSTUNNEL_CLI:-}" ] && ! grep -q "Wstunnel Client CLI:" "$CRED_FILE" 2>/dev/null; then
-            echo "Wstunnel Client CLI:     ${WSTUNNEL_CLI}" >> "$CRED_FILE"
-        fi
-        if [ -n "${ZAPRET_INFO:-}" ] && ! grep -q "Server-Side Zapret:" "$CRED_FILE" 2>/dev/null; then
-            echo "Server-Side Zapret:      ${ZAPRET_INFO}" >> "$CRED_FILE"
-        fi
-        if [ -n "${NAIVE_URI:-}" ] && ! grep -q "NaïveProxy (Chrome HTTPS):" "$CRED_FILE" 2>/dev/null; then
-            echo "NaïveProxy (Chrome HTTPS): ${NAIVE_URI}" >> "$CRED_FILE"
-        fi
-        if [ -n "${DNSTT_CLI:-}" ] && ! grep -q "DNSTT DoH Tunnel:" "$CRED_FILE" 2>/dev/null; then
-            echo "DNSTT DoH Tunnel:        ${DNSTT_CLI}" >> "$CRED_FILE"
-            echo "DNSTT Public Key:        ${DNSTT_PUBKEY}" >> "$CRED_FILE"
-        fi
-        echo -e "  - ${BOLD}Файл с паролями:${NC}        ${CYAN}$CRED_FILE${NC} (обновлен, chmod 600)"
+        chmod 600 "$CRED_FILE" 2>/dev/null || true
     fi
-    chmod 600 "$CRED_FILE" 2>/dev/null || true
-fi
-echo -e "${GREEN}=====================================================================${NC}"
-echo
-exit 0
+    echo -e "${GREEN}=====================================================================${NC}"
+    echo
+    return 0
+}
+
+configure_3xui_panel "$@"

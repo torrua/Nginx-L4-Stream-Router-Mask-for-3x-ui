@@ -205,10 +205,10 @@ deploy_amneziawg_backend() {
 
         if [ -z "$srv_priv" ]; then
             if command -v awg >/dev/null 2>&1; then
-                srv_priv=$(awg genkey 2>/dev/null || openssl rand -base64 32)
+                srv_priv=$(awg genkey 2>/dev/null || generate_base64_token 32)
                 srv_pub=$(echo "$srv_priv" | awg pubkey 2>/dev/null || true)
             else
-                srv_priv=$(openssl rand -base64 32)
+                srv_priv="$(generate_base64_token 32)"
                 srv_pub=$(python3 -c "
 import base64, os
 P = 2**255 - 19
@@ -236,9 +236,9 @@ print(base64.b64encode(pub).decode())
         if [ -f "$awg_dir/keys/server_psk.key" ]; then
             srv_psk=$(cat "$awg_dir/keys/server_psk.key" | tr -d '[:space:]')
         else
-            srv_psk=$(openssl rand -base64 32)
+            srv_psk="$(generate_base64_token 32)"
         fi
-        local hpk="${AWG_HEADER_PROTECTION_KEY:-$(openssl rand -base64 32)}"
+        local hpk="${AWG_HEADER_PROTECTION_KEY:-$(generate_base64_token 32)}"
 
         mkdir -p "$awg_dir/keys"
         [ ! -f "$awg_dir/keys/server_private.key" ] && echo "$srv_priv" > "$awg_dir/keys/server_private.key"

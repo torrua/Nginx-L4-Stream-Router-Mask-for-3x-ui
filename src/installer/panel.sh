@@ -1,3 +1,5 @@
+# @include "panel/configure.sh"
+
 install_step_panel() {
     # 1. Проверяем наличие ядра 3X-UI на сервере, если нет - устанавливаем автоматически
     if ! command -v x-ui >/dev/null 2>&1 && [ ! -f /etc/x-ui/x-ui.db ] && [ ! -f /usr/local/x-ui/bin/x-ui.db ]; then
@@ -9,17 +11,11 @@ install_step_panel() {
         run_with_spinner "Установка официального ядра 3X-UI (mhsanaei)" install_3xui_core_task || die "Ошибка установки ядра 3X-UI."
     fi
 
-    # 2. Использование локальной версии configure-panel.sh с сетевым fallback
+    # 2. Использование локальной версии configure-panel.sh или встроенного модуля (без сети)
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo "/root")"
     CONFIG_EXEC="$script_dir/configure-panel.sh"
     if [ ! -f "$CONFIG_EXEC" ]; then
-        raw_url="https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/configure-panel.sh?v=$(date +%s)"
-        if command -v curl >/dev/null 2>&1; then
-            curl -fsSL "$raw_url" -o /tmp/configure-panel.sh 2>/dev/null && chmod +x /tmp/configure-panel.sh 2>/dev/null || true
-        elif command -v wget >/dev/null 2>&1; then
-            wget -qO /tmp/configure-panel.sh "$raw_url" 2>/dev/null && chmod +x /tmp/configure-panel.sh 2>/dev/null || true
-        fi
-        CONFIG_EXEC="/tmp/configure-panel.sh"
+        CONFIG_EXEC=""
     else
         chmod +x "$CONFIG_EXEC" 2>/dev/null || true
     fi
@@ -31,7 +27,7 @@ install_step_panel() {
         save_session_state "$SAVED_CONFIG_FILE"
     fi
 
-    if [ -f "$CONFIG_EXEC" ]; then
+    if [ -n "$CONFIG_EXEC" ] || command -v configure_3xui_panel >/dev/null 2>&1; then
         if is_true "${ENABLE_NODE_TOKEN:-y}"; then
             NODE_ENV_FILE="${NODE_ENV_FILE:-$(umask 077; mktemp "${TMPDIR:-/tmp}/3xui-node.XXXXXX")}"
         fi
@@ -90,7 +86,13 @@ install_step_panel() {
             export DNSTT_PORT
             export DNSTT_DOMAIN
             export DNSTT_PUBKEY
-            bash "$CONFIG_EXEC" --config "$SAVED_CONFIG_FILE" -y
+            if [ -n "${CONFIG_EXEC:-}" ] && [ -f "$CONFIG_EXEC" ]; then
+                bash "$CONFIG_EXEC" --config "$SAVED_CONFIG_FILE" -y
+            elif command -v configure_3xui_panel >/dev/null 2>&1; then
+                configure_3xui_panel --config "$SAVED_CONFIG_FILE" -y
+            else
+                die "Модуль автонастройки 3X-UI недоступен."
+            fi
         }
         run_with_spinner "Автоматическая настройка базы 3X-UI и создание инбаундов" run_configure_3xui_task || die "Ошибка настройки базы 3X-UI."
 

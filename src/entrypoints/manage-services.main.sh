@@ -35,6 +35,8 @@ get_compose_cmd() {
     fi
 }
 
+# @include "common/secrets.sh"
+
 ensure_env() {
     if [ ! -f "$ENV_FILE" ]; then
         if [ -f "$ENV_EXAMPLE" ]; then
@@ -42,10 +44,10 @@ ensure_env() {
             cp "$ENV_EXAMPLE" "$ENV_FILE"
             # Генерация криптографических паролей
             local rand_masque rand_stls rand_naive rand_ws
-            rand_masque=$(python3 -c "import secrets; print(secrets.token_urlsafe(16))" 2>/dev/null || openssl rand -base64 16 | tr -dc 'a-zA-Z0-9')
-            rand_stls=$(python3 -c "import secrets; print(secrets.token_urlsafe(16))" 2>/dev/null || openssl rand -base64 16 | tr -dc 'a-zA-Z0-9')
-            rand_naive=$(python3 -c "import secrets; print(secrets.token_urlsafe(16))" 2>/dev/null || openssl rand -base64 16 | tr -dc 'a-zA-Z0-9')
-            rand_ws=$(python3 -c "import secrets; print(secrets.token_urlsafe(16))" 2>/dev/null || openssl rand -base64 16 | tr -dc 'a-zA-Z0-9')
+            rand_masque="$(generate_urlsafe_token 16)"
+            rand_stls="$(generate_urlsafe_token 16)"
+            rand_naive="$(generate_urlsafe_token 16)"
+            rand_ws="$(generate_urlsafe_token 16)"
 
             sed -i "s/ChangeMeSecretMasquePass2026!/${rand_masque}/" "$ENV_FILE" 2>/dev/null || true
             sed -i "s/ChangeMeShadowTlsPassword2026!/${rand_stls}/" "$ENV_FILE" 2>/dev/null || true

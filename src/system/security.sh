@@ -12,13 +12,30 @@ BOLD="${BOLD:-}"
 ARROW="${ARROW:-}"
 DIM="${DIM:-}"
 
+get_user_home() {
+    local target_user="${1:-root}"
+    if [ "$target_user" = "root" ]; then
+        echo "/root"
+        return 0
+    fi
+    local home_dir=""
+    if command -v getent >/dev/null 2>&1; then
+        home_dir="$(getent passwd "$target_user" 2>/dev/null | cut -d: -f6)"
+    fi
+    if [ -n "$home_dir" ]; then
+        echo "$home_dir"
+        return 0
+    fi
+    echo "/home/$target_user"
+}
+
 has_authorized_keys() {
     local target_user="${1:-root}"
     local user_home
     if [ "$target_user" = "root" ]; then
         user_home="/root"
     else
-        user_home=$(eval echo "~$target_user" 2>/dev/null || echo "/home/$target_user")
+        user_home="$(get_user_home "$target_user")"
     fi
     local auth_file="${user_home}/.ssh/authorized_keys"
     if [ -f "$auth_file" ] && [ -s "$auth_file" ]; then
@@ -38,7 +55,7 @@ add_authorized_key() {
     if [ "$target_user" = "root" ]; then
         user_home="/root"
     else
-        user_home=$(eval echo "~$target_user" 2>/dev/null || echo "/home/$target_user")
+        user_home="$(get_user_home "$target_user")"
     fi
 
     mkdir -p "${user_home}/.ssh"
@@ -71,7 +88,7 @@ generate_ed25519_keypair() {
     if [ "$target_user" = "root" ]; then
         user_home="/root"
     else
-        user_home=$(eval echo "~$target_user" 2>/dev/null || echo "/home/$target_user")
+        user_home="$(get_user_home "$target_user")"
     fi
 
     mkdir -p "${user_home}/.ssh"

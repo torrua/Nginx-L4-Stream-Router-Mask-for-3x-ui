@@ -1122,7 +1122,7 @@ for item in res:
             [ -n "${NAIVE_PORT:-}" ] || NAIVE_PORT="8446"
             [ -n "${NAIVE_USER:-}" ] || NAIVE_USER="user"
             [ -n "${NAIVE_DOMAIN:-}" ] || NAIVE_DOMAIN="naive.${PRIMARY_DOMAIN:-}"
-            [ -n "${NAIVE_PASS:-}" ] || NAIVE_PASS="$(python3 -c 'import secrets; print(secrets.token_urlsafe(16))' 2>/dev/null || openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' || echo "nv${RANDOM}")"
+            [ -n "${NAIVE_PASS:-}" ] || NAIVE_PASS="$(generate_urlsafe_token 16)"
             if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
                 prompt_default "  Локальный порт для NaïveProxy (Caddy)" "$NAIVE_PORT" NAIVE_PORT || return $?
                 prompt_default "  SNI-домен для NaïveProxy" "$NAIVE_DOMAIN" NAIVE_DOMAIN || return $?

@@ -380,7 +380,7 @@ setup_naive_service() {
     local naive_user="${NAIVE_USER:-user}"
     local naive_pass="${NAIVE_PASS:-}"
     if [ -z "$naive_pass" ]; then
-        naive_pass=$(python3 -c "import secrets; print(secrets.token_urlsafe(16))" 2>/dev/null || openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' || echo "ChangeMeNaive2026")
+        naive_pass="$(generate_urlsafe_token 16)"
         NAIVE_PASS="$naive_pass"
     fi
     export NAIVE_PASS="$naive_pass"

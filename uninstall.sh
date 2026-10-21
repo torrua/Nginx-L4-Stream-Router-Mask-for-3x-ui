@@ -563,8 +563,8 @@ run_uninstall() {
     if command -v ufw >/dev/null 2>&1; then
         local current_ssh_port
         current_ssh_port=$(command -v detect_active_ssh_port >/dev/null 2>&1 && detect_active_ssh_port || echo 22)
-        ufw allow "${current_ssh_port}/tcp" 2>/dev/null || true
-        [ -n "$orig_ssh_port" ] && ufw allow "${orig_ssh_port}/tcp" 2>/dev/null || true
+        ufw allow "${current_ssh_port}/tcp" comment 'SSH (Active)' 2>/dev/null || true
+        [ -n "$orig_ssh_port" ] && ufw allow "${orig_ssh_port}/tcp" comment 'SSH (Restored)' 2>/dev/null || true
         ufw reload 2>/dev/null || true
     fi
     ok "Правила Firewall очищены (SSH-порты защищены)."

@@ -531,16 +531,15 @@ echo "Настраиваем порты (только IPv4)..."
 ufw allow "$SSH_PORT"/tcp comment 'SSH'
 
 # Дополнительные TCP порты
-TCP_PORTS=(80 443 8443 10443)
-for port in "${TCP_PORTS[@]}"; do
-    ufw allow "$port"/tcp
-done
+ufw allow 80/tcp comment 'HTTP'
+ufw allow 443/tcp comment 'HTTPS'
+ufw allow 8443/tcp comment 'AmneziaWG Web'
+ufw allow 10443/tcp comment '3X-UI Panel'
 
 # Дополнительные UDP порты
-UDP_PORTS=(443 8443 8444)
-for port in "${UDP_PORTS[@]}"; do
-    ufw allow "$port"/udp
-done
+ufw allow 443/udp comment 'Hysteria 2 / QUIC'
+ufw allow 8443/udp comment 'AmneziaWG v3'
+ufw allow 8444/udp comment 'AmneziaWG v2'
 
 # Опциональная блокировка Ping (ICMP)
 if prompt_yes_no "Блокировать входящие ICMP (Ping) запросы?"; then

@@ -84,8 +84,8 @@ EOF
 
 install_step_certificates() {
         # Обеспечиваем доступность портов 80 и 443 для ACME HTTP-01 проверки
-        command -v ufw >/dev/null 2>&1 && ufw allow 80/tcp >/dev/null 2>&1 || true
-        command -v ufw >/dev/null 2>&1 && ufw allow 443/tcp >/dev/null 2>&1 || true
+        command -v ufw >/dev/null 2>&1 && ufw allow 80/tcp comment 'HTTP (ACME Challenge)' >/dev/null 2>&1 || true
+        command -v ufw >/dev/null 2>&1 && ufw allow 443/tcp comment 'HTTPS (ACME Challenge)' >/dev/null 2>&1 || true
         command -v iptables >/dev/null 2>&1 && iptables -I INPUT -p tcp --dport 80 -j ACCEPT >/dev/null 2>&1 || true
         command -v iptables >/dev/null 2>&1 && iptables -I INPUT -p tcp --dport 443 -j ACCEPT >/dev/null 2>&1 || true
 

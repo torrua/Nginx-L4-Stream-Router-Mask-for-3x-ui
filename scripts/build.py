@@ -41,11 +41,6 @@ ENTRYPOINTS: dict[str, str] = {
     "maintain.sh": "entrypoints/maintain.main.sh",
     "prepare-server.sh": "entrypoints/prepare-server.main.sh",
     "manage-services.sh": "entrypoints/manage-services.main.sh",
-    "setup_mask.sh": "entrypoints/compat/setup.main.sh",
-    "configure_3xui.sh": "entrypoints/compat/configure-panel.main.sh",
-    "update_repair.sh": "entrypoints/compat/maintain.main.sh",
-    "secure-vps.sh": "entrypoints/compat/prepare-server.main.sh",
-    "manage_nextgen.sh": "entrypoints/compat/manage-services.main.sh",
 }
 
 INCLUDE_PATTERN = re.compile(r"^(\s*)#\s*@include\s+[\"']([^\"']+)[\"']\s*$")

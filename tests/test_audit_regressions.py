@@ -1548,7 +1548,7 @@ class TestBashScopeRegressions(unittest.TestCase):
 
     def test_amnezia_vpnuri_naming_and_modern_container(self):
         """Verify that Amnezia vpn:// URI uses informative server name and modern amnezia-awg2 container."""
-        from src.awg import manage_amneziawg
+        from src.awg import manage_clients as manage_amneziawg
         import base64, zlib, json
 
         conf = "[Interface]\nPrivateKey = aaaa\nAddress = 10.8.1.2/32\n\n[Peer]\nPublicKey = bbbb\nEndpoint = 127.0.0.1:8443\n"

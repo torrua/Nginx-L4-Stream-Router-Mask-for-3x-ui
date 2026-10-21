@@ -59,7 +59,7 @@
   * `manage-services.sh` — управление дополнительными сервисами (MASQUE, ShadowTLS, NaiveProxy, Zapret, Wstunnel);
   * `manage-clients.sh` / `src/awg/manage_clients.py` — управление клиентами и профилями AmneziaWG / `vpn://`.
   * `server-setup.env` — каноническое имя конфигурационного файла сессии.
-* **Обратная совместимость:** Все прежние скрипты (`setup_mask.sh`, `configure_3xui.sh`, `update_repair.sh`, `secure-vps.sh`, `manage_nextgen.sh`, `setup_mask.env`) сохранены как переходные исполняемые обертки. Они передают аргументы, статус завершения и прозрачно подтягивают новые скрипты.
+* **Очистка от устаревшего кода:** В рамках мажорного релиза полностью ликвидированы устаревшие переходные скрипты-обёртки (`setup_mask.sh`, `configure_3xui.sh`, `update_repair.sh`, `secure-vps.sh`, `manage_nextgen.sh`), скрытый сетевой загрузчик `src/common/compat.sh`, старые обёртки `src/awg/manage_amneziawg.*` и дублирующий шаблон `setup_mask.env.example`. В проекте осталась строго каноническая линейка. Для серверов, развернутых на предыдущих версиях, сохранено бесшовное автообнаружение существующего файла конфигурации `setup_mask.env` в `src/common/config.sh` без необходимости ручного переименования.
 
 ---
 

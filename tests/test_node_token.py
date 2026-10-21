@@ -86,7 +86,7 @@ die() { warn "$*"; exit 1; }
         self.assertIn("RESULT=y", result.stdout)
 
     def test_generated_config_enables_node_token_by_default(self):
-        for name in ("server-setup.env.example", "setup_mask.env.example", "src/tui/banner.sh"):
+        for name in ("server-setup.env.example", "src/tui/banner.sh"):
             with self.subTest(name=name):
                 self.assertTrue('ENABLE_NODE_TOKEN="y"' in (ROOT / name).read_text(encoding="utf-8"))
 

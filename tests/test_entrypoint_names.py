@@ -1,4 +1,4 @@
-"""Public names, backwards-compatible launchers and configuration discovery."""
+"""Public names, canonical CLI tools and configuration discovery."""
 import os
 from pathlib import Path
 import shlex
@@ -10,16 +10,34 @@ import unittest
 
 ROOT = Path(__file__).resolve().parent.parent
 BASH = Path(r"C:\Program Files\Git\bin\bash.exe") if os.name == "nt" else Path(shutil.which("bash") or "bash")
-ALIASES = {
-    "setup_mask.sh": "setup.sh",
-    "configure_3xui.sh": "configure-panel.sh",
-    "update_repair.sh": "maintain.sh",
-    "secure-vps.sh": "prepare-server.sh",
-    "manage_nextgen.sh": "manage-services.sh",
-}
+CANONICAL_ENTRYPOINTS = [
+    "install.sh",
+    "setup.sh",
+    "uninstall.sh",
+    "configure-panel.sh",
+    "maintain.sh",
+    "prepare-server.sh",
+    "manage-services.sh",
+]
+LEGACY_NAMES = [
+    "setup_mask.sh",
+    "configure_3xui.sh",
+    "update_repair.sh",
+    "secure-vps.sh",
+    "manage_nextgen.sh",
+    "setup_mask.env.example",
+]
 
 
 class EntrypointNamesTests(unittest.TestCase):
+    def test_canonical_entrypoints_exist_and_legacy_are_removed(self):
+        for name in CANONICAL_ENTRYPOINTS:
+            with self.subTest(canonical=name):
+                self.assertTrue((ROOT / name).is_file(), f"Canonical entrypoint {name} must exist")
+        for legacy in LEGACY_NAMES:
+            with self.subTest(legacy=legacy):
+                self.assertFalse((ROOT / legacy).exists(), f"Legacy file {legacy} should not exist in root")
+
     def test_new_setup_cli_generates_neutral_config(self):
         with tempfile.TemporaryDirectory() as temp:
             generated = Path(temp) / "server-setup.env"
@@ -29,40 +47,6 @@ class EntrypointNamesTests(unittest.TestCase):
             self.assertTrue(generated.is_file())
             self.assertIn("PANEL_PATH=", generated.read_text(encoding="utf-8"))
             self.assertNotIn("setup_mask", generated.read_text(encoding="utf-8"))
-
-    def test_legacy_names_forward_arguments_and_exit_status(self):
-        for old, new in ALIASES.items():
-            with self.subTest(old=old), tempfile.TemporaryDirectory(prefix="entrypoint with spaces ") as temp:
-                text = (ROOT / old).read_text(encoding="utf-8")
-                # Never run a full installation in this compatibility test.
-                self.assertLess(len(text.splitlines()), 100, "Legacy entrypoint must be a small forwarding wrapper")
-                work = Path(temp)
-                alias = work / old
-                alias.write_text(text, encoding="utf-8", newline="\n")
-                (work / new).write_text("#!/usr/bin/env bash\nprintf 'ARG=<%s>\\n' \"$@\"\nexit 23\n",
-                                       encoding="utf-8", newline="\n")
-                result = subprocess.run([str(BASH), alias.as_posix(), "--config", "a path with spaces.env"],
-                                        capture_output=True, text=True, encoding="utf-8", timeout=10)
-                self.assertEqual(result.returncode, 23, result.stderr)
-                self.assertIn("ARG=<a path with spaces.env>", result.stdout)
-
-    def test_downloaded_legacy_launcher_can_fetch_new_name(self):
-        text = (ROOT / "setup_mask.sh").read_text(encoding="utf-8")
-        self.assertLess(len(text.splitlines()), 100, "Legacy entrypoint must be a small forwarding wrapper")
-        with tempfile.TemporaryDirectory() as temp:
-            work = Path(temp)
-            alias = work / "setup_mask.sh"
-            alias.write_text(text, encoding="utf-8", newline="\n")
-            fixture = work / "fixture.txt"
-            fixture.write_text("printf 'FORWARDED=<%s>\\n' \"$@\"\nexit 23\n", encoding="utf-8", newline="\n")
-            startup = work / "startup.sh"
-            startup.write_text('export PATH=/usr/bin:/bin:$PATH\n'
-                               'curl() { cp "$TARGET_FIXTURE" "${@: -1}"; }\n', encoding="utf-8", newline="\n")
-            env = dict(os.environ, BASH_ENV=startup.as_posix(), TARGET_FIXTURE=fixture.as_posix())
-            result = subprocess.run([str(BASH), alias.as_posix(), "--config", "with spaces.env"],
-                                    env=env, capture_output=True, text=True, encoding="utf-8", timeout=10)
-            self.assertEqual(result.returncode, 23, result.stderr)
-            self.assertIn("FORWARDED=<with spaces.env>", result.stdout)
 
     def test_config_discovery_preserves_legacy_files_and_prefers_new_name(self):
         helper = ROOT / "src/common/config.sh"

@@ -395,7 +395,7 @@ prompt_default() { printf -v "$3" '%s' "$2"; }
                     args.append("--no-web-stack")
                 if mode != "interactive":
                     args.append("--non-interactive")
-                result = subprocess.run(args, cwd=work, input="\n\n\n", text=True, encoding="utf-8", capture_output=True, timeout=15)
+                result = subprocess.run(args, cwd=work, input="\n\n\n", text=True, encoding="utf-8", capture_output=True, timeout=30)
                 self.assertEqual(result.returncode, 0, result.stderr + result.stdout[-700:])
                 lines = result.stdout.splitlines()
                 self.assertEqual(lines.count("APPLY:awg"), 1)

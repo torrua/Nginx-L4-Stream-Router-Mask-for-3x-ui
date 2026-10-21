@@ -19,7 +19,10 @@ apply_express_defaults() {
     express_default HY2_DOMAIN "$PRIMARY_DOMAIN"
     express_default ENABLE_AWG_V3 y
     express_default AWG_V3_PORT 8443
-    express_default ENABLE_AWG_V2 n
+    express_default ENABLE_AWG_V2 y
+    express_default ENABLE_TUIC y
+    express_default ENABLE_SS2022 y
+    express_default ENABLE_MTPROTO y
     express_default DECOY_MODE 1
     express_default SSL_ENGINE_CHOICE 1
     express_default AUTO_SETUP_3XUI y

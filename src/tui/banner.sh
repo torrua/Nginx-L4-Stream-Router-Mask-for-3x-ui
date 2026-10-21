@@ -162,8 +162,22 @@ AWG_HEADER_PROTECTION_KEY=""
 AWG_RANDOM_TRAILERS="false"
 
 # AmneziaWG v2.0 (Для роутеров Keenetic / OpenWrt) [y/n]
-ENABLE_AWG_V2="n"
+ENABLE_AWG_V2="y"
 AWG_V2_PORT="8444"
+
+# TUIC v5 (QUIC 0-RTT, BBR Congestion Control) [y/n]
+ENABLE_TUIC="y"
+TUIC_PORT="8448"
+
+# Shadowsocks 2022 (L4 TCP/UDP, 2022-blake3-aes-256-gcm) [y/n]
+ENABLE_SS2022="y"
+SS2022_PORT="8388"
+
+# Telegram MTProxy FakeTLS (mtg-multi) [y/n]
+ENABLE_MTPROTO="y"
+MTPROTO_PORT="8444"
+MTPROTO_FAKETLS_DOMAIN="gateway.icloud.com"
+MTPROTO_ADTAG=""
 
 # Настройки сети и DNS для клиентов AmneziaWG:
 AWG_PRIMARY_DNS="9.9.9.9"

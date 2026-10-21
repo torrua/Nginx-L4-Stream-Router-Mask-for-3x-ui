@@ -966,14 +966,32 @@ for item in res:
             echo
         fi
 
+        # По умолчанию все инбаунды панели 3X-UI включены, если не были заданы ранее
+        ENABLE_HY2="${ENABLE_HY2:-y}"
+        ENABLE_AWG_V3="${ENABLE_AWG_V3:-y}"
+        ENABLE_AWG_V2="${ENABLE_AWG_V2:-y}"
+        ENABLE_TUIC="${ENABLE_TUIC:-y}"
+        ENABLE_SS2022="${ENABLE_SS2022:-y}"
+        ENABLE_MTPROTO="${ENABLE_MTPROTO:-y}"
+
+        # Дополнительные автономные протоколы по умолчанию отключены (пользователь отмечает при необходимости)
+        ENABLE_AWG_STANDALONE="${ENABLE_AWG_STANDALONE:-n}"
+        ENABLE_MASQUE="${ENABLE_MASQUE:-n}"
+        ENABLE_SHADOWTLS="${ENABLE_SHADOWTLS:-n}"
+        ENABLE_WSTUNNEL="${ENABLE_WSTUNNEL:-n}"
+        ENABLE_ZAPRET="${ENABLE_ZAPRET:-n}"
+        ENABLE_NAIVE="${ENABLE_NAIVE:-n}"
+        ENABLE_DNSTT="${ENABLE_DNSTT:-n}"
+        ENABLE_MIERU="${ENABLE_MIERU:-n}"
+
         local proto_keys=(
             "ENABLE_HY2"
             "ENABLE_AWG_V3"
             "ENABLE_AWG_V2"
-            "ENABLE_AWG_STANDALONE"
             "ENABLE_TUIC"
             "ENABLE_SS2022"
             "ENABLE_MTPROTO"
+            "ENABLE_AWG_STANDALONE"
             "ENABLE_MASQUE"
             "ENABLE_SHADOWTLS"
             "ENABLE_WSTUNNEL"
@@ -985,18 +1003,18 @@ for item in res:
         local proto_labels=(
             "Hysteria 2 (UDP/QUIC Brutal CC, :${HY2_PORT:-443})"
             "AmneziaWG v3.1 (инбаунд 3X-UI, :${AWG_V3_PORT:-8443}/udp)"
-            "AmneziaWG v2.0 (роутеры Keenetic/OpenWrt, :${AWG_V2_PORT:-8444}/udp)"
-            "Автономный сервер AmneziaWG (awg-mgr, :${AWG_STANDALONE_PORT:-8445}/udp)"
-            "TUIC v5 (QUIC 0-RTT + BBR, :${TUIC_PORT:-8448}/udp)"
-            "Shadowsocks 2022 (2022-blake3-aes-256-gcm, :${SS2022_PORT:-8388})"
-            "Telegram MTProxy (FakeTLS прямой доступ, :${MTPROTO_PORT:-8444}/tcp)"
+            "AmneziaWG v2.0 (инбаунд 3X-UI для роутеров, :${AWG_V2_PORT:-8444}/udp)"
+            "TUIC v5 (инбаунд 3X-UI QUIC 0-RTT, :${TUIC_PORT:-8448}/udp)"
+            "Shadowsocks 2022 (инбаунд 3X-UI TCP/UDP, :${SS2022_PORT:-8388})"
+            "Telegram MTProxy (инбаунд 3X-UI FakeTLS, :${MTPROTO_PORT:-8444}/tcp)"
+            "Автономный сервер AmneziaWG (awg-quick@awg0 на хосте, :${AWG_STANDALONE_PORT:-8445}/udp)"
             "MASQUE (RFC 9484 / RFC 9298 via Sing-box, :${MASQUE_PORT:-8449}/udp)"
             "ShadowTLS v4 + SS-2022 (Nginx Stream :443 SNI ${SHADOWTLS_SNI:-gateway.icloud.com})"
             "Wstunnel over Nginx L7 (HTTPS WebSocket :443 -> :${WSTUNNEL_PORT:-8080})"
             "Server-Side Zapret (DPI Desync nfqws connbytes 1:6 NFQUEUE 200)"
             "NaïveProxy (Chromium HTTPS Stack via Caddy, Nginx Stream :443 -> :${NAIVE_PORT:-8446})"
             "DNSTT DoH Tunnel (DNS Tunneling via dnstt-server, :${DNSTT_PORT:-53053}/udp -> SS-2022)"
-            "Mieru Proxy (XChaCha20-Poly1305, без TLS, защита от активного зондирования и сигнатурного DPI, :${MIERU_PORT:-8450})"
+            "Mieru Proxy (XChaCha20-Poly1305, без TLS, защита от активного зондирования, :${MIERU_PORT:-8450})"
         )
 
         prompt_multiselect "Выберите протоколы для установки" proto_keys proto_labels || return $?

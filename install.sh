@@ -3,7 +3,7 @@
 #!/usr/bin/env bash
 #
 # ==============================================================================
-# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v9.0.0 Universal
+# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v9.1.0 Universal
 # Nginx L4 Stream + 3X-UI + Unix Sockets + Native proxy_http_version 2 + 3 Decoys
 # ==============================================================================
 # Архитектура:
@@ -29,7 +29,7 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="v9.0.0"
+SCRIPT_VERSION="v9.1.0"
 
 
 # Checkpoints use stable step IDs and input signatures, independent of UI numbering.
@@ -618,7 +618,7 @@ generate_config_template() {
     local target_file="${1:-server-setup.env.example}"
     cat << 'EOF_CONF' > "$target_file"
 # ==============================================================================
-# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v9.0.0 Universal)
+# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v9.1.0 Universal)
 # ==============================================================================
 # Данный файл позволяет выполнять полностью автоматическую установку:
 # ./setup.sh --config server-setup.env --non-interactive --force
@@ -703,8 +703,22 @@ AWG_HEADER_PROTECTION_KEY=""
 AWG_RANDOM_TRAILERS="false"
 
 # AmneziaWG v2.0 (Для роутеров Keenetic / OpenWrt) [y/n]
-ENABLE_AWG_V2="n"
+ENABLE_AWG_V2="y"
 AWG_V2_PORT="8444"
+
+# TUIC v5 (QUIC 0-RTT, BBR Congestion Control) [y/n]
+ENABLE_TUIC="y"
+TUIC_PORT="8448"
+
+# Shadowsocks 2022 (L4 TCP/UDP, 2022-blake3-aes-256-gcm) [y/n]
+ENABLE_SS2022="y"
+SS2022_PORT="8388"
+
+# Telegram MTProxy FakeTLS (mtg-multi) [y/n]
+ENABLE_MTPROTO="y"
+MTPROTO_PORT="8444"
+MTPROTO_FAKETLS_DOMAIN="gateway.icloud.com"
+MTPROTO_ADTAG=""
 
 # Настройки сети и DNS для клиентов AmneziaWG:
 AWG_PRIMARY_DNS="9.9.9.9"
@@ -7519,7 +7533,7 @@ setup_naive_service() {
         local caddy_tmp="/tmp/caddy_naive_$$"
         mkdir -p "$caddy_tmp"
         local rel_ver="${SCRIPT_VERSION:-v8.1.0}"
-        [[ "$rel_ver" == "v9.0.0" ]] && rel_ver="v8.1.0"
+        [[ "$rel_ver" == "v9.1.0" ]] && rel_ver="v8.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/caddy-naive-linux-${caddy_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
@@ -7656,7 +7670,7 @@ setup_dnstt_service() {
         local dnstt_tmp="/tmp/dnstt_$$"
         mkdir -p "$dnstt_tmp"
         local rel_ver="${SCRIPT_VERSION:-v8.1.0}"
-        [[ "$rel_ver" == "v9.0.0" ]] && rel_ver="v8.1.0"
+        [[ "$rel_ver" == "v9.1.0" ]] && rel_ver="v8.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/dnstt-server-linux-${dnstt_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
@@ -8439,7 +8453,10 @@ apply_express_defaults() {
     express_default HY2_DOMAIN "$PRIMARY_DOMAIN"
     express_default ENABLE_AWG_V3 y
     express_default AWG_V3_PORT 8443
-    express_default ENABLE_AWG_V2 n
+    express_default ENABLE_AWG_V2 y
+    express_default ENABLE_TUIC y
+    express_default ENABLE_SS2022 y
+    express_default ENABLE_MTPROTO y
     express_default DECOY_MODE 1
     express_default SSL_ENGINE_CHOICE 1
     express_default AUTO_SETUP_3XUI y
@@ -16246,14 +16263,32 @@ for item in res:
             echo
         fi
 
+        # По умолчанию все инбаунды панели 3X-UI включены, если не были заданы ранее
+        ENABLE_HY2="${ENABLE_HY2:-y}"
+        ENABLE_AWG_V3="${ENABLE_AWG_V3:-y}"
+        ENABLE_AWG_V2="${ENABLE_AWG_V2:-y}"
+        ENABLE_TUIC="${ENABLE_TUIC:-y}"
+        ENABLE_SS2022="${ENABLE_SS2022:-y}"
+        ENABLE_MTPROTO="${ENABLE_MTPROTO:-y}"
+
+        # Дополнительные автономные протоколы по умолчанию отключены (пользователь отмечает при необходимости)
+        ENABLE_AWG_STANDALONE="${ENABLE_AWG_STANDALONE:-n}"
+        ENABLE_MASQUE="${ENABLE_MASQUE:-n}"
+        ENABLE_SHADOWTLS="${ENABLE_SHADOWTLS:-n}"
+        ENABLE_WSTUNNEL="${ENABLE_WSTUNNEL:-n}"
+        ENABLE_ZAPRET="${ENABLE_ZAPRET:-n}"
+        ENABLE_NAIVE="${ENABLE_NAIVE:-n}"
+        ENABLE_DNSTT="${ENABLE_DNSTT:-n}"
+        ENABLE_MIERU="${ENABLE_MIERU:-n}"
+
         local proto_keys=(
             "ENABLE_HY2"
             "ENABLE_AWG_V3"
             "ENABLE_AWG_V2"
-            "ENABLE_AWG_STANDALONE"
             "ENABLE_TUIC"
             "ENABLE_SS2022"
             "ENABLE_MTPROTO"
+            "ENABLE_AWG_STANDALONE"
             "ENABLE_MASQUE"
             "ENABLE_SHADOWTLS"
             "ENABLE_WSTUNNEL"
@@ -16265,18 +16300,18 @@ for item in res:
         local proto_labels=(
             "Hysteria 2 (UDP/QUIC Brutal CC, :${HY2_PORT:-443})"
             "AmneziaWG v3.1 (инбаунд 3X-UI, :${AWG_V3_PORT:-8443}/udp)"
-            "AmneziaWG v2.0 (роутеры Keenetic/OpenWrt, :${AWG_V2_PORT:-8444}/udp)"
-            "Автономный сервер AmneziaWG (awg-mgr, :${AWG_STANDALONE_PORT:-8445}/udp)"
-            "TUIC v5 (QUIC 0-RTT + BBR, :${TUIC_PORT:-8448}/udp)"
-            "Shadowsocks 2022 (2022-blake3-aes-256-gcm, :${SS2022_PORT:-8388})"
-            "Telegram MTProxy (FakeTLS прямой доступ, :${MTPROTO_PORT:-8444}/tcp)"
+            "AmneziaWG v2.0 (инбаунд 3X-UI для роутеров, :${AWG_V2_PORT:-8444}/udp)"
+            "TUIC v5 (инбаунд 3X-UI QUIC 0-RTT, :${TUIC_PORT:-8448}/udp)"
+            "Shadowsocks 2022 (инбаунд 3X-UI TCP/UDP, :${SS2022_PORT:-8388})"
+            "Telegram MTProxy (инбаунд 3X-UI FakeTLS, :${MTPROTO_PORT:-8444}/tcp)"
+            "Автономный сервер AmneziaWG (awg-quick@awg0 на хосте, :${AWG_STANDALONE_PORT:-8445}/udp)"
             "MASQUE (RFC 9484 / RFC 9298 via Sing-box, :${MASQUE_PORT:-8449}/udp)"
             "ShadowTLS v4 + SS-2022 (Nginx Stream :443 SNI ${SHADOWTLS_SNI:-gateway.icloud.com})"
             "Wstunnel over Nginx L7 (HTTPS WebSocket :443 -> :${WSTUNNEL_PORT:-8080})"
             "Server-Side Zapret (DPI Desync nfqws connbytes 1:6 NFQUEUE 200)"
             "NaïveProxy (Chromium HTTPS Stack via Caddy, Nginx Stream :443 -> :${NAIVE_PORT:-8446})"
             "DNSTT DoH Tunnel (DNS Tunneling via dnstt-server, :${DNSTT_PORT:-53053}/udp -> SS-2022)"
-            "Mieru Proxy (XChaCha20-Poly1305, без TLS, защита от активного зондирования и сигнатурного DPI, :${MIERU_PORT:-8450})"
+            "Mieru Proxy (XChaCha20-Poly1305, без TLS, защита от активного зондирования, :${MIERU_PORT:-8450})"
         )
 
         prompt_multiselect "Выберите протоколы для установки" proto_keys proto_labels || return $?

@@ -1684,6 +1684,21 @@ echo "AGH_CLIENT_ID=$AGH_CLIENT_ID"
         self.assertIn('listen unix:/dev/shm/nginx-http.sock ssl ${HTTP2_LISTEN_PARAM}default_server proxy_protocol;', config_sh)
         self.assertIn('listen 127.0.0.1:$REALITY_FALLBACK_PORT ssl ${HTTP2_LISTEN_PARAM}default_server proxy_protocol;', config_sh)
 
+    def test_ufw_comments_contain_no_single_quotes(self):
+        """UFW Python parser explicitly raises ValueError if comment contains single quotes (apostrophe)."""
+        ufw_regex = re.compile(r'ufw\s+(?:allow|deny)\s+.*?comment\s+([^\n]+)')
+        for sh_file in (ROOT / "src").rglob("*.sh"):
+            content = sh_file.read_text(encoding="utf-8")
+            for match in ufw_regex.finditer(content):
+                comment_part = match.group(1).strip()
+                # If wrapped in quotes, check the interior value
+                if (comment_part.startswith("'") and comment_part.endswith("'")) or \
+                   (comment_part.startswith('"') and comment_part.endswith('"')):
+                    inner = comment_part[1:-1]
+                    self.assertNotIn("'", inner, f"UFW rule in {sh_file.name} contains forbidden single quote in comment: {comment_part}")
+                elif "\\'" in comment_part:
+                    self.fail(f"UFW rule in {sh_file.name} contains escaped single quote in comment: {comment_part}")
+
 
 
 if __name__ == "__main__":

@@ -10536,8 +10536,8 @@ if [ -n "$target_ssh" ] && [ "$target_ssh" != "$active_ssh" ]; then
     ufw allow "${target_ssh}/tcp" comment 'SSH (Target)'
 fi
 
-# Web endpoints: HTTP Let's Encrypt / Decoy and HTTPS Nginx L4 Stream Router
-ufw allow 80/tcp comment 'HTTP (Let'\''s Encrypt / Decoy)'
+# Web endpoints: HTTP ACME / Decoy and HTTPS Nginx L4 Stream Router
+ufw allow 80/tcp comment 'HTTP (ACME / Decoy)'
 ufw allow 443/tcp comment 'HTTPS (Nginx L4 Stream Router)'
 
 # Internal stack ports (deny direct external access to prevent bypass of Nginx and scanner discovery)
@@ -10548,6 +10548,7 @@ done
 
 # Protocol listeners: allow public entrypoints, deny non-public internal proxies
 while read -r protocol transport port; do
+    [ -z "$port" ] || [ -z "$transport" ] && continue
     local ufw_port="${port//-/:}"
     if protocol_is_public "$protocol"; then
         ufw allow "$ufw_port/$transport" comment "VPN: $protocol"

@@ -59,3 +59,13 @@
   * `PANEL_PATH` — случайный URL веб-панели (вместо `my-3x-panel`);
   * `WSTUNNEL_PREFIX` — случайный префикс WebSocket (вместо `/wstunnel`);
   * `AGH_CLIENT_ID` — криптографический случайный Client ID (вместо `home-router`).
+
+---
+
+### 7. Обновление CI/CD конвейера (GitHub Actions v7 / v3)
+* Все действия в рабочих процессах `.github/workflows/` обновлены до актуальных мажорных версий со средой выполнения Node.js 24:
+  * `actions/checkout@v7` (ранее `@v4`);
+  * `actions/setup-python@v7` (ранее `@v5`);
+  * `actions/setup-go@v7` (ранее `@v5`);
+  * `actions/upload-artifact@v7` (ранее `@v4`);
+  * `softprops/action-gh-release@v3` (ранее `@v2`).

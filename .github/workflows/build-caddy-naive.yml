@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       upload_to_release:
-        description: 'Tag of GitHub Release to upload assets to (e.g. v8.1.0, leave empty to only build artifacts)'
+        description: 'Tag of GitHub Release to upload assets to (e.g. v9.1.0, leave empty to only build artifacts)'
         required: false
-        default: 'v8.1.0'
+        default: 'v9.1.0'
         type: string
   release:
     types: [published]

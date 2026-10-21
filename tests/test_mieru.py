@@ -331,6 +331,132 @@ rules:
         self.assertEqual(parsed["profiles"][0]["servers"][0]["portBindings"][0]["port"], 8450)
         self.assertEqual(parsed["profiles"][0]["servers"][0]["portBindings"][0]["protocol"], "TCP")
 
+    def test_mieru_mgr_list_users(self):
+        """Verify mieru-mgr list command parses server config and displays users."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg_file = os.path.join(tmpdir, "config.json")
+            data = {
+                "portBindings": [
+                    {"port": 8450, "protocol": "TCP"},
+                    {"port": 8450, "protocol": "UDP"},
+                ],
+                "users": [
+                    {"name": "user_alpha", "password": "pass_alpha_secret"},
+                    {"name": "user_beta", "password": "pass_beta_secret"},
+                ],
+            }
+            Path(cfg_file).write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+            res = run_shell(f"""
+set -euo pipefail
+export MIERU_SERVER_CONFIG="{cfg_file.replace(os.sep, '/')}"
+export MIERU_CLIENT_DIR="{tmpdir.replace(os.sep, '/')}"
+bash src/system/mieru-mgr.sh list
+""")
+            self.assertEqual(res.returncode, 0, f"Stderr: {res.stderr}")
+            self.assertIn("user_alpha", res.stdout)
+            self.assertIn("user_beta", res.stdout)
+            self.assertIn("8450/TCP", res.stdout)
+
+    def test_mieru_mgr_add_and_del_user(self):
+        """Verify mieru-mgr add creates user and client profile, and del removes them."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg_file = os.path.join(tmpdir, "config.json")
+            data = {
+                "portBindings": [{"port": 8450, "protocol": "TCP"}],
+                "users": [{"name": "primary_user", "password": "primary_pass"}],
+            }
+            Path(cfg_file).write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+            # 1. Add user
+            res_add = run_shell(f"""
+set -euo pipefail
+export MIERU_SERVER_CONFIG="{cfg_file.replace(os.sep, '/')}"
+export MIERU_CLIENT_DIR="{tmpdir.replace(os.sep, '/')}"
+export MIERU_MGR_FORCE=1
+export PRIMARY_DOMAIN="vpn.test.example"
+bash src/system/mieru-mgr.sh add new_user MySecretPass123!
+""")
+            self.assertEqual(res_add.returncode, 0, f"Stderr: {res_add.stderr}")
+            self.assertIn("new_user", res_add.stdout)
+            self.assertIn("MySecretPass123!", res_add.stdout)
+
+            # Check config updated
+            with open(cfg_file, "r", encoding="utf-8") as f:
+                updated_data = json.load(f)
+            user_names = [u["name"] for u in updated_data["users"]]
+            self.assertIn("new_user", user_names)
+
+            # Check client profile generated
+            client_file = Path(tmpdir) / "mieru-client-new_user.json"
+            self.assertTrue(client_file.is_file(), f"Client file not found: {client_file}")
+            with open(client_file, "r", encoding="utf-8") as cf:
+                cdata = json.load(cf)
+            self.assertEqual(cdata["profiles"][0]["user"]["name"], "new_user")
+            self.assertEqual(cdata["profiles"][0]["user"]["password"], "MySecretPass123!")
+            self.assertEqual(cdata["profiles"][0]["servers"][0]["ipAddress"], "vpn.test.example")
+
+            # 2. Delete user
+            res_del = run_shell(f"""
+set -euo pipefail
+export MIERU_SERVER_CONFIG="{cfg_file.replace(os.sep, '/')}"
+export MIERU_CLIENT_DIR="{tmpdir.replace(os.sep, '/')}"
+export MIERU_MGR_FORCE=1
+bash src/system/mieru-mgr.sh del new_user
+""")
+            self.assertEqual(res_del.returncode, 0, f"Stderr: {res_del.stderr}")
+            self.assertFalse(client_file.exists(), "Client file was not removed on user deletion")
+
+            with open(cfg_file, "r", encoding="utf-8") as f:
+                final_data = json.load(f)
+            final_user_names = [u["name"] for u in final_data["users"]]
+            self.assertNotIn("new_user", final_user_names)
+
+            # 3. Try to delete the only remaining user (should fail)
+            res_del_last = run_shell(f"""
+set -euo pipefail
+export MIERU_SERVER_CONFIG="{cfg_file.replace(os.sep, '/')}"
+export MIERU_CLIENT_DIR="{tmpdir.replace(os.sep, '/')}"
+export MIERU_MGR_FORCE=1
+bash src/system/mieru-mgr.sh del primary_user
+""")
+            self.assertNotEqual(res_del_last.returncode, 0)
+            self.assertIn("единственный пользователь", res_del_last.stderr)
+
+    def test_maintain_mieru_user_flags(self):
+        """Verify maintain.sh --mieru-list-users and --mieru-add-user flags invoke manager."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg_file = os.path.join(tmpdir, "config.json")
+            data = {
+                "portBindings": [{"port": 8450, "protocol": "TCP"}],
+                "users": [{"name": "root_user", "password": "root_pass"}],
+            }
+            Path(cfg_file).write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+            # Test --mieru-list-users
+            res_list = run_shell(f"""
+set -euo pipefail
+export MIERU_SERVER_CONFIG="{cfg_file.replace(os.sep, '/')}"
+export MIERU_CLIENT_DIR="{tmpdir.replace(os.sep, '/')}"
+bash maintain.sh --mieru-list-users
+""")
+            self.assertEqual(res_list.returncode, 0, f"Stderr: {res_list.stderr}")
+            self.assertIn("root_user", res_list.stdout)
+
+            # Test --mieru-add-user
+            res_add = run_shell(f"""
+set -euo pipefail
+export MIERU_SERVER_CONFIG="{cfg_file.replace(os.sep, '/')}"
+export MIERU_CLIENT_DIR="{tmpdir.replace(os.sep, '/')}"
+export MIERU_MGR_FORCE=1
+export PRIMARY_DOMAIN="vpn.test.example"
+bash maintain.sh --mieru-add-user maintain_user Pass789!
+""")
+            self.assertEqual(res_add.returncode, 0, f"Stderr: {res_add.stderr}")
+            self.assertIn("maintain_user", res_add.stdout)
+            self.assertIn("Pass789!", res_add.stdout)
+
+
 
 if __name__ == "__main__":
     unittest.main()

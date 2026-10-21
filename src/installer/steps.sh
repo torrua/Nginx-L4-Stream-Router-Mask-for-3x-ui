@@ -739,6 +739,20 @@ EOF
             warn "Ошибка запуска службы mita.service. Проверьте: journalctl -u mita -n 20"
         fi
     fi
+
+    # Развертывание CLI-менеджера пользователей Mieru
+    local src_mgr="$(cd "$(dirname "${BASH_SOURCE[0]}")/../system" 2>/dev/null && pwd)/mieru-mgr.sh"
+    if [ -f "$src_mgr" ]; then
+        cp -f "$src_mgr" "${bin_dir}/mieru-mgr"
+    fi
+    if [ ! -f "${bin_dir}/mieru-mgr" ]; then
+        cat << 'EOF_MIERU_MGR' > "${bin_dir}/mieru-mgr"
+# @include "system/mieru-mgr.sh"
+EOF_MIERU_MGR
+    fi
+    chmod 755 "${bin_dir}/mieru-mgr" 2>/dev/null || true
+    ln -sf "${bin_dir}/mieru-mgr" "${bin_dir}/mieru-cli" 2>/dev/null || true
+    ok "Утилита управления пользователями Mieru готова: ${bin_dir}/mieru-mgr (или mieru-cli)"
 }
 
 deploy_native_nextgen_services() {

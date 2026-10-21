@@ -713,7 +713,7 @@ $([ -n "${WSTUNNEL_CLI:-}" ] && printf "Wstunnel Client CLI:     %s\n" "${WSTUNN
 $([ -n "${ZAPRET_INFO:-}" ] && printf "Server-Side Zapret:      %s\n" "${ZAPRET_INFO}")
 $([ -n "${NAIVE_URI:-}" ] && printf "NaïveProxy (Chrome HTTPS): %s\n" "${NAIVE_URI}")
 $([ -n "${DNSTT_CLI:-}" ] && printf "DNSTT DoH Tunnel:        %s\nDNSTT Public Key:        %s\n" "${DNSTT_CLI}" "${DNSTT_PUBKEY}")
-$([ -n "${MIERU_PORT:-}" ] && [ -n "${MIERU_USER:-}" ] && printf "Mieru Proxy (XChaCha20, :%s): user: %s, pass: %s (Клиентский конфиг: /root/mieru-client.json)\n" "${MIERU_PORT}" "${MIERU_USER}" "${MIERU_PASS}")
+$([ -n "${MIERU_PORT:-}" ] && [ -n "${MIERU_USER:-}" ] && printf "Mieru Proxy (XChaCha20, :%s): user: %s, pass: %s (Клиентский конфиг: /root/mieru-client.json, управление: mieru-mgr)\n" "${MIERU_PORT}" "${MIERU_USER}" "${MIERU_PASS}")
 $([ -n "${NODE_TOKEN:-}" ] && printf "3X-UI Node Token:      %s\nИмя ноды (Node Name):  %s (Host: %s:443, Path: /%s/)\n" "${NODE_TOKEN}" "${NODE_TOKEN_NAME}" "${PRIMARY_DOMAIN}" "${PANEL_PATH#/}")
 (Объединяет все конфигурации: Steal REALITY, Classic REALITY, xHTTP, Hysteria 2, AWG v3, AWG v2, SS-2022, TUIC v5, MTProxy, MASQUE, ShadowTLS, Wstunnel, Zapret, NaïveProxy, DNSTT, Mieru)
 =====================================================================
@@ -742,7 +742,7 @@ EOF_CRED
             fi
             if [ -n "${MIERU_PORT:-}" ] && [ -n "${MIERU_USER:-}" ] && ! grep -q "Mieru Proxy" "$CRED_FILE" 2>/dev/null; then
                 echo "Mieru Proxy (XChaCha20, :${MIERU_PORT}): user: ${MIERU_USER}, pass: ${MIERU_PASS}" >> "$CRED_FILE"
-                echo "  Клиентский конфиг: /root/mieru-client.json" >> "$CRED_FILE"
+                echo "  Клиентский конфиг: /root/mieru-client.json (Управление пользователями: mieru-mgr list|add|del)" >> "$CRED_FILE"
             fi
             echo -e "  - ${BOLD}Файл с паролями:${NC}        ${CYAN}$CRED_FILE${NC} (обновлен, chmod 600)"
         fi

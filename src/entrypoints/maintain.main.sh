@@ -19,6 +19,7 @@ set -euo pipefail
 # @include "common/logger.sh"
 # @include "common/config.sh"
 # @include "common/backup.sh"
+# @include "system/mieru-mgr.sh"
 
 
 show_help() {
@@ -34,6 +35,10 @@ show_help() {
   --force-sub             Принудительно перезаписать кастомные параметры подписки из .env
   --rollback              Мгновенный откат базы данных и Nginx к последнему бэкапу
   -y, --yes               Выполнить исправления без интерактивного подтверждения
+  --mieru-list-users      Список всех пользователей Mieru Proxy
+  --mieru-add-user <NAME> [PASS] Добавить пользователя Mieru и создать клиентский .json
+  --mieru-del-user <NAME> Удалить пользователя Mieru
+  --mieru-mgr <CMD> ...   Прямой вызов диспетчера пользователей Mieru (list, add, del)
   -h, --help              Показать эту справку и выйти
 
 Примеры использования:
@@ -45,6 +50,11 @@ show_help() {
 
   # 3. Мгновенный откат системы к состоянию до обновления:
   ./maintain.sh --rollback
+
+  # 4. Управление пользователями Mieru:
+  ./maintain.sh --mieru-list-users
+  ./maintain.sh --mieru-add-user alice
+  ./maintain.sh --mieru-del-user alice
 EOF_HELP
 }
 
@@ -54,6 +64,10 @@ DRY_RUN=0
 FORCE_SUB=0
 ROLLBACK=0
 NON_INTERACTIVE=0
+MIERU_ACTION=""
+MIERU_TARGET_USER=""
+MIERU_TARGET_PASS=""
+MIERU_MGR_ARGS=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -83,6 +97,32 @@ while [[ $# -gt 0 ]]; do
             NON_INTERACTIVE=1
             shift
             ;;
+        --mieru-list-users)
+            MIERU_ACTION="list"
+            shift
+            ;;
+        --mieru-add-user)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: имя пользователя."
+            MIERU_ACTION="add"
+            MIERU_TARGET_USER="$2"
+            shift 2
+            if [[ $# -gt 0 && "${1:0:1}" != "-" ]]; then
+                MIERU_TARGET_PASS="$1"
+                shift
+            fi
+            ;;
+        --mieru-del-user)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: имя пользователя."
+            MIERU_ACTION="del"
+            MIERU_TARGET_USER="$2"
+            shift 2
+            ;;
+        --mieru-mgr)
+            MIERU_ACTION="mgr"
+            shift
+            MIERU_MGR_ARGS=("$@")
+            break
+            ;;
         -h|--help)
             show_help
             exit 0
@@ -93,6 +133,27 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+if [ -n "$MIERU_ACTION" ]; then
+    case "$MIERU_ACTION" in
+        list)
+            mieru_list_users
+            exit 0
+            ;;
+        add)
+            mieru_add_user "$MIERU_TARGET_USER" "${MIERU_TARGET_PASS:-}"
+            exit 0
+            ;;
+        del)
+            mieru_del_user "$MIERU_TARGET_USER"
+            exit 0
+            ;;
+        mgr)
+            mieru_mgr_main "${MIERU_MGR_ARGS[@]}"
+            exit 0
+            ;;
+    esac
+fi
 
 echo -e "${CYAN}=====================================================================${NC}"
 echo -e "${GREEN}  Smart Update & Repair Tool: Nginx L4 + 3X-UI (Self-Healing Engine) ${NC}"
@@ -1511,7 +1572,7 @@ else
         fi
         if [ -n "${MIERU_PORT:-}" ] && [ -n "${MIERU_USER:-}" ] && ! grep -q "Mieru Proxy" /root/vpn_credentials.txt 2>/dev/null; then
             echo "Mieru Proxy (XChaCha20, :${MIERU_PORT}): user: ${MIERU_USER}, pass: ${MIERU_PASS}" >> /root/vpn_credentials.txt
-            echo "  Клиентский конфиг: /root/mieru-client.json" >> /root/vpn_credentials.txt
+            echo "  Клиентский конфиг: /root/mieru-client.json (Управление пользователями: mieru-mgr list|add|del)" >> /root/vpn_credentials.txt
         fi
     fi
 fi

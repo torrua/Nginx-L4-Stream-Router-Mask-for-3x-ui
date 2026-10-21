@@ -130,6 +130,7 @@ run_uninstall() {
         "${target_root}/etc/systemd/system/wstunnel.service"
         "${target_root}/etc/systemd/system/dnstt.service"
         "${target_root}/etc/systemd/system/caddy-naive.service"
+        "${target_root}/etc/systemd/system/mita.service"
         "${target_root}/etc/systemd/system/zapret.service"
         "${target_root}/etc/systemd/system/nginx.service.d/override.conf"
     )
@@ -277,6 +278,9 @@ run_uninstall() {
         "${target_root}/etc/sing-box"
         "${target_root}/etc/caddy"
         "${target_root}/etc/amnezia"
+        "${target_root}/etc/mita"
+        "${target_root}/var/lib/mita"
+        "${target_root}/var/run/mita"
         "${target_root}/root/awg"
         "${target_root}/var/www/mirror"
         "${target_root}/root/.server_setup"
@@ -295,6 +299,9 @@ run_uninstall() {
         "${target_root}/usr/local/bin/wstunnel"
         "${target_root}/usr/local/bin/dnstt-server"
         "${target_root}/usr/local/bin/caddy-naive"
+        "${target_root}/usr/local/bin/mita"
+        "${target_root}/usr/local/bin/mieru-mgr"
+        "${target_root}/usr/local/bin/mieru-cli"
         "${target_root}/usr/local/bin/awg-mgr"
         "${target_root}/usr/local/bin/manage-services"
     )
@@ -304,6 +311,8 @@ run_uninstall() {
 
     # Очистка временных файлов и учетных данных
     rm -f "${target_root}/root/vpn_credentials.txt" \
+          "${target_root}/root/mieru-client"*.json \
+          "${target_root}/etc/mita_server_config.json" \
           "${target_root}/run/3xui_unified_client.env" \
           "${target_root}/var/run/server_setup.checkpoint" \
           "${target_root}/var/run/server_setup.failed_step" \

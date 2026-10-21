@@ -45,10 +45,12 @@ while [ $# -gt 0 ]; do
             ;;
         --remove-certs|--purge-certs)
             UNINSTALL_KEEP_CERTS=0
+            UNINSTALL_CERTS_EXPLICIT=1
             shift
             ;;
         --keep-certs)
             UNINSTALL_KEEP_CERTS=1
+            UNINSTALL_CERTS_EXPLICIT=1
             shift
             ;;
         -h|--help)

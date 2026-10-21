@@ -137,6 +137,15 @@ create_initial_state_snapshot
         creds.parent.mkdir(parents=True, exist_ok=True)
         creds.write_text("SECRET", encoding="utf-8")
 
+        # Mock cron and systemd-resolved files
+        cron_file = self.target_root / "etc/cron.d/awg-purge-expired"
+        cron_file.parent.mkdir(parents=True, exist_ok=True)
+        cron_file.write_text("0 4 * * * root awg-mgr purge-expired\n", encoding="utf-8")
+
+        resolved_conf = self.target_root / "etc/systemd/resolved.conf.d/adguard.conf"
+        resolved_conf.parent.mkdir(parents=True, exist_ok=True)
+        resolved_conf.write_text("[Resolve]\nDNSStubListener=no\n", encoding="utf-8")
+
         # Mock ufw before.rules with hy2 port hopping rule
         etc_ufw = self.target_root / "etc/ufw"
         etc_ufw.mkdir(parents=True, exist_ok=True)
@@ -171,10 +180,65 @@ run_uninstall
         self.assertFalse(singbox_dir.exists(), "etc/sing-box must be removed")
         self.assertFalse(opt_zapret.exists(), "opt/zapret must be removed")
         self.assertFalse(creds.exists(), "vpn_credentials.txt must be removed")
+        self.assertFalse(cron_file.exists(), "awg-purge-expired cron file must be removed")
+        self.assertFalse(resolved_conf.exists(), "adguard resolved.conf.d override must be removed")
 
         # Port hopping cleaned from before.rules
         rules_text = (etc_ufw / "before.rules").read_text(encoding="utf-8")
         self.assertNotIn("Port Hopping for Hysteria 2", rules_text)
+
+    def test_uninstall_ssl_certs_retention_and_removal(self):
+        """Verify that SSL certs are kept by default and purged only when requested."""
+        le_dir = self.target_root / "etc/letsencrypt"
+        le_dir.mkdir(parents=True, exist_ok=True)
+        (le_dir / "live").mkdir(parents=True, exist_ok=True)
+        (le_dir / "live/cert.pem").write_text("MOCK CERT", encoding="utf-8")
+
+        acme_dir = self.target_root / "root/.acme.sh"
+        acme_dir.mkdir(parents=True, exist_ok=True)
+        (acme_dir / "account.conf").write_text("ACCOUNT", encoding="utf-8")
+
+        snap_dir = self.work / "backups/server_setup"
+
+        # Case 1: UNINSTALL_KEEP_CERTS=1 (Default)
+        snippet_keep = f"""
+set -euo pipefail
+TARGET_ROOT="{self.target_root.as_posix()}"
+SNAPSHOT_DIR="{snap_dir.as_posix()}"
+UNINSTALL_FORCE=1
+UNINSTALL_KEEP_CERTS=1
+
+source "{ROOT.as_posix()}/src/common/colors.sh"
+source "{ROOT.as_posix()}/src/common/logger.sh"
+source "{ROOT.as_posix()}/src/system/snapshot.sh"
+source "{ROOT.as_posix()}/src/system/uninstall.sh"
+
+run_uninstall
+"""
+        res = self.run_bash_snippet(snippet_keep)
+        self.assertEqual(res.returncode, 0, f"Error: {res.stderr}\nStdout: {res.stdout}")
+        self.assertTrue((le_dir / "live/cert.pem").exists(), "Certificates must be preserved when UNINSTALL_KEEP_CERTS=1")
+        self.assertTrue((acme_dir / "account.conf").exists(), "acme.sh must be preserved when UNINSTALL_KEEP_CERTS=1")
+
+        # Case 2: UNINSTALL_KEEP_CERTS=0 (Remove)
+        snippet_remove = f"""
+set -euo pipefail
+TARGET_ROOT="{self.target_root.as_posix()}"
+SNAPSHOT_DIR="{snap_dir.as_posix()}"
+UNINSTALL_FORCE=1
+UNINSTALL_KEEP_CERTS=0
+
+source "{ROOT.as_posix()}/src/common/colors.sh"
+source "{ROOT.as_posix()}/src/common/logger.sh"
+source "{ROOT.as_posix()}/src/system/snapshot.sh"
+source "{ROOT.as_posix()}/src/system/uninstall.sh"
+
+run_uninstall
+"""
+        res2 = self.run_bash_snippet(snippet_remove)
+        self.assertEqual(res2.returncode, 0, f"Error: {res2.stderr}\nStdout: {res2.stdout}")
+        self.assertFalse(le_dir.exists(), "Letsencrypt dir must be deleted when UNINSTALL_KEEP_CERTS=0")
+        self.assertFalse(acme_dir.exists(), ".acme.sh dir must be deleted when UNINSTALL_KEEP_CERTS=0")
 
     def test_uninstall_cli_help(self):
         """Verify uninstall.sh and setup.sh help outputs."""

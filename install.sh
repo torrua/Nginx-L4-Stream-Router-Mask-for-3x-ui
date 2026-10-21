@@ -1969,6 +1969,7 @@ verify_initial_state_snapshot() {
 UNINSTALL_FORCE="${UNINSTALL_FORCE:-0}"
 UNINSTALL_PURGE_PKGS="${UNINSTALL_PURGE_PKGS:-0}"
 UNINSTALL_KEEP_CERTS="${UNINSTALL_KEEP_CERTS:-1}"
+UNINSTALL_CERTS_EXPLICIT="${UNINSTALL_CERTS_EXPLICIT:-0}"
 
 parse_manifest_field() {
     local field="$1"
@@ -2041,6 +2042,20 @@ run_uninstall() {
             echo -e "${YELLOW}Удаление отменено пользователем.${NC}"
             return 0
         fi
+
+        # Интерактивный запрос по SSL-сертификатам Let's Encrypt
+        if [ "${UNINSTALL_CERTS_EXPLICIT:-0}" -eq 0 ]; then
+            echo ""
+            echo -e "${CYAN}Управление SSL-сертификатами:${NC}"
+            echo -e "  Сохранение сертификатов предотвращает исчерпание недельных лимитов Let's Encrypt при повторной настройке."
+            read -r -p "Удалить выпущенные SSL-сертификаты (/etc/letsencrypt, /etc/ssl/acme, ~/.acme.sh)? [y/N]: " confirm_certs
+            if [[ "$confirm_certs" =~ ^[YyДд1] ]]; then
+                UNINSTALL_KEEP_CERTS=0
+            else
+                UNINSTALL_KEEP_CERTS=1
+            fi
+            echo ""
+        fi
     fi
 
     log "Шаг 1/8: Остановка и отключение служб..."
@@ -2061,7 +2076,7 @@ run_uninstall() {
     done
     ok "Службы остановлены и отключены."
 
-    log "Шаг 2/8: Удаление созданных systemd units..."
+    log "Шаг 2/8: Удаление созданных systemd units и cron-задач..."
     local units_to_remove=(
         "${target_root}/etc/systemd/system/x-ui.service"
         "${target_root}/etc/systemd/system/xray-geo-update.service"
@@ -2082,8 +2097,31 @@ run_uninstall() {
     if [ -d "${target_root}/etc/systemd/system/nginx.service.d" ]; then
         rmdir "${target_root}/etc/systemd/system/nginx.service.d" 2>/dev/null || true
     fi
+
+    # Удаление cron-файлов и периодических задач
+    rm -f "${target_root}/etc/cron.d/awg-purge-expired" 2>/dev/null || true
+    if command -v crontab >/dev/null 2>&1; then
+        (crontab -l 2>/dev/null | grep -v "sysctl --system" || true) | crontab - 2>/dev/null || true
+    fi
+
+    # Зачистка tunnel-интерфейса awg0, если остался активен
+    if command -v ip >/dev/null 2>&1; then
+        ip link delete dev awg0 2>/dev/null || true
+    fi
+
+    # Очистка резолвера AdGuard Home в systemd-resolved
+    if [ "$agh_preexisted" -eq 0 ]; then
+        rm -f "${target_root}/etc/systemd/resolved.conf.d/adguard.conf" 2>/dev/null || true
+        if [ -d "${target_root}/etc/systemd/resolved.conf.d" ]; then
+            rmdir "${target_root}/etc/systemd/resolved.conf.d" 2>/dev/null || true
+        fi
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl restart systemd-resolved 2>/dev/null || true
+        fi
+    fi
+
     command -v systemctl >/dev/null 2>&1 && systemctl daemon-reload 2>/dev/null || true
-    ok "Systemd units очищены."
+    ok "Systemd units, cron-задачи и сетевые интерфейсы очищены."
 
     log "Шаг 3/8: Восстановление Firewall и очистка правил UFW..."
     # Удаление правил port hopping и MSS clamping из UFW
@@ -2229,8 +2267,11 @@ run_uninstall() {
 
     # SSL сертификаты (по умолчанию сохраняются, если не запрошена очистка)
     if [ "${UNINSTALL_KEEP_CERTS:-1}" -eq 0 ]; then
-        rm -rf "${target_root}/etc/letsencrypt" "${target_root}/etc/ssl/acme" 2>/dev/null || true
-        ok "SSL-сертификаты удалены."
+        rm -rf "${target_root}/etc/letsencrypt" "${target_root}/etc/ssl/acme" "${target_root}/root/.acme.sh" 2>/dev/null || true
+        if command -v crontab >/dev/null 2>&1; then
+            (crontab -l 2>/dev/null | grep -v "acme.sh" || true) | crontab - 2>/dev/null || true
+        fi
+        ok "SSL-сертификаты и acme.sh успешно удалены."
     else
         log "SSL-сертификаты сохранены в /etc/letsencrypt и /etc/ssl/acme (защита от исчерпания лимитов)."
     fi

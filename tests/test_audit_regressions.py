@@ -1699,6 +1699,20 @@ echo "AGH_CLIENT_ID=$AGH_CLIENT_ID"
                 elif "\\'" in comment_part:
                     self.fail(f"UFW rule in {sh_file.name} contains escaped single quote in comment: {comment_part}")
 
+    def test_tri_state_ports_customization_question(self):
+        """Verify the tri-state port customization question: 0 (No/Default), 1 (Yes/All), 2 (External Only)."""
+        wizard_sh = (ROOT / "src/tui/wizard.sh").read_text(encoding="utf-8")
+        self.assertIn("Хотите ли вы настраивать порты подключений вручную? [0/1/2]", wizard_sh)
+        self.assertIn("[0] Нет (по умолчанию)", wizard_sh)
+        self.assertIn("[1] Да (все порты)", wizard_sh)
+        self.assertIn("[2] Только внешние", wizard_sh)
+
+        # In env.sh and prompts.sh, default is 0
+        env_sh = (ROOT / "src/system/env.sh").read_text(encoding="utf-8")
+        prompts_sh = (ROOT / "src/tui/prompts.sh").read_text(encoding="utf-8")
+        self.assertIn('PORTS_SETUP_MODE="${PORTS_SETUP_MODE:-0}"', env_sh)
+        self.assertIn('PORTS_SETUP_MODE="${PORTS_SETUP_MODE:-0}"', prompts_sh)
+
 
 
 if __name__ == "__main__":

@@ -1593,7 +1593,7 @@ ENABLE_CLASSIC="$classic_save"
 CLASSIC_PORT="${CLASSIC_PORTS_LIST[0]:-46443}"
 CLASSIC_SNI="${EXT_SNI_LIST[*]:-}"
 
-PORTS_SETUP_MODE="${PORTS_SETUP_MODE:-1}"
+PORTS_SETUP_MODE="${PORTS_SETUP_MODE:-0}"
 REALITY_FALLBACK_PORT="${REALITY_FALLBACK_PORT:-9443}"
 
 PANEL_PORT="${PANEL_PORT:-10443}"
@@ -2915,7 +2915,7 @@ CHECK_MODE=0
 GEN_CONFIG=0
 ROTATE_PATHS=0
 FORCE_DNS=${FORCE_DNS:-0}
-PORTS_SETUP_MODE="${PORTS_SETUP_MODE:-1}"
+PORTS_SETUP_MODE="${PORTS_SETUP_MODE:-0}"
 SAVED_CONFIG_FILE="server-setup.env"
 
 CLI_PRIMARY_DOMAIN=""
@@ -8456,6 +8456,7 @@ apply_express_defaults() {
     express_default ENABLE_SS2022 y
     express_default ENABLE_MTPROTO y
     express_default DECOY_MODE 1
+    express_default PORTS_SETUP_MODE 0
     express_default SSL_ENGINE_CHOICE 1
     express_default AUTO_SETUP_3XUI y
     express_default ENABLE_WARP y
@@ -15457,7 +15458,7 @@ else
                     AWG_SERVER_HOST=""
                     ENABLE_STEAL=""
                     ENABLE_CLASSIC=""
-                    PORTS_SETUP_MODE=1
+                    PORTS_SETUP_MODE=0
                     ENABLE_HY2=""
                     ENABLE_AWG_V3=""
                     ENABLE_AWG_V2=""
@@ -15987,7 +15988,7 @@ for item in res:
         STEAL_PORTS_LIST=()
         STEAL_DOMAINS=()
 
-        if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+        if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
             local port_input=""
             prompt_default "  Локальный порт Xray для REALITY (свой сайт)" "$old_steal_port" port_input || return $?
             STEAL_PORT="$port_input"
@@ -16002,8 +16003,12 @@ for item in res:
         fi
 
         local s_dom_in=""
-        prompt_default "  Домен/поддомен для маскировки REALITY (свой сайт)" "$old_steal_dom" s_dom_in || return $?
-        s_dom_in=$(echo "${s_dom_in:-$old_steal_dom}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+        if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
+            prompt_default "  Домен/поддомен для маскировки REALITY (свой сайт)" "$old_steal_dom" s_dom_in || return $?
+            s_dom_in=$(echo "${s_dom_in:-$old_steal_dom}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+        else
+            s_dom_in="$old_steal_dom"
+        fi
 
         if [[ ! "$s_dom_in" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; then
             warn "  Некорректный синтаксис домена '$s_dom_in'. Использован $old_steal_dom."
@@ -16021,7 +16026,7 @@ for item in res:
         DOMAIN_TO_PORT["$s_dom_in"]="$STEAL_PORT"
         ok "  Домен $s_dom_in привязан к инбаунд-порту $STEAL_PORT"
 
-        if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+        if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
             echo ""
             [ "${SHOW_TIPS:-y}" = "y" ] && echo -e "  ${CYAN}[i]${NC} ${DIM}Одного подключения REALITY (свой сайт) достаточно для всех ваших устройств.${NC}"
             local add_more=""
@@ -16042,27 +16047,11 @@ for item in res:
         return 0
     }
 
-    q_step_steal() {
-        prompt_yes_no "Включить VLESS REALITY (маскировка под свой сайт)?" "${ENABLE_STEAL:-y}" ENABLE_STEAL || return $?
-        if is_true "${ENABLE_STEAL:-y}"; then
-            STEAL_ENABLED=1
-            configure_steal_settings || return $?
-        else
-            STEAL_ENABLED=0
-            STEAL_PORTS_LIST=()
-            STEAL_DOMAINS=()
-            log "Сценарий VLESS REALITY (свой сайт) отключен."
-        fi
-        rebuild_all_domains
-        sync_reality_ports
-        return 0
-    }
-
     configure_classic_settings() {
         CLASSIC_PORTS_LIST=()
         EXT_SNI_LIST=()
 
-        if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+        if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
             local port_input=""
             prompt_default "  Локальный порт Xray для REALITY (внешние сервисы)" "${CLASSIC_PORT:-46443}" port_input || return $?
             CLASSIC_PORT="$port_input"
@@ -16071,93 +16060,82 @@ for item in res:
                 CLASSIC_PORT="46443"
             fi
             CLASSIC_PORTS_LIST+=("$CLASSIC_PORT")
+
+            local scanned_snis=()
+            local scanned_lats=()
+            if command -v python3 >/dev/null 2>&1; then
+                echo -e "  ${CYAN}[*] Сканирование лучших REALITY-доменов по задержке (TLS 1.3 + h2)...${NC}"
+                while read -r s_host s_lat; do
+                    [ -n "$s_host" ] || continue
+                    scanned_snis+=("$s_host")
+                    scanned_lats+=("$s_lat")
+                done < <(scan_reality_candidates)
+            fi
+
+            if [ "${#scanned_snis[@]}" -eq 0 ]; then
+                scanned_snis=("avito.ru" "www.avito.ru" "dl.google.com" "www.apple.com" "www.samsung.com" "www.nvidia.com" "www.microsoft.com")
+                scanned_lats=("fast" "fast" "fast" "fast" "fast" "fast" "fast")
+            fi
+
+            local default_classic_sni="${CLASSIC_SNI:-${scanned_snis[0]}}"
+
+            echo ""
+            echo -e "  ${BOLD}Доступные проверенные кандидаты маскировки (REALITY Targets):${NC}"
+            for idx in "${!scanned_snis[@]}"; do
+                local num=$((idx + 1))
+                local h="${scanned_snis[$idx]}"
+                local lat="${scanned_lats[$idx]}"
+                local marker="  "
+                [ "$h" = "$default_classic_sni" ] && marker="${GREEN}★ ${NC}"
+                local lat_str="${DIM}(${lat} ms)${NC}"
+                [ "$lat" = "fast" ] && lat_str=""
+                echo -e "    ${CYAN}[$num]${NC} $marker${WHITE}$h${NC} $lat_str"
+            done
+            echo -e "    ${CYAN}[C]${NC}   ${DIM}Ввести свой собственный домен вручную${NC}"
+            echo ""
+
+            while true; do
+                echo -ne "  ${WHITE}${ARROW} Выберите номер [1-${#scanned_snis[@]}], домен или Enter для [${GREEN}${default_classic_sni}${WHITE}] ${DIM}(b - назад)${NC}: "
+                local ext_input=""
+                read -r ext_input </dev/tty || read -r ext_input || true
+                ext_input=$(echo "${ext_input:-}" | tr -d '[:space:]')
+                if [[ "${ext_input,,}" == "b" || "${ext_input,,}" == "back" || "${ext_input,,}" == "назад" ]]; then
+                    return 10
+                fi
+
+                local ext_sni=""
+                if [ -z "$ext_input" ]; then
+                    ext_sni="$default_classic_sni"
+                elif [[ "$ext_input" =~ ^[0-9]+$ ]] && [ "$ext_input" -ge 1 ] && [ "$ext_input" -le "${#scanned_snis[@]}" ]; then
+                    ext_sni="${scanned_snis[$((ext_input - 1))]}"
+                elif [[ "${ext_input,,}" == "c" ]]; then
+                    prompt_default "    Введите свой домен SNI (например, dl.google.com)" "dl.google.com" ext_sni || return $?
+                    ext_sni=$(echo "${ext_sni:-}" | tr -d '[:space:]')
+                else
+                    ext_sni="$ext_input"
+                fi
+
+                if [[ ! "$ext_sni" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; then
+                    warn "    Некорректный формат SNI: '$ext_sni'. Попробуйте снова."
+                    continue
+                fi
+
+                CLASSIC_SNI="$ext_sni"
+                EXT_SNI_LIST=("$ext_sni")
+                EXT_SNI_TO_PORT["$ext_sni"]="$CLASSIC_PORT"
+                ALL_EXT_SNIS=("$ext_sni")
+                ok "  Внешний SNI $ext_sni привязан к порту $CLASSIC_PORT"
+                break
+            done
         else
             CLASSIC_PORT="${CLASSIC_PORT:-46443}"
             CLASSIC_PORTS_LIST+=("$CLASSIC_PORT")
-        fi
-
-        local scanned_snis=()
-        local scanned_lats=()
-        if command -v python3 >/dev/null 2>&1; then
-            echo -e "  ${CYAN}[*] Сканирование лучших REALITY-доменов по задержке (TLS 1.3 + h2)...${NC}"
-            while read -r s_host s_lat; do
-                [ -n "$s_host" ] || continue
-                scanned_snis+=("$s_host")
-                scanned_lats+=("$s_lat")
-            done < <(scan_reality_candidates)
-        fi
-
-        if [ "${#scanned_snis[@]}" -eq 0 ]; then
-            scanned_snis=("avito.ru" "www.avito.ru" "dl.google.com" "www.apple.com" "www.samsung.com" "www.nvidia.com" "www.microsoft.com")
-            scanned_lats=("fast" "fast" "fast" "fast" "fast" "fast" "fast")
-        fi
-
-        local default_classic_sni="${CLASSIC_SNI:-${scanned_snis[0]}}"
-
-        echo ""
-        echo -e "  ${BOLD}Доступные проверенные кандидаты маскировки (REALITY Targets):${NC}"
-        for idx in "${!scanned_snis[@]}"; do
-            local num=$((idx + 1))
-            local h="${scanned_snis[$idx]}"
-            local lat="${scanned_lats[$idx]}"
-            local marker="  "
-            [ "$h" = "$default_classic_sni" ] && marker="${GREEN}★ ${NC}"
-            local lat_str="${DIM}(${lat} ms)${NC}"
-            [ "$lat" = "fast" ] && lat_str=""
-            echo -e "    ${CYAN}[$num]${NC} $marker${WHITE}$h${NC} $lat_str"
-        done
-        echo -e "    ${CYAN}[C]${NC}   ${DIM}Ввести свой собственный домен вручную${NC}"
-        echo ""
-
-        while true; do
-            echo -ne "  ${WHITE}${ARROW} Выберите номер [1-${#scanned_snis[@]}], домен или Enter для [${GREEN}${default_classic_sni}${WHITE}] ${DIM}(b - назад)${NC}: "
-            local ext_input=""
-            read -r ext_input </dev/tty || read -r ext_input || true
-            ext_input=$(echo "${ext_input:-}" | tr -d '[:space:]')
-            if [[ "${ext_input,,}" == "b" || "${ext_input,,}" == "back" || "${ext_input,,}" == "назад" ]]; then
-                return 10
-            fi
-
-            local ext_sni=""
-            if [ -z "$ext_input" ]; then
-                ext_sni="$default_classic_sni"
-            elif [[ "$ext_input" =~ ^[0-9]+$ ]] && [ "$ext_input" -ge 1 ] && [ "$ext_input" -le "${#scanned_snis[@]}" ]; then
-                ext_sni="${scanned_snis[$((ext_input - 1))]}"
-            elif [[ "${ext_input,,}" == "c" ]]; then
-                prompt_default "    Введите свой домен SNI (например, dl.google.com)" "dl.google.com" ext_sni || return $?
-                ext_sni=$(echo "${ext_sni:-}" | tr -d '[:space:]')
-            else
-                ext_sni="$ext_input"
-            fi
-
-            if [[ ! "$ext_sni" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; then
-                warn "    Некорректный формат SNI: '$ext_sni'. Попробуйте снова."
-                continue
-            fi
-
-            CLASSIC_SNI="$ext_sni"
+            local ext_sni="${CLASSIC_SNI:-avito.ru}"
             EXT_SNI_LIST=("$ext_sni")
             EXT_SNI_TO_PORT["$ext_sni"]="$CLASSIC_PORT"
             ALL_EXT_SNIS=("$ext_sni")
             ok "  Внешний SNI $ext_sni привязан к порту $CLASSIC_PORT"
-            break
-        done
-        return 0
-    }
-
-    q_step_classic() {
-        prompt_yes_no "Включить VLESS REALITY (маскировка под популярные сервисы)?" "${ENABLE_CLASSIC:-y}" ENABLE_CLASSIC || return $?
-        if [[ "${ENABLE_CLASSIC,,}" == "y" || "${ENABLE_CLASSIC:-}" == "1" ]]; then
-            CLASSIC_ENABLED=1
-            configure_classic_settings || return $?
-        else
-            CLASSIC_ENABLED=0
-            CLASSIC_PORTS_LIST=()
-            EXT_SNI_LIST=()
-            ALL_EXT_SNIS=()
-            log "Сценарий VLESS REALITY (внешние сервисы) отключен."
         fi
-        sync_reality_ports
         return 0
     }
 
@@ -16244,6 +16222,39 @@ for item in res:
 
         prompt_multiselect "Выберите протоколы для установки" proto_keys proto_labels || return $?
 
+        echo
+        echo -e "  ${BOLD}Настройка портов подключения:${NC}"
+        echo -e "    ${GREEN}[0] Нет (по умолчанию)${NC} — безопасные рекомендованные порты для всех сервисов"
+        echo -e "    ${CYAN}[1] Да (все порты)${NC}     — ручная настройка всех внешних портов и внутренних портов/путей 3X-UI"
+        echo -e "    ${CYAN}[2] Только внешние${NC}     — ручная настройка только внешних портов (3X-UI и пути — по умолчанию)"
+        echo
+
+        local port_mode_input=""
+        while true; do
+            prompt_default "  Хотите ли вы настраивать порты подключений вручную? [0/1/2]" "${PORTS_SETUP_MODE:-0}" port_mode_input || return $?
+            port_mode_input=$(echo "${port_mode_input:-0}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+            case "$port_mode_input" in
+                0|n|no|нет)
+                    PORTS_SETUP_MODE=0
+                    ok "Выбран автоматический режим: все порты и пути назначаются по умолчанию."
+                    break
+                    ;;
+                1|y|yes|да)
+                    PORTS_SETUP_MODE=1
+                    ok "Выбран ручной режим: будет выполнен подробный опрос всех портов."
+                    break
+                    ;;
+                2|ext|external|внешние)
+                    PORTS_SETUP_MODE=2
+                    ok "Выбран режим настройки только внешних портов (внутренние порты 3X-UI останутся по умолчанию)."
+                    break
+                    ;;
+                *)
+                    warn "  Пожалуйста, введите 0 (Нет), 1 (Да) или 2 (Только внешние)."
+                    ;;
+            esac
+        done
+
         # Настройки VLESS REALITY (свой сайт)
         if is_true "$ENABLE_STEAL"; then
             STEAL_ENABLED=1
@@ -16271,7 +16282,7 @@ for item in res:
             [ -n "${HY2_DOMAIN:-}" ] || HY2_DOMAIN="$PRIMARY_DOMAIN"
             HY2_PORT_HOPPING="${HY2_PORT_HOPPING:-n}"
             HY2_PORT_HOPPING_RANGE="${HY2_PORT_HOPPING_RANGE:-20000:50000}"
-            if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+            if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
                 prompt_default "  UDP-порт для Hysteria 2" "$HY2_PORT" HY2_PORT || return $?
                 prompt_default "  Домен/поддомен для Hysteria 2" "$HY2_DOMAIN" HY2_DOMAIN || return $?
                 prompt_yes_no "  Включить Port Hopping для Hysteria 2 (UDP 20000:50000)?" "$HY2_PORT_HOPPING" HY2_PORT_HOPPING || return $?
@@ -16287,7 +16298,7 @@ for item in res:
 
         if is_true "$ENABLE_AWG_V3"; then
             [ -n "${AWG_V3_PORT:-}" ] || AWG_V3_PORT="8443"
-            if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+            if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
                 prompt_default "  UDP-порт для AmneziaWG v3.1 (3X-UI)" "$AWG_V3_PORT" AWG_V3_PORT || return $?
             fi
         else
@@ -16296,7 +16307,7 @@ for item in res:
 
         if is_true "$ENABLE_AWG_V2"; then
             [ -n "${AWG_V2_PORT:-}" ] || AWG_V2_PORT="8444"
-            if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+            if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
                 prompt_default "  UDP-порт для AmneziaWG v2.0 (3X-UI)" "$AWG_V2_PORT" AWG_V2_PORT || return $?
             fi
         else
@@ -16306,7 +16317,7 @@ for item in res:
         if is_true "$ENABLE_AWG_STANDALONE"; then
             [ -n "${AWG_STANDALONE_PORT:-}" ] || AWG_STANDALONE_PORT="8445"
             [ -n "${AWG_SERVER_HOST:-}" ] || AWG_SERVER_HOST="${PRIMARY_DOMAIN:-$WAN_IP}"
-            if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+            if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
                 prompt_default "  UDP-порт для автономного AmneziaWG" "$AWG_STANDALONE_PORT" AWG_STANDALONE_PORT || return $?
                 prompt_default "  Хост/IP для подключения клиентов AmneziaWG" "$AWG_SERVER_HOST" AWG_SERVER_HOST || return $?
             fi
@@ -16316,7 +16327,7 @@ for item in res:
 
         if is_true "$ENABLE_TUIC"; then
             [ -n "${TUIC_PORT:-}" ] || TUIC_PORT="8448"
-            if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+            if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
                 prompt_default "  UDP-порт для TUIC v5" "$TUIC_PORT" TUIC_PORT || return $?
             fi
         else
@@ -16325,7 +16336,7 @@ for item in res:
 
         if is_true "$ENABLE_SS2022"; then
             [ -n "${SS2022_PORT:-}" ] || SS2022_PORT="8388"
-            if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+            if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
                 prompt_default "  Порт для Shadowsocks 2022 (TCP/UDP)" "$SS2022_PORT" SS2022_PORT || return $?
             fi
         else
@@ -16336,7 +16347,7 @@ for item in res:
             [ -n "${MTPROTO_PORT:-}" ] || MTPROTO_PORT="8444"
             [ -n "${MTPROTO_FAKETLS_DOMAIN:-}" ] || MTPROTO_FAKETLS_DOMAIN="gateway.icloud.com"
             MTPROTO_ADTAG="${MTPROTO_ADTAG:-}"
-            if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+            if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
                 prompt_default "  TCP-порт для Telegram MTProxy" "$MTPROTO_PORT" MTPROTO_PORT || return $?
                 prompt_default "  FakeTLS домен маскировки для MTProxy" "$MTPROTO_FAKETLS_DOMAIN" MTPROTO_FAKETLS_DOMAIN || return $?
                 prompt_default "  Спонсорский promo-тег adTag (опционально, 32 hex)" "$MTPROTO_ADTAG" MTPROTO_ADTAG || return $?
@@ -16351,7 +16362,7 @@ for item in res:
             [ -n "${MASQUE_PORT:-}" ] || MASQUE_PORT="8449"
             [ -n "${MASQUE_USER:-}" ] || MASQUE_USER="client"
             [ -n "${MASQUE_PASSWORD:-}" ] || MASQUE_PASSWORD="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "masque${RANDOM}")"
-            if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+            if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
                 prompt_default "  UDP-порт для MASQUE (HTTP/3)" "$MASQUE_PORT" MASQUE_PORT || return $?
                 prompt_default "  Имя пользователя для MASQUE" "$MASQUE_USER" MASQUE_USER || return $?
             fi
@@ -16365,7 +16376,7 @@ for item in res:
             [ -n "${SHADOWTLS_PASSWORD:-}" ] || SHADOWTLS_PASSWORD="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "stls${RANDOM}")"
             ENABLE_SS2022=1
             [ -n "${SS2022_PORT:-}" ] || SS2022_PORT="8388"
-            if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+            if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
                 prompt_default "  Локальный порт для ShadowTLS" "$SHADOWTLS_PORT" SHADOWTLS_PORT || return $?
                 prompt_default "  FakeTLS SNI для ShadowTLS" "$SHADOWTLS_SNI" SHADOWTLS_SNI || return $?
             fi
@@ -16378,7 +16389,7 @@ for item in res:
             [ -n "${WSTUNNEL_PORT:-}" ] || WSTUNNEL_PORT="8080"
             ensure_wstunnel_prefix || return 1
             [ -n "${WSTUNNEL_SECRET:-}" ] || WSTUNNEL_SECRET="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "wst${RANDOM}")"
-            if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+            if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
                 prompt_default "  Локальный порт для Wstunnel daemon" "$WSTUNNEL_PORT" WSTUNNEL_PORT || return $?
                 prompt_default "  HTTP-путь location для Wstunnel" "$WSTUNNEL_PREFIX" WSTUNNEL_PREFIX || return $?
             fi
@@ -16391,7 +16402,7 @@ for item in res:
             [ -n "${ZAPRET_QNUM:-}" ] || ZAPRET_QNUM="200"
             [ -n "${ZAPRET_DESYNC:-}" ] || ZAPRET_DESYNC="split2"
             [ -n "${ZAPRET_FOOLING:-}" ] || ZAPRET_FOOLING="md5sig,badseq"
-            if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+            if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
                 prompt_default "  Очередь NFQUEUE для Zapret" "$ZAPRET_QNUM" ZAPRET_QNUM || return $?
                 prompt_default "  Режим desync для nfqws" "$ZAPRET_DESYNC" ZAPRET_DESYNC || return $?
                 prompt_default "  Режим fooling для nfqws" "$ZAPRET_FOOLING" ZAPRET_FOOLING || return $?
@@ -16405,7 +16416,7 @@ for item in res:
             [ -n "${NAIVE_USER:-}" ] || NAIVE_USER="user"
             [ -n "${NAIVE_DOMAIN:-}" ] || NAIVE_DOMAIN="naive.${PRIMARY_DOMAIN:-}"
             [ -n "${NAIVE_PASS:-}" ] || NAIVE_PASS="$(generate_urlsafe_token 16)"
-            if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+            if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
                 prompt_default "  Локальный порт для NaïveProxy (Caddy)" "$NAIVE_PORT" NAIVE_PORT || return $?
                 prompt_default "  SNI-домен для NaïveProxy" "$NAIVE_DOMAIN" NAIVE_DOMAIN || return $?
                 prompt_default "  Пользователь для NaïveProxy" "$NAIVE_USER" NAIVE_USER || return $?
@@ -16422,7 +16433,7 @@ for item in res:
             [ -n "${DNSTT_DOMAIN:-}" ] || DNSTT_DOMAIN="t.${PRIMARY_DOMAIN:-}"
             ENABLE_SS2022=1
             [ -n "${SS2022_PORT:-}" ] || SS2022_PORT="8388"
-            if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+            if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
                 prompt_default "  UDP-порт для DNSTT-сервера" "$DNSTT_PORT" DNSTT_PORT || return $?
                 prompt_default "  NS/DNS-домен зоны для DNSTT" "$DNSTT_DOMAIN" DNSTT_DOMAIN || return $?
             fi
@@ -16433,7 +16444,7 @@ for item in res:
 
         if is_true "$ENABLE_MIERU"; then
             MIERU_PORT_MODE="${MIERU_PORT_MODE:-single}"
-            if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+            if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
                 echo -e "\n  ${BOLD}Режим портов для Mieru Proxy:${NC}"
                 echo -e "    1) Одиночный порт [8450] (рекомендуется)"
                 echo -e "    2) Пул портов [8450-8455] (рандомизация соединений)"
@@ -16480,20 +16491,21 @@ for item in res:
             echo -e "  ${CYAN}💡 Что это:${NC} Внутренние порты и секретные URI-пути для веб-панели 3X-UI,"
             echo -e "     сервера подписок для клиентов и инбаунда VLESS xHTTP (HTTP/2 Stream-One)."
             echo
-            echo -e "  ${BOLD}Выберите вариант настройки:${NC}"
-            echo -e "    ${GREEN}[1] Рекомендованные безопасные настройки (Enter / Быстро)${NC}"
-            echo -e "        ${DIM}• Порты: Панель :10443, Подписки :55443, xHTTP :50443${NC}"
-            echo -e "        ${DIM}• Пути: Случайные криптостойкие URI (защита от сетевых сканеров и ботов)${NC}"
-            echo -e "        ${DIM}• Логин: admin, Пароль: случайный стойкий хэш${NC}"
-            echo -e "    ${CYAN}[2] Ручная экспертная настройка (задать все порты, логин, пароль и пути вручную)${NC}"
-            echo
-        else
-            echo -e "  ${BOLD}Вариант настройки:${NC} [1] Рекомендованные порты/пути (Enter)  [2] Ручная экспертная настройка"
         fi
 
-        prompt_default "  Ваш выбор (1 или 2)" "${PORTS_SETUP_MODE:-1}" PORTS_SETUP_MODE || return $?
+        local ask_internal_ports=0
+        if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
+            ask_internal_ports=1
+        elif [ "${EDITING_FROM_REVIEW:-0}" -eq 1 ]; then
+            echo -e "  ${BOLD}Текущий режим внутренних портов: Рекомендованные безопасные${NC}"
+            local customize_internal="n"
+            prompt_yes_no "  Настроить внутренние порты 3X-UI и секретные пути вручную?" "n" customize_internal || return $?
+            if is_true "$customize_internal"; then
+                ask_internal_ports=1
+            fi
+        fi
 
-        if [ "$PORTS_SETUP_MODE" = "2" ]; then
+        if [ "$ask_internal_ports" -eq 1 ]; then
             prompt_default "  Внутренний порт панели 3X-UI" "${PANEL_PORT:-10443}" PANEL_PORT || return $?
             prompt_default "  Логин администратора 3X-UI" "${ADMIN_USERNAME:-admin}" ADMIN_USERNAME || return $?
             local def_pass="${ADMIN_PASSWORD:-$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 12 || echo "Admin1234567")}"
@@ -16557,7 +16569,6 @@ for item in res:
         prompt_yes_no "Установить и настроить AmneziaWG v3.1 (инбаунд 3X-UI)?" "${ENABLE_AWG_V3:-y}" ENABLE_AWG_V3 || return $?
         if is_true "${ENABLE_AWG_V3:-y}"; then
             ENABLE_AWG_V3=1
-
             prompt_default "  Внешний UDP-порт для AmneziaWG v3.1 (3X-UI)" "${AWG_V3_PORT:-8443}" AWG_V3_PORT || return $?
         else
             ENABLE_AWG_V3=0
@@ -16570,7 +16581,6 @@ for item in res:
         prompt_yes_no "Установить и настроить AmneziaWG v2.0 (для роутеров Keenetic / OpenWrt, инбаунд 3X-UI)?" "${ENABLE_AWG_V2:-n}" ENABLE_AWG_V2 || return $?
         if is_true "${ENABLE_AWG_V2:-y}"; then
             ENABLE_AWG_V2=1
-
             prompt_default "  Внешний UDP-порт для AmneziaWG v2.0 (3X-UI)" "${AWG_V2_PORT:-8444}" AWG_V2_PORT || return $?
         else
             ENABLE_AWG_V2=0
@@ -16583,7 +16593,6 @@ for item in res:
         prompt_yes_no "Установить автономный сервер AmneziaWG (awg-mgr / системная служба на хосте)?" "${ENABLE_AWG_STANDALONE:-n}" ENABLE_AWG_STANDALONE || return $?
         if is_true "${ENABLE_AWG_STANDALONE:-y}"; then
             ENABLE_AWG_STANDALONE=1
-
             prompt_default "  Внешний UDP-порт для автономного сервера AmneziaWG" "${AWG_STANDALONE_PORT:-8445}" AWG_STANDALONE_PORT || return $?
             prompt_default "  Домен или IP-адрес для подключения клиентов (Endpoint)" "${AWG_SERVER_HOST:-${PRIMARY_DOMAIN:-$WAN_IP}}" AWG_SERVER_HOST || return $?
         else
@@ -16781,7 +16790,7 @@ for item in res:
                 if [[ -z "$SERVER_PREFIX" || "${SERVER_PREFIX,,}" =~ ^(-|none|off|no)$ ]]; then
                     def_token_name="Master-Node-Cluster"
                 fi
-                if [[ "${PORTS_SETUP_MODE:-1}" == "2" ]]; then
+                if [[ "${PORTS_SETUP_MODE:-0}" == "1" ]] && declare -F prompt_default >/dev/null; then
                     prompt_default "  Имя API-токена ноды" "${NODE_TOKEN_NAME:-$def_token_name}" NODE_TOKEN_NAME || return $?
                 else
                     NODE_TOKEN_NAME="${NODE_TOKEN_NAME:-$def_token_name}"
@@ -16970,7 +16979,10 @@ for item in res:
         echo
         echo -e "  ${CYAN}[1]${NC} ${BOLD}Основной домен:${NC}       ${WHITE}$PRIMARY_DOMAIN${NC} (Префикс клиентов: ${GREEN}$SERVER_PREFIX${NC}, www: ${ADD_WWW})"
 
-        echo -e "  ${CYAN}[2]${NC} ${BOLD}Протоколы VPN/Прокси:${NC}"
+        local port_mode_str="Автоматический (по умолчанию)"
+        [ "${PORTS_SETUP_MODE:-0}" = "1" ] && port_mode_str="Ручной (все порты)"
+        [ "${PORTS_SETUP_MODE:-0}" = "2" ] && port_mode_str="Только внешние порты"
+        echo -e "  ${CYAN}[2]${NC} ${BOLD}Протоколы VPN/Прокси:${NC} (Режим портов: ${WHITE}${port_mode_str}${NC})"
         local steal_status="${RED}Отключен${NC}"
         if is_true "${STEAL_ENABLED:-0}"; then
             steal_status="${GREEN}Включен${NC} (${WHITE}${STEAL_DOMAINS[*]}${NC} -> 127.0.0.1:${STEAL_PORTS_LIST[*]})"

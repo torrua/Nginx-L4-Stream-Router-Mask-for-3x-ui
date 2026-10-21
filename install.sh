@@ -15994,7 +15994,7 @@ for item in res:
         STEAL_PORTS_LIST=()
         STEAL_DOMAINS=()
 
-        if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
+        if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
             local port_input=""
             prompt_default "  Локальный порт Xray для REALITY (свой сайт)" "$old_steal_port" port_input || return $?
             STEAL_PORT="$port_input"
@@ -16009,7 +16009,7 @@ for item in res:
         fi
 
         local s_dom_in=""
-        if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
+        if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
             prompt_default "  Домен/поддомен для маскировки REALITY (свой сайт)" "$old_steal_dom" s_dom_in || return $?
             s_dom_in=$(echo "${s_dom_in:-$old_steal_dom}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
         else
@@ -16032,7 +16032,7 @@ for item in res:
         DOMAIN_TO_PORT["$s_dom_in"]="$STEAL_PORT"
         ok "  Домен $s_dom_in привязан к инбаунд-порту $STEAL_PORT"
 
-        if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
+        if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
             echo ""
             [ "${SHOW_TIPS:-y}" = "y" ] && echo -e "  ${CYAN}[i]${NC} ${DIM}Одного подключения REALITY (свой сайт) достаточно для всех ваших устройств.${NC}"
             local add_more=""
@@ -16057,7 +16057,7 @@ for item in res:
         CLASSIC_PORTS_LIST=()
         EXT_SNI_LIST=()
 
-        if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
+        if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
             local port_input=""
             prompt_default "  Локальный порт Xray для REALITY (внешние сервисы)" "${CLASSIC_PORT:-46443}" port_input || return $?
             CLASSIC_PORT="$port_input"
@@ -16153,7 +16153,7 @@ for item in res:
             echo -e "     • ${GREEN}VLESS REALITY (свой сайт)${NC}: маскировка под собственный поддомен (напр. cdn.$PRIMARY_DOMAIN)."
             echo -e "     • ${GREEN}VLESS REALITY (внешний)${NC}: маскировка под популярные сервисы (Apple, Microsoft, dl.google.com)."
             echo -e "     • ${GREEN}Hysteria 2${NC}: сверхбыстрый QUIC/UDP протокол с BBR Brutal для стриминга и мобильного интернета."
-            echo -e "     • ${GREEN}AmneziaWG v3.1${NC}: защита от блокировок ТСПУ/DPI с обфускацией пакетов (внутри 3X-UI)."
+            echo -e "     • ${GREEN}AmneziaWG v3.1${NC}: защита от блокировок ТСПУ/DPI с обфускацией пакетов (Junk packets, S1-S4, H1-H4)."
             echo -e "     • ${GREEN}AmneziaWG v2.0${NC}: совместимость со старыми роутерами (Keenetic, OpenWrt)."
             echo -e "     • ${GREEN}TUIC v5${NC}: 0-RTT рукопожатие на чистом QUIC для мгновенного отклика."
             echo -e "     • ${GREEN}Shadowsocks 2022${NC}: устойчивый к зондированию шифрованный протокол."
@@ -16169,7 +16169,7 @@ for item in res:
             echo
         fi
 
-        # Инбаунды панели 3X-UI: основные включены по умолчанию, v2.0 для старых роутеров отключен
+        # Базовые протоколы: основные включены по умолчанию, v2.0 для старых роутеров отключен
         ENABLE_STEAL="${ENABLE_STEAL:-y}"
         ENABLE_CLASSIC="${ENABLE_CLASSIC:-y}"
         ENABLE_HY2="${ENABLE_HY2:-y}"
@@ -16179,7 +16179,7 @@ for item in res:
         ENABLE_SS2022="${ENABLE_SS2022:-y}"
         ENABLE_MTPROTO="${ENABLE_MTPROTO:-y}"
 
-        # Дополнительные автономные протоколы по умолчанию отключены (пользователь отмечает при необходимости)
+        # Дополнительные протоколы по умолчанию отключены (пользователь отмечает при необходимости)
         ENABLE_AWG_STANDALONE="${ENABLE_AWG_STANDALONE:-n}"
         ENABLE_MASQUE="${ENABLE_MASQUE:-n}"
         ENABLE_SHADOWTLS="${ENABLE_SHADOWTLS:-n}"
@@ -16211,28 +16211,28 @@ for item in res:
             "VLESS REALITY (маскировка под свой сайт, :${STEAL_PORT:-45443})"
             "VLESS REALITY (маскировка под популярные сервисы, :${CLASSIC_PORT:-46443})"
             "Hysteria 2 (UDP/QUIC Brutal CC, :${HY2_PORT:-443})"
-            "AmneziaWG v3.1 (инбаунд 3X-UI, :${AWG_V3_PORT:-8443}/udp)"
-            "AmneziaWG v2.0 (инбаунд 3X-UI для роутеров, :${AWG_V2_PORT:-8444}/udp)"
-            "TUIC v5 (инбаунд 3X-UI QUIC 0-RTT, :${TUIC_PORT:-8448}/udp)"
-            "Shadowsocks 2022 (инбаунд 3X-UI TCP/UDP, :${SS2022_PORT:-8388})"
-            "Telegram MTProxy (инбаунд 3X-UI FakeTLS, :${MTPROTO_PORT:-8444}/tcp)"
-            "Автономный сервер AmneziaWG (awg-quick@awg0 на хосте, :${AWG_STANDALONE_PORT:-8445}/udp)"
-            "MASQUE (RFC 9484 / RFC 9298 via Sing-box, :${MASQUE_PORT:-8449}/udp)"
-            "ShadowTLS v4 + SS-2022 (Nginx Stream :443 SNI ${SHADOWTLS_SNI:-gateway.icloud.com})"
-            "Wstunnel over Nginx L7 (HTTPS WebSocket :443 -> :${WSTUNNEL_PORT:-8080})"
+            "AmneziaWG v3.1 (продвинутая обфускация WireGuard, :${AWG_V3_PORT:-8443}/udp)"
+            "AmneziaWG v2.0 (совместимость с роутерами Keenetic / OpenWrt, :${AWG_V2_PORT:-8444}/udp)"
+            "TUIC v5 (высокоскоростной QUIC 0-RTT, :${TUIC_PORT:-8448}/udp)"
+            "Shadowsocks 2022 (современный шифрованный протокол TCP/UDP, :${SS2022_PORT:-8388})"
+            "Telegram MTProxy (прямой доступ для клиентов Telegram с FakeTLS, :${MTPROTO_PORT:-8444}/tcp)"
+            "Автономный сервер AmneziaWG (системная служба с CLI awg-mgr, :${AWG_STANDALONE_PORT:-8445}/udp)"
+            "MASQUE (RFC 9484 / HTTP/3 IP-проксирование, :${MASQUE_PORT:-8449}/udp)"
+            "ShadowTLS v4 + SS-2022 (маскировка под доверенный TLS SNI)"
+            "Wstunnel over Nginx L7 (пробитие строгих файрволов через WebSocket :443)"
             "Server-Side Zapret (DPI Desync nfqws connbytes 1:6 NFQUEUE 200)"
-            "NaïveProxy (Chromium HTTPS Stack via Caddy, Nginx Stream :443 -> :${NAIVE_PORT:-8446})"
-            "DNSTT DoH Tunnel (DNS Tunneling via dnstt-server, :${DNSTT_PORT:-53053}/udp -> SS-2022)"
-            "Mieru Proxy (XChaCha20-Poly1305, без TLS, защита от активного зондирования, :${MIERU_PORT:-8450})"
+            "NaïveProxy (Chromium HTTPS сетевой стек против цензуры)"
+            "DNSTT DoH Tunnel (DNS-туннелирование при блокировке IP/SNI)"
+            "Mieru Proxy (XChaCha20-Poly1305, без TLS, защита от зондирования, :${MIERU_PORT:-8450})"
         )
 
         prompt_multiselect "Выберите протоколы для установки" proto_keys proto_labels || return $?
 
         echo
         echo -e "  ${BOLD}Настройка сетевых портов подключения:${NC}"
-        echo -e "    ${GREEN}[0] Нет (по умолчанию)${NC} — безопасные рекомендованные порты для всех сервисов"
-        echo -e "    ${CYAN}[1] Да (все порты)${NC}     — ручная настройка внешних портов протоколов и внутренних портов 3X-UI"
-        echo -e "    ${CYAN}[2] Только внешние${NC}     — ручная настройка только внешних портов протоколов (3X-UI — по умолчанию)"
+        echo -e "    ${GREEN}[0] Нет (по умолчанию)${NC} — безопасные рекомендованные порты для всех протоколов и служб"
+        echo -e "    ${CYAN}[1] Да (все порты)${NC}     — ручная настройка всех портов (внешних клиентских и внутренних локальных)"
+        echo -e "    ${CYAN}[2] Только внешние${NC}     — ручная настройка только внешних клиентских портов (все внутренние — по умолчанию)"
         echo
 
         local port_mode_input=""
@@ -16247,16 +16247,16 @@ for item in res:
                     ;;
                 1|y|yes|да)
                     PORTS_SETUP_MODE=1
-                    ok "Выбран ручной режим: будет выполнен подробный опрос всех портов (внешних и внутренних)."
+                    ok "Выбран ручной режим: подробная настройка всех портов (внешних и внутренних)."
                     break
                     ;;
                 2|ext|external|внешние)
                     PORTS_SETUP_MODE=2
-                    ok "Выбран режим настройки только внешних портов (внутренние порты 3X-UI останутся по умолчанию)."
+                    ok "Выбран режим настройки только внешних портов (все внутренние порты остаются по умолчанию)."
                     break
                     ;;
                 *)
-                    warn "  Пожалуйста, введите 0 (Нет), 1 (Да) или 2 (Только внешние)."
+                    warn "  Пожалуйста, введите 0 (Нет), 1 (Все порты) или 2 (Только внешние)."
                     ;;
             esac
         done
@@ -16305,7 +16305,7 @@ for item in res:
         if is_true "$ENABLE_AWG_V3"; then
             [ -n "${AWG_V3_PORT:-}" ] || AWG_V3_PORT="8443"
             if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
-                prompt_default "  UDP-порт для AmneziaWG v3.1 (3X-UI)" "$AWG_V3_PORT" AWG_V3_PORT || return $?
+                prompt_default "  UDP-порт для AmneziaWG v3.1" "$AWG_V3_PORT" AWG_V3_PORT || return $?
             fi
         else
             AWG_V3_PORT=""
@@ -16314,7 +16314,7 @@ for item in res:
         if is_true "$ENABLE_AWG_V2"; then
             [ -n "${AWG_V2_PORT:-}" ] || AWG_V2_PORT="8444"
             if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
-                prompt_default "  UDP-порт для AmneziaWG v2.0 (3X-UI)" "$AWG_V2_PORT" AWG_V2_PORT || return $?
+                prompt_default "  UDP-порт для AmneziaWG v2.0" "$AWG_V2_PORT" AWG_V2_PORT || return $?
             fi
         else
             AWG_V2_PORT=""
@@ -16382,7 +16382,7 @@ for item in res:
             [ -n "${SHADOWTLS_PASSWORD:-}" ] || SHADOWTLS_PASSWORD="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "stls${RANDOM}")"
             ENABLE_SS2022=1
             [ -n "${SS2022_PORT:-}" ] || SS2022_PORT="8388"
-            if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
+            if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
                 prompt_default "  Локальный порт для ShadowTLS" "$SHADOWTLS_PORT" SHADOWTLS_PORT || return $?
                 prompt_default "  FakeTLS SNI для ShadowTLS" "$SHADOWTLS_SNI" SHADOWTLS_SNI || return $?
             fi
@@ -16395,7 +16395,7 @@ for item in res:
             [ -n "${WSTUNNEL_PORT:-}" ] || WSTUNNEL_PORT="8080"
             ensure_wstunnel_prefix || return 1
             [ -n "${WSTUNNEL_SECRET:-}" ] || WSTUNNEL_SECRET="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "wst${RANDOM}")"
-            if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
+            if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
                 prompt_default "  Локальный порт для Wstunnel daemon" "$WSTUNNEL_PORT" WSTUNNEL_PORT || return $?
                 prompt_default "  HTTP-путь location для Wstunnel" "$WSTUNNEL_PREFIX" WSTUNNEL_PREFIX || return $?
             fi
@@ -16408,7 +16408,7 @@ for item in res:
             [ -n "${ZAPRET_QNUM:-}" ] || ZAPRET_QNUM="200"
             [ -n "${ZAPRET_DESYNC:-}" ] || ZAPRET_DESYNC="split2"
             [ -n "${ZAPRET_FOOLING:-}" ] || ZAPRET_FOOLING="md5sig,badseq"
-            if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
+            if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
                 prompt_default "  Очередь NFQUEUE для Zapret" "$ZAPRET_QNUM" ZAPRET_QNUM || return $?
                 prompt_default "  Режим desync для nfqws" "$ZAPRET_DESYNC" ZAPRET_DESYNC || return $?
                 prompt_default "  Режим fooling для nfqws" "$ZAPRET_FOOLING" ZAPRET_FOOLING || return $?
@@ -16422,7 +16422,7 @@ for item in res:
             [ -n "${NAIVE_USER:-}" ] || NAIVE_USER="user"
             [ -n "${NAIVE_DOMAIN:-}" ] || NAIVE_DOMAIN="naive.${PRIMARY_DOMAIN:-}"
             [ -n "${NAIVE_PASS:-}" ] || NAIVE_PASS="$(generate_urlsafe_token 16)"
-            if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
+            if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
                 prompt_default "  Локальный порт для NaïveProxy (Caddy)" "$NAIVE_PORT" NAIVE_PORT || return $?
                 prompt_default "  SNI-домен для NaïveProxy" "$NAIVE_DOMAIN" NAIVE_DOMAIN || return $?
                 prompt_default "  Пользователь для NaïveProxy" "$NAIVE_USER" NAIVE_USER || return $?
@@ -16492,28 +16492,28 @@ for item in res:
 
     q_step_ports() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 3/11: Настройка внутренних портов и секретных путей (3X-UI и VLESS xHTTP) ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 3/11: Настройка внутренних портов и секретных путей (веб-панель и VLESS xHTTP) ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
-            echo -e "  ${CYAN}💡 Что это:${NC} Внутренние порты и секретные URI-пути для веб-панели 3X-UI,"
+            echo -e "  ${CYAN}💡 Что это:${NC} Внутренние локальные порты и секретные URI-пути для веб-панели управления,"
             echo -e "     сервера подписок для клиентов и инбаунда VLESS xHTTP (HTTP/2 Stream-One)."
             echo
         fi
 
-        # --- 1. Внутренние сетевые порты 3X-UI ---
+        # --- 1. Внутренние сетевые порты служб ---
         local ask_internal_ports=0
         if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
             ask_internal_ports=1
         elif [ "${EDITING_FROM_REVIEW:-0}" -eq 1 ]; then
             local change_ports="n"
-            prompt_yes_no "  Настроить внутренние порты 3X-UI (:10443, :55443, :50443) вручную?" "n" change_ports || return $?
+            prompt_yes_no "  Настроить внутренние порты служб (:10443, :55443, :50443) вручную?" "n" change_ports || return $?
             if is_true "$change_ports"; then
                 ask_internal_ports=1
             fi
         fi
 
         if [ "$ask_internal_ports" -eq 1 ]; then
-            prompt_default "  Внутренний порт панели 3X-UI" "${PANEL_PORT:-10443}" PANEL_PORT || return $?
-            prompt_default "  Внутренний порт сервера подписок 3X-UI" "${SUB_PORT:-55443}" SUB_PORT || return $?
+            prompt_default "  Внутренний порт веб-панели управления" "${PANEL_PORT:-10443}" PANEL_PORT || return $?
+            prompt_default "  Внутренний порт сервера подписок" "${SUB_PORT:-55443}" SUB_PORT || return $?
             prompt_default "  Внутренний порт инбаунда VLESS xHTTP" "${XHTTP_STREAM_PORT:-50443}" XHTTP_STREAM_PORT || return $?
         else
             PANEL_PORT="${PANEL_PORT:-10443}"
@@ -16608,10 +16608,10 @@ for item in res:
     }
 
     q_step_awg_v3() {
-        prompt_yes_no "Установить и настроить AmneziaWG v3.1 (инбаунд 3X-UI)?" "${ENABLE_AWG_V3:-y}" ENABLE_AWG_V3 || return $?
+        prompt_yes_no "Установить и настроить AmneziaWG v3.1?" "${ENABLE_AWG_V3:-y}" ENABLE_AWG_V3 || return $?
         if is_true "${ENABLE_AWG_V3:-y}"; then
             ENABLE_AWG_V3=1
-            prompt_default "  Внешний UDP-порт для AmneziaWG v3.1 (3X-UI)" "${AWG_V3_PORT:-8443}" AWG_V3_PORT || return $?
+            prompt_default "  Внешний UDP-порт для AmneziaWG v3.1" "${AWG_V3_PORT:-8443}" AWG_V3_PORT || return $?
         else
             ENABLE_AWG_V3=0
             AWG_V3_PORT=""
@@ -16620,10 +16620,10 @@ for item in res:
     }
 
     q_step_awg_v2() {
-        prompt_yes_no "Установить и настроить AmneziaWG v2.0 (для роутеров Keenetic / OpenWrt, инбаунд 3X-UI)?" "${ENABLE_AWG_V2:-n}" ENABLE_AWG_V2 || return $?
+        prompt_yes_no "Установить и настроить AmneziaWG v2.0 (для роутеров Keenetic / OpenWrt)?" "${ENABLE_AWG_V2:-n}" ENABLE_AWG_V2 || return $?
         if is_true "${ENABLE_AWG_V2:-y}"; then
             ENABLE_AWG_V2=1
-            prompt_default "  Внешний UDP-порт для AmneziaWG v2.0 (3X-UI)" "${AWG_V2_PORT:-8444}" AWG_V2_PORT || return $?
+            prompt_default "  Внешний UDP-порт для AmneziaWG v2.0" "${AWG_V2_PORT:-8444}" AWG_V2_PORT || return $?
         else
             ENABLE_AWG_V2=0
             AWG_V2_PORT=""
@@ -17047,11 +17047,11 @@ for item in res:
 
         local awg3_status="${RED}Отключен${NC}"
         is_true "${ENABLE_AWG_V3:-0}" && awg3_status="${GREEN}Включен${NC} (:${AWG_V3_PORT}/udp)"
-        echo -e "      ${DIM}• AmneziaWG v3.1 (3X-UI):${NC} $awg3_status"
+        echo -e "      ${DIM}• AmneziaWG v3.1:${NC}        $awg3_status"
 
         local awg2_status="${RED}Отключен${NC}"
         is_true "${ENABLE_AWG_V2:-0}" && awg2_status="${GREEN}Включен${NC} (:${AWG_V2_PORT}/udp)"
-        echo -e "      ${DIM}• AmneziaWG v2.0 (3X-UI):${NC} $awg2_status"
+        echo -e "      ${DIM}• AmneziaWG v2.0:${NC}        $awg2_status"
 
         local awg_sa_status="${RED}Отключен${NC}"
         if is_true "${ENABLE_AWG_STANDALONE:-0}"; then

@@ -970,7 +970,7 @@ class TestExtraProtocolsInbounds(unittest.TestCase):
         self.assertIn("q_step_awg_v2", wizard_content)
         self.assertIn("q_step_awg_standalone", wizard_content)
         self.assertIn("TOTAL_STEPS=11", wizard_content)
-        self.assertIn("AmneziaWG v3.1 (инбаунд 3X-UI", wizard_content)
+        self.assertIn("AmneziaWG v3.1", wizard_content)
         self.assertIn("Автономный сервер AmneziaWG", wizard_content)
 
         env_path = Path("src/system/env.sh")
@@ -1706,6 +1706,8 @@ echo "AGH_CLIENT_ID=$AGH_CLIENT_ID"
         self.assertIn("[0] Нет (по умолчанию)", wizard_sh)
         self.assertIn("[1] Да (все порты)", wizard_sh)
         self.assertIn("[2] Только внешние", wizard_sh)
+        self.assertIn("ручная настройка всех портов (внешних клиентских и внутренних локальных)", wizard_sh)
+        self.assertIn("ручная настройка только внешних клиентских портов (все внутренние — по умолчанию)", wizard_sh)
 
         # In env.sh and prompts.sh, default is 0
         env_sh = (ROOT / "src/system/env.sh").read_text(encoding="utf-8")

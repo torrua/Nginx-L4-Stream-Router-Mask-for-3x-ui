@@ -969,7 +969,7 @@ class TestExtraProtocolsInbounds(unittest.TestCase):
         self.assertIn("q_step_awg_v3", wizard_content)
         self.assertIn("q_step_awg_v2", wizard_content)
         self.assertIn("q_step_awg_standalone", wizard_content)
-        self.assertIn("TOTAL_STEPS=13", wizard_content)
+        self.assertIn("TOTAL_STEPS=11", wizard_content)
         self.assertIn("AmneziaWG v3.1 (инбаунд 3X-UI", wizard_content)
         self.assertIn("Автономный сервер AmneziaWG", wizard_content)
 
@@ -993,7 +993,7 @@ class TestExtraProtocolsInbounds(unittest.TestCase):
         self.assertIn("q_step_security", wizard_content)
         self.assertIn("ENABLE_HOST_SECURITY", wizard_content)
         self.assertIn("ENABLE_FAIL2BAN", wizard_content)
-        self.assertIn("Шаг 12/13: Безопасность сервера", wizard_content)
+        self.assertIn("Шаг 10/11: Безопасность сервера", wizard_content)
 
         env_path = Path("src/system/env.sh")
         env_content = env_path.read_text(encoding="utf-8")

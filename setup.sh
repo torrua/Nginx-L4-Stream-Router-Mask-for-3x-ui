@@ -15934,7 +15934,7 @@ for item in res:
 
     q_step_domain() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 1/13: Конфигурация главного сайта (домена) ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 1/11: Конфигурация главного сайта (домена) ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Ваш основной домен (например, ${BOLD}yourdomain.online${NC})."
             echo -e "     На нем будет работать веб-маска (декой-сайт), панель 3X-UI,"
@@ -15980,25 +15980,13 @@ for item in res:
         return 0
     }
 
-    q_step_steal() {
-        echo
-        echo -e "${YELLOW}━━━ Шаг 2/13: Настройка VLESS REALITY (маскировка под свой сайт) ━━━${NC}"
-        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
-            echo -e "  ${CYAN}💡 Что это:${NC} Режим REALITY, маскирующийся под ${BOLD}собственный поддомен${NC} (напр. cdn.$PRIMARY_DOMAIN)."
-            echo -e "     ${GREEN}Преимущество:${NC} Трафик выглядит как обычный просмотр вашего сайта."
-            echo -e "     Защищает от блокировок сторонних адресов маскировки со стороны систем фильтрации."
-            echo
-        fi
+    configure_steal_settings() {
+        local old_steal_dom="${STEAL_DOMAINS[0]:-${STEAL_DOMAINS_STR:-cdn.$PRIMARY_DOMAIN}}"
+        local old_steal_port="${STEAL_PORTS_LIST[0]:-${STEAL_PORT:-45443}}"
+        STEAL_PORTS_LIST=()
+        STEAL_DOMAINS=()
 
-        prompt_yes_no "Включить VLESS REALITY (маскировка под свой сайт)?" "${ENABLE_STEAL:-y}" ENABLE_STEAL || return $?
-
-        if is_true "${ENABLE_STEAL:-y}"; then
-            STEAL_ENABLED=1
-            local old_steal_dom="${STEAL_DOMAINS[0]:-${STEAL_DOMAINS_STR:-cdn.$PRIMARY_DOMAIN}}"
-            local old_steal_port="${STEAL_PORTS_LIST[0]:-${STEAL_PORT:-45443}}"
-            STEAL_PORTS_LIST=()
-            STEAL_DOMAINS=()
-
+        if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
             local port_input=""
             prompt_default "  Локальный порт Xray для REALITY (свой сайт)" "$old_steal_port" port_input || return $?
             STEAL_PORT="$port_input"
@@ -16007,27 +15995,32 @@ for item in res:
                 STEAL_PORT="45443"
             fi
             STEAL_PORTS_LIST+=("$STEAL_PORT")
+        else
+            STEAL_PORT="${STEAL_PORT:-45443}"
+            STEAL_PORTS_LIST+=("$STEAL_PORT")
+        fi
 
-            local s_dom_in=""
-            prompt_default "  Домен/поддомен для маскировки REALITY на порту $STEAL_PORT" "$old_steal_dom" s_dom_in || return $?
-            s_dom_in=$(echo "${s_dom_in:-$old_steal_dom}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+        local s_dom_in=""
+        prompt_default "  Домен/поддомен для маскировки REALITY (свой сайт)" "$old_steal_dom" s_dom_in || return $?
+        s_dom_in=$(echo "${s_dom_in:-$old_steal_dom}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
 
-            if [[ ! "$s_dom_in" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; then
-                warn "  Некорректный синтаксис домена '$s_dom_in'. Использован $old_steal_dom."
-                s_dom_in="$old_steal_dom"
-            fi
+        if [[ ! "$s_dom_in" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; then
+            warn "  Некорректный синтаксис домена '$s_dom_in'. Использован $old_steal_dom."
+            s_dom_in="$old_steal_dom"
+        fi
 
-            if [ "$s_dom_in" = "$PRIMARY_DOMAIN" ]; then
-                warn "  Коллизия: '$s_dom_in' совпадает с главным доменом (PRIMARY_DOMAIN)!"
-                warn "  Главный домен зарезервирован за Nginx L7 (панель, веб-маска, подписки, xHTTP)."
-                warn "  Для REALITY со своим сайтом укажите поддомен (например, cdn.$PRIMARY_DOMAIN)."
-                s_dom_in="$old_steal_dom"
-            fi
+        if [ "$s_dom_in" = "$PRIMARY_DOMAIN" ]; then
+            warn "  Коллизия: '$s_dom_in' совпадает с главным доменом (PRIMARY_DOMAIN)!"
+            warn "  Главный домен зарезервирован за Nginx L7 (панель, веб-маска, подписки, xHTTP)."
+            warn "  Для REALITY со своим сайтом укажите поддомен (например, cdn.$PRIMARY_DOMAIN)."
+            s_dom_in="$old_steal_dom"
+        fi
 
-            STEAL_DOMAINS=("$s_dom_in")
-            DOMAIN_TO_PORT["$s_dom_in"]="$STEAL_PORT"
-            ok "  Домен $s_dom_in привязан к инбаунд-порту $STEAL_PORT"
+        STEAL_DOMAINS=("$s_dom_in")
+        DOMAIN_TO_PORT["$s_dom_in"]="$STEAL_PORT"
+        ok "  Домен $s_dom_in привязан к инбаунд-порту $STEAL_PORT"
 
+        if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
             echo ""
             [ "${SHOW_TIPS:-y}" = "y" ] && echo -e "  ${CYAN}[i]${NC} ${DIM}Одного подключения REALITY (свой сайт) достаточно для всех ваших устройств.${NC}"
             local add_more=""
@@ -16044,35 +16037,31 @@ for item in res:
                     ok "    Второй домен $extra_dom привязан к порту $extra_port"
                 fi
             fi
+        fi
+        return 0
+    }
+
+    q_step_steal() {
+        prompt_yes_no "Включить VLESS REALITY (маскировка под свой сайт)?" "${ENABLE_STEAL:-y}" ENABLE_STEAL || return $?
+        if is_true "${ENABLE_STEAL:-y}"; then
+            STEAL_ENABLED=1
+            configure_steal_settings || return $?
         else
             STEAL_ENABLED=0
             STEAL_PORTS_LIST=()
             STEAL_DOMAINS=()
             log "Сценарий VLESS REALITY (свой сайт) отключен."
         fi
-
         rebuild_all_domains
         sync_reality_ports
         return 0
     }
 
-    q_step_classic() {
-        echo
-        echo -e "${YELLOW}━━━ Шаг 3/13: Настройка VLESS REALITY (маскировка под популярные сервисы) ━━━${NC}"
-        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
-            echo -e "  ${CYAN}💡 Что это:${NC} Режим REALITY, маскирующийся под ${BOLD}известные сервисы${NC} (Apple, Microsoft, Samsung)."
-            echo -e "     ${GREEN}Преимущество:${NC} Даже если ваш собственный домен окажется недоступен, это подключение продолжит"
-            echo -e "     работать, используя валидные TLS 1.3 сертификаты внешних ресурсов."
-            echo
-        fi
+    configure_classic_settings() {
+        CLASSIC_PORTS_LIST=()
+        EXT_SNI_LIST=()
 
-        prompt_yes_no "Включить VLESS REALITY (маскировка под популярные сервисы)?" "${ENABLE_CLASSIC:-y}" ENABLE_CLASSIC || return $?
-
-        if [[ "${ENABLE_CLASSIC,,}" == "y" || "${ENABLE_CLASSIC:-}" == "1" ]]; then
-            CLASSIC_ENABLED=1
-            CLASSIC_PORTS_LIST=()
-            EXT_SNI_LIST=()
-
+        if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
             local port_input=""
             prompt_default "  Локальный порт Xray для REALITY (внешние сервисы)" "${CLASSIC_PORT:-46443}" port_input || return $?
             CLASSIC_PORT="$port_input"
@@ -16081,73 +16070,85 @@ for item in res:
                 CLASSIC_PORT="46443"
             fi
             CLASSIC_PORTS_LIST+=("$CLASSIC_PORT")
+        else
+            CLASSIC_PORT="${CLASSIC_PORT:-46443}"
+            CLASSIC_PORTS_LIST+=("$CLASSIC_PORT")
+        fi
 
-            local scanned_snis=()
-            local scanned_lats=()
-            if command -v python3 >/dev/null 2>&1; then
-                echo -e "  ${CYAN}[*] Сканирование лучших REALITY-доменов по задержке (TLS 1.3 + h2)...${NC}"
-                while read -r s_host s_lat; do
-                    [ -n "$s_host" ] || continue
-                    scanned_snis+=("$s_host")
-                    scanned_lats+=("$s_lat")
-                done < <(scan_reality_candidates)
+        local scanned_snis=()
+        local scanned_lats=()
+        if command -v python3 >/dev/null 2>&1; then
+            echo -e "  ${CYAN}[*] Сканирование лучших REALITY-доменов по задержке (TLS 1.3 + h2)...${NC}"
+            while read -r s_host s_lat; do
+                [ -n "$s_host" ] || continue
+                scanned_snis+=("$s_host")
+                scanned_lats+=("$s_lat")
+            done < <(scan_reality_candidates)
+        fi
+
+        if [ "${#scanned_snis[@]}" -eq 0 ]; then
+            scanned_snis=("avito.ru" "www.avito.ru" "dl.google.com" "www.apple.com" "www.samsung.com" "www.nvidia.com" "www.microsoft.com")
+            scanned_lats=("fast" "fast" "fast" "fast" "fast" "fast" "fast")
+        fi
+
+        local default_classic_sni="${CLASSIC_SNI:-${scanned_snis[0]}}"
+
+        echo ""
+        echo -e "  ${BOLD}Доступные проверенные кандидаты маскировки (REALITY Targets):${NC}"
+        for idx in "${!scanned_snis[@]}"; do
+            local num=$((idx + 1))
+            local h="${scanned_snis[$idx]}"
+            local lat="${scanned_lats[$idx]}"
+            local marker="  "
+            [ "$h" = "$default_classic_sni" ] && marker="${GREEN}★ ${NC}"
+            local lat_str="${DIM}(${lat} ms)${NC}"
+            [ "$lat" = "fast" ] && lat_str=""
+            echo -e "    ${CYAN}[$num]${NC} $marker${WHITE}$h${NC} $lat_str"
+        done
+        echo -e "    ${CYAN}[C]${NC}   ${DIM}Ввести свой собственный домен вручную${NC}"
+        echo ""
+
+        while true; do
+            echo -ne "  ${WHITE}${ARROW} Выберите номер [1-${#scanned_snis[@]}], домен или Enter для [${GREEN}${default_classic_sni}${WHITE}] ${DIM}(b - назад)${NC}: "
+            local ext_input=""
+            read -r ext_input </dev/tty || read -r ext_input || true
+            ext_input=$(echo "${ext_input:-}" | tr -d '[:space:]')
+            if [[ "${ext_input,,}" == "b" || "${ext_input,,}" == "back" || "${ext_input,,}" == "назад" ]]; then
+                return 10
             fi
 
-            if [ "${#scanned_snis[@]}" -eq 0 ]; then
-                scanned_snis=("avito.ru" "www.avito.ru" "dl.google.com" "www.apple.com" "www.samsung.com" "www.nvidia.com" "www.microsoft.com")
-                scanned_lats=("fast" "fast" "fast" "fast" "fast" "fast" "fast")
+            local ext_sni=""
+            if [ -z "$ext_input" ]; then
+                ext_sni="$default_classic_sni"
+            elif [[ "$ext_input" =~ ^[0-9]+$ ]] && [ "$ext_input" -ge 1 ] && [ "$ext_input" -le "${#scanned_snis[@]}" ]; then
+                ext_sni="${scanned_snis[$((ext_input - 1))]}"
+            elif [[ "${ext_input,,}" == "c" ]]; then
+                prompt_default "    Введите свой домен SNI (например, dl.google.com)" "dl.google.com" ext_sni || return $?
+                ext_sni=$(echo "${ext_sni:-}" | tr -d '[:space:]')
+            else
+                ext_sni="$ext_input"
             fi
 
-            local default_classic_sni="${CLASSIC_SNI:-${scanned_snis[0]}}"
+            if [[ ! "$ext_sni" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; then
+                warn "    Некорректный формат SNI: '$ext_sni'. Попробуйте снова."
+                continue
+            fi
 
-            echo ""
-            echo -e "  ${BOLD}Доступные проверенные кандидаты маскировки (REALITY Targets):${NC}"
-            for idx in "${!scanned_snis[@]}"; do
-                local num=$((idx + 1))
-                local h="${scanned_snis[$idx]}"
-                local lat="${scanned_lats[$idx]}"
-                local marker="  "
-                [ "$h" = "$default_classic_sni" ] && marker="${GREEN}★ ${NC}"
-                local lat_str="${DIM}(${lat} ms)${NC}"
-                [ "$lat" = "fast" ] && lat_str=""
-                echo -e "    ${CYAN}[$num]${NC} $marker${WHITE}$h${NC} $lat_str"
-            done
-            echo -e "    ${CYAN}[C]${NC}   ${DIM}Ввести свой собственный домен вручную${NC}"
-            echo ""
+            CLASSIC_SNI="$ext_sni"
+            EXT_SNI_LIST=("$ext_sni")
+            EXT_SNI_TO_PORT["$ext_sni"]="$CLASSIC_PORT"
+            ALL_EXT_SNIS=("$ext_sni")
+            ok "  Внешний SNI $ext_sni привязан к порту $CLASSIC_PORT"
+            break
+        done
+        return 0
+    }
 
-            while true; do
-                echo -ne "  ${WHITE}${ARROW} Выберите номер [1-${#scanned_snis[@]}], домен или Enter для [${GREEN}${default_classic_sni}${WHITE}] ${DIM}(b - назад)${NC}: "
-                local ext_input=""
-                read -r ext_input </dev/tty || read -r ext_input || true
-                ext_input=$(echo "${ext_input:-}" | tr -d '[:space:]')
-                if [[ "${ext_input,,}" == "b" || "${ext_input,,}" == "back" || "${ext_input,,}" == "назад" ]]; then
-                    return 10
-                fi
-
-                local ext_sni=""
-                if [ -z "$ext_input" ]; then
-                    ext_sni="$default_classic_sni"
-                elif [[ "$ext_input" =~ ^[0-9]+$ ]] && [ "$ext_input" -ge 1 ] && [ "$ext_input" -le "${#scanned_snis[@]}" ]; then
-                    ext_sni="${scanned_snis[$((ext_input - 1))]}"
-                elif [[ "${ext_input,,}" == "c" ]]; then
-                    prompt_default "    Введите свой домен SNI (например, dl.google.com)" "dl.google.com" ext_sni || return $?
-                    ext_sni=$(echo "${ext_sni:-}" | tr -d '[:space:]')
-                else
-                    ext_sni="$ext_input"
-                fi
-
-                if [[ ! "$ext_sni" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; then
-                    warn "    Некорректный формат SNI: '$ext_sni'. Попробуйте снова."
-                    continue
-                fi
-
-                CLASSIC_SNI="$ext_sni"
-                EXT_SNI_LIST=("$ext_sni")
-                EXT_SNI_TO_PORT["$ext_sni"]="$CLASSIC_PORT"
-                ALL_EXT_SNIS=("$ext_sni")
-                ok "  Внешний SNI $ext_sni привязан к порту $CLASSIC_PORT"
-                break
-            done
+    q_step_classic() {
+        prompt_yes_no "Включить VLESS REALITY (маскировка под популярные сервисы)?" "${ENABLE_CLASSIC:-y}" ENABLE_CLASSIC || return $?
+        if [[ "${ENABLE_CLASSIC,,}" == "y" || "${ENABLE_CLASSIC:-}" == "1" ]]; then
+            CLASSIC_ENABLED=1
+            configure_classic_settings || return $?
         else
             CLASSIC_ENABLED=0
             CLASSIC_PORTS_LIST=()
@@ -16155,113 +16156,37 @@ for item in res:
             ALL_EXT_SNIS=()
             log "Сценарий VLESS REALITY (внешние сервисы) отключен."
         fi
-
         sync_reality_ports
-        return 0
-    }
-
-    q_step_ports() {
-        echo
-        echo -e "${YELLOW}━━━ Шаг 4/13: Настройка путей и внутренних портов (3X-UI и VLESS xHTTP) ━━━${NC}"
-        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
-            echo -e "  ${CYAN}💡 Что это:${NC} Внутренние порты и секретные URI-пути для веб-панели 3X-UI,"
-            echo -e "     сервера подписок для клиентов и инбаунда VLESS xHTTP (HTTP/2 Stream-One)."
-            echo
-            echo -e "  ${BOLD}Выберите вариант настройки:${NC}"
-            echo -e "    ${GREEN}[1] Рекомендованные безопасные настройки (Enter / Быстро)${NC}"
-            echo -e "        ${DIM}• Порты: Панель :10443, Подписки :55443, xHTTP :50443${NC}"
-            echo -e "        ${DIM}• Пути: Случайные криптостойкие URI (защита от сетевых сканеров и ботов)${NC}"
-            echo -e "        ${DIM}• Логин: admin, Пароль: случайный стойкий хэш${NC}"
-            echo -e "    ${CYAN}[2] Ручная экспертная настройка (задать все порты, логин, пароль и пути вручную)${NC}"
-            echo
-        else
-            echo -e "  ${BOLD}Вариант настройки:${NC} [1] Рекомендованные порты/пути (Enter)  [2] Ручная экспертная настройка"
-        fi
-
-        prompt_default "  Ваш выбор (1 или 2)" "${PORTS_SETUP_MODE:-1}" PORTS_SETUP_MODE || return $?
-
-        if [ "$PORTS_SETUP_MODE" = "2" ]; then
-            prompt_default "  Внутренний порт панели 3X-UI" "${PANEL_PORT:-10443}" PANEL_PORT || return $?
-            prompt_default "  Логин администратора 3X-UI" "${ADMIN_USERNAME:-admin}" ADMIN_USERNAME || return $?
-            local def_pass="${ADMIN_PASSWORD:-$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 12 || echo "Admin1234567")}"
-            prompt_default "  Пароль администратора 3X-UI" "$def_pass" ADMIN_PASSWORD || return $?
-
-            ensure_panel_path || return 1
-            local r_path="$RAW_PATH"
-            prompt_default "  Секретный URI-путь к веб-панели (без слэшей)" "$r_path" RAW_PATH || return $?
-            validate_path_segment "$RAW_PATH" "URI панели"
-            PANEL_PATH="/${RAW_PATH#/}"; PANEL_PATH="${PANEL_PATH%/}/"
-
-            prompt_default "  Внутренний порт сервера подписок 3X-UI" "${SUB_PORT:-55443}" SUB_PORT || return $?
-            local rand_s_path="sub-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "sub${RANDOM}")"
-            local r_sub="${RAW_SUB_PATH:-${SUB_PATH:-$rand_s_path}}"
-            r_sub="${r_sub#/}"; r_sub="${r_sub%/}"
-            prompt_default "  Секретный URI-путь подписок (без слэшей)" "$r_sub" RAW_SUB_PATH || return $?
-            validate_path_segment "$RAW_SUB_PATH" "URI подписок"
-            SUB_PATH="/${RAW_SUB_PATH#/}"; SUB_PATH="${SUB_PATH%/}/"
-            SUB_JSON_PATH="${SUB_PATH%/}/json/"
-            SUB_CLASH_PATH="${SUB_PATH%/}/clash/"
-            prompt_default "  Заголовок подписки для клиентов (Enter - без заголовка)" "${SUB_TITLE:-}" SUB_TITLE || return $?
-
-            prompt_default "  Внутренний порт инбаунда VLESS xHTTP" "${XHTTP_STREAM_PORT:-50443}" XHTTP_STREAM_PORT || return $?
-            local rand_x_path="$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "xh${RANDOM}")"
-            local r_xhttp="${RAW_XHTTP_STREAM_PATH:-${XHTTP_STREAM_PATH:-$rand_x_path}}"
-            r_xhttp="${r_xhttp#/}"; r_xhttp="${r_xhttp%/}"
-            prompt_default "  URI-путь для xHTTP Stream-One" "$r_xhttp" RAW_XHTTP_STREAM_PATH || return $?
-            validate_path_segment "$RAW_XHTTP_STREAM_PATH" "URI xHTTP"
-            XHTTP_STREAM_PATH="/${RAW_XHTTP_STREAM_PATH#/}"; XHTTP_STREAM_PATH="${XHTTP_STREAM_PATH%/}/"
-        else
-            PANEL_PORT="${PANEL_PORT:-10443}"
-            ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
-            [ -n "${ADMIN_PASSWORD:-}" ] || ADMIN_PASSWORD="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 12 || echo "Admin1234567")"
-
-            ensure_panel_path || return 1
-            validate_path_segment "$RAW_PATH" "URI панели"
-
-            SUB_PORT="${SUB_PORT:-55443}"
-            [ -n "${RAW_SUB_PATH:-}" ] || RAW_SUB_PATH="sub-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "sub${RANDOM}")"
-            RAW_SUB_PATH="${RAW_SUB_PATH#/}"; RAW_SUB_PATH="${RAW_SUB_PATH%/}"
-            SUB_PATH="/${RAW_SUB_PATH#/}"; SUB_PATH="${SUB_PATH%/}/"
-            SUB_JSON_PATH="${SUB_PATH%/}/json/"
-            SUB_CLASH_PATH="${SUB_PATH%/}/clash/"
-
-            XHTTP_STREAM_PORT="${XHTTP_STREAM_PORT:-50443}"
-            [ -n "${RAW_XHTTP_STREAM_PATH:-}" ] || RAW_XHTTP_STREAM_PATH="$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "xh${RANDOM}")"
-            RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH#/}"; RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH%/}"
-            XHTTP_STREAM_PATH="/${RAW_XHTTP_STREAM_PATH#/}"; XHTTP_STREAM_PATH="${XHTTP_STREAM_PATH%/}/"
-
-            echo -e "  ${GREEN}${CHECK} Настройки применены автоматически:${NC}"
-            echo -e "    ${DIM}• Порты:${NC}   Панель :$PANEL_PORT, Подписки :$SUB_PORT, xHTTP :$XHTTP_STREAM_PORT"
-            echo -e "    ${DIM}• Пути:${NC}    Панель: $PANEL_PATH, Подписки: $SUB_PATH, Clash: $SUB_CLASH_PATH, xHTTP: $XHTTP_STREAM_PATH"
-            echo -e "    ${DIM}• Доступ:${NC}  Логин: ${BOLD}$ADMIN_USERNAME${NC}, Пароль: ${YELLOW}$ADMIN_PASSWORD${NC}"
-        fi
-
-        ok "Внутренние порты и пути сконфигурированы."
         return 0
     }
 
     q_step_protocols() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 5/13: Выбор протоколов и транспортов (VPN / Прокси) ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 2/11: Выбор протоколов и транспортов (VPN / Прокси) ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Выберите протоколы подключения, которые будут развернуты на сервере."
+            echo -e "     • ${GREEN}VLESS REALITY (свой сайт)${NC}: маскировка под собственный поддомен (напр. cdn.$PRIMARY_DOMAIN)."
+            echo -e "     • ${GREEN}VLESS REALITY (внешний)${NC}: маскировка под популярные сервисы (Apple, Microsoft, dl.google.com)."
             echo -e "     • ${GREEN}Hysteria 2${NC}: сверхбыстрый QUIC/UDP протокол с BBR Brutal для стриминга и мобильного интернета."
             echo -e "     • ${GREEN}AmneziaWG v3.1${NC}: защита от блокировок ТСПУ/DPI с обфускацией пакетов (внутри 3X-UI)."
             echo -e "     • ${GREEN}AmneziaWG v2.0${NC}: совместимость со старыми роутерами (Keenetic, OpenWrt)."
-            echo -e "     • ${GREEN}Автономный AmneziaWG${NC}: независимый сервис ядра Linux (awg-quick@awg0, утилита awg-mgr)."
             echo -e "     • ${GREEN}TUIC v5${NC}: 0-RTT рукопожатие на чистом QUIC для мгновенного отклика."
             echo -e "     • ${GREEN}Shadowsocks 2022${NC}: устойчивый к зондированию шифрованный протокол."
             echo -e "     • ${GREEN}Telegram MTProxy${NC}: прямой доступ для клиентов Telegram без дополнительных VPN-приложений."
+            echo -e "     • ${GREEN}Автономный AmneziaWG${NC}: независимый сервис ядра Linux (awg-quick@awg0, утилита awg-mgr)."
             echo -e "     • ${GREEN}MASQUE (RFC 9484)${NC}: стандартизированный IETF CONNECT-UDP/IP прокси поверх HTTP/3 QUIC."
             echo -e "     • ${GREEN}ShadowTLS v4${NC}: идеальная маскировка под Apple gateway.icloud.com через Nginx Stream L4."
             echo -e "     • ${GREEN}Wstunnel (Nginx L7)${NC}: WebSocket туннелирование через порт 443 HTTPS с валидным SSL."
             echo -e "     • ${GREEN}Server-Side Zapret${NC}: десинхронизация DPI ТСПУ прямо на VPS через nfqws connbytes 1:6."
             echo -e "     • ${GREEN}NaïveProxy${NC}: маскировка под Chrome HTTP/2/3 HTTPS (Chromium network stack via Caddy)."
             echo -e "     • ${GREEN}DNSTT (DoH Tunnel)${NC}: аварийный DNS-туннель через DoH (dnstt-server) для обхода жестких белых списков."
+            echo -e "     • ${GREEN}Mieru Proxy${NC}: протокол без TLS, устойчивый к активному зондированию."
             echo
         fi
 
         # Инбаунды панели 3X-UI: основные включены по умолчанию, v2.0 для старых роутеров отключен
+        ENABLE_STEAL="${ENABLE_STEAL:-y}"
+        ENABLE_CLASSIC="${ENABLE_CLASSIC:-y}"
         ENABLE_HY2="${ENABLE_HY2:-y}"
         ENABLE_AWG_V3="${ENABLE_AWG_V3:-y}"
         ENABLE_AWG_V2="${ENABLE_AWG_V2:-n}"
@@ -16280,6 +16205,8 @@ for item in res:
         ENABLE_MIERU="${ENABLE_MIERU:-n}"
 
         local proto_keys=(
+            "ENABLE_STEAL"
+            "ENABLE_CLASSIC"
             "ENABLE_HY2"
             "ENABLE_AWG_V3"
             "ENABLE_AWG_V2"
@@ -16296,6 +16223,8 @@ for item in res:
             "ENABLE_MIERU"
         )
         local proto_labels=(
+            "VLESS REALITY (маскировка под свой сайт, :${STEAL_PORT:-45443})"
+            "VLESS REALITY (маскировка под популярные сервисы, :${CLASSIC_PORT:-46443})"
             "Hysteria 2 (UDP/QUIC Brutal CC, :${HY2_PORT:-443})"
             "AmneziaWG v3.1 (инбаунд 3X-UI, :${AWG_V3_PORT:-8443}/udp)"
             "AmneziaWG v2.0 (инбаунд 3X-UI для роутеров, :${AWG_V2_PORT:-8444}/udp)"
@@ -16313,6 +16242,27 @@ for item in res:
         )
 
         prompt_multiselect "Выберите протоколы для установки" proto_keys proto_labels || return $?
+
+        # Настройки VLESS REALITY (свой сайт)
+        if is_true "$ENABLE_STEAL"; then
+            STEAL_ENABLED=1
+            configure_steal_settings || return $?
+        else
+            STEAL_ENABLED=0
+            STEAL_PORTS_LIST=()
+            STEAL_DOMAINS=()
+        fi
+
+        # Настройки VLESS REALITY (внешние сервисы)
+        if is_true "$ENABLE_CLASSIC"; then
+            CLASSIC_ENABLED=1
+            configure_classic_settings || return $?
+        else
+            CLASSIC_ENABLED=0
+            CLASSIC_PORTS_LIST=()
+            EXT_SNI_LIST=()
+            ALL_EXT_SNIS=()
+        fi
 
         # Установка портов по умолчанию и опрос кастомных параметров в экспертном режиме
         if is_true "$ENABLE_HY2"; then
@@ -16362,7 +16312,6 @@ for item in res:
         else
             AWG_STANDALONE_PORT=""
         fi
-
 
         if is_true "$ENABLE_TUIC"; then
             [ -n "${TUIC_PORT:-}" ] || TUIC_PORT="8448"
@@ -16519,6 +16468,87 @@ for item in res:
         fi
 
         rebuild_all_domains
+        sync_reality_ports
+        return 0
+    }
+
+    q_step_ports() {
+        echo
+        echo -e "${YELLOW}━━━ Шаг 3/11: Настройка путей и внутренних портов (3X-UI и VLESS xHTTP) ━━━${NC}"
+        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+            echo -e "  ${CYAN}💡 Что это:${NC} Внутренние порты и секретные URI-пути для веб-панели 3X-UI,"
+            echo -e "     сервера подписок для клиентов и инбаунда VLESS xHTTP (HTTP/2 Stream-One)."
+            echo
+            echo -e "  ${BOLD}Выберите вариант настройки:${NC}"
+            echo -e "    ${GREEN}[1] Рекомендованные безопасные настройки (Enter / Быстро)${NC}"
+            echo -e "        ${DIM}• Порты: Панель :10443, Подписки :55443, xHTTP :50443${NC}"
+            echo -e "        ${DIM}• Пути: Случайные криптостойкие URI (защита от сетевых сканеров и ботов)${NC}"
+            echo -e "        ${DIM}• Логин: admin, Пароль: случайный стойкий хэш${NC}"
+            echo -e "    ${CYAN}[2] Ручная экспертная настройка (задать все порты, логин, пароль и пути вручную)${NC}"
+            echo
+        else
+            echo -e "  ${BOLD}Вариант настройки:${NC} [1] Рекомендованные порты/пути (Enter)  [2] Ручная экспертная настройка"
+        fi
+
+        prompt_default "  Ваш выбор (1 или 2)" "${PORTS_SETUP_MODE:-1}" PORTS_SETUP_MODE || return $?
+
+        if [ "$PORTS_SETUP_MODE" = "2" ]; then
+            prompt_default "  Внутренний порт панели 3X-UI" "${PANEL_PORT:-10443}" PANEL_PORT || return $?
+            prompt_default "  Логин администратора 3X-UI" "${ADMIN_USERNAME:-admin}" ADMIN_USERNAME || return $?
+            local def_pass="${ADMIN_PASSWORD:-$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 12 || echo "Admin1234567")}"
+            prompt_default "  Пароль администратора 3X-UI" "$def_pass" ADMIN_PASSWORD || return $?
+
+            ensure_panel_path || return 1
+            local r_path="$RAW_PATH"
+            prompt_default "  Секретный URI-путь к веб-панели (без слэшей)" "$r_path" RAW_PATH || return $?
+            validate_path_segment "$RAW_PATH" "URI панели"
+            PANEL_PATH="/${RAW_PATH#/}"; PANEL_PATH="${PANEL_PATH%/}/"
+
+            prompt_default "  Внутренний порт сервера подписок 3X-UI" "${SUB_PORT:-55443}" SUB_PORT || return $?
+            local rand_s_path="sub-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "sub${RANDOM}")"
+            local r_sub="${RAW_SUB_PATH:-${SUB_PATH:-$rand_s_path}}"
+            r_sub="${r_sub#/}"; r_sub="${r_sub%/}"
+            prompt_default "  Секретный URI-путь подписок (без слэшей)" "$r_sub" RAW_SUB_PATH || return $?
+            validate_path_segment "$RAW_SUB_PATH" "URI подписок"
+            SUB_PATH="/${RAW_SUB_PATH#/}"; SUB_PATH="${SUB_PATH%/}/"
+            SUB_JSON_PATH="${SUB_PATH%/}/json/"
+            SUB_CLASH_PATH="${SUB_PATH%/}/clash/"
+            prompt_default "  Заголовок подписки для клиентов (Enter - без заголовка)" "${SUB_TITLE:-}" SUB_TITLE || return $?
+
+            prompt_default "  Внутренний порт инбаунда VLESS xHTTP" "${XHTTP_STREAM_PORT:-50443}" XHTTP_STREAM_PORT || return $?
+            local rand_x_path="$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "xh${RANDOM}")"
+            local r_xhttp="${RAW_XHTTP_STREAM_PATH:-${XHTTP_STREAM_PATH:-$rand_x_path}}"
+            r_xhttp="${r_xhttp#/}"; r_xhttp="${r_xhttp%/}"
+            prompt_default "  URI-путь для xHTTP Stream-One" "$r_xhttp" RAW_XHTTP_STREAM_PATH || return $?
+            validate_path_segment "$RAW_XHTTP_STREAM_PATH" "URI xHTTP"
+            XHTTP_STREAM_PATH="/${RAW_XHTTP_STREAM_PATH#/}"; XHTTP_STREAM_PATH="${XHTTP_STREAM_PATH%/}/"
+        else
+            PANEL_PORT="${PANEL_PORT:-10443}"
+            ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
+            [ -n "${ADMIN_PASSWORD:-}" ] || ADMIN_PASSWORD="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 12 || echo "Admin1234567")"
+
+            ensure_panel_path || return 1
+            validate_path_segment "$RAW_PATH" "URI панели"
+
+            SUB_PORT="${SUB_PORT:-55443}"
+            [ -n "${RAW_SUB_PATH:-}" ] || RAW_SUB_PATH="sub-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "sub${RANDOM}")"
+            RAW_SUB_PATH="${RAW_SUB_PATH#/}"; RAW_SUB_PATH="${RAW_SUB_PATH%/}"
+            SUB_PATH="/${RAW_SUB_PATH#/}"; SUB_PATH="${SUB_PATH%/}/"
+            SUB_JSON_PATH="${SUB_PATH%/}/json/"
+            SUB_CLASH_PATH="${SUB_PATH%/}/clash/"
+
+            XHTTP_STREAM_PORT="${XHTTP_STREAM_PORT:-50443}"
+            [ -n "${RAW_XHTTP_STREAM_PATH:-}" ] || RAW_XHTTP_STREAM_PATH="$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "xh${RANDOM}")"
+            RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH#/}"; RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH%/}"
+            XHTTP_STREAM_PATH="/${RAW_XHTTP_STREAM_PATH#/}"; XHTTP_STREAM_PATH="${XHTTP_STREAM_PATH%/}/"
+
+            echo -e "  ${GREEN}${CHECK} Настройки применены автоматически:${NC}"
+            echo -e "    ${DIM}• Порты:${NC}   Панель :$PANEL_PORT, Подписки :$SUB_PORT, xHTTP :$XHTTP_STREAM_PORT"
+            echo -e "    ${DIM}• Пути:${NC}    Панель: $PANEL_PATH, Подписки: $SUB_PATH, Clash: $SUB_CLASH_PATH, xHTTP: $XHTTP_STREAM_PATH"
+            echo -e "    ${DIM}• Доступ:${NC}  Логин: ${BOLD}$ADMIN_USERNAME${NC}, Пароль: ${YELLOW}$ADMIN_PASSWORD${NC}"
+        fi
+
+        ok "Внутренние порты и пути сконфигурированы."
         return 0
     }
 
@@ -16564,7 +16594,7 @@ for item in res:
 
     q_step_agh() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 6/13: Настройка приватного AdGuard Home DoH + Split-DNS ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 4/11: Настройка приватного AdGuard Home DoH + Split-DNS ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Приватный шифрованный DNS (DNS-over-HTTPS) с защитой от рекламы и трекеров."
             echo -e "     ${GREEN}Split-DNS:${NC} Запросы к российским сайтам (.ru, банки, Госуслуги) направляются"
@@ -16612,7 +16642,7 @@ for item in res:
 
     q_step_decoy() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 7/13: Выбор темы для сайта-маскировки (Decoy Site) ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 5/11: Выбор темы для сайта-маскировки (Decoy Site) ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Веб-сайт, который отображается в браузере при обращении к вашему домену."
             echo -e "     Защищает сервер от выявления цензорами, активными сканерами и сетевыми ботами."
@@ -16645,7 +16675,7 @@ for item in res:
 
     q_step_ssl_domains() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 8/13: Реестр SSL-сертификатов и дополнительные домены ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 6/11: Реестр SSL-сертификатов и дополнительные домены ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Список доменов, для которых будут автоматически получены SSL-сертификаты."
             echo -e "  ${DIM}Следующие домены уже включены автоматически из предыдущих шагов:${NC}"
@@ -16683,7 +16713,7 @@ for item in res:
 
     q_step_ssl_engine() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 9/13: Выбор метода выпуска SSL-сертификатов ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 7/11: Выбор метода выпуска SSL-сертификатов ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Способ валидации владения доменом для Let's Encrypt."
             echo -e "    ${GREEN}[1] Классический Certbot (HTTP-01, Рекомендуется)${NC}"
@@ -16725,7 +16755,7 @@ for item in res:
 
     q_step_3xui_auto() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 10/13: Автоматическая настройка базы данных панели 3X-UI ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 8/11: Автоматическая настройка базы данных панели 3X-UI ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Автоматическое создание подключений (REALITY со своим сайтом, внешними сервисами, xHTTP)"
             echo -e "     в базе данных панели 3X-UI, а также настройка секретных путей и подписок."
@@ -16770,7 +16800,7 @@ for item in res:
 
     q_step_warp() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 11/13: Исходящий туннель Cloudflare WARP ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 9/11: Исходящий туннель Cloudflare WARP ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Исходящий WireGuard туннель от вашего VPS в сеть Cloudflare."
             echo -e "     ${GREEN}Преимущество:${NC} Полностью избавляет от капч Google/Cloudflare и разблокирует"
@@ -16794,7 +16824,7 @@ for item in res:
 
     q_step_security() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 12/13: Безопасность сервера (SSH и Fail2ban) ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 10/11: Безопасность сервера (SSH и Fail2ban) ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Базовая защита операционной системы хоста."
             echo -e "     ${GREEN}Преимущество:${NC} Перенос порта SSH со стандартного 22 скрывает сервер"
@@ -16939,22 +16969,19 @@ for item in res:
         echo
         echo -e "  ${CYAN}[1]${NC} ${BOLD}Основной домен:${NC}       ${WHITE}$PRIMARY_DOMAIN${NC} (Префикс клиентов: ${GREEN}$SERVER_PREFIX${NC}, www: ${ADD_WWW})"
 
+        echo -e "  ${CYAN}[2]${NC} ${BOLD}Протоколы VPN/Прокси:${NC}"
         local steal_status="${RED}Отключен${NC}"
         if is_true "${STEAL_ENABLED:-0}"; then
             steal_status="${GREEN}Включен${NC} (${WHITE}${STEAL_DOMAINS[*]}${NC} -> 127.0.0.1:${STEAL_PORTS_LIST[*]})"
         fi
-        echo -e "  ${CYAN}[2]${NC} ${BOLD}REALITY (свой сайт):${NC}  $steal_status"
+        echo -e "      ${DIM}• REALITY (свой сайт):${NC}    $steal_status"
 
         local classic_status="${RED}Отключен${NC}"
         if is_true "${CLASSIC_ENABLED:-0}"; then
             classic_status="${GREEN}Включен${NC} (SNI: ${WHITE}${EXT_SNI_LIST[*]}${NC} -> 127.0.0.1:${CLASSIC_PORTS_LIST[*]})"
         fi
-        echo -e "  ${CYAN}[3]${NC} ${BOLD}REALITY (внешний):${NC}    $classic_status"
+        echo -e "      ${DIM}• REALITY (внешний):${NC}      $classic_status"
 
-        echo -e "  ${CYAN}[4]${NC} ${BOLD}Внутренние порты:${NC}     Панель :${WHITE}$PANEL_PORT${NC} (${DIM}$PANEL_PATH${NC}), Подписки :${WHITE}$SUB_PORT${NC} (${DIM}$SUB_PATH, Clash: $SUB_CLASH_PATH${NC}), xHTTP :${WHITE}$XHTTP_STREAM_PORT${NC}"
-        echo -e "      ${DIM}Доступ в 3X-UI:${NC}       Логин: ${WHITE}$ADMIN_USERNAME${NC}, Пароль: ${YELLOW}$ADMIN_PASSWORD${NC}"
-
-        echo -e "  ${CYAN}[5]${NC} ${BOLD}Протоколы VPN/Прокси:${NC}"
         local hy2_status="${RED}Отключена${NC}"
         if is_true "${ENABLE_HY2:-0}"; then
             local hop_str=""
@@ -17018,35 +17045,38 @@ for item in res:
         is_true "${ENABLE_MIERU:-0}" && mieru_status="${GREEN}Включен${NC} (:${MIERU_PORT:-8450}/tcp,udp, XChaCha20-Poly1305)"
         echo -e "      ${DIM}• Mieru Proxy:${NC}          $mieru_status"
 
+        echo -e "  ${CYAN}[3]${NC} ${BOLD}Внутренние порты:${NC}     Панель :${WHITE}$PANEL_PORT${NC} (${DIM}$PANEL_PATH${NC}), Подписки :${WHITE}$SUB_PORT${NC} (${DIM}$SUB_PATH, Clash: $SUB_CLASH_PATH${NC}), xHTTP :${WHITE}$XHTTP_STREAM_PORT${NC}"
+        echo -e "      ${DIM}Доступ в 3X-UI:${NC}       Логин: ${WHITE}$ADMIN_USERNAME${NC}, Пароль: ${YELLOW}$ADMIN_PASSWORD${NC}"
+
         local agh_status="${RED}Отключен${NC}"
         if is_true "${ENABLE_AGH:-0}"; then
             local m_desc="Основной домен"
             [ "$AGH_MODE" = "2" ] && m_desc="Поддомен $AGH_DOMAIN"
             agh_status="${GREEN}Включен${NC} (Режим: $m_desc, ClientID: $AGH_CLIENT_ID)"
         fi
-        echo -e "  ${CYAN}[6]${NC} ${BOLD}AdGuard Home DoH:${NC}     $agh_status"
+        echo -e "  ${CYAN}[4]${NC} ${BOLD}AdGuard Home DoH:${NC}     $agh_status"
 
         local decoy_name="DataSphere Analytics"
         [ "$DECOY_MODE" = "2" ] && decoy_name="CosmosCloud NextGen"
         [ "$DECOY_MODE" = "3" ] && decoy_name="Стандартная заглушка Nginx"
-        echo -e "  ${CYAN}[7]${NC} ${BOLD}Тема маскировки:${NC}      ${WHITE}$decoy_name${NC}"
+        echo -e "  ${CYAN}[5]${NC} ${BOLD}Тема маскировки:${NC}      ${WHITE}$decoy_name${NC}"
 
-        echo -e "  ${CYAN}[8]${NC} ${BOLD}SSL-домены (${#ALL_DOMAINS[@]}):${NC}   ${WHITE}${ALL_DOMAINS[*]}${NC}"
+        echo -e "  ${CYAN}[6]${NC} ${BOLD}SSL-домены (${#ALL_DOMAINS[@]}):${NC}   ${WHITE}${ALL_DOMAINS[*]}${NC}"
 
         local ssl_name="Certbot (HTTP-01)"
         [ "$SSL_ENGINE_CHOICE" = "2" ] && ssl_name="acme.sh + Cloudflare DNS-01"
-        echo -e "  ${CYAN}[9]${NC} ${BOLD}Метод выпуска SSL:${NC}    ${WHITE}$ssl_name${NC}"
+        echo -e "  ${CYAN}[7]${NC} ${BOLD}Метод выпуска SSL:${NC}    ${WHITE}$ssl_name${NC}"
 
         local auto_3xui_str="${GREEN}Да${NC}"
         is_true "${AUTO_SETUP_3XUI:-y}" || auto_3xui_str="${RED}Нет${NC}"
         if is_true "${ENABLE_NODE_TOKEN:-n}"; then
             auto_3xui_str="${auto_3xui_str} ${DIM}(+ Node Token: ${WHITE}${NODE_TOKEN_NAME}${DIM})${NC}"
         fi
-        echo -e "  ${CYAN}[10]${NC} ${BOLD}3X-UI автонастройка:${NC}  $auto_3xui_str"
+        echo -e "  ${CYAN}[8]${NC} ${BOLD}3X-UI автонастройка:${NC}  $auto_3xui_str"
 
         local warp_status="${RED}Отключен${NC}"
         is_true "${ENABLE_WARP:-n}" && warp_status="${GREEN}Включен${NC} (WireGuard MTU: 1280)"
-        echo -e "  ${CYAN}[11]${NC} ${BOLD}Cloudflare WARP:${NC}      $warp_status"
+        echo -e "  ${CYAN}[9]${NC} ${BOLD}Cloudflare WARP:${NC}      $warp_status"
 
         local sec_status="${DIM}Без изменений (порт ${SSH_PORT:-$SSH_ACTIVE_PORT}, Fail2ban выкл)${NC}"
         if is_true "${ENABLE_HOST_SECURITY:-n}"; then
@@ -17062,19 +17092,19 @@ for item in res:
                 sec_status="${GREEN}Настроена${NC} (SSH порт: ${WHITE}${SSH_PORT}${NC}, Fail2ban: ${f2b_str}, Доступ: ${pwd_str}${key_str})"
             fi
         fi
-        echo -e "  ${CYAN}[12]${NC} ${BOLD}Безопасность сервера:${NC}    $sec_status"
+        echo -e "  ${CYAN}[10]${NC} ${BOLD}Безопасность сервера:${NC}   $sec_status"
 
         echo
         echo -e "${YELLOW}════════════════════════════════════════════════════════════════════════════════${NC}"
         echo -e "  ${GREEN}[Enter]${NC} или ${GREEN}[y]${NC}  ${BOLD}Проверить параметры и перейти к плану установки${NC}"
-        echo -e "  ${CYAN}[1 - 12]${NC}        ${BOLD}Изменить соответствующий раздел конфигурации${NC}"
+        echo -e "  ${CYAN}[1 - 10]${NC}        ${BOLD}Изменить соответствующий раздел конфигурации${NC}"
         echo -e "  ${RED}[q]${NC}             ${BOLD}Отмена и выход${NC}"
         echo -e "${YELLOW}════════════════════════════════════════════════════════════════════════════════${NC}"
         echo
 
         while true; do
             local choice=""
-            echo -ne "  ${WHITE}${ARROW} Ваш выбор [${GREEN}Enter = далее${WHITE}]: ${NC}"
+            echo -ne "  ${WHITE}${ARROW} Ваш выбор [${GREEN}Enter = далее${WHITE}]: "
             read -r choice </dev/tty || read -r choice || true
             choice=$(echo "${choice:-}" | tr -d '[:space:]')
 
@@ -17086,11 +17116,11 @@ for item in res:
                 die "Установка отменена пользователем."
             fi
 
-            if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le 12 ]; then
+            if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le 10 ]; then
                 return $((100 + choice))
             fi
 
-            warn "  Некорректный ввод. Нажмите Enter для старта, номер [1-12] для изменения или 'q' для выхода."
+            warn "  Некорректный ввод. Нажмите Enter для старта, номер [1-10] для изменения или 'q' для выхода."
         done
     }
 
@@ -17116,36 +17146,34 @@ for item in res:
 
         WIZARD_ALLOW_BACK=1
         if [ "${START_AT_REVIEW:-0}" -eq 1 ]; then
-            CURRENT_STEP=13
+            CURRENT_STEP=11
             EDITING_FROM_REVIEW=0
         else
             CURRENT_STEP=1
             EDITING_FROM_REVIEW=0
         fi
-        TOTAL_STEPS=13
+        TOTAL_STEPS=11
 
         while [ "$CURRENT_STEP" -le "$TOTAL_STEPS" ]; do
             res=0
             case "$CURRENT_STEP" in
                 1) q_step_domain || res=$? ;;
-                2) q_step_steal || res=$? ;;
-                3) q_step_classic || res=$? ;;
-                4) q_step_ports || res=$? ;;
-                5) q_step_protocols || res=$? ;;
-                6) q_step_agh || res=$? ;;
-                7) q_step_decoy || res=$? ;;
-                8) q_step_ssl_domains || res=$? ;;
-                9) q_step_ssl_engine || res=$? ;;
-                10) q_step_3xui_auto || res=$? ;;
-                11) q_step_warp || res=$? ;;
-                12) q_step_security || res=$? ;;
-                13) q_step_review || res=$? ;;
+                2) q_step_protocols || res=$? ;;
+                3) q_step_ports || res=$? ;;
+                4) q_step_agh || res=$? ;;
+                5) q_step_decoy || res=$? ;;
+                6) q_step_ssl_domains || res=$? ;;
+                7) q_step_ssl_engine || res=$? ;;
+                8) q_step_3xui_auto || res=$? ;;
+                9) q_step_warp || res=$? ;;
+                10) q_step_security || res=$? ;;
+                11) q_step_review || res=$? ;;
             esac
 
             if [ "$res" -eq 10 ]; then
                 # Запрос перехода назад
                 if [ "$EDITING_FROM_REVIEW" -eq 1 ]; then
-                    CURRENT_STEP=13
+                    CURRENT_STEP=11
                     EDITING_FROM_REVIEW=0
                 elif [ "$CURRENT_STEP" -gt 1 ]; then
                     CURRENT_STEP=$((CURRENT_STEP - 1))
@@ -17165,15 +17193,15 @@ for item in res:
                         warn "Вы уже на первом шаге."
                     fi
                 fi
-            elif [ "$res" -ge 101 ] && [ "$res" -le 112 ]; then
+            elif [ "$res" -ge 101 ] && [ "$res" -le 110 ]; then
                 # Переход к конкретному шагу из экрана Review
                 CURRENT_STEP=$((res - 100))
                 EDITING_FROM_REVIEW=1
             elif [ "$res" -eq 0 ]; then
-                if [ "$CURRENT_STEP" -eq 13 ]; then
+                if [ "$CURRENT_STEP" -eq 11 ]; then
                     break
                 elif [ "$EDITING_FROM_REVIEW" -eq 1 ]; then
-                    CURRENT_STEP=13
+                    CURRENT_STEP=11
                     EDITING_FROM_REVIEW=0
                 else
                     CURRENT_STEP=$((CURRENT_STEP + 1))

@@ -639,6 +639,163 @@ echo "BAD_SUCCESS"
         self.assertNotIn("BAD_SUCCESS", res.stdout)
         self.assertIn("Конфликт порта 8445/udp", res.stderr)
 
+    def test_mieru_mgr_udp_only_server_generates_udp_client(self):
+        """Verify mieru-mgr add generates UDP client profile and UDP Mihomo transport when server is UDP-only."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg_file = os.path.join(tmpdir, "config.json")
+            data = {
+                "portBindings": [{"portRange": "8450-8455", "protocol": "UDP"}],
+                "users": [{"name": "primary_user", "password": "primary_pass"}],
+            }
+            Path(cfg_file).write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+            res_add = run_shell(f"""
+set -euo pipefail
+export MIERU_SERVER_CONFIG="{cfg_file.replace(os.sep, '/')}"
+export MIERU_CLIENT_DIR="{tmpdir.replace(os.sep, '/')}"
+export MIERU_MGR_FORCE=1
+export PRIMARY_DOMAIN="vpn.test.example"
+bash src/system/mieru-mgr.sh add udp_user UdpPass123!
+""")
+            self.assertEqual(res_add.returncode, 0, f"Stderr: {res_add.stderr}")
+            self.assertIn("transport: UDP", res_add.stdout)
+
+            # Check client profile generated
+            client_file = Path(tmpdir) / "mieru-client-udp_user.json"
+            self.assertTrue(client_file.is_file(), f"Client file not found: {client_file}")
+            with open(client_file, "r", encoding="utf-8") as cf:
+                cdata = json.load(cf)
+            bindings = cdata["profiles"][0]["servers"][0]["portBindings"]
+            self.assertEqual(len(bindings), 1)
+            self.assertEqual(bindings[0].get("protocol"), "UDP")
+            self.assertEqual(bindings[0].get("portRange"), "8450-8455")
+
+    def test_reconcile_udp_only_mieru_export(self):
+        """Verify subClashTemplate and /root/mieru-client.json use UDP when MIERU_TRANSPORT=UDP."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_file = os.path.join(tmpdir, "x-ui.db")
+            client_file = os.path.join(tmpdir, "mieru-client.json")
+            conn = sqlite3.connect(db_file)
+            conn.execute("CREATE TABLE settings (id INTEGER PRIMARY KEY, key TEXT, value TEXT)")
+            conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, password TEXT)")
+            conn.execute("INSERT INTO users VALUES (1, 'admin', 'admin')")
+            conn.execute("CREATE TABLE inbounds (id INTEGER PRIMARY KEY, user_id INTEGER, up INTEGER, down INTEGER, total INTEGER, remark TEXT, enable INTEGER, expiry_time INTEGER, listen TEXT, port INTEGER, protocol TEXT, settings TEXT, stream_settings TEXT, tag TEXT, sniffing TEXT, client_stats TEXT)")
+            initial_tpl = """port: 7890
+mode: rule
+proxies:
+  - name: "Existing VLESS"
+    type: vless
+    server: 198.51.100.1
+    port: 443
+proxy-groups:
+  - name: "PROXIES"
+    type: select
+    proxies:
+      - "Existing VLESS"
+rules:
+  - MATCH,PROXIES
+"""
+            conn.execute("INSERT INTO settings (key, value) VALUES ('subClashTemplate', ?)", (initial_tpl,))
+            conn.commit()
+            conn.close()
+
+            env = {
+                **os.environ,
+                "DB_PATH": db_file,
+                "DRY_RUN": "0",
+                "FORCE_SUB": "0",
+                "PRIMARY_DOMAIN": "vpn.example.com",
+                "ENABLE_MIERU": "1",
+                "MIERU_PORT": "8450-8455",
+                "MIERU_PORT_MODE": "range",
+                "MIERU_TRANSPORT": "UDP",
+                "MIERU_USER": "udp_alice",
+                "MIERU_PASS": "udp_secret",
+            }
+            # Extract Python config from configure-panel.sh
+            conf_text = Path("configure-panel.sh").read_text(encoding="utf-8")
+            marker = "\"$PYTHON_CMD\" - << 'EOF_PYTHON_CONFIG'"
+            py_start = conf_text.find(marker)
+            self.assertNotEqual(py_start, -1)
+            py_code = conf_text[py_start + len(marker) + 1:]
+            py_end = py_code.find("EOF_PYTHON_CONFIG")
+            self.assertNotEqual(py_end, -1)
+            full_code = py_code[:py_end]
+            full_code = full_code.replace('"/root/mieru-client.json"', json.dumps(client_file.replace(os.sep, "/")))
+            py_script = os.path.join(tmpdir, "run_reconcile.py")
+            Path(py_script).write_text(full_code, encoding="utf-8")
+            res = subprocess.run([sys.executable, py_script], env=env, capture_output=True, text=True, encoding="utf-8", errors="replace")
+            self.assertEqual(res.returncode, 0, f"Stderr: {res.stderr}\nStdout: {res.stdout}")
+
+            # Verify subClashTemplate in DB
+            conn = sqlite3.connect(db_file)
+            cur = conn.cursor()
+            cur.execute("SELECT value FROM settings WHERE key = 'subClashTemplate'")
+            tpl = cur.fetchone()[0]
+            conn.close()
+
+            self.assertIn("type: mieru", tpl)
+            self.assertIn("transport: UDP", tpl)
+            self.assertNotIn("transport: TCP", tpl)
+
+            # Verify client json
+            self.assertTrue(os.path.isfile(client_file))
+            with open(client_file, "r", encoding="utf-8") as f:
+                cdata = json.load(f)
+            bindings = cdata["profiles"][0]["servers"][0]["portBindings"]
+            self.assertEqual(len(bindings), 1)
+            self.assertEqual(bindings[0].get("protocol"), "UDP")
+            self.assertEqual(bindings[0].get("portRange"), "8450-8455")
+
+    def test_check_required_port_range_detects_missing_intermediate_port(self):
+        """check_required_port fails when boundary ports listen but intermediate port is missing."""
+        script = r'''
+set -euo pipefail
+source src/common/preflight.sh
+
+# Mock ss: port 8450 and 8455 succeed, but 8451..8454 return nothing
+ss() {
+    for arg in "$@"; do
+        if [[ "$arg" == *"sport = :8450"* ]] || [[ "$arg" == *"sport = :8455"* ]]; then
+            echo "LISTEN 0 128 0.0.0.0:8450 0.0.0.0:*"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Should fail because 8451..8454 are missing
+if check_required_port tcp 8450-8455 >/dev/null 2>&1; then
+    echo "UNEXPECTED_SUCCESS"
+    exit 1
+else
+    echo "EXPECTED_FAILURE"
+fi
+'''
+        res = run_shell(script)
+        self.assertEqual(res.returncode, 0, f"Stderr: {res.stderr}")
+        self.assertIn("EXPECTED_FAILURE", res.stdout)
+        self.assertNotIn("UNEXPECTED_SUCCESS", res.stdout)
+
+    def test_check_required_port_range_succeeds_when_all_ports_listening(self):
+        """check_required_port succeeds when all ports in range are listening."""
+        script = r'''
+set -euo pipefail
+source src/common/preflight.sh
+
+# Mock ss: all ports in 8450..8455 return listeners
+ss() {
+    echo "LISTEN 0 128 0.0.0.0:sport 0.0.0.0:*"
+    return 0
+}
+
+check_required_port tcp 8450-8455
+echo "ALL_PORTS_OK"
+'''
+        res = run_shell(script)
+        self.assertEqual(res.returncode, 0, f"Stderr: {res.stderr}")
+        self.assertIn("ALL_PORTS_OK", res.stdout)
+        self.assertIn("all listening (8450..8455)", res.stdout)
 
 
 if __name__ == "__main__":

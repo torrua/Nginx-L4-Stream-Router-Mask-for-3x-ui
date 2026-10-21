@@ -423,14 +423,27 @@ check_required_port() {
     local p_flag="-ltn"
     [ "$protocol" = udp ] && p_flag="-lun"
 
-    if [[ "$port" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+    if [[ "$port" =~ ^([0-9]+)[-:]+([0-9]+)$ ]]; then
         local p_start="${BASH_REMATCH[1]}" p_end="${BASH_REMATCH[2]}"
-        local p
-        for p in "$p_start" "$p_end"; do
-            listeners=$(ss -H $p_flag "sport = :$p" 2>/dev/null) || { warn "Port $port/$protocol (boundary $p) is not listening"; return 1; }
-            [ -n "$listeners" ] || { warn "Port $port/$protocol (boundary $p) is not listening"; return 1; }
+        p_start="$((10#$p_start))"
+        p_end="$((10#$p_end))"
+        if [ "$p_start" -gt "$p_end" ]; then
+            local tmp="$p_start"
+            p_start="$p_end"
+            p_end="$tmp"
+        fi
+        local p missing_ports=()
+        for (( p=p_start; p<=p_end; p++ )); do
+            listeners=$(ss -H $p_flag "sport = :$p" 2>/dev/null) || true
+            if [ -z "$listeners" ]; then
+                missing_ports+=("$p")
+            fi
         done
-        ok "Port range $port/$protocol: listening"
+        if [ "${#missing_ports[@]}" -gt 0 ]; then
+            warn "Port range $port/$protocol: not listening on port(s): ${missing_ports[*]}"
+            return 1
+        fi
+        ok "Port range $port/$protocol: all listening (${p_start}..${p_end})"
         return 0
     fi
 
@@ -768,12 +781,12 @@ run_doctor_check() {
     exit 0
 }
 
-if [ "$CHECK_MODE" -eq 1 ]; then
+if [ "${CHECK_MODE:-0}" -eq 1 ]; then
     run_doctor_check
     exit 0
 fi
 
-if [ "$NON_INTERACTIVE" -eq 1 ]; then
+if [ "${NON_INTERACTIVE:-0}" -eq 1 ]; then
     log "Включен НЕИНТЕРАКТИВНЫЙ режим (Ansible / Cloud-Init / CI)."
 fi
 

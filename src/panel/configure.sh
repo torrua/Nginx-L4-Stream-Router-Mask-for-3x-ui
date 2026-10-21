@@ -394,6 +394,12 @@ EOF_HELP
     export ENABLE_WSTUNNEL="${ENABLE_WSTUNNEL:-n}"
     export WSTUNNEL_PREFIX="${WSTUNNEL_PREFIX:-}"
     export WSTUNNEL_PORT="${WSTUNNEL_PORT:-8080}"
+    export ENABLE_MIERU="${ENABLE_MIERU:-n}"
+    export MIERU_PORT="${MIERU_PORT:-8450}"
+    export MIERU_PORT_MODE="${MIERU_PORT_MODE:-single}"
+    export MIERU_TRANSPORT="${MIERU_TRANSPORT:-BOTH}"
+    export MIERU_USER="${MIERU_USER:-}"
+    export MIERU_PASS="${MIERU_PASS:-}"
     export BLOCK_LAN
     export WEB_LISTEN
     export SUB_LISTEN

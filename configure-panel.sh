@@ -1556,6 +1556,12 @@ EOF_HELP
     export ENABLE_WSTUNNEL="${ENABLE_WSTUNNEL:-n}"
     export WSTUNNEL_PREFIX="${WSTUNNEL_PREFIX:-}"
     export WSTUNNEL_PORT="${WSTUNNEL_PORT:-8080}"
+    export ENABLE_MIERU="${ENABLE_MIERU:-n}"
+    export MIERU_PORT="${MIERU_PORT:-8450}"
+    export MIERU_PORT_MODE="${MIERU_PORT_MODE:-single}"
+    export MIERU_TRANSPORT="${MIERU_TRANSPORT:-BOTH}"
+    export MIERU_USER="${MIERU_USER:-}"
+    export MIERU_PASS="${MIERU_PASS:-}"
     export BLOCK_LAN
     export WEB_LISTEN
     export SUB_LISTEN
@@ -2232,18 +2238,34 @@ for k, v in settings_updates.items():
 enable_mieru = os.environ.get("ENABLE_MIERU", "n").lower() in ("1", "y", "true")
 mieru_port_mode = (os.environ.get("MIERU_PORT_MODE") or "single").strip().lower()
 mieru_port = (os.environ.get("MIERU_PORT") or ("8450-8455" if mieru_port_mode == "range" else "8450")).strip()
+mieru_transport = (os.environ.get("MIERU_TRANSPORT") or "").strip().upper()
 mieru_user = (os.environ.get("MIERU_USER") or "").strip()
 mieru_pass = (os.environ.get("MIERU_PASS") or "").strip()
 
-if enable_mieru and (not mieru_user or not mieru_pass) and os.path.isfile("/etc/mita_server_config.json"):
-    try:
-        with open("/etc/mita_server_config.json", "r", encoding="utf-8") as mf:
-            mdata = json.load(mf)
-            if mdata.get("users") and len(mdata["users"]) > 0:
-                if not mieru_user: mieru_user = mdata["users"][0].get("name", "")
-                if not mieru_pass: mieru_pass = mdata["users"][0].get("password", "")
-    except Exception:
-        pass
+if enable_mieru and (not mieru_user or not mieru_pass or not mieru_transport):
+    for m_cfg_candidate in ["/etc/mita/config.json", "/etc/mita_server_config.json"]:
+        if os.path.isfile(m_cfg_candidate):
+            try:
+                with open(m_cfg_candidate, "r", encoding="utf-8") as mf:
+                    mdata = json.load(mf)
+                    if not mieru_user and mdata.get("users") and len(mdata["users"]) > 0:
+                        mieru_user = mdata["users"][0].get("name", "")
+                    if not mieru_pass and mdata.get("users") and len(mdata["users"]) > 0:
+                        mieru_pass = mdata["users"][0].get("password", "")
+                    if not mieru_transport and mdata.get("portBindings"):
+                        protos = [str(b.get("protocol", "")).upper() for b in mdata["portBindings"] if "protocol" in b]
+                        if "UDP" in protos and "TCP" not in protos:
+                            mieru_transport = "UDP"
+                        elif "TCP" in protos and "UDP" not in protos:
+                            mieru_transport = "TCP"
+                        elif "TCP" in protos and "UDP" in protos:
+                            mieru_transport = "BOTH"
+                break
+            except Exception:
+                pass
+
+if not mieru_transport:
+    mieru_transport = "BOTH"
 
 if enable_mieru and mieru_user and mieru_pass:
     server_title = (sub_title or domain or "VPN").strip()
@@ -2257,11 +2279,12 @@ if enable_mieru and mieru_user and mieru_pass:
     safe_node_name = json.dumps(mieru_node_name)
     safe_user = json.dumps(mieru_user)
     safe_pass = json.dumps(mieru_pass)
+    clash_transport = "UDP" if mieru_transport == "UDP" else "TCP"
     mieru_yaml_block = f"""  - name: {safe_node_name}
     type: mieru
     server: {domain}
     {m_port_field}
-    transport: TCP
+    transport: {clash_transport}
     udp: true
     username: {safe_user}
     password: {safe_pass}
@@ -3980,6 +4003,14 @@ dnstt_cli = f"dnstt-client -doh https://dns.google/dns-query -pubkey {dnstt_pubk
 
 if enable_mieru and mieru_user and mieru_pass:
     client_m_port = int(mieru_port.split("-")[0].split(":")[0]) if "-" not in mieru_port and ":" not in mieru_port else mieru_port
+    m_protocols = ["UDP"] if mieru_transport == "UDP" else (["TCP"] if mieru_transport == "TCP" else ["TCP", "UDP"])
+    m_client_bindings = []
+    for p in m_protocols:
+        if isinstance(client_m_port, int) or ("-" not in str(client_m_port)):
+            m_client_bindings.append({"port": int(str(client_m_port).split("-")[0].split(":")[0]), "protocol": p})
+        else:
+            m_client_bindings.append({"portRange": str(client_m_port), "protocol": p})
+
     mieru_client_config = {
         "profiles": [{
             "profileName": "default",
@@ -3989,9 +4020,7 @@ if enable_mieru and mieru_user and mieru_pass:
             },
             "servers": [{
                 "ipAddress": domain,
-                "portBindings": [
-                    {"port": client_m_port, "protocol": "TCP"} if isinstance(client_m_port, int) else {"portRange": str(client_m_port), "protocol": "TCP"}
-                ]
+                "portBindings": m_client_bindings
             }],
             "handshakeMode": "HANDSHAKE_STANDARD"
         }],
@@ -4074,6 +4103,7 @@ if not dry_run:
                 f.write(f"ENABLE_MIERU='1'\n")
                 f.write(f"MIERU_PORT={shlex.quote(mieru_port)}\n")
                 f.write(f"MIERU_PORT_MODE={shlex.quote(mieru_port_mode)}\n")
+                f.write(f"MIERU_TRANSPORT={shlex.quote(mieru_transport)}\n")
                 f.write(f"MIERU_USER={shlex.quote(mieru_user)}\n")
                 f.write(f"MIERU_PASS={shlex.quote(mieru_pass)}\n")
                 if 'mieru_node_name' in locals():

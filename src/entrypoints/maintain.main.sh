@@ -1379,17 +1379,31 @@ if not dry_run:
 
     enable_mieru = os.environ.get("ENABLE_MIERU", "n").lower() in ("1", "y", "true")
     mieru_port = (os.environ.get("MIERU_PORT") or "8450").strip()
+    mieru_transport = (os.environ.get("MIERU_TRANSPORT") or "").strip().upper()
     mieru_user = (os.environ.get("MIERU_USER") or "").strip()
     mieru_pass = (os.environ.get("MIERU_PASS") or "").strip()
-    if (not mieru_user or not mieru_pass) and os.path.isfile("/etc/mita_server_config.json"):
-        try:
-            with open("/etc/mita_server_config.json", "r", encoding="utf-8") as mf:
-                mdata = json.load(mf)
-                if mdata.get("users") and len(mdata["users"]) > 0:
-                    if not mieru_user: mieru_user = mdata["users"][0].get("name", "")
-                    if not mieru_pass: mieru_pass = mdata["users"][0].get("password", "")
-        except Exception:
-            pass
+    if not mieru_user or not mieru_pass or not mieru_transport:
+        for m_cfg_candidate in ["/etc/mita/config.json", "/etc/mita_server_config.json"]:
+            if os.path.isfile(m_cfg_candidate):
+                try:
+                    with open(m_cfg_candidate, "r", encoding="utf-8") as mf:
+                        mdata = json.load(mf)
+                        if mdata.get("users") and len(mdata["users"]) > 0:
+                            if not mieru_user: mieru_user = mdata["users"][0].get("name", "")
+                            if not mieru_pass: mieru_pass = mdata["users"][0].get("password", "")
+                        if not mieru_transport and mdata.get("portBindings"):
+                            protos = [str(b.get("protocol", "")).upper() for b in mdata["portBindings"] if "protocol" in b]
+                            if "UDP" in protos and "TCP" not in protos:
+                                mieru_transport = "UDP"
+                            elif "TCP" in protos and "UDP" not in protos:
+                                mieru_transport = "TCP"
+                            elif "TCP" in protos and "UDP" in protos:
+                                mieru_transport = "BOTH"
+                    break
+                except Exception:
+                    pass
+    if not mieru_transport:
+        mieru_transport = "BOTH"
 
     try:
         cur.execute("PRAGMA wal_checkpoint(TRUNCATE)")
@@ -1448,6 +1462,7 @@ if not dry_run:
             if (enable_mieru or os.path.exists("/etc/systemd/system/mita.service")) and mieru_user and mieru_pass:
                 f.write(f"ENABLE_MIERU='1'\n")
                 f.write(f"MIERU_PORT={shlex.quote(mieru_port)}\n")
+                f.write(f"MIERU_TRANSPORT={shlex.quote(mieru_transport)}\n")
                 f.write(f"MIERU_USER={shlex.quote(mieru_user)}\n")
                 f.write(f"MIERU_PASS={shlex.quote(mieru_pass)}\n")
         os.umask(old_umask)

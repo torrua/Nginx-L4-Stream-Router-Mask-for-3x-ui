@@ -233,21 +233,51 @@ for p in [cfg_path, "/etc/mita/config.json", "/etc/mita_server_config.json"]:
         except Exception:
             pass
 
-# Determine port binding for client
+# Determine port binding and transport for client
 bindings = data.get("portBindings", [])
 port_val = None
+server_protos = []
 for b in bindings:
-    if "port" in b:
+    if "port" in b and not port_val:
         port_val = b["port"]
-        break
-    elif "portRange" in b:
+    elif "portRange" in b and not port_val:
         port_val = b["portRange"]
-        break
+    if "protocol" in b:
+        server_protos.append(str(b["protocol"]).upper())
+
 if not port_val:
     port_val = 8450
 
+env_trans = (os.environ.get("MIERU_TRANSPORT") or os.environ.get("MIERU_CONFIG_TRANSPORT") or "").strip().upper()
+if env_trans in ("TCP", "UDP", "BOTH"):
+    effective_trans = env_trans
+elif "UDP" in server_protos and "TCP" not in server_protos:
+    effective_trans = "UDP"
+elif "TCP" in server_protos and "UDP" not in server_protos:
+    effective_trans = "TCP"
+elif "TCP" in server_protos and "UDP" in server_protos:
+    effective_trans = "BOTH"
+else:
+    effective_trans = "TCP"
+
+if effective_trans == "UDP":
+    client_protocols = ["UDP"]
+    yaml_transport = "UDP"
+elif effective_trans == "TCP":
+    client_protocols = ["TCP"]
+    yaml_transport = "TCP"
+else:
+    client_protocols = ["TCP", "UDP"]
+    yaml_transport = "TCP"
+
+client_bindings = []
+for proto in client_protocols:
+    if isinstance(port_val, int) or ("-" not in str(port_val)):
+        client_bindings.append({"port": int(str(port_val).split("-")[0].split(":")[0]), "protocol": proto})
+    else:
+        client_bindings.append({"portRange": str(port_val), "protocol": proto})
+
 # Generate client json
-client_binding = {"port": port_val, "protocol": "TCP"} if isinstance(port_val, int) else {"portRange": str(port_val), "protocol": "TCP"}
 client_config = {
     "profiles": [{
         "profileName": "default",
@@ -257,7 +287,7 @@ client_config = {
         },
         "servers": [{
             "ipAddress": domain,
-            "portBindings": [client_binding]
+            "portBindings": client_bindings
         }],
         "handshakeMode": "HANDSHAKE_STANDARD"
     }],
@@ -286,7 +316,7 @@ mihomo_yaml = f"""  - name: "Mieru - {username}"
     {yaml_port_key}
     username: {username}
     password: {password}
-    transport: TCP
+    transport: {yaml_transport}
     multiplexing: MULTIPLEXING_LOW
     handshake-mode: HANDSHAKE_STANDARD
     udp: true"""
@@ -332,7 +362,13 @@ EOF_ADD
     fi
     echo -e "    username: ${target_user}"
     echo -e "    password: ${target_pass}"
-    echo -e "    transport: TCP"
+    local cli_trans="TCP"
+    if [ -f "$client_file" ]; then
+        if grep -q '"protocol": *"UDP"' "$client_file" 2>/dev/null && ! grep -q '"protocol": *"TCP"' "$client_file" 2>/dev/null; then
+            cli_trans="UDP"
+        fi
+    fi
+    echo -e "    transport: ${cli_trans}"
     echo -e "    multiplexing: MULTIPLEXING_LOW"
     echo -e "    handshake-mode: HANDSHAKE_STANDARD"
     echo -e "    udp: true${NC}"

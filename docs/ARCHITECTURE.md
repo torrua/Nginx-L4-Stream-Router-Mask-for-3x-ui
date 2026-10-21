@@ -1234,6 +1234,11 @@ src/
 │   ├── snapshot.sh
 │   ├── sysctl.sh
 │   └── uninstall.sh
+├── panel/              # Настройка панели 3X-UI: автономный запуск, токены нод, реконсиляция SQLite
+│   ├── configure.sh
+│   ├── node-token.sh
+│   ├── node_token.py
+│   └── reconcile.py
 ├── nginx/              # Конфигурация Nginx: установка, генератор стрим/HTTP-роутера, сайты-приманки
 │   ├── config.sh
 │   ├── decoys.sh
@@ -1248,16 +1253,38 @@ src/
 │   ├── keys.py
 │   └── routing.py
 ├── installer/          # Подсистемы мастера установки install.sh: экспресс-опросник, шаги, дашборд
+│   ├── engine.sh
 │   ├── express.sh
+│   ├── plan.sh
 │   ├── steps.sh
 │   └── summary.sh
 └── entrypoints/        # Точки входа, собирающие монолитные дистрибутивы
     ├── configure-panel.main.sh
     ├── install.main.sh
+    ├── maintain.main.sh
+    ├── manage-services.main.sh
+    ├── prepare-server.main.sh
     ├── setup.main.sh
-    ├── uninstall.main.sh
-    └── maintain.main.sh
+    └── uninstall.main.sh
 ```
+
+### 15.1. Подсистема снимков и полного отката (`src/system/snapshot.sh` и `uninstall.sh`)
+* **Автоматический снимок:** Перед внесением системных изменений модуль `snapshot.sh` сохраняет состояние ОС в `/var/backups/server_setup/snapshot_initial/`:
+  - Правила файрвола UFW (`/etc/ufw/` и статус);
+  - Параметры ядра (`/etc/sysctl.conf`, `/etc/sysctl.d/`);
+  - Конфигурацию SSH (`/etc/ssh/sshd_config`, `/etc/ssh/sshd_config.d/`);
+  - Сетевые настройки и DNS (`/etc/resolv.conf`, `systemd-resolved`);
+  - Список активных systemd-юнитов и пользовательские задачи `crontab`.
+* **Безопасная деинсталляция (`uninstall.sh`):**
+  - Восстановление оригинальных файлов конфигурации из снимка;
+  - Защита Anti-Lockout: проверка доступности SSH-порта и правил файрвола перед отключением служб;
+  - Интерактивный диалог сохранения или удаления выданных сертификатов (`--keep-certs` / `--remove-certs`);
+  - Остановка и удаление сервисов стека (3X-UI, Nginx, AdGuard Home, AmneziaWG DKMS, Sing-box, Caddy).
+
+### 15.2. Умная диагностика при сбоях (Smart Silent Debug)
+* Модуль `src/common/spinner.sh` выполняет системные команды через перехват вывода во временный буфер.
+* В штатном режиме в консоль выводятся только аккуратные спиннеры этапов.
+* При сбое команды (ненулевой код завершения) скрипт мгновенно выводит контекст ошибки, хвост логов упавшего процесса и состояние системного сервиса без необходимости ручного перезапуска с флагом `--debug`.
 
 ### Принцип сборки дистрибутивов
 Для сохранения полной совместимости с вызовом через `curl -sSL ... | sudo bash` сборочный скрипт `scripts/build.py` генерирует самодостаточные монолитные файлы в корень репозитория:

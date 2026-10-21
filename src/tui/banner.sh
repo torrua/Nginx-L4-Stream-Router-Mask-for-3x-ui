@@ -253,6 +253,15 @@ DNSTT_PORT="53053"
 DNSTT_DOMAIN=""
 DNSTT_PUBKEY=""
 
+# Mieru Proxy (XChaCha20-Poly1305, без TLS, защита от активного зондирования и сигнатурного DPI) [y/n]
+ENABLE_MIERU="n"
+MIERU_PORT_MODE="single"
+MIERU_PORT="8450"
+MIERU_TRANSPORT="BOTH"
+MIERU_USER=""
+MIERU_PASS=""
+MIERU_MTU="1400"
+
 # --- 10. БЕЗОПАСНОСТЬ ХОСТА (HOST SECURITY & SSH HARDENING) ---
 # Включить настройку безопасности хоста (порт SSH, ключи, защита от брутфорса) [y/n]
 ENABLE_HOST_SECURITY="n"

@@ -308,6 +308,28 @@ reconstruct_arrays_from_vars() {
     if [ "$ENABLE_WSTUNNEL" -eq 1 ] && [ -z "${WSTUNNEL_SECRET:-}" ]; then
         WSTUNNEL_SECRET="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "wst${RANDOM}")"
     fi
+    _v="${ENABLE_MIERU:-n}"; if is_true "$_v"; then ENABLE_MIERU=1; else ENABLE_MIERU=0; fi
+    MIERU_PORT_MODE="${MIERU_PORT_MODE:-single}"
+    case "${MIERU_PORT_MODE,,}" in
+        range|pool)
+            MIERU_PORT_MODE="range"
+            MIERU_PORT="${MIERU_PORT:-8450-8455}"
+            ;;
+        *)
+            MIERU_PORT_MODE="single"
+            MIERU_PORT="${MIERU_PORT:-8450}"
+            ;;
+    esac
+    MIERU_TRANSPORT="${MIERU_TRANSPORT:-BOTH}"
+    if [ "$ENABLE_MIERU" -eq 1 ] && [ -z "${MIERU_USER:-}" ]; then
+        MIERU_USER="user-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "mieru${RANDOM}")"
+    fi
+    MIERU_USER="${MIERU_USER:-}"
+    if [ "$ENABLE_MIERU" -eq 1 ] && [ -z "${MIERU_PASS:-}" ]; then
+        MIERU_PASS="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "mieru${RANDOM}")"
+    fi
+    MIERU_PASS="${MIERU_PASS:-}"
+    MIERU_MTU="${MIERU_MTU:-1400}"
     CF_AUTH_METHOD="${CF_AUTH_METHOD:-1}"
     _v="${ENABLE_HOST_SECURITY:-n}"; if is_true "$_v"; then ENABLE_HOST_SECURITY="y"; else ENABLE_HOST_SECURITY="n"; fi
     SSH_PORT="${SSH_PORT:-${SSH_ACTIVE_PORT:-22}}"
@@ -423,6 +445,8 @@ save_session_state() {
     v="${ENABLE_ZAPRET:-n}"; is_true "$v" && zapret_save="y"
     local wstunnel_save="n"
     v="${ENABLE_WSTUNNEL:-n}"; is_true "$v" && wstunnel_save="y"
+    local mieru_save="n"
+    v="${ENABLE_MIERU:-n}"; is_true "$v" && mieru_save="y"
     local host_security_save="n"
     v="${ENABLE_HOST_SECURITY:-n}"; is_true "$v" && host_security_save="y"
     local fail2ban_save="n"
@@ -582,6 +606,13 @@ WSTUNNEL_DOMAIN="${WSTUNNEL_DOMAIN:-}"
 WSTUNNEL_PREFIX="${WSTUNNEL_PREFIX:-}"
 WSTUNNEL_PORT="${WSTUNNEL_PORT:-8080}"
 WSTUNNEL_SECRET="${WSTUNNEL_SECRET:-}"
+ENABLE_MIERU="$mieru_save"
+MIERU_PORT_MODE="${MIERU_PORT_MODE:-single}"
+MIERU_PORT="${MIERU_PORT:-8450}"
+MIERU_TRANSPORT="${MIERU_TRANSPORT:-BOTH}"
+MIERU_USER="${MIERU_USER:-}"
+MIERU_PASS="${MIERU_PASS:-}"
+MIERU_MTU="${MIERU_MTU:-1400}"
 
 ENABLE_HOST_SECURITY="$host_security_save"
 SSH_PORT="${SSH_PORT:-${SSH_ACTIVE_PORT:-22}}"

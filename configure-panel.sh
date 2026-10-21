@@ -2228,6 +2228,121 @@ for k, v in settings_updates.items():
     else:
         print(f"  [В ПОРЯДКЕ] Настройка {k}: '{v}'")
 
+# ----------------- 1.0. Интеграция Mieru в шаблон подписки Clash (subClashTemplate) -----------------
+enable_mieru = os.environ.get("ENABLE_MIERU", "n").lower() in ("1", "y", "true")
+mieru_port_mode = (os.environ.get("MIERU_PORT_MODE") or "single").strip().lower()
+mieru_port = (os.environ.get("MIERU_PORT") or ("8450-8455" if mieru_port_mode == "range" else "8450")).strip()
+mieru_user = (os.environ.get("MIERU_USER") or "").strip()
+mieru_pass = (os.environ.get("MIERU_PASS") or "").strip()
+
+if enable_mieru and (not mieru_user or not mieru_pass) and os.path.isfile("/etc/mita_server_config.json"):
+    try:
+        with open("/etc/mita_server_config.json", "r", encoding="utf-8") as mf:
+            mdata = json.load(mf)
+            if mdata.get("users") and len(mdata["users"]) > 0:
+                if not mieru_user: mieru_user = mdata["users"][0].get("name", "")
+                if not mieru_pass: mieru_pass = mdata["users"][0].get("password", "")
+    except Exception:
+        pass
+
+if enable_mieru and mieru_user and mieru_pass:
+    server_title = (sub_title or domain or "VPN").strip()
+    mieru_node_name = f"{server_title} — Mieru"
+    if mieru_port_mode == "range" or "-" in mieru_port:
+        m_port_field = f"port-range: {mieru_port}"
+    else:
+        m_port_clean = mieru_port.split("-")[0].split(":")[0]
+        m_port_field = f"port: {m_port_clean}"
+
+    mieru_yaml_block = f"""  - name: "{mieru_node_name}"
+    type: mieru
+    server: {domain}
+    {m_port_field}
+    transport: TCP
+    udp: true
+    username: "{mieru_user}"
+    password: "{mieru_pass}"
+    multiplexing: MULTIPLEXING_LOW
+    handshake-mode: HANDSHAKE_STANDARD"""
+
+    raw_clash_tpl = existing_settings.get("subClashTemplate", "")
+    if not raw_clash_tpl or not raw_clash_tpl.strip():
+        new_clash_tpl = f"""port: 7890
+socks-port: 7891
+allow-lan: false
+mode: rule
+log-level: info
+unified-delay: true
+global-client-fingerprint: chrome
+dns:
+  enable: true
+  listen: :1053
+  ipv6: false
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  default-nameserver:
+    - 1.1.1.1
+    - 8.8.8.8
+  nameserver:
+    - https://dns.google/dns-query
+    - https://1.1.1.1/dns-query
+proxies:
+{mieru_yaml_block}
+proxy-groups:
+  - name: "PROXIES"
+    type: select
+    proxies:
+      - "{mieru_node_name}"
+  - name: "AUTO"
+    type: url-test
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+    proxies:
+      - "{mieru_node_name}"
+rules:
+  - GEOIP,private,DIRECT
+  - MATCH,PROXIES
+"""
+    elif "type: mieru" not in raw_clash_tpl:
+        lines = raw_clash_tpl.splitlines()
+        new_lines = []
+        proxies_injected = False
+        has_proxies = any(l.strip().startswith("proxies:") for l in lines)
+        if not has_proxies:
+            new_lines.append("proxies:")
+            new_lines.append(mieru_yaml_block)
+            new_lines.extend(lines)
+        else:
+            for l in lines:
+                new_lines.append(l)
+                if not proxies_injected and l.strip().startswith("proxies:"):
+                    new_lines.append(mieru_yaml_block)
+                    proxies_injected = True
+        
+        final_lines = []
+        in_tg = False
+        for l in new_lines:
+            final_lines.append(l)
+            if re.search(r'name:\s*["\']?(PROXIES|AUTO|PROXY|Default|FALLBACK)["\']?', l, re.IGNORECASE):
+                in_tg = True
+            elif in_tg and l.strip().startswith("proxies:"):
+                final_lines.append(f'      - "{mieru_node_name}"')
+                in_tg = False
+            elif in_tg and l.strip() and not l.startswith(" ") and not l.startswith("\t"):
+                in_tg = False
+        new_clash_tpl = "\n".join(final_lines) + "\n"
+    else:
+        new_clash_tpl = raw_clash_tpl
+
+    if new_clash_tpl != raw_clash_tpl:
+        if not dry_run:
+            cur.execute("SELECT id FROM settings WHERE key = 'subClashTemplate'")
+            if cur.fetchone():
+                cur.execute("UPDATE settings SET value = ? WHERE key = 'subClashTemplate'", (new_clash_tpl,))
+            else:
+                cur.execute("INSERT INTO settings (key, value) VALUES ('subClashTemplate', ?)", (new_clash_tpl,))
+        print(f"  [ИСПРАВЛЕНО] Узел Mieru ({mieru_port}) интегрирован в шаблон подписки subClashTemplate.")
+
 # ----------------- 1.1. Тюнинг безопасности и шаблона ядра Xray (xrayTemplateConfig) -----------------
 print("\n[+] Синхронизация шаблона конфигурации Xray (DNS, безопасность и защита от абуз)...")
 
@@ -3860,6 +3975,37 @@ if not dnstt_pubkey and enable_dnstt and not dry_run:
         pass
 dnstt_cli = f"dnstt-client -doh https://dns.google/dns-query -pubkey {dnstt_pubkey} {dnstt_domain} 127.0.0.1:1080"
 
+if enable_mieru and mieru_user and mieru_pass:
+    client_m_port = int(mieru_port.split("-")[0].split(":")[0]) if "-" not in mieru_port and ":" not in mieru_port else mieru_port
+    mieru_client_config = {
+        "profiles": [{
+            "profileName": "default",
+            "user": {
+                "name": mieru_user,
+                "password": mieru_pass
+            },
+            "servers": [{
+                "ipAddress": domain,
+                "portBindings": [
+                    {"port": client_m_port, "protocol": "TCP"} if isinstance(client_m_port, int) else {"portRange": str(client_m_port), "protocol": "TCP"}
+                ]
+            }],
+            "handshakeMode": "HANDSHAKE_STANDARD"
+        }],
+        "activeProfile": "default",
+        "rpcPort": 0,
+        "socks5Port": 1080,
+        "loggingLevel": "INFO",
+        "httpProxyPort": 8080
+    }
+    if not dry_run:
+        try:
+            with open("/root/mieru-client.json", "w", encoding="utf-8") as mcf:
+                json.dump(mieru_client_config, mcf, indent=2)
+            os.chmod("/root/mieru-client.json", 0o600)
+        except Exception:
+            pass
+
 if not dry_run:
     try:
         cur.execute("PRAGMA wal_checkpoint(TRUNCATE)")
@@ -3921,6 +4067,14 @@ if not dry_run:
                 f.write(f"DNSTT_PORT='{dnstt_port}'\n")
                 f.write(f"DNSTT_DOMAIN='{dnstt_domain}'\n")
                 f.write(f"DNSTT_PUBKEY='{dnstt_pubkey}'\n")
+            if enable_mieru:
+                f.write(f"ENABLE_MIERU='1'\n")
+                f.write(f"MIERU_PORT='{mieru_port}'\n")
+                f.write(f"MIERU_PORT_MODE='{mieru_port_mode}'\n")
+                f.write(f"MIERU_USER='{mieru_user}'\n")
+                f.write(f"MIERU_PASS='{mieru_pass}'\n")
+                if 'mieru_node_name' in locals():
+                    f.write(f"MIERU_NODE_NAME='{mieru_node_name}'\n")
         os.umask(old_umask)
         os.chmod(run_file, 0o600)
     except Exception:
@@ -4218,8 +4372,9 @@ $([ -n "${WSTUNNEL_CLI:-}" ] && printf "Wstunnel Client CLI:     %s\n" "${WSTUNN
 $([ -n "${ZAPRET_INFO:-}" ] && printf "Server-Side Zapret:      %s\n" "${ZAPRET_INFO}")
 $([ -n "${NAIVE_URI:-}" ] && printf "NaïveProxy (Chrome HTTPS): %s\n" "${NAIVE_URI}")
 $([ -n "${DNSTT_CLI:-}" ] && printf "DNSTT DoH Tunnel:        %s\nDNSTT Public Key:        %s\n" "${DNSTT_CLI}" "${DNSTT_PUBKEY}")
+$([ -n "${MIERU_PORT:-}" ] && [ -n "${MIERU_USER:-}" ] && printf "Mieru Proxy (XChaCha20, :%s): user: %s, pass: %s (Клиентский конфиг: /root/mieru-client.json)\n" "${MIERU_PORT}" "${MIERU_USER}" "${MIERU_PASS}")
 $([ -n "${NODE_TOKEN:-}" ] && printf "3X-UI Node Token:      %s\nИмя ноды (Node Name):  %s (Host: %s:443, Path: /%s/)\n" "${NODE_TOKEN}" "${NODE_TOKEN_NAME}" "${PRIMARY_DOMAIN}" "${PANEL_PATH#/}")
-(Объединяет все конфигурации: Steal REALITY, Classic REALITY, xHTTP, Hysteria 2, AWG v3, AWG v2, SS-2022, TUIC v5, MTProxy, MASQUE, ShadowTLS, Wstunnel, Zapret, NaïveProxy, DNSTT)
+(Объединяет все конфигурации: Steal REALITY, Classic REALITY, xHTTP, Hysteria 2, AWG v3, AWG v2, SS-2022, TUIC v5, MTProxy, MASQUE, ShadowTLS, Wstunnel, Zapret, NaïveProxy, DNSTT, Mieru)
 =====================================================================
 EOF_CRED
             echo -e "  - ${BOLD}Файл с паролями:${NC}        ${CYAN}$CRED_FILE${NC} (chmod 600)"
@@ -4243,6 +4398,10 @@ EOF_CRED
             if [ -n "${DNSTT_CLI:-}" ] && ! grep -q "DNSTT DoH Tunnel:" "$CRED_FILE" 2>/dev/null; then
                 echo "DNSTT DoH Tunnel:        ${DNSTT_CLI}" >> "$CRED_FILE"
                 echo "DNSTT Public Key:        ${DNSTT_PUBKEY}" >> "$CRED_FILE"
+            fi
+            if [ -n "${MIERU_PORT:-}" ] && [ -n "${MIERU_USER:-}" ] && ! grep -q "Mieru Proxy" "$CRED_FILE" 2>/dev/null; then
+                echo "Mieru Proxy (XChaCha20, :${MIERU_PORT}): user: ${MIERU_USER}, pass: ${MIERU_PASS}" >> "$CRED_FILE"
+                echo "  Клиентский конфиг: /root/mieru-client.json" >> "$CRED_FILE"
             fi
             echo -e "  - ${BOLD}Файл с паролями:${NC}        ${CYAN}$CRED_FILE${NC} (обновлен, chmod 600)"
         fi

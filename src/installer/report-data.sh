@@ -44,6 +44,10 @@ fi
 if [[ "${ENABLE_DNSTT:-}" == "1" || "${ENABLE_DNSTT,,}" == "y" ]] && [ -n "${DNSTT_PORT:-}" ]; then
     UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${DNSTT_PORT}/udp"
 fi
+if [[ "${ENABLE_MIERU:-}" == "1" || "${ENABLE_MIERU,,}" == "y" ]] && [ -n "${MIERU_PORT:-}" ]; then
+    _ufw_m_p="${MIERU_PORT//-/:}"
+    UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${_ufw_m_p}/tcp && ufw allow ${_ufw_m_p}/udp"
+fi
 
 SSL_CERT_REPORT=""
 for dom in "${ALL_DOMAINS[@]}"; do

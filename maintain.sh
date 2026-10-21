@@ -2372,6 +2372,20 @@ if not dry_run:
             pass
     dnstt_cli = f"dnstt-client -doh https://dns.google/dns-query -pubkey {dnstt_pubkey} {dnstt_domain} 127.0.0.1:1080"
 
+    enable_mieru = os.environ.get("ENABLE_MIERU", "n").lower() in ("1", "y", "true")
+    mieru_port = (os.environ.get("MIERU_PORT") or "8450").strip()
+    mieru_user = (os.environ.get("MIERU_USER") or "").strip()
+    mieru_pass = (os.environ.get("MIERU_PASS") or "").strip()
+    if (not mieru_user or not mieru_pass) and os.path.isfile("/etc/mita_server_config.json"):
+        try:
+            with open("/etc/mita_server_config.json", "r", encoding="utf-8") as mf:
+                mdata = json.load(mf)
+                if mdata.get("users") and len(mdata["users"]) > 0:
+                    if not mieru_user: mieru_user = mdata["users"][0].get("name", "")
+                    if not mieru_pass: mieru_pass = mdata["users"][0].get("password", "")
+        except Exception:
+            pass
+
     try:
         cur.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     except Exception:
@@ -2426,6 +2440,11 @@ if not dry_run:
                 f.write(f"DNSTT_PORT='{dnstt_port}'\n")
                 f.write(f"DNSTT_DOMAIN='{dnstt_domain}'\n")
                 f.write(f"DNSTT_PUBKEY='{dnstt_pubkey}'\n")
+            if (enable_mieru or os.path.exists("/etc/systemd/system/mita.service")) and mieru_user and mieru_pass:
+                f.write(f"ENABLE_MIERU='1'\n")
+                f.write(f"MIERU_PORT='{mieru_port}'\n")
+                f.write(f"MIERU_USER='{mieru_user}'\n")
+                f.write(f"MIERU_PASS='{mieru_pass}'\n")
         os.umask(old_umask)
         os.chmod(run_file, 0o600)
     except Exception:
@@ -2545,6 +2564,10 @@ else
         if [ -n "${DNSTT_CLI:-}" ] && ! grep -q "DNSTT DoH Tunnel:" /root/vpn_credentials.txt 2>/dev/null; then
             echo "DNSTT DoH Tunnel:        ${DNSTT_CLI}" >> /root/vpn_credentials.txt
             [ -n "${DNSTT_PUBKEY:-}" ] && echo "DNSTT Public Key:        ${DNSTT_PUBKEY}" >> /root/vpn_credentials.txt
+        fi
+        if [ -n "${MIERU_PORT:-}" ] && [ -n "${MIERU_USER:-}" ] && ! grep -q "Mieru Proxy" /root/vpn_credentials.txt 2>/dev/null; then
+            echo "Mieru Proxy (XChaCha20, :${MIERU_PORT}): user: ${MIERU_USER}, pass: ${MIERU_PASS}" >> /root/vpn_credentials.txt
+            echo "  Клиентский конфиг: /root/mieru-client.json" >> /root/vpn_credentials.txt
         fi
     fi
 fi

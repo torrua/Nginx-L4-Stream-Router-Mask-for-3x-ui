@@ -21,10 +21,11 @@ done
 
 # Protocol listeners: allow public entrypoints, deny non-public internal proxies
 while read -r protocol transport port; do
+    local ufw_port="${port//-/:}"
     if protocol_is_public "$protocol"; then
-        ufw allow "$port/$transport" comment "VPN: $protocol"
+        ufw allow "$ufw_port/$transport" comment "VPN: $protocol"
     else
-        ufw deny "$port/$transport" comment "Internal: $protocol"
+        ufw deny "$ufw_port/$transport" comment "Internal: $protocol"
     fi
 done < <(selected_protocol_ports)
 

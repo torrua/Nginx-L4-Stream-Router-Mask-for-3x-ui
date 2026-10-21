@@ -588,6 +588,159 @@ EOF
     fi
 }
 
+setup_mieru_service() {
+    log "Настройка службы Mieru Proxy (mita)..."
+    local cur_arch
+    cur_arch=$(uname -m 2>/dev/null || echo "x86_64")
+    local mita_arch="amd64"
+    case "$cur_arch" in
+        x86_64|amd64) mita_arch="amd64" ;;
+        aarch64|arm64) mita_arch="arm64" ;;
+        *) mita_arch="amd64" ;;
+    esac
+
+    local bin_dir="${LOCAL_BIN_DIR:-/usr/local/bin}"
+    [ -d "$bin_dir" ] || mkdir -p "$bin_dir" 2>/dev/null || true
+
+    local mita_bin="${bin_dir}/mita"
+    if [ ! -x "$mita_bin" ] && command -v mita >/dev/null 2>&1; then
+        mita_bin="$(command -v mita)"
+    fi
+
+    if command -v timedatectl >/dev/null 2>&1; then
+        timedatectl set-ntp true 2>/dev/null || true
+        systemctl restart systemd-timesyncd 2>/dev/null || true
+    fi
+
+    if [ ! -x "$mita_bin" ]; then
+        local mita_ver="3.38.1"
+        local mita_tmp="/tmp/mita_${mita_ver}_$$"
+        mkdir -p "$mita_tmp"
+        local dl_url="https://github.com/enfein/mieru/releases/download/v${mita_ver}/mita_${mita_ver}_linux_${mita_arch}.tar.gz"
+        local dl_mirror="https://ghfast.top/${dl_url}"
+        if curl -fsSL --connect-timeout 15 "$dl_url" -o "$mita_tmp/mita.tar.gz" 2>/dev/null || \
+           curl -fsSL --connect-timeout 15 "$dl_mirror" -o "$mita_tmp/mita.tar.gz" 2>/dev/null; then
+            tar -zxf "$mita_tmp/mita.tar.gz" -C "$mita_tmp" 2>/dev/null || true
+            if [ -f "$mita_tmp/mita" ]; then
+                cp "$mita_tmp/mita" "${bin_dir}/mita"
+                chmod +x "${bin_dir}/mita"
+                mita_bin="${bin_dir}/mita"
+            fi
+        fi
+        rm -rf "$mita_tmp" 2>/dev/null || true
+    fi
+
+    if [ ! -x "$mita_bin" ]; then
+        warn "Не удалось загрузить бинарник mita. Установка Mieru пропущена."
+        return 0
+    fi
+
+    if ! id -u mita >/dev/null 2>&1; then
+        useradd --system --no-create-home --user-group mita 2>/dev/null || true
+    fi
+    mkdir -p /etc/mita /var/lib/mita /var/run/mita
+    chown -R mita:mita /etc/mita /var/lib/mita /var/run/mita 2>/dev/null || true
+    chmod 775 /etc/mita /var/lib/mita /var/run/mita 2>/dev/null || true
+
+    local m_port_mode="${MIERU_PORT_MODE:-single}"
+    local m_port="${MIERU_PORT:-8450}"
+    local m_user="${MIERU_USER:-user-default}"
+    local m_pass="${MIERU_PASS:-pass-default}"
+    local m_trans="${MIERU_TRANSPORT:-BOTH}"
+    local m_mtu="${MIERU_MTU:-1400}"
+
+    python3 -c "
+import json
+port_mode = '$m_port_mode'.lower()
+port_val = '$m_port'.strip()
+transport = '$m_trans'.upper()
+
+protocols = ['TCP', 'UDP'] if transport == 'BOTH' else [transport]
+port_bindings = []
+
+for proto in protocols:
+    if port_mode == 'range' or '-' in port_val:
+        port_bindings.append({'portRange': port_val, 'protocol': proto})
+    else:
+        clean_p = int(port_val.split('-')[0].split(':')[0])
+        port_bindings.append({'port': clean_p, 'protocol': proto})
+
+config = {
+    'portBindings': port_bindings,
+    'users': [{
+        'name': '$m_user',
+        'password': '$m_pass'
+    }],
+    'loggingLevel': 'INFO',
+    'mtu': int('$m_mtu'),
+    'dns': {
+        'dualStack': 'PREFER_IPv4'
+    }
+}
+
+for path in ['/etc/mita/config.json', '/etc/mita_server_config.json']:
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(config, f, indent=2)
+" 2>/dev/null || true
+
+    chown mita:mita /etc/mita/config.json /etc/mita_server_config.json 2>/dev/null || true
+    chmod 600 /etc/mita/config.json /etc/mita_server_config.json 2>/dev/null || true
+
+    mkdir -p /etc/systemd/system
+    cat << EOF > /etc/systemd/system/mita.service
+[Unit]
+Description=Mieru proxy server (mita)
+After=network-online.target network.service systemd-timesyncd.service
+Wants=network-online.target systemd-timesyncd.service
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+Type=exec
+User=mita
+Group=mita
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+Environment="MITA_LOG_NO_TIMESTAMP=true"
+ExecStartPre=+/bin/sh -c 'mkdir -p /var/run/mita && chown -R mita:mita /var/run/mita && chmod 775 /var/run/mita'
+ExecStart=${mita_bin} run
+Nice=-10
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    if command -v ufw >/dev/null 2>&1; then
+        local ufw_m_port="${m_port//-/:}"
+        if [ "$m_trans" = "BOTH" ] || [ "$m_trans" = "TCP" ]; then
+            ufw allow "${ufw_m_port}/tcp" comment 'VPN: Mieru TCP' 2>/dev/null || true
+        fi
+        if [ "$m_trans" = "BOTH" ] || [ "$m_trans" = "UDP" ]; then
+            ufw allow "${ufw_m_port}/udp" comment 'VPN: Mieru UDP' 2>/dev/null || true
+        fi
+    fi
+
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload 2>/dev/null || true
+        systemctl enable mita >/dev/null 2>&1 || true
+        if systemctl restart mita 2>/dev/null; then
+            sleep 1
+            if [ -x "$mita_bin" ] && [ -f /etc/mita_server_config.json ]; then
+                "$mita_bin" apply config /etc/mita_server_config.json 2>/dev/null || true
+            fi
+            if systemctl is-active --quiet mita; then
+                ok "Служба Mieru (mita) успешно запущена (порт ${m_port}, XChaCha20-Poly1305)."
+            else
+                warn "Служба Mieru не перешла в статус active. Проверьте: journalctl -u mita -n 20"
+            fi
+        else
+            warn "Ошибка запуска службы mita.service. Проверьте: journalctl -u mita -n 20"
+        fi
+    fi
+}
+
 deploy_native_nextgen_services() {
     if is_true "${ENABLE_ZAPRET:-0}"; then
         setup_zapret_service
@@ -606,5 +759,8 @@ deploy_native_nextgen_services() {
     fi
     if is_true "${ENABLE_DNSTT:-0}"; then
         setup_dnstt_service
+    fi
+    if is_true "${ENABLE_MIERU:-0}"; then
+        setup_mieru_service
     fi
 }

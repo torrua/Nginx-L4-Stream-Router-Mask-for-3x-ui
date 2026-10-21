@@ -365,6 +365,26 @@ inspect_port_conflicts() {
         fi
     fi
 
+    local _mieru_en="${ENABLE_MIERU:-n}"
+    if [[ "${_mieru_en,,}" == "y" || "${_mieru_en}" == "1" || "${_mieru_en,,}" == "true" ]]; then
+        local mr_port="${MIERU_PORT:-8450}"
+        local mr_base="${mr_port%%[-:]*}"
+        if is_port_in_use "tcp" "$mr_base"; then
+            local mr_t_owner
+            mr_t_owner=$(get_port_listener_info "tcp" "$mr_base")
+            warn "Порт $mr_port/tcp (Mieru Proxy) занят: ${mr_t_owner:-сторонней службой}."
+        else
+            ok "Порт $mr_port/tcp (Mieru Proxy) свободен."
+        fi
+        if is_port_in_use "udp" "$mr_base"; then
+            local mr_u_owner
+            mr_u_owner=$(get_port_listener_info "udp" "$mr_base")
+            warn "Порт $mr_port/udp (Mieru Proxy) занят: ${mr_u_owner:-сторонней службой}."
+        else
+            ok "Порт $mr_port/udp (Mieru Proxy) свободен."
+        fi
+    fi
+
     echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}\n"
 }
 
@@ -379,10 +399,11 @@ check_required_file() {
 
 check_required_port() {
     local protocol="$1" port="$2" listeners
+    local check_port="${port%%[-:]*}"
     if [ "$protocol" = udp ]; then
-        listeners=$(ss -H -lun "sport = :$port" 2>/dev/null) || return 1
+        listeners=$(ss -H -lun "sport = :$check_port" 2>/dev/null) || return 1
     else
-        listeners=$(ss -H -ltn "sport = :$port" 2>/dev/null) || return 1
+        listeners=$(ss -H -ltn "sport = :$check_port" 2>/dev/null) || return 1
     fi
     [ -n "$listeners" ] || { warn "Port $port/$protocol is not listening"; return 1; }
     ok "Port $port/$protocol: listening"
@@ -418,6 +439,9 @@ post_install_sanity_check() {
             check_required_service AdGuardHome || all_ok=0
             check_required_port tcp "${PORT_AGH_WEB:-3000}" || all_ok=0
             check_required_port udp 53 || all_ok=0
+        fi
+        if is_true "${ENABLE_MIERU:-n}"; then
+            check_required_service mita || all_ok=0
         fi
         # curl validates the certificate and hostname as well as HTTPS availability.
         if ! curl -fLsS --connect-timeout 3 --max-time 10 -o /dev/null \

@@ -72,6 +72,7 @@ ALLOWED_NETWORKS = [
     ipaddress.ip_network("192.0.2.0/24"),    # TEST-NET-1 (RFC 5737)
     ipaddress.ip_network("198.51.100.0/24"), # TEST-NET-2 (RFC 5737)
     ipaddress.ip_network("203.0.113.0/24"),  # TEST-NET-3 (RFC 5737)
+    ipaddress.ip_network("198.18.0.0/15"),   # Benchmarking (RFC 2544 / Clash fake-ip)
     ipaddress.ip_network("224.0.0.0/4"),     # Multicast
     ipaddress.ip_network("240.0.0.0/4"),     # Reserved
 ]

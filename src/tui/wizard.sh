@@ -556,6 +556,23 @@ for item in res:
             ENABLE_DNSTT=0
         fi
 
+        if [[ "${ENABLE_MIERU,,}" == "y" || "${ENABLE_MIERU:-}" == "1" ]]; then
+            ENABLE_MIERU=1
+            MIERU_PORT_MODE="${MIERU_PORT_MODE:-single}"
+            case "${MIERU_PORT_MODE,,}" in
+                range|pool)
+                    MIERU_PORT="${MIERU_PORT:-8450-8455}"
+                    ;;
+                *)
+                    MIERU_PORT="${MIERU_PORT:-8450}"
+                    ;;
+            esac
+            [ -n "${MIERU_USER:-}" ] || MIERU_USER="user-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "mieru${RANDOM}")"
+            [ -n "${MIERU_PASS:-}" ] || MIERU_PASS="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "mieru${RANDOM}")"
+        else
+            ENABLE_MIERU=0
+        fi
+
 
         # AdGuard Home
         if [[ "${ENABLE_AGH,,}" == "y" || "${ENABLE_AGH:-}" == "1" ]]; then
@@ -963,6 +980,7 @@ for item in res:
             "ENABLE_ZAPRET"
             "ENABLE_NAIVE"
             "ENABLE_DNSTT"
+            "ENABLE_MIERU"
         )
         local proto_labels=(
             "Hysteria 2 (UDP/QUIC Brutal CC, :${HY2_PORT:-443})"
@@ -978,6 +996,7 @@ for item in res:
             "Server-Side Zapret (DPI Desync nfqws connbytes 1:6 NFQUEUE 200)"
             "NaïveProxy (Chromium HTTPS Stack via Caddy, Nginx Stream :443 -> :${NAIVE_PORT:-8446})"
             "DNSTT DoH Tunnel (DNS Tunneling via dnstt-server, :${DNSTT_PORT:-53053}/udp -> SS-2022)"
+            "Mieru Proxy (XChaCha20-Poly1305, без TLS, защита от активного зондирования и сигнатурного DPI, :${MIERU_PORT:-8450})"
         )
 
         prompt_multiselect "Выберите протоколы для установки" proto_keys proto_labels || return $?
@@ -1147,6 +1166,43 @@ for item in res:
         else
             DNSTT_PORT=""
             DNSTT_DOMAIN=""
+        fi
+
+        if is_true "$ENABLE_MIERU"; then
+            MIERU_PORT_MODE="${MIERU_PORT_MODE:-single}"
+            if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+                echo -e "\n  ${BOLD}Режим портов для Mieru Proxy:${NC}"
+                echo -e "    1) Одиночный порт [8450] (рекомендуется)"
+                echo -e "    2) Пул портов [8450-8455] (рандомизация соединений)"
+                local _m_mode_choice="1"
+                [ "$MIERU_PORT_MODE" = "range" ] && _m_mode_choice="2"
+                prompt_default "  Выберите режим портов Mieru (1 или 2)" "$_m_mode_choice" _m_mode_choice || return $?
+                if [ "$_m_mode_choice" = "2" ]; then
+                    MIERU_PORT_MODE="range"
+                    prompt_default "  Диапазон портов для Mieru (TCP и UDP)" "${MIERU_PORT:-8450-8455}" MIERU_PORT || return $?
+                else
+                    MIERU_PORT_MODE="single"
+                    prompt_default "  Порт для Mieru (TCP и UDP)" "${MIERU_PORT:-8450}" MIERU_PORT || return $?
+                fi
+                prompt_default "  Имя пользователя Mieru" "${MIERU_USER:-user-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "m$(date +%s | cut -c7-10)")}" MIERU_USER || return $?
+                prompt_default "  Пароль Mieru" "${MIERU_PASS:-$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "pass$(date +%s)")}" MIERU_PASS || return $?
+            else
+                case "${MIERU_PORT_MODE,,}" in
+                    range|pool)
+                        MIERU_PORT="${MIERU_PORT:-8450-8455}"
+                        ;;
+                    *)
+                        MIERU_PORT_MODE="single"
+                        MIERU_PORT="${MIERU_PORT:-8450}"
+                        ;;
+                esac
+                [ -n "${MIERU_USER:-}" ] || MIERU_USER="user-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "mieru${RANDOM}")"
+                [ -n "${MIERU_PASS:-}" ] || MIERU_PASS="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "mieru${RANDOM}")"
+            fi
+        else
+            MIERU_PORT=""
+            MIERU_USER=""
+            MIERU_PASS=""
         fi
 
         rebuild_all_domains
@@ -1644,6 +1700,10 @@ for item in res:
         local dnstt_status="${RED}Отключен${NC}"
         is_true "${ENABLE_DNSTT:-0}" && dnstt_status="${GREEN}Включен${NC} (UDP :${DNSTT_PORT:-53053} ➜ SS-2022, Zone: ${DNSTT_DOMAIN:-t.$PRIMARY_DOMAIN})"
         echo -e "      ${DIM}• DNSTT DoH Tunnel:${NC}     $dnstt_status"
+
+        local mieru_status="${RED}Отключен${NC}"
+        is_true "${ENABLE_MIERU:-0}" && mieru_status="${GREEN}Включен${NC} (:${MIERU_PORT:-8450}/tcp,udp, XChaCha20-Poly1305)"
+        echo -e "      ${DIM}• Mieru Proxy:${NC}          $mieru_status"
 
         local agh_status="${RED}Отключен${NC}"
         if is_true "${ENABLE_AGH:-0}"; then

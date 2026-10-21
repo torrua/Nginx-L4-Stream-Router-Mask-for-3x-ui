@@ -527,6 +527,12 @@ CLI_ENABLE_DNSTT=""
 CLI_DNSTT_PORT=""
 CLI_DNSTT_DOMAIN=""
 CLI_DNSTT_PUBKEY=""
+CLI_ENABLE_MIERU=""
+CLI_MIERU_PORT_MODE=""
+CLI_MIERU_PORT=""
+CLI_MIERU_TRANSPORT=""
+CLI_MIERU_USER=""
+CLI_MIERU_PASS=""
 CLI_ALL_PROTOCOLS=""
 
 while [[ $# -gt 0 ]]; do
@@ -856,6 +862,46 @@ while [[ $# -gt 0 ]]; do
             CLI_DNSTT_PUBKEY="$2"
             shift 2
             ;;
+        --mieru|--enable-mieru)
+            ENABLE_MIERU="y"
+            CLI_ENABLE_MIERU="y"
+            shift
+            ;;
+        --no-mieru|--disable-mieru)
+            ENABLE_MIERU="n"
+            CLI_ENABLE_MIERU="n"
+            shift
+            ;;
+        --mieru-port-mode)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: single или range."
+            MIERU_PORT_MODE="$2"
+            CLI_MIERU_PORT_MODE="$2"
+            shift 2
+            ;;
+        --mieru-port)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: порт или диапазон Mieru (например 8450 или 8450-8455)."
+            MIERU_PORT="$2"
+            CLI_MIERU_PORT="$2"
+            shift 2
+            ;;
+        --mieru-transport)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: транспорт Mieru (TCP, UDP, BOTH)."
+            MIERU_TRANSPORT="$2"
+            CLI_MIERU_TRANSPORT="$2"
+            shift 2
+            ;;
+        --mieru-user)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: имя пользователя Mieru."
+            MIERU_USER="$2"
+            CLI_MIERU_USER="$2"
+            shift 2
+            ;;
+        --mieru-pass|--mieru-password)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: пароль Mieru."
+            MIERU_PASS="$2"
+            CLI_MIERU_PASS="$2"
+            shift 2
+            ;;
         --all-protocols|--all-proto)
             CLI_ALL_PROTOCOLS="1"
             ALL_PROTOCOLS="1"
@@ -870,6 +916,7 @@ while [[ $# -gt 0 ]]; do
             ENABLE_ZAPRET="y"; CLI_ENABLE_ZAPRET="y"
             ENABLE_NAIVE="y"; CLI_ENABLE_NAIVE="y"
             ENABLE_DNSTT="y"; CLI_ENABLE_DNSTT="y"
+            ENABLE_MIERU="y"; CLI_ENABLE_MIERU="y"
             shift
             ;;
         -m|--email)
@@ -1062,6 +1109,12 @@ fi
 [ -n "${CLI_DNSTT_PORT:-}" ]         && DNSTT_PORT="$CLI_DNSTT_PORT"
 [ -n "${CLI_DNSTT_DOMAIN:-}" ]       && DNSTT_DOMAIN="$CLI_DNSTT_DOMAIN"
 [ -n "${CLI_DNSTT_PUBKEY:-}" ]       && DNSTT_PUBKEY="$CLI_DNSTT_PUBKEY"
+[ -n "${CLI_ENABLE_MIERU:-}" ]       && ENABLE_MIERU="$CLI_ENABLE_MIERU"
+[ -n "${CLI_MIERU_PORT_MODE:-}" ]    && MIERU_PORT_MODE="$CLI_MIERU_PORT_MODE"
+[ -n "${CLI_MIERU_PORT:-}" ]         && MIERU_PORT="$CLI_MIERU_PORT"
+[ -n "${CLI_MIERU_TRANSPORT:-}" ]    && MIERU_TRANSPORT="$CLI_MIERU_TRANSPORT"
+[ -n "${CLI_MIERU_USER:-}" ]         && MIERU_USER="$CLI_MIERU_USER"
+[ -n "${CLI_MIERU_PASS:-}" ]         && MIERU_PASS="$CLI_MIERU_PASS"
 [ -n "${CLI_ALL_PROTOCOLS:-}" ]      && ALL_PROTOCOLS="$CLI_ALL_PROTOCOLS"
 
 if [ "$ROTATE_PATHS" -eq 1 ]; then

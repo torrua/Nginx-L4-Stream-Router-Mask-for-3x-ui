@@ -78,7 +78,7 @@ checkpoint_signature() {
         certificates) keys="PRIMARY_DOMAIN ALL_DOMAINS SSL_ENGINE_CHOICE CF_AUTH_METHOD CF_Token CF_Account_ID CF_Email CF_Key" ;;
         decoy) keys="PRIMARY_DOMAIN DECOY_MODE" ;;
         security) keys="SSH_PORT SSH_PUBLIC_KEY ENABLE_HOST_SECURITY ENABLE_FAIL2BAN DISABLE_PASSWORD_AUTH" ;;
-        *) keys="PRIMARY_DOMAIN ALL_DOMAINS STEAL_PORTS_LIST CLASSIC_PORTS_LIST EXT_SNI_LIST ALL_EXT_SNIS ADD_WWW ENABLE_WEB_STACK ENABLE_STEAL STEAL_DOMAINS STEAL_PORT ENABLE_CLASSIC CLASSIC_SNI CLASSIC_PORT PANEL_PORT PANEL_PATH ADMIN_USERNAME ADMIN_PASSWORD SUB_PORT SUB_PATH SUB_CLASH_PATH SUB_TITLE XHTTP_STREAM_PORT XHTTP_STREAM_PATH ENABLE_HY2 HY2_PORT HY2_DOMAIN HY2_PORT_HOPPING HY2_PORT_HOPPING_RANGE ENABLE_AWG_V3 AWG_V3_PORT ENABLE_AWG_V2 AWG_V2_PORT ENABLE_AWG_STANDALONE AWG_STANDALONE_PORT AWG_SERVER_HOST AWG_PRIMARY_DNS AWG_SECONDARY_DNS ENABLE_AGH AGH_MODE AGH_DOMAIN AGH_USER AGH_PASS AGH_CLIENT_ID AGH_XRAY_DNS PORT_AGH_WEB ENABLE_WARP WARP_LICENSE_KEY ENABLE_SS2022 SS2022_PORT SS2022_METHOD SS2022_PASSWORD ENABLE_TUIC TUIC_PORT TUIC_UUID TUIC_PASSWORD ENABLE_MTPROTO MTPROTO_PORT MTPROTO_SECRET ENABLE_MASQUE MASQUE_PORT MASQUE_PASSWORD ENABLE_SHADOWTLS SHADOWTLS_PORT SHADOWTLS_DOMAIN SHADOWTLS_PASSWORD ENABLE_NAIVE NAIVE_PORT NAIVE_DOMAIN NAIVE_USER NAIVE_PASS ENABLE_WSTUNNEL WSTUNNEL_PORT WSTUNNEL_PREFIX WSTUNNEL_SECRET ENABLE_DNSTT DNSTT_PORT DNSTT_DOMAIN DNSTT_PUBKEY ENABLE_ZAPRET ZAPRET_QNUM ZAPRET_DESYNC ZAPRET_FOOLING AUTO_SETUP_3XUI ENABLE_NODE_TOKEN NODE_TOKEN NODE_TOKEN_NAME TIME_LOCATION BLOCK_SMTP BLOCK_LAN WEB_LISTEN SUB_LISTEN AWG_HEADER_PROTECTION_KEY AWG_RANDOM_TRAILERS AWG_SUBNET_IP AWG_SUBNET_CIDR MTPROTO_FAKETLS_DOMAIN MTPROTO_ADTAG SHADOWTLS_SNI WSTUNNEL_DOMAIN" ;;
+        *) keys="PRIMARY_DOMAIN ALL_DOMAINS STEAL_PORTS_LIST CLASSIC_PORTS_LIST EXT_SNI_LIST ALL_EXT_SNIS ADD_WWW ENABLE_WEB_STACK ENABLE_STEAL STEAL_DOMAINS STEAL_PORT ENABLE_CLASSIC CLASSIC_SNI CLASSIC_PORT PANEL_PORT PANEL_PATH ADMIN_USERNAME ADMIN_PASSWORD SUB_PORT SUB_PATH SUB_CLASH_PATH SUB_TITLE XHTTP_STREAM_PORT XHTTP_STREAM_PATH ENABLE_HY2 HY2_PORT HY2_DOMAIN HY2_PORT_HOPPING HY2_PORT_HOPPING_RANGE ENABLE_AWG_V3 AWG_V3_PORT ENABLE_AWG_V2 AWG_V2_PORT ENABLE_AWG_STANDALONE AWG_STANDALONE_PORT AWG_SERVER_HOST AWG_PRIMARY_DNS AWG_SECONDARY_DNS ENABLE_AGH AGH_MODE AGH_DOMAIN AGH_USER AGH_PASS AGH_CLIENT_ID AGH_XRAY_DNS PORT_AGH_WEB ENABLE_WARP WARP_LICENSE_KEY ENABLE_SS2022 SS2022_PORT SS2022_METHOD SS2022_PASSWORD ENABLE_TUIC TUIC_PORT TUIC_UUID TUIC_PASSWORD ENABLE_MTPROTO MTPROTO_PORT MTPROTO_SECRET ENABLE_MASQUE MASQUE_PORT MASQUE_PASSWORD ENABLE_SHADOWTLS SHADOWTLS_PORT SHADOWTLS_DOMAIN SHADOWTLS_PASSWORD ENABLE_NAIVE NAIVE_PORT NAIVE_DOMAIN NAIVE_USER NAIVE_PASS ENABLE_WSTUNNEL WSTUNNEL_PORT WSTUNNEL_PREFIX WSTUNNEL_SECRET ENABLE_DNSTT DNSTT_PORT DNSTT_DOMAIN DNSTT_PUBKEY ENABLE_ZAPRET ZAPRET_QNUM ZAPRET_DESYNC ZAPRET_FOOLING ENABLE_MIERU MIERU_PORT_MODE MIERU_PORT MIERU_TRANSPORT MIERU_USER MIERU_PASS MIERU_MTU AUTO_SETUP_3XUI ENABLE_NODE_TOKEN NODE_TOKEN NODE_TOKEN_NAME TIME_LOCATION BLOCK_SMTP BLOCK_LAN WEB_LISTEN SUB_LISTEN AWG_HEADER_PROTECTION_KEY AWG_RANDOM_TRAILERS AWG_SUBNET_IP AWG_SUBNET_CIDR MTPROTO_FAKETLS_DOMAIN MTPROTO_ADTAG SHADOWTLS_SNI WSTUNNEL_DOMAIN" ;;
     esac
     {
         printf '%s\0' "${SCRIPT_VERSION:-unknown}" "$id"
@@ -792,6 +792,15 @@ DNSTT_PORT="53053"
 DNSTT_DOMAIN=""
 DNSTT_PUBKEY=""
 
+# Mieru Proxy (XChaCha20-Poly1305, без TLS, защита от активного зондирования и сигнатурного DPI) [y/n]
+ENABLE_MIERU="n"
+MIERU_PORT_MODE="single"
+MIERU_PORT="8450"
+MIERU_TRANSPORT="BOTH"
+MIERU_USER=""
+MIERU_PASS=""
+MIERU_MTU="1400"
+
 # --- 10. БЕЗОПАСНОСТЬ ХОСТА (HOST SECURITY & SSH HARDENING) ---
 # Включить настройку безопасности хоста (порт SSH, ключи, защита от брутфорса) [y/n]
 ENABLE_HOST_SECURITY="n"
@@ -1374,6 +1383,28 @@ reconstruct_arrays_from_vars() {
     if [ "$ENABLE_WSTUNNEL" -eq 1 ] && [ -z "${WSTUNNEL_SECRET:-}" ]; then
         WSTUNNEL_SECRET="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "wst${RANDOM}")"
     fi
+    _v="${ENABLE_MIERU:-n}"; if is_true "$_v"; then ENABLE_MIERU=1; else ENABLE_MIERU=0; fi
+    MIERU_PORT_MODE="${MIERU_PORT_MODE:-single}"
+    case "${MIERU_PORT_MODE,,}" in
+        range|pool)
+            MIERU_PORT_MODE="range"
+            MIERU_PORT="${MIERU_PORT:-8450-8455}"
+            ;;
+        *)
+            MIERU_PORT_MODE="single"
+            MIERU_PORT="${MIERU_PORT:-8450}"
+            ;;
+    esac
+    MIERU_TRANSPORT="${MIERU_TRANSPORT:-BOTH}"
+    if [ "$ENABLE_MIERU" -eq 1 ] && [ -z "${MIERU_USER:-}" ]; then
+        MIERU_USER="user-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "mieru${RANDOM}")"
+    fi
+    MIERU_USER="${MIERU_USER:-}"
+    if [ "$ENABLE_MIERU" -eq 1 ] && [ -z "${MIERU_PASS:-}" ]; then
+        MIERU_PASS="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "mieru${RANDOM}")"
+    fi
+    MIERU_PASS="${MIERU_PASS:-}"
+    MIERU_MTU="${MIERU_MTU:-1400}"
     CF_AUTH_METHOD="${CF_AUTH_METHOD:-1}"
     _v="${ENABLE_HOST_SECURITY:-n}"; if is_true "$_v"; then ENABLE_HOST_SECURITY="y"; else ENABLE_HOST_SECURITY="n"; fi
     SSH_PORT="${SSH_PORT:-${SSH_ACTIVE_PORT:-22}}"
@@ -1489,6 +1520,8 @@ save_session_state() {
     v="${ENABLE_ZAPRET:-n}"; is_true "$v" && zapret_save="y"
     local wstunnel_save="n"
     v="${ENABLE_WSTUNNEL:-n}"; is_true "$v" && wstunnel_save="y"
+    local mieru_save="n"
+    v="${ENABLE_MIERU:-n}"; is_true "$v" && mieru_save="y"
     local host_security_save="n"
     v="${ENABLE_HOST_SECURITY:-n}"; is_true "$v" && host_security_save="y"
     local fail2ban_save="n"
@@ -1648,6 +1681,13 @@ WSTUNNEL_DOMAIN="${WSTUNNEL_DOMAIN:-}"
 WSTUNNEL_PREFIX="${WSTUNNEL_PREFIX:-}"
 WSTUNNEL_PORT="${WSTUNNEL_PORT:-8080}"
 WSTUNNEL_SECRET="${WSTUNNEL_SECRET:-}"
+ENABLE_MIERU="$mieru_save"
+MIERU_PORT_MODE="${MIERU_PORT_MODE:-single}"
+MIERU_PORT="${MIERU_PORT:-8450}"
+MIERU_TRANSPORT="${MIERU_TRANSPORT:-BOTH}"
+MIERU_USER="${MIERU_USER:-}"
+MIERU_PASS="${MIERU_PASS:-}"
+MIERU_MTU="${MIERU_MTU:-1400}"
 
 ENABLE_HOST_SECURITY="$host_security_save"
 SSH_PORT="${SSH_PORT:-${SSH_ACTIVE_PORT:-22}}"
@@ -2904,6 +2944,12 @@ CLI_ENABLE_DNSTT=""
 CLI_DNSTT_PORT=""
 CLI_DNSTT_DOMAIN=""
 CLI_DNSTT_PUBKEY=""
+CLI_ENABLE_MIERU=""
+CLI_MIERU_PORT_MODE=""
+CLI_MIERU_PORT=""
+CLI_MIERU_TRANSPORT=""
+CLI_MIERU_USER=""
+CLI_MIERU_PASS=""
 CLI_ALL_PROTOCOLS=""
 
 while [[ $# -gt 0 ]]; do
@@ -3233,6 +3279,46 @@ while [[ $# -gt 0 ]]; do
             CLI_DNSTT_PUBKEY="$2"
             shift 2
             ;;
+        --mieru|--enable-mieru)
+            ENABLE_MIERU="y"
+            CLI_ENABLE_MIERU="y"
+            shift
+            ;;
+        --no-mieru|--disable-mieru)
+            ENABLE_MIERU="n"
+            CLI_ENABLE_MIERU="n"
+            shift
+            ;;
+        --mieru-port-mode)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: single или range."
+            MIERU_PORT_MODE="$2"
+            CLI_MIERU_PORT_MODE="$2"
+            shift 2
+            ;;
+        --mieru-port)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: порт или диапазон Mieru (например 8450 или 8450-8455)."
+            MIERU_PORT="$2"
+            CLI_MIERU_PORT="$2"
+            shift 2
+            ;;
+        --mieru-transport)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: транспорт Mieru (TCP, UDP, BOTH)."
+            MIERU_TRANSPORT="$2"
+            CLI_MIERU_TRANSPORT="$2"
+            shift 2
+            ;;
+        --mieru-user)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: имя пользователя Mieru."
+            MIERU_USER="$2"
+            CLI_MIERU_USER="$2"
+            shift 2
+            ;;
+        --mieru-pass|--mieru-password)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: пароль Mieru."
+            MIERU_PASS="$2"
+            CLI_MIERU_PASS="$2"
+            shift 2
+            ;;
         --all-protocols|--all-proto)
             CLI_ALL_PROTOCOLS="1"
             ALL_PROTOCOLS="1"
@@ -3247,6 +3333,7 @@ while [[ $# -gt 0 ]]; do
             ENABLE_ZAPRET="y"; CLI_ENABLE_ZAPRET="y"
             ENABLE_NAIVE="y"; CLI_ENABLE_NAIVE="y"
             ENABLE_DNSTT="y"; CLI_ENABLE_DNSTT="y"
+            ENABLE_MIERU="y"; CLI_ENABLE_MIERU="y"
             shift
             ;;
         -m|--email)
@@ -3439,6 +3526,12 @@ fi
 [ -n "${CLI_DNSTT_PORT:-}" ]         && DNSTT_PORT="$CLI_DNSTT_PORT"
 [ -n "${CLI_DNSTT_DOMAIN:-}" ]       && DNSTT_DOMAIN="$CLI_DNSTT_DOMAIN"
 [ -n "${CLI_DNSTT_PUBKEY:-}" ]       && DNSTT_PUBKEY="$CLI_DNSTT_PUBKEY"
+[ -n "${CLI_ENABLE_MIERU:-}" ]       && ENABLE_MIERU="$CLI_ENABLE_MIERU"
+[ -n "${CLI_MIERU_PORT_MODE:-}" ]    && MIERU_PORT_MODE="$CLI_MIERU_PORT_MODE"
+[ -n "${CLI_MIERU_PORT:-}" ]         && MIERU_PORT="$CLI_MIERU_PORT"
+[ -n "${CLI_MIERU_TRANSPORT:-}" ]    && MIERU_TRANSPORT="$CLI_MIERU_TRANSPORT"
+[ -n "${CLI_MIERU_USER:-}" ]         && MIERU_USER="$CLI_MIERU_USER"
+[ -n "${CLI_MIERU_PASS:-}" ]         && MIERU_PASS="$CLI_MIERU_PASS"
 [ -n "${CLI_ALL_PROTOCOLS:-}" ]      && ALL_PROTOCOLS="$CLI_ALL_PROTOCOLS"
 
 if [ "$ROTATE_PATHS" -eq 1 ]; then
@@ -3488,6 +3581,8 @@ ENABLE_SHADOWTLS tcp SHADOWTLS_PORT 8543 ShadowTLS
 ENABLE_WSTUNNEL tcp WSTUNNEL_PORT 8080 Wstunnel
 ENABLE_NAIVE tcp NAIVE_PORT 8446 NaiveProxy
 ENABLE_DNSTT udp DNSTT_PORT 53053 DNSTT
+ENABLE_MIERU tcp MIERU_PORT 8450 Mieru
+ENABLE_MIERU udp MIERU_PORT 8450 Mieru
 PROTOCOL_PORTS
     fi
     if is_true "${ENABLE_AWG_STANDALONE:-n}"; then
@@ -3878,6 +3973,26 @@ inspect_port_conflicts() {
         fi
     fi
 
+    local _mieru_en="${ENABLE_MIERU:-n}"
+    if [[ "${_mieru_en,,}" == "y" || "${_mieru_en}" == "1" || "${_mieru_en,,}" == "true" ]]; then
+        local mr_port="${MIERU_PORT:-8450}"
+        local mr_base="${mr_port%%[-:]*}"
+        if is_port_in_use "tcp" "$mr_base"; then
+            local mr_t_owner
+            mr_t_owner=$(get_port_listener_info "tcp" "$mr_base")
+            warn "Порт $mr_port/tcp (Mieru Proxy) занят: ${mr_t_owner:-сторонней службой}."
+        else
+            ok "Порт $mr_port/tcp (Mieru Proxy) свободен."
+        fi
+        if is_port_in_use "udp" "$mr_base"; then
+            local mr_u_owner
+            mr_u_owner=$(get_port_listener_info "udp" "$mr_base")
+            warn "Порт $mr_port/udp (Mieru Proxy) занят: ${mr_u_owner:-сторонней службой}."
+        else
+            ok "Порт $mr_port/udp (Mieru Proxy) свободен."
+        fi
+    fi
+
     echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}\n"
 }
 
@@ -3892,10 +4007,11 @@ check_required_file() {
 
 check_required_port() {
     local protocol="$1" port="$2" listeners
+    local check_port="${port%%[-:]*}"
     if [ "$protocol" = udp ]; then
-        listeners=$(ss -H -lun "sport = :$port" 2>/dev/null) || return 1
+        listeners=$(ss -H -lun "sport = :$check_port" 2>/dev/null) || return 1
     else
-        listeners=$(ss -H -ltn "sport = :$port" 2>/dev/null) || return 1
+        listeners=$(ss -H -ltn "sport = :$check_port" 2>/dev/null) || return 1
     fi
     [ -n "$listeners" ] || { warn "Port $port/$protocol is not listening"; return 1; }
     ok "Port $port/$protocol: listening"
@@ -3931,6 +4047,9 @@ post_install_sanity_check() {
             check_required_service AdGuardHome || all_ok=0
             check_required_port tcp "${PORT_AGH_WEB:-3000}" || all_ok=0
             check_required_port udp 53 || all_ok=0
+        fi
+        if is_true "${ENABLE_MIERU:-n}"; then
+            check_required_service mita || all_ok=0
         fi
         # curl validates the certificate and hostname as well as HTTPS availability.
         if ! curl -fLsS --connect-timeout 3 --max-time 10 -o /dev/null \
@@ -7621,6 +7740,159 @@ EOF
     fi
 }
 
+setup_mieru_service() {
+    log "Настройка службы Mieru Proxy (mita)..."
+    local cur_arch
+    cur_arch=$(uname -m 2>/dev/null || echo "x86_64")
+    local mita_arch="amd64"
+    case "$cur_arch" in
+        x86_64|amd64) mita_arch="amd64" ;;
+        aarch64|arm64) mita_arch="arm64" ;;
+        *) mita_arch="amd64" ;;
+    esac
+
+    local bin_dir="${LOCAL_BIN_DIR:-/usr/local/bin}"
+    [ -d "$bin_dir" ] || mkdir -p "$bin_dir" 2>/dev/null || true
+
+    local mita_bin="${bin_dir}/mita"
+    if [ ! -x "$mita_bin" ] && command -v mita >/dev/null 2>&1; then
+        mita_bin="$(command -v mita)"
+    fi
+
+    if command -v timedatectl >/dev/null 2>&1; then
+        timedatectl set-ntp true 2>/dev/null || true
+        systemctl restart systemd-timesyncd 2>/dev/null || true
+    fi
+
+    if [ ! -x "$mita_bin" ]; then
+        local mita_ver="3.38.1"
+        local mita_tmp="/tmp/mita_${mita_ver}_$$"
+        mkdir -p "$mita_tmp"
+        local dl_url="https://github.com/enfein/mieru/releases/download/v${mita_ver}/mita_${mita_ver}_linux_${mita_arch}.tar.gz"
+        local dl_mirror="https://ghfast.top/${dl_url}"
+        if curl -fsSL --connect-timeout 15 "$dl_url" -o "$mita_tmp/mita.tar.gz" 2>/dev/null || \
+           curl -fsSL --connect-timeout 15 "$dl_mirror" -o "$mita_tmp/mita.tar.gz" 2>/dev/null; then
+            tar -zxf "$mita_tmp/mita.tar.gz" -C "$mita_tmp" 2>/dev/null || true
+            if [ -f "$mita_tmp/mita" ]; then
+                cp "$mita_tmp/mita" "${bin_dir}/mita"
+                chmod +x "${bin_dir}/mita"
+                mita_bin="${bin_dir}/mita"
+            fi
+        fi
+        rm -rf "$mita_tmp" 2>/dev/null || true
+    fi
+
+    if [ ! -x "$mita_bin" ]; then
+        warn "Не удалось загрузить бинарник mita. Установка Mieru пропущена."
+        return 0
+    fi
+
+    if ! id -u mita >/dev/null 2>&1; then
+        useradd --system --no-create-home --user-group mita 2>/dev/null || true
+    fi
+    mkdir -p /etc/mita /var/lib/mita /var/run/mita
+    chown -R mita:mita /etc/mita /var/lib/mita /var/run/mita 2>/dev/null || true
+    chmod 775 /etc/mita /var/lib/mita /var/run/mita 2>/dev/null || true
+
+    local m_port_mode="${MIERU_PORT_MODE:-single}"
+    local m_port="${MIERU_PORT:-8450}"
+    local m_user="${MIERU_USER:-user-default}"
+    local m_pass="${MIERU_PASS:-pass-default}"
+    local m_trans="${MIERU_TRANSPORT:-BOTH}"
+    local m_mtu="${MIERU_MTU:-1400}"
+
+    python3 -c "
+import json
+port_mode = '$m_port_mode'.lower()
+port_val = '$m_port'.strip()
+transport = '$m_trans'.upper()
+
+protocols = ['TCP', 'UDP'] if transport == 'BOTH' else [transport]
+port_bindings = []
+
+for proto in protocols:
+    if port_mode == 'range' or '-' in port_val:
+        port_bindings.append({'portRange': port_val, 'protocol': proto})
+    else:
+        clean_p = int(port_val.split('-')[0].split(':')[0])
+        port_bindings.append({'port': clean_p, 'protocol': proto})
+
+config = {
+    'portBindings': port_bindings,
+    'users': [{
+        'name': '$m_user',
+        'password': '$m_pass'
+    }],
+    'loggingLevel': 'INFO',
+    'mtu': int('$m_mtu'),
+    'dns': {
+        'dualStack': 'PREFER_IPv4'
+    }
+}
+
+for path in ['/etc/mita/config.json', '/etc/mita_server_config.json']:
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(config, f, indent=2)
+" 2>/dev/null || true
+
+    chown mita:mita /etc/mita/config.json /etc/mita_server_config.json 2>/dev/null || true
+    chmod 600 /etc/mita/config.json /etc/mita_server_config.json 2>/dev/null || true
+
+    mkdir -p /etc/systemd/system
+    cat << EOF > /etc/systemd/system/mita.service
+[Unit]
+Description=Mieru proxy server (mita)
+After=network-online.target network.service systemd-timesyncd.service
+Wants=network-online.target systemd-timesyncd.service
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+Type=exec
+User=mita
+Group=mita
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+Environment="MITA_LOG_NO_TIMESTAMP=true"
+ExecStartPre=+/bin/sh -c 'mkdir -p /var/run/mita && chown -R mita:mita /var/run/mita && chmod 775 /var/run/mita'
+ExecStart=${mita_bin} run
+Nice=-10
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    if command -v ufw >/dev/null 2>&1; then
+        local ufw_m_port="${m_port//-/:}"
+        if [ "$m_trans" = "BOTH" ] || [ "$m_trans" = "TCP" ]; then
+            ufw allow "${ufw_m_port}/tcp" comment 'VPN: Mieru TCP' 2>/dev/null || true
+        fi
+        if [ "$m_trans" = "BOTH" ] || [ "$m_trans" = "UDP" ]; then
+            ufw allow "${ufw_m_port}/udp" comment 'VPN: Mieru UDP' 2>/dev/null || true
+        fi
+    fi
+
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload 2>/dev/null || true
+        systemctl enable mita >/dev/null 2>&1 || true
+        if systemctl restart mita 2>/dev/null; then
+            sleep 1
+            if [ -x "$mita_bin" ] && [ -f /etc/mita_server_config.json ]; then
+                "$mita_bin" apply config /etc/mita_server_config.json 2>/dev/null || true
+            fi
+            if systemctl is-active --quiet mita; then
+                ok "Служба Mieru (mita) успешно запущена (порт ${m_port}, XChaCha20-Poly1305)."
+            else
+                warn "Служба Mieru не перешла в статус active. Проверьте: journalctl -u mita -n 20"
+            fi
+        else
+            warn "Ошибка запуска службы mita.service. Проверьте: journalctl -u mita -n 20"
+        fi
+    fi
+}
+
 deploy_native_nextgen_services() {
     if is_true "${ENABLE_ZAPRET:-0}"; then
         setup_zapret_service
@@ -7639,6 +7911,9 @@ deploy_native_nextgen_services() {
     fi
     if is_true "${ENABLE_DNSTT:-0}"; then
         setup_dnstt_service
+    fi
+    if is_true "${ENABLE_MIERU:-0}"; then
+        setup_mieru_service
     fi
 }
 # Express provides defaults for the common installation engine.
@@ -7699,6 +7974,8 @@ ENABLE_SHADOWTLS tcp SHADOWTLS_PORT 8543 ShadowTLS
 ENABLE_WSTUNNEL tcp WSTUNNEL_PORT 8080 Wstunnel
 ENABLE_NAIVE tcp NAIVE_PORT 8446 NaiveProxy
 ENABLE_DNSTT udp DNSTT_PORT 53053 DNSTT
+ENABLE_MIERU tcp MIERU_PORT 8450 Mieru
+ENABLE_MIERU udp MIERU_PORT 8450 Mieru
 PROTOCOL_PORTS
     fi
     if is_true "${ENABLE_AWG_STANDALONE:-n}"; then
@@ -9754,10 +10031,11 @@ done
 
 # Protocol listeners: allow public entrypoints, deny non-public internal proxies
 while read -r protocol transport port; do
+    local ufw_port="${port//-/:}"
     if protocol_is_public "$protocol"; then
-        ufw allow "$port/$transport" comment "VPN: $protocol"
+        ufw allow "$ufw_port/$transport" comment "VPN: $protocol"
     else
-        ufw deny "$port/$transport" comment "Internal: $protocol"
+        ufw deny "$ufw_port/$transport" comment "Internal: $protocol"
     fi
 done < <(selected_protocol_ports)
 
@@ -11555,6 +11833,121 @@ for k, v in settings_updates.items():
     else:
         print(f"  [В ПОРЯДКЕ] Настройка {k}: '{v}'")
 
+# ----------------- 1.0. Интеграция Mieru в шаблон подписки Clash (subClashTemplate) -----------------
+enable_mieru = os.environ.get("ENABLE_MIERU", "n").lower() in ("1", "y", "true")
+mieru_port_mode = (os.environ.get("MIERU_PORT_MODE") or "single").strip().lower()
+mieru_port = (os.environ.get("MIERU_PORT") or ("8450-8455" if mieru_port_mode == "range" else "8450")).strip()
+mieru_user = (os.environ.get("MIERU_USER") or "").strip()
+mieru_pass = (os.environ.get("MIERU_PASS") or "").strip()
+
+if enable_mieru and (not mieru_user or not mieru_pass) and os.path.isfile("/etc/mita_server_config.json"):
+    try:
+        with open("/etc/mita_server_config.json", "r", encoding="utf-8") as mf:
+            mdata = json.load(mf)
+            if mdata.get("users") and len(mdata["users"]) > 0:
+                if not mieru_user: mieru_user = mdata["users"][0].get("name", "")
+                if not mieru_pass: mieru_pass = mdata["users"][0].get("password", "")
+    except Exception:
+        pass
+
+if enable_mieru and mieru_user and mieru_pass:
+    server_title = (sub_title or domain or "VPN").strip()
+    mieru_node_name = f"{server_title} — Mieru"
+    if mieru_port_mode == "range" or "-" in mieru_port:
+        m_port_field = f"port-range: {mieru_port}"
+    else:
+        m_port_clean = mieru_port.split("-")[0].split(":")[0]
+        m_port_field = f"port: {m_port_clean}"
+
+    mieru_yaml_block = f"""  - name: "{mieru_node_name}"
+    type: mieru
+    server: {domain}
+    {m_port_field}
+    transport: TCP
+    udp: true
+    username: "{mieru_user}"
+    password: "{mieru_pass}"
+    multiplexing: MULTIPLEXING_LOW
+    handshake-mode: HANDSHAKE_STANDARD"""
+
+    raw_clash_tpl = existing_settings.get("subClashTemplate", "")
+    if not raw_clash_tpl or not raw_clash_tpl.strip():
+        new_clash_tpl = f"""port: 7890
+socks-port: 7891
+allow-lan: false
+mode: rule
+log-level: info
+unified-delay: true
+global-client-fingerprint: chrome
+dns:
+  enable: true
+  listen: :1053
+  ipv6: false
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  default-nameserver:
+    - 1.1.1.1
+    - 8.8.8.8
+  nameserver:
+    - https://dns.google/dns-query
+    - https://1.1.1.1/dns-query
+proxies:
+{mieru_yaml_block}
+proxy-groups:
+  - name: "PROXIES"
+    type: select
+    proxies:
+      - "{mieru_node_name}"
+  - name: "AUTO"
+    type: url-test
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+    proxies:
+      - "{mieru_node_name}"
+rules:
+  - GEOIP,private,DIRECT
+  - MATCH,PROXIES
+"""
+    elif "type: mieru" not in raw_clash_tpl:
+        lines = raw_clash_tpl.splitlines()
+        new_lines = []
+        proxies_injected = False
+        has_proxies = any(l.strip().startswith("proxies:") for l in lines)
+        if not has_proxies:
+            new_lines.append("proxies:")
+            new_lines.append(mieru_yaml_block)
+            new_lines.extend(lines)
+        else:
+            for l in lines:
+                new_lines.append(l)
+                if not proxies_injected and l.strip().startswith("proxies:"):
+                    new_lines.append(mieru_yaml_block)
+                    proxies_injected = True
+        
+        final_lines = []
+        in_tg = False
+        for l in new_lines:
+            final_lines.append(l)
+            if re.search(r'name:\s*["\']?(PROXIES|AUTO|PROXY|Default|FALLBACK)["\']?', l, re.IGNORECASE):
+                in_tg = True
+            elif in_tg and l.strip().startswith("proxies:"):
+                final_lines.append(f'      - "{mieru_node_name}"')
+                in_tg = False
+            elif in_tg and l.strip() and not l.startswith(" ") and not l.startswith("\t"):
+                in_tg = False
+        new_clash_tpl = "\n".join(final_lines) + "\n"
+    else:
+        new_clash_tpl = raw_clash_tpl
+
+    if new_clash_tpl != raw_clash_tpl:
+        if not dry_run:
+            cur.execute("SELECT id FROM settings WHERE key = 'subClashTemplate'")
+            if cur.fetchone():
+                cur.execute("UPDATE settings SET value = ? WHERE key = 'subClashTemplate'", (new_clash_tpl,))
+            else:
+                cur.execute("INSERT INTO settings (key, value) VALUES ('subClashTemplate', ?)", (new_clash_tpl,))
+        print(f"  [ИСПРАВЛЕНО] Узел Mieru ({mieru_port}) интегрирован в шаблон подписки subClashTemplate.")
+
 # ----------------- 1.1. Тюнинг безопасности и шаблона ядра Xray (xrayTemplateConfig) -----------------
 print("\n[+] Синхронизация шаблона конфигурации Xray (DNS, безопасность и защита от абуз)...")
 
@@ -13187,6 +13580,37 @@ if not dnstt_pubkey and enable_dnstt and not dry_run:
         pass
 dnstt_cli = f"dnstt-client -doh https://dns.google/dns-query -pubkey {dnstt_pubkey} {dnstt_domain} 127.0.0.1:1080"
 
+if enable_mieru and mieru_user and mieru_pass:
+    client_m_port = int(mieru_port.split("-")[0].split(":")[0]) if "-" not in mieru_port and ":" not in mieru_port else mieru_port
+    mieru_client_config = {
+        "profiles": [{
+            "profileName": "default",
+            "user": {
+                "name": mieru_user,
+                "password": mieru_pass
+            },
+            "servers": [{
+                "ipAddress": domain,
+                "portBindings": [
+                    {"port": client_m_port, "protocol": "TCP"} if isinstance(client_m_port, int) else {"portRange": str(client_m_port), "protocol": "TCP"}
+                ]
+            }],
+            "handshakeMode": "HANDSHAKE_STANDARD"
+        }],
+        "activeProfile": "default",
+        "rpcPort": 0,
+        "socks5Port": 1080,
+        "loggingLevel": "INFO",
+        "httpProxyPort": 8080
+    }
+    if not dry_run:
+        try:
+            with open("/root/mieru-client.json", "w", encoding="utf-8") as mcf:
+                json.dump(mieru_client_config, mcf, indent=2)
+            os.chmod("/root/mieru-client.json", 0o600)
+        except Exception:
+            pass
+
 if not dry_run:
     try:
         cur.execute("PRAGMA wal_checkpoint(TRUNCATE)")
@@ -13248,6 +13672,14 @@ if not dry_run:
                 f.write(f"DNSTT_PORT='{dnstt_port}'\n")
                 f.write(f"DNSTT_DOMAIN='{dnstt_domain}'\n")
                 f.write(f"DNSTT_PUBKEY='{dnstt_pubkey}'\n")
+            if enable_mieru:
+                f.write(f"ENABLE_MIERU='1'\n")
+                f.write(f"MIERU_PORT='{mieru_port}'\n")
+                f.write(f"MIERU_PORT_MODE='{mieru_port_mode}'\n")
+                f.write(f"MIERU_USER='{mieru_user}'\n")
+                f.write(f"MIERU_PASS='{mieru_pass}'\n")
+                if 'mieru_node_name' in locals():
+                    f.write(f"MIERU_NODE_NAME='{mieru_node_name}'\n")
         os.umask(old_umask)
         os.chmod(run_file, 0o600)
     except Exception:
@@ -13545,8 +13977,9 @@ $([ -n "${WSTUNNEL_CLI:-}" ] && printf "Wstunnel Client CLI:     %s\n" "${WSTUNN
 $([ -n "${ZAPRET_INFO:-}" ] && printf "Server-Side Zapret:      %s\n" "${ZAPRET_INFO}")
 $([ -n "${NAIVE_URI:-}" ] && printf "NaïveProxy (Chrome HTTPS): %s\n" "${NAIVE_URI}")
 $([ -n "${DNSTT_CLI:-}" ] && printf "DNSTT DoH Tunnel:        %s\nDNSTT Public Key:        %s\n" "${DNSTT_CLI}" "${DNSTT_PUBKEY}")
+$([ -n "${MIERU_PORT:-}" ] && [ -n "${MIERU_USER:-}" ] && printf "Mieru Proxy (XChaCha20, :%s): user: %s, pass: %s (Клиентский конфиг: /root/mieru-client.json)\n" "${MIERU_PORT}" "${MIERU_USER}" "${MIERU_PASS}")
 $([ -n "${NODE_TOKEN:-}" ] && printf "3X-UI Node Token:      %s\nИмя ноды (Node Name):  %s (Host: %s:443, Path: /%s/)\n" "${NODE_TOKEN}" "${NODE_TOKEN_NAME}" "${PRIMARY_DOMAIN}" "${PANEL_PATH#/}")
-(Объединяет все конфигурации: Steal REALITY, Classic REALITY, xHTTP, Hysteria 2, AWG v3, AWG v2, SS-2022, TUIC v5, MTProxy, MASQUE, ShadowTLS, Wstunnel, Zapret, NaïveProxy, DNSTT)
+(Объединяет все конфигурации: Steal REALITY, Classic REALITY, xHTTP, Hysteria 2, AWG v3, AWG v2, SS-2022, TUIC v5, MTProxy, MASQUE, ShadowTLS, Wstunnel, Zapret, NaïveProxy, DNSTT, Mieru)
 =====================================================================
 EOF_CRED
             echo -e "  - ${BOLD}Файл с паролями:${NC}        ${CYAN}$CRED_FILE${NC} (chmod 600)"
@@ -13570,6 +14003,10 @@ EOF_CRED
             if [ -n "${DNSTT_CLI:-}" ] && ! grep -q "DNSTT DoH Tunnel:" "$CRED_FILE" 2>/dev/null; then
                 echo "DNSTT DoH Tunnel:        ${DNSTT_CLI}" >> "$CRED_FILE"
                 echo "DNSTT Public Key:        ${DNSTT_PUBKEY}" >> "$CRED_FILE"
+            fi
+            if [ -n "${MIERU_PORT:-}" ] && [ -n "${MIERU_USER:-}" ] && ! grep -q "Mieru Proxy" "$CRED_FILE" 2>/dev/null; then
+                echo "Mieru Proxy (XChaCha20, :${MIERU_PORT}): user: ${MIERU_USER}, pass: ${MIERU_PASS}" >> "$CRED_FILE"
+                echo "  Клиентский конфиг: /root/mieru-client.json" >> "$CRED_FILE"
             fi
             echo -e "  - ${BOLD}Файл с паролями:${NC}        ${CYAN}$CRED_FILE${NC} (обновлен, chmod 600)"
         fi
@@ -13958,6 +14395,10 @@ if [[ "${ENABLE_MASQUE:-}" == "1" || "${ENABLE_MASQUE,,}" == "y" ]] && [ -n "${M
 fi
 if [[ "${ENABLE_DNSTT:-}" == "1" || "${ENABLE_DNSTT,,}" == "y" ]] && [ -n "${DNSTT_PORT:-}" ]; then
     UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${DNSTT_PORT}/udp"
+fi
+if [[ "${ENABLE_MIERU:-}" == "1" || "${ENABLE_MIERU,,}" == "y" ]] && [ -n "${MIERU_PORT:-}" ]; then
+    _ufw_m_p="${MIERU_PORT//-/:}"
+    UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${_ufw_m_p}/tcp && ufw allow ${_ufw_m_p}/udp"
 fi
 
 SSL_CERT_REPORT=""
@@ -14893,6 +15334,23 @@ for item in res:
             ENABLE_DNSTT=0
         fi
 
+        if [[ "${ENABLE_MIERU,,}" == "y" || "${ENABLE_MIERU:-}" == "1" ]]; then
+            ENABLE_MIERU=1
+            MIERU_PORT_MODE="${MIERU_PORT_MODE:-single}"
+            case "${MIERU_PORT_MODE,,}" in
+                range|pool)
+                    MIERU_PORT="${MIERU_PORT:-8450-8455}"
+                    ;;
+                *)
+                    MIERU_PORT="${MIERU_PORT:-8450}"
+                    ;;
+            esac
+            [ -n "${MIERU_USER:-}" ] || MIERU_USER="user-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "mieru${RANDOM}")"
+            [ -n "${MIERU_PASS:-}" ] || MIERU_PASS="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "mieru${RANDOM}")"
+        else
+            ENABLE_MIERU=0
+        fi
+
 
         # AdGuard Home
         if [[ "${ENABLE_AGH,,}" == "y" || "${ENABLE_AGH:-}" == "1" ]]; then
@@ -15300,6 +15758,7 @@ for item in res:
             "ENABLE_ZAPRET"
             "ENABLE_NAIVE"
             "ENABLE_DNSTT"
+            "ENABLE_MIERU"
         )
         local proto_labels=(
             "Hysteria 2 (UDP/QUIC Brutal CC, :${HY2_PORT:-443})"
@@ -15315,6 +15774,7 @@ for item in res:
             "Server-Side Zapret (DPI Desync nfqws connbytes 1:6 NFQUEUE 200)"
             "NaïveProxy (Chromium HTTPS Stack via Caddy, Nginx Stream :443 -> :${NAIVE_PORT:-8446})"
             "DNSTT DoH Tunnel (DNS Tunneling via dnstt-server, :${DNSTT_PORT:-53053}/udp -> SS-2022)"
+            "Mieru Proxy (XChaCha20-Poly1305, без TLS, защита от активного зондирования и сигнатурного DPI, :${MIERU_PORT:-8450})"
         )
 
         prompt_multiselect "Выберите протоколы для установки" proto_keys proto_labels || return $?
@@ -15484,6 +15944,43 @@ for item in res:
         else
             DNSTT_PORT=""
             DNSTT_DOMAIN=""
+        fi
+
+        if is_true "$ENABLE_MIERU"; then
+            MIERU_PORT_MODE="${MIERU_PORT_MODE:-single}"
+            if [ "${PORTS_SETUP_MODE:-1}" = "2" ]; then
+                echo -e "\n  ${BOLD}Режим портов для Mieru Proxy:${NC}"
+                echo -e "    1) Одиночный порт [8450] (рекомендуется)"
+                echo -e "    2) Пул портов [8450-8455] (рандомизация соединений)"
+                local _m_mode_choice="1"
+                [ "$MIERU_PORT_MODE" = "range" ] && _m_mode_choice="2"
+                prompt_default "  Выберите режим портов Mieru (1 или 2)" "$_m_mode_choice" _m_mode_choice || return $?
+                if [ "$_m_mode_choice" = "2" ]; then
+                    MIERU_PORT_MODE="range"
+                    prompt_default "  Диапазон портов для Mieru (TCP и UDP)" "${MIERU_PORT:-8450-8455}" MIERU_PORT || return $?
+                else
+                    MIERU_PORT_MODE="single"
+                    prompt_default "  Порт для Mieru (TCP и UDP)" "${MIERU_PORT:-8450}" MIERU_PORT || return $?
+                fi
+                prompt_default "  Имя пользователя Mieru" "${MIERU_USER:-user-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "m$(date +%s | cut -c7-10)")}" MIERU_USER || return $?
+                prompt_default "  Пароль Mieru" "${MIERU_PASS:-$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "pass$(date +%s)")}" MIERU_PASS || return $?
+            else
+                case "${MIERU_PORT_MODE,,}" in
+                    range|pool)
+                        MIERU_PORT="${MIERU_PORT:-8450-8455}"
+                        ;;
+                    *)
+                        MIERU_PORT_MODE="single"
+                        MIERU_PORT="${MIERU_PORT:-8450}"
+                        ;;
+                esac
+                [ -n "${MIERU_USER:-}" ] || MIERU_USER="user-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "mieru${RANDOM}")"
+                [ -n "${MIERU_PASS:-}" ] || MIERU_PASS="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "mieru${RANDOM}")"
+            fi
+        else
+            MIERU_PORT=""
+            MIERU_USER=""
+            MIERU_PASS=""
         fi
 
         rebuild_all_domains
@@ -15981,6 +16478,10 @@ for item in res:
         local dnstt_status="${RED}Отключен${NC}"
         is_true "${ENABLE_DNSTT:-0}" && dnstt_status="${GREEN}Включен${NC} (UDP :${DNSTT_PORT:-53053} ➜ SS-2022, Zone: ${DNSTT_DOMAIN:-t.$PRIMARY_DOMAIN})"
         echo -e "      ${DIM}• DNSTT DoH Tunnel:${NC}     $dnstt_status"
+
+        local mieru_status="${RED}Отключен${NC}"
+        is_true "${ENABLE_MIERU:-0}" && mieru_status="${GREEN}Включен${NC} (:${MIERU_PORT:-8450}/tcp,udp, XChaCha20-Poly1305)"
+        echo -e "      ${DIM}• Mieru Proxy:${NC}          $mieru_status"
 
         local agh_status="${RED}Отключен${NC}"
         if is_true "${ENABLE_AGH:-0}"; then

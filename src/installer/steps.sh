@@ -677,15 +677,8 @@ setup_mieru_service() {
 
     if [ ! -x "$mita_bin" ]; then
         warn "Не удалось загрузить бинарник mita. Установка Mieru пропущена."
-        return 0
+        return 1
     fi
-
-    if ! id -u mita >/dev/null 2>&1; then
-        useradd --system --no-create-home --user-group mita 2>/dev/null || true
-    fi
-    mkdir -p /etc/mita /var/lib/mita /var/run/mita
-    chown -R mita:mita /etc/mita /var/lib/mita /var/run/mita 2>/dev/null || true
-    chmod 775 /etc/mita /var/lib/mita /var/run/mita 2>/dev/null || true
 
     local m_port_mode="${MIERU_PORT_MODE:-single}"
     local m_port="${MIERU_PORT:-8450}"
@@ -693,12 +686,52 @@ setup_mieru_service() {
     local m_pass="${MIERU_PASS:-pass-default}"
     local m_trans="${MIERU_TRANSPORT:-BOTH}"
     local m_mtu="${MIERU_MTU:-1400}"
+    local m_cfg_file="${MIERU_CONFIG_FILE:-/etc/mita/config.json}"
+    local m_compat_file="${MIERU_COMPAT_CONFIG_FILE:-/etc/mita_server_config.json}"
 
-    python3 -c "
+    if ! id -u mita >/dev/null 2>&1; then
+        useradd --system --no-create-home --user-group mita 2>/dev/null || true
+    fi
+    mkdir -p "$(dirname "$m_cfg_file")" /var/lib/mita /var/run/mita 2>/dev/null || true
+    chown -R mita:mita "$(dirname "$m_cfg_file")" /var/lib/mita /var/run/mita 2>/dev/null || true
+    chmod 750 "$(dirname "$m_cfg_file")" /var/lib/mita /var/run/mita 2>/dev/null || true
+
+    local py_cmd="${PYTHON_CMD:-}"
+    if [ -z "$py_cmd" ]; then
+        if command -v python3 >/dev/null 2>&1; then
+            py_cmd="python3"
+        elif command -v python >/dev/null 2>&1; then
+            py_cmd="python"
+        else
+            py_cmd="python3"
+        fi
+    fi
+
+    MIERU_CONFIG_PORT_MODE="$m_port_mode" \
+    MIERU_CONFIG_PORT_VAL="$m_port" \
+    MIERU_CONFIG_TRANSPORT="$m_trans" \
+    MIERU_CONFIG_USER="$m_user" \
+    MIERU_CONFIG_PASS="$m_pass" \
+    MIERU_CONFIG_MTU="$m_mtu" \
+    MIERU_CONFIG_FILE="$m_cfg_file" \
+    MIERU_COMPAT_CONFIG_FILE="$m_compat_file" \
+    "$py_cmd" - << 'PYEOF'
 import json
-port_mode = '$m_port_mode'.lower()
-port_val = '$m_port'.strip()
-transport = '$m_trans'.upper()
+import os
+import sys
+import tempfile
+
+port_mode = os.environ.get("MIERU_CONFIG_PORT_MODE", "single").lower()
+port_val = os.environ.get("MIERU_CONFIG_PORT_VAL", "8450").strip()
+transport = os.environ.get("MIERU_CONFIG_TRANSPORT", "BOTH").upper()
+user = os.environ.get("MIERU_CONFIG_USER", "user-default")
+password = os.environ.get("MIERU_CONFIG_PASS", "pass-default")
+cfg_file = os.environ.get("MIERU_CONFIG_FILE", "/etc/mita/config.json")
+compat_file = os.environ.get("MIERU_COMPAT_CONFIG_FILE", "/etc/mita_server_config.json")
+try:
+    mtu = int(os.environ.get("MIERU_CONFIG_MTU", "1400"))
+except ValueError:
+    mtu = 1400
 
 protocols = ['TCP', 'UDP'] if transport == 'BOTH' else [transport]
 port_bindings = []
@@ -713,23 +746,51 @@ for proto in protocols:
 config = {
     'portBindings': port_bindings,
     'users': [{
-        'name': '$m_user',
-        'password': '$m_pass'
+        'name': user,
+        'password': password
     }],
     'loggingLevel': 'INFO',
-    'mtu': int('$m_mtu'),
+    'mtu': mtu,
     'dns': {
         'dualStack': 'PREFER_IPv4'
     }
 }
 
-for path in ['/etc/mita/config.json', '/etc/mita_server_config.json']:
-    with open(path, 'w', encoding='utf-8') as f:
-        json.dump(config, f, indent=2)
-" 2>/dev/null || true
+paths = [cfg_file, compat_file]
+for path in paths:
+    target_dir = os.path.dirname(path)
+    if target_dir:
+        os.makedirs(target_dir, exist_ok=True)
+    tmp_fd, tmp_path = tempfile.mkstemp(dir=target_dir or None, prefix="mita_conf_", text=True)
+    try:
+        try:
+            os.fchmod(tmp_fd, 0o600)
+        except Exception:
+            pass
+        with open(tmp_fd, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2)
+            f.write('\n')
+        os.replace(tmp_path, path)
+        try:
+            os.chmod(path, 0o600)
+        except Exception:
+            pass
+    except Exception:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+        raise
+PYEOF
+    local py_rc=$?
+    if [ "$py_rc" -ne 0 ]; then
+        warn "Ошибка при создании конфигурации Mieru ($m_cfg_file)."
+        return 1
+    fi
 
-    chown mita:mita /etc/mita/config.json /etc/mita_server_config.json 2>/dev/null || true
-    chmod 644 /etc/mita/config.json /etc/mita_server_config.json 2>/dev/null || true
+    chown mita:mita "$m_cfg_file" "$m_compat_file" 2>/dev/null || true
+    chmod 600 "$m_cfg_file" "$m_compat_file" 2>/dev/null || true
 
     mkdir -p /etc/systemd/system
     cat << EOF > /etc/systemd/system/mita.service
@@ -746,8 +807,8 @@ User=mita
 Group=mita
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 Environment="MITA_LOG_NO_TIMESTAMP=true"
-Environment="MITA_CONFIG_JSON_FILE=/etc/mita/config.json"
-ExecStartPre=+/bin/sh -c 'mkdir -p /var/run/mita /var/lib/mita && chown -R mita:mita /var/run/mita /var/lib/mita /etc/mita && chmod 775 /var/run/mita /var/lib/mita /etc/mita'
+Environment="MITA_CONFIG_JSON_FILE=${m_cfg_file}"
+ExecStartPre=+/bin/sh -c 'mkdir -p /var/run/mita /var/lib/mita && chown -R mita:mita /var/run/mita /var/lib/mita /etc/mita && chmod 750 /var/run/mita /var/lib/mita /etc/mita && chmod 600 ${m_cfg_file} ${m_compat_file} 2>/dev/null || true'
 ExecStart=${mita_bin} run
 Nice=-10
 Restart=on-failure

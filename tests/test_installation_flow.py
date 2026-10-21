@@ -235,6 +235,34 @@ echo BAD_SUCCESS
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("BAD_SUCCESS", result.stdout)
 
+    def test_post_install_sanity_check_fails_when_selected_binary_missing(self):
+        cases = [
+            ("ENABLE_MIERU=y; MIERU_PORT=8450", "Mieru"),
+            ("ENABLE_MASQUE=y; MASQUE_PORT=8449", "MASQUE"),
+            ("ENABLE_NAIVE=y; NAIVE_PORT=8446", "NaiveProxy"),
+            ("ENABLE_DNSTT=y; DNSTT_PORT=53053", "DNSTT"),
+        ]
+        for env_vars, name in cases:
+            with self.subTest(component=name):
+                result = self.shell(f'''
+ENABLE_WEB_STACK=1
+ENABLE_STEAL=n; ENABLE_CLASSIC=n; ENABLE_HY2=n; ENABLE_AWG_V3=n; ENABLE_AWG_V2=n; ENABLE_AGH=n; AUTO_SETUP_3XUI=y
+PRIMARY_DOMAIN=example.com; SSL_ENGINE_CHOICE=1
+{env_vars}
+systemctl() {{ return 0; }}
+nginx() {{ return 0; }}
+curl() {{ return 0; }}
+ss() {{ echo "UNCONN 0 0 0.0.0.0:443 0.0.0.0:*"; }}
+export LOCAL_BIN_DIR="$TEST_WORK/empty_bin"
+mkdir -p "$LOCAL_BIN_DIR"
+export PATH="/bin:/usr/bin"
+post_install_sanity_check
+echo BAD_SUCCESS
+''', "common/preflight.sh")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("BAD_SUCCESS", result.stdout)
+                self.assertIn("не установлен", result.stdout)
+
     def test_certificate_failure_never_becomes_a_self_signed_success(self):
         for ssl_engine in (1, 2):
             with self.subTest(ssl_engine=ssl_engine):

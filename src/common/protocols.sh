@@ -8,6 +8,13 @@ selected_protocol_ports() {
     if is_true "${ENABLE_WEB_STACK:-y}"; then
         while read -r flag transport variable fallback name; do
             if is_true "${!flag:-n}"; then
+                if [ "$flag" = "ENABLE_MIERU" ]; then
+                    local m_trans="${MIERU_TRANSPORT:-BOTH}"
+                    case "${m_trans^^}" in
+                        TCP) [ "$transport" = "udp" ] && continue ;;
+                        UDP) [ "$transport" = "tcp" ] && continue ;;
+                    esac
+                fi
                 printf '%s %s %s\n' "$name" "$transport" "${!variable:-$fallback}"
             fi
         done <<'PROTOCOL_PORTS'

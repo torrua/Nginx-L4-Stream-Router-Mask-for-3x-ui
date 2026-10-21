@@ -368,21 +368,42 @@ inspect_port_conflicts() {
     local _mieru_en="${ENABLE_MIERU:-n}"
     if [[ "${_mieru_en,,}" == "y" || "${_mieru_en}" == "1" || "${_mieru_en,,}" == "true" ]]; then
         local mr_port="${MIERU_PORT:-8450}"
-        local mr_base="${mr_port%%[-:]*}"
-        if is_port_in_use "tcp" "$mr_base"; then
-            local mr_t_owner
-            mr_t_owner=$(get_port_listener_info "tcp" "$mr_base")
-            warn "Порт $mr_port/tcp (Mieru Proxy) занят: ${mr_t_owner:-сторонней службой}."
-        else
-            ok "Порт $mr_port/tcp (Mieru Proxy) свободен."
-        fi
-        if is_port_in_use "udp" "$mr_base"; then
-            local mr_u_owner
-            mr_u_owner=$(get_port_listener_info "udp" "$mr_base")
-            warn "Порт $mr_port/udp (Mieru Proxy) занят: ${mr_u_owner:-сторонней службой}."
-        else
-            ok "Порт $mr_port/udp (Mieru Proxy) свободен."
-        fi
+        local mr_trans="${MIERU_TRANSPORT:-BOTH}"
+        local check_transports=()
+        case "${mr_trans^^}" in
+            TCP) check_transports=(tcp) ;;
+            UDP) check_transports=(udp) ;;
+            *) check_transports=(tcp udp) ;;
+        esac
+
+        local cur_t
+        for cur_t in "${check_transports[@]}"; do
+            if [[ "$mr_port" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+                local r_start="${BASH_REMATCH[1]}" r_end="${BASH_REMATCH[2]}"
+                local conflict_p="" p_owner="" p
+                for (( p=r_start; p<=r_end; p++ )); do
+                    if is_port_in_use "$cur_t" "$p"; then
+                        conflict_p="$p"
+                        p_owner=$(get_port_listener_info "$cur_t" "$p")
+                        break
+                    fi
+                done
+                if [ -n "$conflict_p" ]; then
+                    warn "Порт $conflict_p/$cur_t из диапазона Mieru ($mr_port) занят: ${p_owner:-сторонней службой}."
+                else
+                    ok "Диапазон портов $mr_port/$cur_t (Mieru Proxy) свободен."
+                fi
+            else
+                local mr_base="${mr_port%%[-:]*}"
+                if is_port_in_use "$cur_t" "$mr_base"; then
+                    local mr_owner
+                    mr_owner=$(get_port_listener_info "$cur_t" "$mr_base")
+                    warn "Порт $mr_port/$cur_t (Mieru Proxy) занят: ${mr_owner:-сторонней службой}."
+                else
+                    ok "Порт $mr_port/$cur_t (Mieru Proxy) свободен."
+                fi
+            fi
+        done
     fi
 
     echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}\n"
@@ -399,18 +420,30 @@ check_required_file() {
 
 check_required_port() {
     local protocol="$1" port="$2" listeners
-    local check_port="${port%%[-:]*}"
-    if [ "$protocol" = udp ]; then
-        listeners=$(ss -H -lun "sport = :$check_port" 2>/dev/null) || return 1
-    else
-        listeners=$(ss -H -ltn "sport = :$check_port" 2>/dev/null) || return 1
+    local p_flag="-ltn"
+    [ "$protocol" = udp ] && p_flag="-lun"
+
+    if [[ "$port" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+        local p_start="${BASH_REMATCH[1]}" p_end="${BASH_REMATCH[2]}"
+        local p
+        for p in "$p_start" "$p_end"; do
+            listeners=$(ss -H $p_flag "sport = :$p" 2>/dev/null) || { warn "Port $port/$protocol (boundary $p) is not listening"; return 1; }
+            [ -n "$listeners" ] || { warn "Port $port/$protocol (boundary $p) is not listening"; return 1; }
+        done
+        ok "Port range $port/$protocol: listening"
+        return 0
     fi
+
+    local check_port="${port%%[-:]*}"
+    listeners=$(ss -H $p_flag "sport = :$check_port" 2>/dev/null) || return 1
     [ -n "$listeners" ] || { warn "Port $port/$protocol is not listening"; return 1; }
     ok "Port $port/$protocol: listening"
 }
 
 post_install_sanity_check() {
     local all_ok=1 flag protocol variable fallback port
+    local bin_dir="${LOCAL_BIN_DIR:-/usr/local/bin}"
+    local -A checked_services=()
     if is_true "${ENABLE_WEB_STACK:-y}"; then
         check_required_service nginx || all_ok=0
         nginx -t >/dev/null 2>&1 || all_ok=0
@@ -430,48 +463,86 @@ post_install_sanity_check() {
                     check_required_port tcp "$port" || all_ok=0
                 done
             fi
-            while read -r flag protocol port; do
-                [ "$flag" = AWG-standalone ] && continue
-                case "$flag" in
-                    MASQUE)
-                        if [ ! -x "/usr/local/bin/sing-box" ]; then
-                            warn "Служба MASQUE: бинарник sing-box не установлен, проверка порта пропущена."
-                            continue
-                        fi
-                        ;;
-                    NaiveProxy)
-                        if [ ! -x "/usr/local/bin/caddy-naive" ] && [ ! -x "/usr/local/bin/caddy" ]; then
-                            warn "Служба NaiveProxy: бинарник caddy-naive не установлен, проверка порта пропущена."
-                            continue
-                        fi
-                        ;;
-                    DNSTT)
-                        if [ ! -x "/usr/local/bin/dnstt-server" ]; then
-                            warn "Служба DNSTT: бинарник dnstt-server не установлен, проверка порта пропущена."
-                            continue
-                        fi
-                        ;;
-                    Mieru)
-                        if [ ! -x "/usr/local/bin/mita" ]; then
-                            warn "Служба Mieru: бинарник mita не установлен, проверка порта пропущена."
-                            continue
-                        fi
-                        ;;
-                esac
-                check_required_port "$protocol" "$port" || all_ok=0
-            done < <(selected_protocol_ports)
+        fi
+        while read -r flag protocol port; do
+            [ "$flag" = AWG-standalone ] && continue
+            case "$flag" in
+                MASQUE)
+                    if [ ! -x "${bin_dir}/sing-box" ] && ! command -v sing-box >/dev/null 2>&1; then
+                        warn "Служба MASQUE: бинарник sing-box не установлен."
+                        all_ok=0
+                        continue
+                    fi
+                    if [ -z "${checked_services[sing-box-masque]:-}" ]; then
+                        check_required_service sing-box-masque || all_ok=0
+                        checked_services[sing-box-masque]=1
+                    fi
+                    ;;
+                NaiveProxy)
+                    if [ ! -x "${bin_dir}/caddy-naive" ] && [ ! -x "${bin_dir}/caddy" ] && ! command -v caddy-naive >/dev/null 2>&1 && ! command -v caddy >/dev/null 2>&1; then
+                        warn "Служба NaiveProxy: бинарник caddy-naive не установлен."
+                        all_ok=0
+                        continue
+                    fi
+                    if [ -z "${checked_services[caddy-naive]:-}" ]; then
+                        check_required_service caddy-naive || all_ok=0
+                        checked_services[caddy-naive]=1
+                    fi
+                    ;;
+                DNSTT)
+                    if [ ! -x "${bin_dir}/dnstt-server" ] && ! command -v dnstt-server >/dev/null 2>&1; then
+                        warn "Служба DNSTT: бинарник dnstt-server не установлен."
+                        all_ok=0
+                        continue
+                    fi
+                    if [ -z "${checked_services[dnstt-server]:-}" ]; then
+                        check_required_service dnstt-server || all_ok=0
+                        checked_services[dnstt-server]=1
+                    fi
+                    ;;
+                Mieru)
+                    if [ ! -x "${bin_dir}/mita" ] && ! command -v mita >/dev/null 2>&1; then
+                        warn "Служба Mieru: бинарник mita не установлен."
+                        all_ok=0
+                        continue
+                    fi
+                    if [ -z "${checked_services[mita]:-}" ]; then
+                        check_required_service mita || all_ok=0
+                        checked_services[mita]=1
+                    fi
+                    ;;
+                ShadowTLS)
+                    if [ ! -x "${bin_dir}/shadow-tls" ] && ! command -v shadow-tls >/dev/null 2>&1; then
+                        warn "Служба ShadowTLS: бинарник shadow-tls не установлен."
+                        all_ok=0
+                        continue
+                    fi
+                    if [ -z "${checked_services[shadow-tls]:-}" ]; then
+                        check_required_service shadow-tls || all_ok=0
+                        checked_services[shadow-tls]=1
+                    fi
+                    ;;
+                Wstunnel)
+                    if [ ! -x "${bin_dir}/wstunnel" ] && ! command -v wstunnel >/dev/null 2>&1; then
+                        warn "Служба Wstunnel: бинарник wstunnel не установлен."
+                        all_ok=0
+                        continue
+                    fi
+                    if [ -z "${checked_services[wstunnel]:-}" ]; then
+                        check_required_service wstunnel || all_ok=0
+                        checked_services[wstunnel]=1
+                    fi
+                    ;;
+            esac
+            check_required_port "$protocol" "$port" || all_ok=0
+        done < <(selected_protocol_ports)
+        if is_true "${ENABLE_ZAPRET:-n}"; then
+            check_required_service zapret-server || all_ok=0
         fi
         if is_true "${ENABLE_AGH:-n}"; then
             check_required_service AdGuardHome || all_ok=0
             check_required_port tcp "${PORT_AGH_WEB:-3000}" || all_ok=0
             check_required_port udp 53 || all_ok=0
-        fi
-        if is_true "${ENABLE_MIERU:-n}"; then
-            if [ -x "/usr/local/bin/mita" ]; then
-                check_required_service mita || all_ok=0
-            else
-                warn "Служба Mieru: бинарник mita не установлен, проверка службы пропущена."
-            fi
         fi
         # curl validates the certificate and hostname as well as HTTPS availability.
         if ! curl -fLsS --connect-timeout 3 --max-time 10 -o /dev/null \

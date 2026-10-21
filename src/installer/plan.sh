@@ -89,10 +89,29 @@ validate_installation_config() {
     local name value transport binding
     local -A claimed=()
     while read -r name transport value; do
-        [[ "$value" =~ ^[0-9]{1,5}$ ]] && [ "$((10#$value))" -ge 1 ] && [ "$((10#$value))" -le 65535 ] || die "Некорректный порт $name: $value"
-        binding="$transport:$((10#$value))"
-        [ -z "${claimed[$binding]:-}" ] || die "Конфликт порта $value/$transport: ${claimed[$binding]} и $name. Измените порт одного из компонентов."
-        claimed[$binding]="$name"
+        if [[ "$value" =~ ^([0-9]{1,5})-([0-9]{1,5})$ ]]; then
+            local p_start="${BASH_REMATCH[1]}"
+            local p_end="${BASH_REMATCH[2]}"
+            p_start="$((10#$p_start))"
+            p_end="$((10#$p_end))"
+            [ "$p_start" -ge 1 ] && [ "$p_start" -le 65535 ] && \
+            [ "$p_end" -ge 1 ] && [ "$p_end" -le 65535 ] && \
+            [ "$p_start" -le "$p_end" ] || die "Некорректный диапазон портов $name: $value"
+            local p
+            for (( p=p_start; p<=p_end; p++ )); do
+                binding="$transport:$p"
+                [ -z "${claimed[$binding]:-}" ] || die "Конфликт порта $p/$transport: ${claimed[$binding]} и $name. Измените порт одного из компонентов."
+                claimed[$binding]="$name"
+            done
+        elif [[ "$value" =~ ^[0-9]{1,5}$ ]]; then
+            local p="$((10#$value))"
+            [ "$p" -ge 1 ] && [ "$p" -le 65535 ] || die "Некорректный порт $name: $value"
+            binding="$transport:$p"
+            [ -z "${claimed[$binding]:-}" ] || die "Конфликт порта $value/$transport: ${claimed[$binding]} и $name. Измените порт одного из компонентов."
+            claimed[$binding]="$name"
+        else
+            die "Некорректный порт $name: $value"
+        fi
     done < <(installation_listeners)
 }
 

@@ -300,6 +300,7 @@ EOF_ADD
     if command -v chown >/dev/null 2>&1 && id -u mita >/dev/null 2>&1; then
         chown mita:mita /etc/mita/config.json /etc/mita_server_config.json 2>/dev/null || true
     fi
+    chmod 600 /etc/mita/config.json /etc/mita_server_config.json 2>/dev/null || true
 
     if command -v systemctl >/dev/null 2>&1; then
         systemctl restart mita 2>/dev/null || true
@@ -417,6 +418,7 @@ EOF_DEL
     if command -v chown >/dev/null 2>&1 && id -u mita >/dev/null 2>&1; then
         chown mita:mita /etc/mita/config.json /etc/mita_server_config.json 2>/dev/null || true
     fi
+    chmod 600 /etc/mita/config.json /etc/mita_server_config.json 2>/dev/null || true
 
     if command -v systemctl >/dev/null 2>&1; then
         systemctl restart mita 2>/dev/null || true

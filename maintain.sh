@@ -502,6 +502,7 @@ EOF_ADD
     if command -v chown >/dev/null 2>&1 && id -u mita >/dev/null 2>&1; then
         chown mita:mita /etc/mita/config.json /etc/mita_server_config.json 2>/dev/null || true
     fi
+    chmod 600 /etc/mita/config.json /etc/mita_server_config.json 2>/dev/null || true
 
     if command -v systemctl >/dev/null 2>&1; then
         systemctl restart mita 2>/dev/null || true
@@ -619,6 +620,7 @@ EOF_DEL
     if command -v chown >/dev/null 2>&1 && id -u mita >/dev/null 2>&1; then
         chown mita:mita /etc/mita/config.json /etc/mita_server_config.json 2>/dev/null || true
     fi
+    chmod 600 /etc/mita/config.json /etc/mita_server_config.json 2>/dev/null || true
 
     if command -v systemctl >/dev/null 2>&1; then
         systemctl restart mita 2>/dev/null || true
@@ -2980,9 +2982,9 @@ if not dry_run:
                 f.write(f"DNSTT_PUBKEY='{dnstt_pubkey}'\n")
             if (enable_mieru or os.path.exists("/etc/systemd/system/mita.service")) and mieru_user and mieru_pass:
                 f.write(f"ENABLE_MIERU='1'\n")
-                f.write(f"MIERU_PORT='{mieru_port}'\n")
-                f.write(f"MIERU_USER='{mieru_user}'\n")
-                f.write(f"MIERU_PASS='{mieru_pass}'\n")
+                f.write(f"MIERU_PORT={shlex.quote(mieru_port)}\n")
+                f.write(f"MIERU_USER={shlex.quote(mieru_user)}\n")
+                f.write(f"MIERU_PASS={shlex.quote(mieru_pass)}\n")
         os.umask(old_umask)
         os.chmod(run_file, 0o600)
     except Exception:

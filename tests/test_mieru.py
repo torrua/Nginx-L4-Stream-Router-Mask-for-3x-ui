@@ -30,9 +30,10 @@ def run_shell(code: str, env: dict | None = None) -> subprocess.CompletedProcess
     full_env = os.environ.copy()
     if env:
         full_env.update(env)
+    py_exec = sys.executable.replace(os.sep, "/")
     return subprocess.run(
         [str(BASH), "-s"],
-        input="export PATH=/usr/bin:/bin:$PATH\nsource src/common/colors.sh\nsource src/common/logger.sh\nsource src/common/config.sh\n" + code,
+        input=f"export PATH=/usr/bin:/bin:$PATH\nexport PYTHON_CMD='{py_exec}'\nsource src/common/colors.sh\nsource src/common/logger.sh\nsource src/common/config.sh\n" + code,
         cwd=ROOT,
         text=True,
         encoding="utf-8",
@@ -455,6 +456,188 @@ bash maintain.sh --mieru-add-user maintain_user Pass789!
             self.assertEqual(res_add.returncode, 0, f"Stderr: {res_add.stderr}")
             self.assertIn("maintain_user", res_add.stdout)
             self.assertIn("Pass789!", res_add.stdout)
+
+    def test_setup_mieru_service_atomic_write_and_permissions(self):
+        """Invoke setup_mieru_service with special password O'Brien123 and verify mode 600."""
+        res = run_shell(r"""
+set -euo pipefail
+log(){ :; }; ok(){ :; }; warn(){ echo "WARN:$*"; }; die(){ echo "DIE:$*"; exit 1; };
+is_true(){ [[ "${1:-0}" == "1" || "${1,,}" == "y" || "${1,,}" == "true" ]]; }
+
+MOCK_ROOT="$(pwd)/mock_mieru_$$"
+mkdir -p "$MOCK_ROOT/etc/mita" "$MOCK_ROOT/var/lib/mita" "$MOCK_ROOT/var/run/mita" "$MOCK_ROOT/etc/systemd/system" "$MOCK_ROOT/usr/local/bin"
+printf '#!/bin/sh\nexit 0\n' > "$MOCK_ROOT/usr/local/bin/mita"
+chmod +x "$MOCK_ROOT/usr/local/bin/mita"
+export LOCAL_BIN_DIR="$MOCK_ROOT/usr/local/bin"
+
+systemctl(){ :; }
+id(){ return 1; }
+
+MIERU_PORT_MODE="range"
+MIERU_PORT="8450-8455"
+MIERU_USER="obrien_user"
+MIERU_PASS="O'Brien123!@#"
+MIERU_TRANSPORT="TCP"
+MIERU_MTU="1380"
+export MIERU_CONFIG_FILE="$MOCK_ROOT/etc/mita/config.json"
+export MIERU_COMPAT_CONFIG_FILE="$MOCK_ROOT/etc/mita/compat.json"
+
+source src/installer/steps.sh
+
+eval "$(declare -f setup_mieru_service | \
+    sed "s|/var/lib/mita|$MOCK_ROOT/var/lib/mita|g" | \
+    sed "s|/var/run/mita|$MOCK_ROOT/var/run/mita|g" | \
+    sed "s|/etc/systemd/system|$MOCK_ROOT/etc/systemd/system|g")"
+
+chmod() { echo "CHMOD:$*"; }
+
+setup_mieru_service
+
+cat "$MOCK_ROOT/etc/mita/config.json"
+rm -rf "$MOCK_ROOT"
+""")
+        self.assertEqual(res.returncode, 0, f"Script failed: {res.stderr}")
+        self.assertIn("CHMOD:600", res.stdout)
+        data = json.loads(res.stdout[res.stdout.find("{"):])
+        self.assertEqual(data["users"][0]["name"], "obrien_user")
+        self.assertEqual(data["users"][0]["password"], "O'Brien123!@#")
+        self.assertEqual(data["portBindings"][0]["protocol"], "TCP")
+        self.assertEqual(data["portBindings"][0]["portRange"], "8450-8455")
+        self.assertEqual(len(data["portBindings"]), 1)
+
+    def test_setup_mieru_service_fails_when_mita_missing(self):
+        """setup_mieru_service must return non-zero when mita binary cannot be found or downloaded."""
+        res = run_shell(r"""
+set -euo pipefail
+log(){ :; }; ok(){ :; }; warn(){ echo "WARN:$*"; }; die(){ echo "DIE:$*"; exit 1; };
+is_true(){ [[ "${1:-0}" == "1" || "${1,,}" == "y" || "${1,,}" == "true" ]]; }
+
+MOCK_ROOT=$(mktemp -d)
+mkdir -p "$MOCK_ROOT/usr/local/bin"
+export LOCAL_BIN_DIR="$MOCK_ROOT/usr/local/bin"
+# Ensure mita is not found anywhere
+export PATH="/bin:/usr/bin"
+curl(){ return 1; }
+
+source src/installer/steps.sh
+
+if setup_mieru_service; then
+    echo "BAD_SUCCESS"
+else
+    echo "FAILED_AS_EXPECTED"
+fi
+rm -rf "$MOCK_ROOT"
+""")
+        self.assertEqual(res.returncode, 0, f"Script failed: {res.stderr}")
+        self.assertIn("FAILED_AS_EXPECTED", res.stdout)
+        self.assertNotIn("BAD_SUCCESS", res.stdout)
+
+    def test_protocols_transport_selection_tcp_only(self):
+        """MIERU_TRANSPORT=TCP must emit only tcp for Mieru."""
+        res = run_shell(r"""
+set -euo pipefail
+source src/system/env.sh
+source src/common/protocols.sh
+ENABLE_WEB_STACK=1
+ENABLE_MIERU=1
+MIERU_PORT=8450
+MIERU_TRANSPORT="TCP"
+selected_protocol_ports
+""")
+        self.assertEqual(res.returncode, 0, f"Stderr: {res.stderr}")
+        self.assertIn("Mieru tcp 8450", res.stdout)
+        self.assertNotIn("Mieru udp", res.stdout)
+
+    def test_protocols_transport_selection_udp_only(self):
+        """MIERU_TRANSPORT=UDP must emit only udp for Mieru."""
+        res = run_shell(r"""
+set -euo pipefail
+source src/system/env.sh
+source src/common/protocols.sh
+ENABLE_WEB_STACK=1
+ENABLE_MIERU=1
+MIERU_PORT=8450
+MIERU_TRANSPORT="UDP"
+selected_protocol_ports
+""")
+        self.assertEqual(res.returncode, 0, f"Stderr: {res.stderr}")
+        self.assertIn("Mieru udp 8450", res.stdout)
+        self.assertNotIn("Mieru tcp", res.stdout)
+
+    def test_validate_installation_config_mieru_range_valid(self):
+        """validate_installation_config accepts valid Mieru port range."""
+        res = run_shell(r"""
+set -euo pipefail
+ENABLE_WEB_STACK=1
+PRIMARY_DOMAIN="example.com"
+LE_EMAIL="admin@example.com"
+ENABLE_MIERU=1
+MIERU_PORT="8450-8455"
+MIERU_TRANSPORT="BOTH"
+source src/common/protocols.sh
+source src/installer/plan.sh
+validate_installation_config
+echo "VALID"
+""")
+        self.assertEqual(res.returncode, 0, f"Stderr: {res.stderr}")
+        self.assertIn("VALID", res.stdout)
+
+    def test_validate_installation_config_mieru_range_inverted(self):
+        """validate_installation_config rejects inverted port range."""
+        res = run_shell(r"""
+set -euo pipefail
+ENABLE_WEB_STACK=1
+PRIMARY_DOMAIN="example.com"
+LE_EMAIL="admin@example.com"
+ENABLE_MIERU=1
+MIERU_PORT="8455-8450"
+source src/common/protocols.sh
+source src/installer/plan.sh
+validate_installation_config
+echo "BAD_SUCCESS"
+""")
+        self.assertNotEqual(res.returncode, 0)
+        self.assertNotIn("BAD_SUCCESS", res.stdout)
+        self.assertIn("Некорректный диапазон портов", res.stderr)
+
+    def test_validate_installation_config_mieru_range_out_of_bounds(self):
+        """validate_installation_config rejects out-of-bounds port range."""
+        res = run_shell(r"""
+set -euo pipefail
+ENABLE_WEB_STACK=1
+PRIMARY_DOMAIN="example.com"
+LE_EMAIL="admin@example.com"
+ENABLE_MIERU=1
+MIERU_PORT="8450-70000"
+source src/common/protocols.sh
+source src/installer/plan.sh
+validate_installation_config
+echo "BAD_SUCCESS"
+""")
+        self.assertNotEqual(res.returncode, 0)
+        self.assertNotIn("BAD_SUCCESS", res.stdout)
+        self.assertIn("Некорректный диапазон портов", res.stderr)
+
+    def test_validate_installation_config_mieru_range_collision(self):
+        """validate_installation_config detects conflict between port range and another component."""
+        res = run_shell(r"""
+set -euo pipefail
+ENABLE_WEB_STACK=1
+PRIMARY_DOMAIN="example.com"
+LE_EMAIL="admin@example.com"
+ENABLE_AWG_STANDALONE=1
+AWG_STANDALONE_PORT=8445
+ENABLE_MIERU=1
+MIERU_PORT="8440-8446"
+MIERU_TRANSPORT="BOTH"
+source src/common/protocols.sh
+source src/installer/plan.sh
+validate_installation_config
+echo "BAD_SUCCESS"
+""")
+        self.assertNotEqual(res.returncode, 0)
+        self.assertNotIn("BAD_SUCCESS", res.stdout)
+        self.assertIn("Конфликт порта 8445/udp", res.stderr)
 
 
 

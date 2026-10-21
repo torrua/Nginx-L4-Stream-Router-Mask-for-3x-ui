@@ -2254,14 +2254,17 @@ if enable_mieru and mieru_user and mieru_pass:
         m_port_clean = mieru_port.split("-")[0].split(":")[0]
         m_port_field = f"port: {m_port_clean}"
 
-    mieru_yaml_block = f"""  - name: "{mieru_node_name}"
+    safe_node_name = json.dumps(mieru_node_name)
+    safe_user = json.dumps(mieru_user)
+    safe_pass = json.dumps(mieru_pass)
+    mieru_yaml_block = f"""  - name: {safe_node_name}
     type: mieru
     server: {domain}
     {m_port_field}
     transport: TCP
     udp: true
-    username: "{mieru_user}"
-    password: "{mieru_pass}"
+    username: {safe_user}
+    password: {safe_pass}
     multiplexing: MULTIPLEXING_LOW
     handshake-mode: HANDSHAKE_STANDARD"""
 
@@ -4069,12 +4072,12 @@ if not dry_run:
                 f.write(f"DNSTT_PUBKEY='{dnstt_pubkey}'\n")
             if enable_mieru:
                 f.write(f"ENABLE_MIERU='1'\n")
-                f.write(f"MIERU_PORT='{mieru_port}'\n")
-                f.write(f"MIERU_PORT_MODE='{mieru_port_mode}'\n")
-                f.write(f"MIERU_USER='{mieru_user}'\n")
-                f.write(f"MIERU_PASS='{mieru_pass}'\n")
+                f.write(f"MIERU_PORT={shlex.quote(mieru_port)}\n")
+                f.write(f"MIERU_PORT_MODE={shlex.quote(mieru_port_mode)}\n")
+                f.write(f"MIERU_USER={shlex.quote(mieru_user)}\n")
+                f.write(f"MIERU_PASS={shlex.quote(mieru_pass)}\n")
                 if 'mieru_node_name' in locals():
-                    f.write(f"MIERU_NODE_NAME='{mieru_node_name}'\n")
+                    f.write(f"MIERU_NODE_NAME={shlex.quote(mieru_node_name)}\n")
         os.umask(old_umask)
         os.chmod(run_file, 0o600)
     except Exception:

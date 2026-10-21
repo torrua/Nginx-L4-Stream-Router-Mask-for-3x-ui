@@ -128,7 +128,7 @@ class TestAmneziaWG3XUISettings(unittest.TestCase):
         import sys
         import zlib
         sys.path.insert(0, str((ROOT / "src/awg").resolve()))
-        import manage_amneziawg as mgr
+        import manage_clients as mgr
 
         # 1. Verify CLI argument support in source code
         mgr_src = (ROOT / "src/awg/manage_clients.py").read_text(encoding="utf-8")
@@ -182,7 +182,7 @@ PersistentKeepalive = 15
         """Verify get_client_uri returns cached .vpnuri and regenerates via pure-Python X25519 when missing."""
         import sys
         sys.path.insert(0, str((ROOT / "src/awg").resolve()))
-        import manage_amneziawg as mgr
+        import manage_clients as mgr
 
         with tempfile.TemporaryDirectory() as td:
             tmp_awg = Path(td)

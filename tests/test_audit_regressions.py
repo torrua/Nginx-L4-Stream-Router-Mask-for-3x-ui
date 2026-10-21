@@ -1713,6 +1713,24 @@ echo "AGH_CLIENT_ID=$AGH_CLIENT_ID"
         self.assertIn('PORTS_SETUP_MODE="${PORTS_SETUP_MODE:-0}"', env_sh)
         self.assertIn('PORTS_SETUP_MODE="${PORTS_SETUP_MODE:-0}"', prompts_sh)
 
+    def test_paths_customization_question_separated(self):
+        """Verify secret URI paths customization is a separate question from ports."""
+        wizard_sh = (ROOT / "src/tui/wizard.sh").read_text(encoding="utf-8")
+        env_sh = (ROOT / "src/system/env.sh").read_text(encoding="utf-8")
+        prompts_sh = (ROOT / "src/tui/prompts.sh").read_text(encoding="utf-8")
+        express_sh = (ROOT / "src/installer/express.sh").read_text(encoding="utf-8")
+
+        # Separate question in Step 3
+        self.assertIn("Хотите ли вы настраивать секретные URI-пути и пароли вручную? [0/1]", wizard_sh)
+        self.assertIn("PATHS_SETUP_MODE", wizard_sh)
+        self.assertIn('PATHS_SETUP_MODE="${PATHS_SETUP_MODE:-0}"', env_sh)
+        self.assertIn('PATHS_SETUP_MODE="${PATHS_SETUP_MODE:-0}"', prompts_sh)
+        self.assertIn("express_default PATHS_SETUP_MODE 0", express_sh)
+
+        # Check review screen shows both
+        self.assertIn("Режим портов:", wizard_sh)
+        self.assertIn("Режим путей:", wizard_sh)
+
 
 
 if __name__ == "__main__":

@@ -25,6 +25,7 @@ apply_express_defaults() {
     express_default ENABLE_MTPROTO y
     express_default DECOY_MODE 1
     express_default PORTS_SETUP_MODE 0
+    express_default PATHS_SETUP_MODE 0
     express_default SSL_ENGINE_CHOICE 1
     express_default AUTO_SETUP_3XUI y
     express_default ENABLE_WARP y

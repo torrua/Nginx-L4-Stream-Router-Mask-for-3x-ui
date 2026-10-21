@@ -1596,6 +1596,7 @@ CLASSIC_PORT="${CLASSIC_PORTS_LIST[0]:-46443}"
 CLASSIC_SNI="${EXT_SNI_LIST[*]:-}"
 
 PORTS_SETUP_MODE="${PORTS_SETUP_MODE:-0}"
+PATHS_SETUP_MODE="${PATHS_SETUP_MODE:-0}"
 REALITY_FALLBACK_PORT="${REALITY_FALLBACK_PORT:-9443}"
 
 PANEL_PORT="${PANEL_PORT:-10443}"
@@ -2918,6 +2919,7 @@ GEN_CONFIG=0
 ROTATE_PATHS=0
 FORCE_DNS=${FORCE_DNS:-0}
 PORTS_SETUP_MODE="${PORTS_SETUP_MODE:-0}"
+PATHS_SETUP_MODE="${PATHS_SETUP_MODE:-0}"
 SAVED_CONFIG_FILE="server-setup.env"
 
 CLI_PRIMARY_DOMAIN=""
@@ -8459,6 +8461,7 @@ apply_express_defaults() {
     express_default ENABLE_MTPROTO y
     express_default DECOY_MODE 1
     express_default PORTS_SETUP_MODE 0
+    express_default PATHS_SETUP_MODE 0
     express_default SSL_ENGINE_CHOICE 1
     express_default AUTO_SETUP_3XUI y
     express_default ENABLE_WARP y
@@ -15461,6 +15464,7 @@ else
                     ENABLE_STEAL=""
                     ENABLE_CLASSIC=""
                     PORTS_SETUP_MODE=0
+                    PATHS_SETUP_MODE=0
                     ENABLE_HY2=""
                     ENABLE_AWG_V3=""
                     ENABLE_AWG_V2=""
@@ -16225,10 +16229,10 @@ for item in res:
         prompt_multiselect "Выберите протоколы для установки" proto_keys proto_labels || return $?
 
         echo
-        echo -e "  ${BOLD}Настройка портов подключения:${NC}"
+        echo -e "  ${BOLD}Настройка сетевых портов подключения:${NC}"
         echo -e "    ${GREEN}[0] Нет (по умолчанию)${NC} — безопасные рекомендованные порты для всех сервисов"
-        echo -e "    ${CYAN}[1] Да (все порты)${NC}     — ручная настройка всех внешних портов и внутренних портов/путей 3X-UI"
-        echo -e "    ${CYAN}[2] Только внешние${NC}     — ручная настройка только внешних портов (3X-UI и пути — по умолчанию)"
+        echo -e "    ${CYAN}[1] Да (все порты)${NC}     — ручная настройка внешних портов протоколов и внутренних портов 3X-UI"
+        echo -e "    ${CYAN}[2] Только внешние${NC}     — ручная настройка только внешних портов протоколов (3X-UI — по умолчанию)"
         echo
 
         local port_mode_input=""
@@ -16238,12 +16242,12 @@ for item in res:
             case "$port_mode_input" in
                 0|n|no|нет)
                     PORTS_SETUP_MODE=0
-                    ok "Выбран автоматический режим: все порты и пути назначаются по умолчанию."
+                    ok "Выбран автоматический режим: все порты назначаются по умолчанию."
                     break
                     ;;
                 1|y|yes|да)
                     PORTS_SETUP_MODE=1
-                    ok "Выбран ручной режим: будет выполнен подробный опрос всех портов."
+                    ok "Выбран ручной режим: будет выполнен подробный опрос всех портов (внешних и внутренних)."
                     break
                     ;;
                 2|ext|external|внешние)
@@ -16488,27 +16492,67 @@ for item in res:
 
     q_step_ports() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 3/11: Настройка путей и внутренних портов (3X-UI и VLESS xHTTP) ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 3/11: Настройка внутренних портов и секретных путей (3X-UI и VLESS xHTTP) ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Внутренние порты и секретные URI-пути для веб-панели 3X-UI,"
             echo -e "     сервера подписок для клиентов и инбаунда VLESS xHTTP (HTTP/2 Stream-One)."
             echo
         fi
 
+        # --- 1. Внутренние сетевые порты 3X-UI ---
         local ask_internal_ports=0
         if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
             ask_internal_ports=1
         elif [ "${EDITING_FROM_REVIEW:-0}" -eq 1 ]; then
-            echo -e "  ${BOLD}Текущий режим внутренних портов: Рекомендованные безопасные${NC}"
-            local customize_internal="n"
-            prompt_yes_no "  Настроить внутренние порты 3X-UI и секретные пути вручную?" "n" customize_internal || return $?
-            if is_true "$customize_internal"; then
+            local change_ports="n"
+            prompt_yes_no "  Настроить внутренние порты 3X-UI (:10443, :55443, :50443) вручную?" "n" change_ports || return $?
+            if is_true "$change_ports"; then
                 ask_internal_ports=1
             fi
         fi
 
         if [ "$ask_internal_ports" -eq 1 ]; then
             prompt_default "  Внутренний порт панели 3X-UI" "${PANEL_PORT:-10443}" PANEL_PORT || return $?
+            prompt_default "  Внутренний порт сервера подписок 3X-UI" "${SUB_PORT:-55443}" SUB_PORT || return $?
+            prompt_default "  Внутренний порт инбаунда VLESS xHTTP" "${XHTTP_STREAM_PORT:-50443}" XHTTP_STREAM_PORT || return $?
+        else
+            PANEL_PORT="${PANEL_PORT:-10443}"
+            SUB_PORT="${SUB_PORT:-55443}"
+            XHTTP_STREAM_PORT="${XHTTP_STREAM_PORT:-50443}"
+        fi
+
+        # --- 2. Секретные URI-пути и доступ к 3X-UI (Отдельный вопрос) ---
+        echo
+        echo -e "  ${BOLD}Настройка секретных URI-путей и доступа к 3X-UI:${NC}"
+        echo -e "    ${GREEN}[0] Нет (по умолчанию)${NC} — случайные криптостойкие URI-пути и пароль (защита от сканеров и ботов)"
+        echo -e "    ${CYAN}[1] Да (вручную)${NC}       — задать свои URI-пути (панель, подписки, xHTTP), логин и пароль"
+        echo
+
+        local ask_paths=0
+        local paths_mode_input=""
+        while true; do
+            prompt_default "  Хотите ли вы настраивать секретные URI-пути и пароли вручную? [0/1]" "${PATHS_SETUP_MODE:-0}" paths_mode_input || return $?
+            paths_mode_input=$(echo "${paths_mode_input:-0}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+            case "$paths_mode_input" in
+                0|n|no|нет)
+                    PATHS_SETUP_MODE=0
+                    ask_paths=0
+                    ok "Выбран автоматический режим: пути и пароли генерируются криптостойкими хешами."
+                    break
+                    ;;
+                1|y|yes|да)
+                    PATHS_SETUP_MODE=1
+                    ask_paths=1
+                    ok "Выбран ручной ввод URI-путей и учетных данных."
+                    break
+                    ;;
+                *)
+                    warn "  Пожалуйста, введите 0 (Нет) или 1 (Да)."
+                    ;;
+            esac
+        done
+
+        if [ "$ask_paths" -eq 1 ]; then
             prompt_default "  Логин администратора 3X-UI" "${ADMIN_USERNAME:-admin}" ADMIN_USERNAME || return $?
             local def_pass="${ADMIN_PASSWORD:-$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 12 || echo "Admin1234567")}"
             prompt_default "  Пароль администратора 3X-UI" "$def_pass" ADMIN_PASSWORD || return $?
@@ -16519,7 +16563,6 @@ for item in res:
             validate_path_segment "$RAW_PATH" "URI панели"
             PANEL_PATH="/${RAW_PATH#/}"; PANEL_PATH="${PANEL_PATH%/}/"
 
-            prompt_default "  Внутренний порт сервера подписок 3X-UI" "${SUB_PORT:-55443}" SUB_PORT || return $?
             local rand_s_path="sub-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "sub${RANDOM}")"
             local r_sub="${RAW_SUB_PATH:-${SUB_PATH:-$rand_s_path}}"
             r_sub="${r_sub#/}"; r_sub="${r_sub%/}"
@@ -16530,7 +16573,6 @@ for item in res:
             SUB_CLASH_PATH="${SUB_PATH%/}/clash/"
             prompt_default "  Заголовок подписки для клиентов (Enter - без заголовка)" "${SUB_TITLE:-}" SUB_TITLE || return $?
 
-            prompt_default "  Внутренний порт инбаунда VLESS xHTTP" "${XHTTP_STREAM_PORT:-50443}" XHTTP_STREAM_PORT || return $?
             local rand_x_path="$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "xh${RANDOM}")"
             local r_xhttp="${RAW_XHTTP_STREAM_PATH:-${XHTTP_STREAM_PATH:-$rand_x_path}}"
             r_xhttp="${r_xhttp#/}"; r_xhttp="${r_xhttp%/}"
@@ -16538,30 +16580,28 @@ for item in res:
             validate_path_segment "$RAW_XHTTP_STREAM_PATH" "URI xHTTP"
             XHTTP_STREAM_PATH="/${RAW_XHTTP_STREAM_PATH#/}"; XHTTP_STREAM_PATH="${XHTTP_STREAM_PATH%/}/"
         else
-            PANEL_PORT="${PANEL_PORT:-10443}"
             ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
             [ -n "${ADMIN_PASSWORD:-}" ] || ADMIN_PASSWORD="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 12 || echo "Admin1234567")"
 
             ensure_panel_path || return 1
             validate_path_segment "$RAW_PATH" "URI панели"
 
-            SUB_PORT="${SUB_PORT:-55443}"
             [ -n "${RAW_SUB_PATH:-}" ] || RAW_SUB_PATH="sub-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "sub${RANDOM}")"
             RAW_SUB_PATH="${RAW_SUB_PATH#/}"; RAW_SUB_PATH="${RAW_SUB_PATH%/}"
             SUB_PATH="/${RAW_SUB_PATH#/}"; SUB_PATH="${SUB_PATH%/}/"
             SUB_JSON_PATH="${SUB_PATH%/}/json/"
             SUB_CLASH_PATH="${SUB_PATH%/}/clash/"
 
-            XHTTP_STREAM_PORT="${XHTTP_STREAM_PORT:-50443}"
             [ -n "${RAW_XHTTP_STREAM_PATH:-}" ] || RAW_XHTTP_STREAM_PATH="$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "xh${RANDOM}")"
             RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH#/}"; RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH%/}"
             XHTTP_STREAM_PATH="/${RAW_XHTTP_STREAM_PATH#/}"; XHTTP_STREAM_PATH="${XHTTP_STREAM_PATH%/}/"
-
-            echo -e "  ${GREEN}${CHECK} Настройки применены автоматически:${NC}"
-            echo -e "    ${DIM}• Порты:${NC}   Панель :$PANEL_PORT, Подписки :$SUB_PORT, xHTTP :$XHTTP_STREAM_PORT"
-            echo -e "    ${DIM}• Пути:${NC}    Панель: $PANEL_PATH, Подписки: $SUB_PATH, Clash: $SUB_CLASH_PATH, xHTTP: $XHTTP_STREAM_PATH"
-            echo -e "    ${DIM}• Доступ:${NC}  Логин: ${BOLD}$ADMIN_USERNAME${NC}, Пароль: ${YELLOW}$ADMIN_PASSWORD${NC}"
         fi
+
+        echo
+        echo -e "  ${GREEN}${CHECK} Конфигурация портов и путей 3X-UI:${NC}"
+        echo -e "    ${DIM}• Порты:${NC}   Панель :$PANEL_PORT, Подписки :$SUB_PORT, xHTTP :$XHTTP_STREAM_PORT"
+        echo -e "    ${DIM}• Пути:${NC}    Панель: $PANEL_PATH, Подписки: $SUB_PATH, Clash: $SUB_CLASH_PATH, xHTTP: $XHTTP_STREAM_PATH"
+        echo -e "    ${DIM}• Доступ:${NC}  Логин: ${BOLD}$ADMIN_USERNAME${NC}, Пароль: ${YELLOW}$ADMIN_PASSWORD${NC}"
 
         ok "Внутренние порты и пути сконфигурированы."
         return 0
@@ -17060,8 +17100,12 @@ for item in res:
         is_true "${ENABLE_MIERU:-0}" && mieru_status="${GREEN}Включен${NC} (:${MIERU_PORT:-8450}/tcp,udp, XChaCha20-Poly1305)"
         echo -e "      ${DIM}• Mieru Proxy:${NC}          $mieru_status"
 
-        echo -e "  ${CYAN}[3]${NC} ${BOLD}Внутренние порты:${NC}     Панель :${WHITE}$PANEL_PORT${NC} (${DIM}$PANEL_PATH${NC}), Подписки :${WHITE}$SUB_PORT${NC} (${DIM}$SUB_PATH, Clash: $SUB_CLASH_PATH${NC}), xHTTP :${WHITE}$XHTTP_STREAM_PORT${NC}"
-        echo -e "      ${DIM}Доступ в 3X-UI:${NC}       Логин: ${WHITE}$ADMIN_USERNAME${NC}, Пароль: ${YELLOW}$ADMIN_PASSWORD${NC}"
+        local paths_mode_str="Автоматический (криптостойкие хеши)"
+        [ "${PATHS_SETUP_MODE:-0}" = "1" ] && paths_mode_str="Ручной ввод"
+        echo -e "  ${CYAN}[3]${NC} ${BOLD}Внутренние порты и пути:${NC} (Режим путей: ${WHITE}${paths_mode_str}${NC})"
+        echo -e "      ${DIM}• Порты:${NC}   Панель :${WHITE}$PANEL_PORT${NC}, Подписки :${WHITE}$SUB_PORT${NC}, xHTTP :${WHITE}$XHTTP_STREAM_PORT${NC}"
+        echo -e "      ${DIM}• Пути:${NC}    Панель: ${WHITE}$PANEL_PATH${NC}, Подписки: ${WHITE}$SUB_PATH${NC}, Clash: ${WHITE}$SUB_CLASH_PATH${NC}, xHTTP: ${WHITE}$XHTTP_STREAM_PATH${NC}"
+        echo -e "      ${DIM}• Доступ:${NC}  Логин: ${WHITE}$ADMIN_USERNAME${NC}, Пароль: ${YELLOW}$ADMIN_PASSWORD${NC}"
 
         local agh_status="${RED}Отключен${NC}"
         if is_true "${ENABLE_AGH:-0}"; then

@@ -377,6 +377,44 @@ echo "TASK_EXIT=$?"
         self.assertNotIn("SHOULD_NEVER_PRINT", res.stdout)
         self.assertIn("TASK_EXIT=1", res.stdout)
 
+    def test_smart_debug_captures_error_trace_on_silent_failure(self):
+        """Smart Implicit Debug: verify that ERR trap captures exact failing command, line, and function."""
+        res = run_shell("""
+set -euo pipefail
+source src/tui/base.sh
+NON_INTERACTIVE=1; DEBUG_MODE=0
+silent_fail_task() {
+    local a=1
+    false
+}
+set +e
+output=$(run_with_spinner "silent_step" silent_fail_task 2>&1)
+echo "OUT: $output"
+""")
+        self.assertEqual(res.returncode, 0)
+        self.assertIn("[ERROR-TRACE]", res.stdout)
+        self.assertIn("silent_fail_task", res.stdout)
+        self.assertIn("false", res.stdout)
+
+    def test_smart_debug_persistent_log_creation(self):
+        """Smart Implicit Debug: verify persistent logging to SERVER_SETUP_LOG."""
+        with tempfile.TemporaryDirectory() as temp:
+            log_path = Path(temp) / "test-setup.log"
+            res = run_shell(f"""
+set -euo pipefail
+source src/tui/base.sh
+NON_INTERACTIVE=1; DEBUG_MODE=0
+SERVER_SETUP_LOG="{log_path.as_posix()}"
+dummy_task() {{ echo "step_hello_world"; }}
+run_with_spinner "dummy_step" dummy_task
+""")
+            self.assertEqual(res.returncode, 0)
+            self.assertTrue(log_path.is_file(), "SERVER_SETUP_LOG must be created")
+            content = log_path.read_text(encoding="utf-8")
+            self.assertIn("START TASK: dummy_step", content)
+            self.assertIn("step_hello_world", content)
+            self.assertIn("END TASK: dummy_step (exit: 0)", content)
+
 
 class TestRoutingCustomConstraints(unittest.TestCase):
     def setUp(self):

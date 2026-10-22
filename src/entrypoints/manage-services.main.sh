@@ -35,6 +35,7 @@ get_compose_cmd() {
     fi
 }
 
+# @include "common/config.sh"
 # @include "common/secrets.sh"
 # @include "common/lock.sh"
 
@@ -70,10 +71,7 @@ ensure_configs() {
     local naive_cfg="${COMPOSE_DIR}/naiveproxy/Caddyfile"
 
     # Чтение переменных окружения
-    set -a
-    # shellcheck disable=SC1090
-    source "$ENV_FILE"
-    set +a
+    load_config_data_safe "$ENV_FILE" || die "Ошибка загрузки конфигурации из $ENV_FILE"
 
     # 1. Генерация sing-box MASQUE config.json при отсутствии
     if [ ! -f "$masque_cfg" ] && [ -f "$masque_tpl" ]; then
@@ -253,10 +251,7 @@ cmd_dokploy_export() {
 cmd_clients() {
     ensure_configs
     # Чтение переменных из .env
-    set -a
-    # shellcheck disable=SC1090
-    source "$ENV_FILE"
-    set +a
+    load_config_data_safe "$ENV_FILE" || die "Ошибка загрузки конфигурации из $ENV_FILE"
 
     local dom="${PRIMARY_DOMAIN:-yourdomain.online}"
     local m_port="${MASQUE_PORT:-8449}"

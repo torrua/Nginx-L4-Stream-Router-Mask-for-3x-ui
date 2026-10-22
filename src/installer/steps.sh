@@ -555,37 +555,27 @@ setup_dnstt_service() {
             "$dnstt_bin" -gen-key -privkey-file /etc/dnstt/server.key -pubkey-file /etc/dnstt/server.pub 2>/dev/null || true
         fi
         if [ ! -f /etc/dnstt/server.key ] || [ ! -f /etc/dnstt/server.pub ]; then
-            python3 -c "
-import os
-P = 2**255 - 19
-A24 = 121665
-def clamp(k_bytes):
-    b = bytearray(k_bytes)
-    b[0] &= 248
-    b[31] &= 127
-    b[31] |= 64
-    return int.from_bytes(b, 'little')
-def x25519(k, u=9):
-    x1, x2, z2, x3, z3 = u, 1, 0, u, 1
-    for i in range(254, -1, -1):
-        bit = (k >> i) & 1
-        if bit: x2, x3 = x3, x2; z2, z3 = z3, z2
-        A = (x2 + z2) % P; AA = (A * A) % P; B = (x2 - z2) % P; BB = (B * B) % P; E = (AA - BB) % P
-        C = (x3 + z3) % P; D = (x3 - z3) % P; DA = (D * A) % P; CB = (C * B) % P
-        x3 = pow(DA + CB, 2, P); z3 = (x1 * pow(DA - CB, 2, P)) % P; x2 = (AA * BB) % P; z2 = (E * (AA + A24 * E)) % P
-        if bit: x2, x3 = x3, x2; z2, z3 = z3, z2
-    return (x2 * pow(z2, P - 2, P)) % P
-raw_priv = os.urandom(32)
-k = clamp(raw_priv)
-pub = ((x25519(k, 9)) % P).to_bytes(32, 'little').hex()
-with open('/etc/dnstt/server.key', 'w') as kf:
-    kf.write(raw_priv.hex() + '\n')
-with open('/etc/dnstt/server.pub', 'w') as pf:
-    pf.write(pub + '\n')
-" 2>/dev/null || {
+            python3 - /etc/dnstt/server.key /etc/dnstt/server.pub << 'EOF_DNSTT_KEY' 2>/dev/null || true
+try:
+    from src.common.crypto_engine import generate_dnstt_keypair
+except ImportError:
+    try:
+        from common.crypto_engine import generate_dnstt_keypair
+    except ImportError:
+        pass
+# @include "common/crypto_engine.py"
+import sys
+key_file, pub_file = sys.argv[1], sys.argv[2]
+priv_hex, pub_hex = generate_dnstt_keypair()
+with open(key_file, 'w') as kf:
+    kf.write(priv_hex + '\n')
+with open(pub_file, 'w') as pf:
+    pf.write(pub_hex + '\n')
+EOF_DNSTT_KEY
+            if [ ! -f /etc/dnstt/server.key ] || [ ! -f /etc/dnstt/server.pub ]; then
                 head /dev/urandom 2>/dev/null | tr -dc 0-9a-f | head -c 64 > /etc/dnstt/server.key 2>/dev/null || echo "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" > /etc/dnstt/server.key
                 head /dev/urandom 2>/dev/null | tr -dc 0-9a-f | head -c 64 > /etc/dnstt/server.pub 2>/dev/null || echo "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210" > /etc/dnstt/server.pub
-            }
+            fi
         fi
         chmod 600 /etc/dnstt/server.key /etc/dnstt/server.pub 2>/dev/null || true
     fi

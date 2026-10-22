@@ -221,6 +221,20 @@ printf '%s|%s' "$MULTI_SPACE" "$TAB_EXPORT"
             self.assertEqual(res.returncode, 0, res.stderr)
             self.assertEqual(res.stdout.strip(), "val1|val2")
 
+    def test_t13_safe_config_rejects_critical_system_env_overwrites(self):
+        """Test load_config_data_safe forbids overwriting PATH, LD_PRELOAD, IFS, etc."""
+        with tempfile.TemporaryDirectory() as tmp:
+            for bad_key in ["PATH", "LD_PRELOAD", "LD_AUDIT", "IFS", "SHELL", "PYTHONHOME", "GLOBIGNORE", "path"]:
+                env_file = Path(tmp) / f"bad_{bad_key}.env"
+                env_file.write_text(f'{bad_key}="/malicious/override"\n', encoding="utf-8")
+                script = f"""
+source src/common/config.sh
+load_config_data_safe "{env_file.as_posix()}"
+"""
+                res = self.run_bash(script)
+                self.assertNotEqual(res.returncode, 0, f"Expected rejection for {bad_key}")
+                self.assertIn("critical system variable", res.stderr)
+
     # -------------------------------------------------------------------------
     # T29: Order-Independent CLI Parser (maintain.sh)
     # -------------------------------------------------------------------------

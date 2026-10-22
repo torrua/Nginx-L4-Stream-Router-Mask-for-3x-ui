@@ -93,10 +93,14 @@ setup_amneziawg_controller() {
 
     log "Развертывание универсального контроллера AmneziaWG в $awg_dir..."
 
-    # Копирование или запись manage_clients.py
+    # Копирование или запись manage_clients.py и crypto_engine.py
     local src_py="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/manage_clients.py"
     if [ -f "$src_py" ]; then
         cp -f "$src_py" "$awg_dir/manage_clients.py"
+    fi
+    local src_crypto="$(cd "$(dirname "${BASH_SOURCE[0]}")/../common" 2>/dev/null && pwd)/crypto_engine.py"
+    if [ -f "$src_crypto" ]; then
+        cp -f "$src_crypto" "$awg_dir/crypto_engine.py"
     fi
 
     # Если файл не существует (например, запуск через curl монолита), пишем встроенную версию
@@ -105,7 +109,13 @@ setup_amneziawg_controller() {
 # @include "awg/manage_clients.py"
 EOF_AWG_PY
     fi
+    if [ ! -f "$awg_dir/crypto_engine.py" ]; then
+        cat << 'EOF_AWG_CRYPTO' > "$awg_dir/crypto_engine.py"
+# @include "common/crypto_engine.py"
+EOF_AWG_CRYPTO
+    fi
     chmod 750 "$awg_dir/manage_clients.py"
+    chmod 640 "$awg_dir/crypto_engine.py" 2>/dev/null || true
 
     # Настройка порта и хоста
     local awg_port="${AWG_SERVER_PORT:-${AWG_STANDALONE_PORT:-}}"
@@ -209,26 +219,20 @@ deploy_amneziawg_backend() {
                 srv_pub=$(echo "$srv_priv" | awg pubkey 2>/dev/null || true)
             else
                 srv_priv="$(generate_base64_token 32)"
-                srv_pub=$(python3 -c "
-import base64, os
-P = 2**255 - 19
-def x25519(k, u=9):
-    x1, x2, z2, x3, z3 = u, 1, 0, u, 1
-    for i in range(254, -1, -1):
-        bit = (k >> i) & 1
-        if bit: x2, x3 = x3, x2; z2, z3 = z3, z2
-        A = (x2 + z2) % P; AA = (A * A) % P; B = (x2 - z2) % P; BB = (B * B) % P
-        E = (AA - BB) % P; C = (x3 + z3) % P; D = (x3 - z3) % P
-        x3 = pow(D * A + C * B, 2, P); z3 = (x1 * pow(D * A - C * B, 2, P)) % P
-        x2 = (AA * BB) % P; z2 = (E * (AA + 121665 * E)) % P
-        if bit: x2, x3 = x3, x2; z2, z3 = z3, z2
-    return (x2 * pow(z2, P - 2, P)) % P
-raw = bytearray(base64.b64decode('$srv_priv'))
-raw[0] &= 248; raw[31] &= 127; raw[31] |= 64
-k = int.from_bytes(raw, 'little')
-pub = x25519(k, 9).to_bytes(32, 'little')
-print(base64.b64encode(pub).decode())
-" 2>/dev/null || echo "")
+                srv_pub=$(python3 - "$srv_priv" << 'EOF_CRYPTO_PUB' 2>/dev/null || true
+try:
+    from src.common.crypto_engine import curve25519_pubkey
+except ImportError:
+    try:
+        from common.crypto_engine import curve25519_pubkey
+    except ImportError:
+        pass
+# @include "common/crypto_engine.py"
+import sys
+if len(sys.argv) > 1:
+    print(curve25519_pubkey(sys.argv[1]) or "")
+EOF_CRYPTO_PUB
+)
             fi
         fi
 

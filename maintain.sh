@@ -108,6 +108,15 @@ load_config_data_safe() {
             local key="${BASH_REMATCH[1]}"
             local val="${BASH_REMATCH[2]}"
 
+            # Security check: forbid overwriting critical system environment variables
+            local upper_key="${key^^}"
+            case "$upper_key" in
+                PATH|LD_PRELOAD|LD_LIBRARY_PATH|LD_AUDIT|IFS|SHELL|EUID|UID|PPID|BASH_ENV|ENV|CDPATH|PYTHONPATH|PYTHONHOME|PROMPT_COMMAND|BASH_OPTS|SHELLOPTS|GLOBIGNORE|BASH_XTRACEFD)
+                    echo "[ERROR] Security violation in $env_file line $line_no: overwriting critical system variable '$key' is forbidden!" >&2
+                    return 1
+                    ;;
+            esac
+
             # Handle quotes safely: single quotes preserve raw literal content without expansion (T13.C04)
             if [[ "$val" =~ $re_squote ]]; then
                 val="${BASH_REMATCH[1]}"
@@ -593,25 +602,308 @@ get_sqlite_backup_python() {
     return 1
 }
 
+run_backup_engine() {
+    local py_cmd
+    py_cmd=$(get_sqlite_backup_python || return 1)
+    local script_loc=""
+    for cand in \
+        "$(dirname "${BASH_SOURCE[0]}")/backup_engine.py" \
+        "$(dirname "${BASH_SOURCE[0]}")/../common/backup_engine.py" \
+        "$(dirname "${BASH_SOURCE[0]}")/src/common/backup_engine.py" \
+        "${SCRIPT_DIR:-.}/src/common/backup_engine.py" \
+        "${SCRIPT_DIR:-.}/backup_engine.py"; do
+        if [ -f "$cand" ]; then
+            script_loc="$cand"
+            break
+        fi
+    done
+    if [ -n "$script_loc" ]; then
+        "$py_cmd" "$script_loc" "$@"
+        return $?
+    fi
+    "$py_cmd" - "$@" << 'EOF_BACKUP_ENGINE'
+"""
+src/common/backup_engine.py - Unified Backup & Verification Engine.
+
+Structured Python engine for SQLite WAL-safe live backups, integrity verification,
+SHA-256 backup manifest generation/verification, and secure tarfile archive handling.
+"""
+
+import hashlib
+import json
+import os
+import sqlite3
+import sys
+import tarfile
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Dict, List, Optional, Union
+
+
+def _sha256_file(file_path: Union[str, Path]) -> Optional[str]:
+    """Calculate SHA-256 digest of a file in memory-efficient 64KB chunks."""
+    h = hashlib.sha256()
+    try:
+        with open(str(file_path), "rb") as f:
+            while True:
+                chunk = f.read(65536)
+                if not chunk:
+                    break
+                h.update(chunk)
+        return h.hexdigest()
+    except Exception:
+        return None
+
+
+def verify_db(db_path: Union[str, Path]) -> bool:
+    """Verify SQLite database integrity using PRAGMA integrity_check."""
+    p = str(db_path)
+    if not os.path.isfile(p) or os.path.getsize(p) == 0:
+        return False
+    conn = None
+    try:
+        abs_p = os.path.abspath(p)
+        try:
+            conn = sqlite3.connect(f"file:{abs_p}?mode=ro", uri=True, timeout=10.0)
+        except Exception:
+            conn = sqlite3.connect(p, timeout=10.0)
+        res = conn.execute("PRAGMA integrity_check;").fetchall()
+        return bool(res and res[0][0] == "ok")
+    except Exception:
+        return False
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def backup_db(src_path: Union[str, Path], dst_path: Union[str, Path]) -> bool:
+    """Perform atomic, WAL-safe online backup of an SQLite database."""
+    src_p = str(src_path)
+    dst_p = str(dst_path)
+
+    if not os.path.isfile(src_p):
+        return False
+
+    # Ensure parent directory for destination exists
+    dst_dir = os.path.dirname(os.path.abspath(dst_p))
+    if dst_dir:
+        os.makedirs(dst_dir, exist_ok=True)
+
+    src_conn = None
+    dst_conn = None
+    try:
+        try:
+            src_conn = sqlite3.connect(f"file:{src_p}?mode=ro", uri=True, timeout=10.0)
+        except Exception:
+            src_conn = sqlite3.connect(src_p, timeout=10.0)
+
+        dst_conn = sqlite3.connect(dst_p, timeout=10.0)
+        with dst_conn:
+            src_conn.backup(dst_conn)
+        dst_conn.close()
+        dst_conn = None
+        src_conn.close()
+        src_conn = None
+
+        return verify_db(dst_p)
+    except Exception:
+        try:
+            if os.path.exists(dst_p):
+                os.remove(dst_p)
+        except OSError:
+            pass
+        return False
+    finally:
+        if dst_conn:
+            try:
+                dst_conn.close()
+            except Exception:
+                pass
+        if src_conn:
+            try:
+                src_conn.close()
+            except Exception:
+                pass
+
+
+def create_manifest(staging_dir: Union[str, Path], output_path: Optional[Union[str, Path]] = None) -> bool:
+    """Generate manifest.json with SHA-256 hashes of all files in staging directory."""
+    staging = str(staging_dir)
+    manifest_path = str(output_path) if output_path else os.path.join(staging, "manifest.json")
+    files_map: Dict[str, str] = {}
+
+    for root, _, files in os.walk(staging):
+        for f in sorted(files):
+            if f == "manifest.json":
+                continue
+            full_p = os.path.join(root, f)
+            rel_p = os.path.relpath(full_p, staging).replace("\\", "/")
+            h = _sha256_file(full_p)
+            if h is not None:
+                files_map[rel_p] = h
+
+    created_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    data = {
+        "format_version": "2.0",
+        "project_version": os.environ.get("SCRIPT_VERSION", "v9.3.0"),
+        "created_at": created_iso,
+        "db_path": os.environ.get("DB_PATH", "/etc/x-ui/x-ui.db"),
+        "files": files_map,
+    }
+
+    try:
+        with open(manifest_path, "w", encoding="utf-8") as out:
+            json.dump(data, out, indent=2)
+        return True
+    except Exception:
+        return False
+
+
+def verify_manifest(staging_dir: Union[str, Path], manifest_path: Optional[Union[str, Path]] = None) -> bool:
+    """Verify integrity of backed up files against manifest.json with path traversal protection."""
+    staging = str(staging_dir)
+    man_p = str(manifest_path) if manifest_path else os.path.join(staging, "manifest.json")
+
+    if not os.path.isfile(man_p):
+        print(f"[ERROR] Manifest file not found: {man_p}", file=sys.stderr)
+        return False
+
+    try:
+        with open(man_p, "r", encoding="utf-8") as fp:
+            manifest = json.load(fp)
+    except Exception as e:
+        print(f"[ERROR] Failed to parse manifest {man_p}: {e}", file=sys.stderr)
+        return False
+
+    staging_real = os.path.realpath(staging)
+
+    for rel_p, expected_h in manifest.get("files", {}).items():
+        # Security: reject entries attempting path traversal or absolute references
+        norm_rel = rel_p.replace("\\", "/")
+        if os.path.isabs(norm_rel) or norm_rel.startswith("/") or ".." in norm_rel.split("/"):
+            print(f"[ERROR] Path traversal detected in manifest entry: {rel_p}", file=sys.stderr)
+            return False
+
+        full_p = os.path.realpath(os.path.join(staging, rel_p))
+        if not full_p.startswith(staging_real + os.sep) and full_p != staging_real:
+            print(f"[ERROR] Manifest entry escapes staging directory: {rel_p}", file=sys.stderr)
+            return False
+
+        if not os.path.isfile(full_p):
+            print(f"[ERROR] Missing backed up file: {rel_p}", file=sys.stderr)
+            return False
+
+        actual_h = _sha256_file(full_p)
+        if actual_h is None or actual_h != expected_h:
+            print(f"[ERROR] Checksum mismatch for {rel_p}: expected {expected_h}, got {actual_h}", file=sys.stderr)
+            return False
+
+    return True
+
+
+def create_archive(archive_path: Union[str, Path], staging_dir: Union[str, Path]) -> bool:
+    """Create gzip-compressed tar archive from items in staging directory."""
+    archive = str(archive_path)
+    staging = str(staging_dir)
+
+    try:
+        with tarfile.open(archive, "w:gz") as tar:
+            for item in sorted(os.listdir(staging)):
+                tar.add(os.path.join(staging, item), arcname=item)
+        return True
+    except Exception as e:
+        print(f"[ERROR] Failed to create tar archive {archive}: {e}", file=sys.stderr)
+        return False
+
+
+def extract_archive(archive_path: Union[str, Path], target_dir: Union[str, Path]) -> bool:
+    """Safely extract gzip-compressed tar archive with path traversal protection."""
+    archive = str(archive_path)
+    target = str(target_dir)
+
+    os.makedirs(target, exist_ok=True)
+    dest = os.path.realpath(target)
+
+    try:
+        with tarfile.open(archive, "r:gz") as tar:
+            if hasattr(tarfile, "data_filter"):
+                tar.extractall(target, filter="data")
+            else:
+                for m in tar.getmembers():
+                    mp = os.path.realpath(os.path.join(dest, m.name))
+                    if not mp.startswith(dest + os.sep) and mp != dest:
+                        raise RuntimeError(f"Path Traversal detected: {m.name}")
+                    if m.islnk() or m.issym():
+                        continue
+                    tar.extract(m, dest)
+        return True
+    except Exception as e:
+        print(f"[ERROR] Failed to safely extract archive {archive}: {e}", file=sys.stderr)
+        return False
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    """CLI dispatcher for backup engine operations."""
+    if argv is None:
+        argv = sys.argv[1:]
+    if not argv:
+        print("Usage: backup_engine.py <command> [args...]", file=sys.stderr)
+        return 1
+
+    cmd = argv[0]
+    if cmd == "backup_db":
+        if len(argv) < 3:
+            print("Usage: backup_engine.py backup_db <src> <dst>", file=sys.stderr)
+            return 1
+        return 0 if backup_db(argv[1], argv[2]) else 1
+    elif cmd == "verify_db":
+        if len(argv) < 2:
+            print("Usage: backup_engine.py verify_db <db_path>", file=sys.stderr)
+            return 1
+        return 0 if verify_db(argv[1]) else 1
+    elif cmd == "create_manifest":
+        if len(argv) < 2:
+            print("Usage: backup_engine.py create_manifest <staging_dir> [manifest_path]", file=sys.stderr)
+            return 1
+        out_p = argv[2] if len(argv) > 2 else None
+        return 0 if create_manifest(argv[1], out_p) else 1
+    elif cmd == "verify_manifest":
+        if len(argv) < 2:
+            print("Usage: backup_engine.py verify_manifest <staging_dir> [manifest_path]", file=sys.stderr)
+            return 1
+        man_p = argv[2] if len(argv) > 2 else None
+        return 0 if verify_manifest(argv[1], man_p) else 1
+    elif cmd == "create_archive":
+        if len(argv) < 3:
+            print("Usage: backup_engine.py create_archive <archive_path> <staging_dir>", file=sys.stderr)
+            return 1
+        return 0 if create_archive(argv[1], argv[2]) else 1
+    elif cmd == "extract_archive":
+        if len(argv) < 3:
+            print("Usage: backup_engine.py extract_archive <archive_path> <target_dir>", file=sys.stderr)
+            return 1
+        return 0 if extract_archive(argv[1], argv[2]) else 1
+    else:
+        print(f"Unknown command: {cmd}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+EOF_BACKUP_ENGINE
+}
+
 verify_sqlite_backup() {
     local bkp="$1"
-    local py_cmd="$2"
+    local py_cmd="${2:-}"
     if [ ! -s "$bkp" ]; then
         return 1
     fi
-    if [ -n "$py_cmd" ]; then
-        "$py_cmd" -c "
-import sqlite3, sys
-try:
-    conn = sqlite3.connect(sys.argv[1])
-    res = conn.execute('PRAGMA integrity_check;').fetchall()
-    conn.close()
-    if res and res[0][0] == 'ok':
-        sys.exit(0)
-    sys.exit(1)
-except Exception:
-    sys.exit(1)
-" "$bkp" 2>/dev/null && return 0
+    if [ -n "$py_cmd" ] || get_sqlite_backup_python >/dev/null 2>&1; then
+        run_backup_engine verify_db "$bkp" 2>/dev/null && return 0
     elif command -v sqlite3 >/dev/null 2>&1; then
         local check
         check=$(sqlite3 "$bkp" "PRAGMA integrity_check;" 2>/dev/null || true)
@@ -633,23 +925,7 @@ backup_sqlite_db() {
 
     # 1. Primary: Python SQLite Online Backup API (atomic, WAL-safe)
     if [ -n "$py_cmd" ]; then
-        if "$py_cmd" -c "
-import sqlite3, sys
-src_p, dst_p = sys.argv[1], sys.argv[2]
-try:
-    try:
-        src_conn = sqlite3.connect(f'file:{src_p}?mode=ro', uri=True)
-    except Exception:
-        src_conn = sqlite3.connect(src_p)
-    dst_conn = sqlite3.connect(dst_p)
-    with dst_conn:
-        src_conn.backup(dst_conn)
-    dst_conn.close()
-    src_conn.close()
-    sys.exit(0)
-except Exception:
-    sys.exit(1)
-" "$src" "$dst" 2>/dev/null; then
+        if run_backup_engine backup_db "$src" "$dst" 2>/dev/null; then
             if verify_sqlite_backup "$dst" "$py_cmd"; then
                 backup_ok=1
             fi
@@ -768,7 +1044,9 @@ do_backup() {
         cfg=$(find_config_file "${SCRIPT_DIR:-.}" 2>/dev/null || true)
     fi
     if [ -n "$cfg" ] && [ -f "$cfg" ]; then
-        source "$cfg" 2>/dev/null || true
+        if command -v load_config_data_safe >/dev/null 2>&1; then
+            load_config_data_safe "$cfg" 2>/dev/null || true
+        fi
         mkdir -p "$staging/env"
         cp -a "$cfg" "$staging/env/server-setup.env" 2>/dev/null || true
     fi
@@ -877,48 +1155,10 @@ do_backup() {
     fi
 
     # 8.5 Создание manifest.json со списком файлов и SHA256 (T21.C01)
-    local py_cmd
-    py_cmd=$(get_sqlite_backup_python || echo "python3")
-    "$py_cmd" -c "
-import json, os, hashlib, sys
-
-staging = sys.argv[1]
-manifest_path = os.path.join(staging, 'manifest.json')
-files_map = {}
-
-for root, dirs, files in os.walk(staging):
-    for f in sorted(files):
-        if f == 'manifest.json':
-            continue
-        full_p = os.path.join(root, f)
-        rel_p = os.path.relpath(full_p, staging).replace('\\\\', '/')
-        try:
-            with open(full_p, 'rb') as fp:
-                h = hashlib.sha256(fp.read()).hexdigest()
-            files_map[rel_p] = h
-        except Exception:
-            pass
-
-data = {
-    'format_version': '2.0',
-    'project_version': os.environ.get('SCRIPT_VERSION', 'v9.2.0'),
-    'created_at': os.popen('date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null').read().strip(),
-    'db_path': os.environ.get('DB_PATH', '/etc/x-ui/x-ui.db'),
-    'files': files_map
-}
-
-with open(manifest_path, 'w', encoding='utf-8') as out:
-    json.dump(data, out, indent=2)
-" "$staging" 2>/dev/null || true
+    run_backup_engine create_manifest "$staging" 2>/dev/null || true
 
     # 9. Упаковка архива
-    if ! "$py_cmd" -c "
-import tarfile, sys, os
-archive, staging = sys.argv[1], sys.argv[2]
-with tarfile.open(archive, 'w:gz') as tar:
-    for item in os.listdir(staging):
-        tar.add(os.path.join(staging, item), arcname=item)
-" "$archive" "$staging"; then
+    if ! run_backup_engine create_archive "$archive" "$staging"; then
         rm -rf "$staging"
         die "Ошибка создания tar-архива $archive."
     fi
@@ -976,46 +1216,14 @@ do_restore() {
     staging=$(mktemp -d /tmp/vpn-restore-staging.XXXXXX) || die "Не удалось создать временный каталог для распаковки."
 
     # Распаковываем во временный каталог через безопасный фильтр Python
-    local py_cmd
-    py_cmd=$(get_sqlite_backup_python || echo "python3")
-    if ! "$py_cmd" -c "
-import tarfile, sys, os
-archive, target = sys.argv[1], sys.argv[2]
-os.makedirs(target, exist_ok=True)
-dest = os.path.realpath(target)
-
-with tarfile.open(archive, 'r:gz') as tar:
-    if hasattr(tarfile, 'data_filter'):
-        tar.extractall(target, filter='data')
-    else:
-        for m in tar.getmembers():
-            mp = os.path.realpath(os.path.join(dest, m.name))
-            if not mp.startswith(dest + os.sep) and mp != dest:
-                raise RuntimeError(f'Попытка выхода за границы целевого каталога (Path Traversal): {m.name}')
-            if m.islnk() or m.issym():
-                continue
-            tar.extract(m, dest)
-" "$archive" "$staging"; then
+    if ! run_backup_engine extract_archive "$archive" "$staging"; then
         rm -rf "$staging"
         die "Ошибка безопасной распаковки архива $archive."
     fi
 
     # 0. Проверка целостности файлов бэкапа по manifest.json (T21.C01, T21.C02)
     if [ -f "$staging/manifest.json" ]; then
-        if ! "$py_cmd" -c "
-import json, os, hashlib, sys
-staging = sys.argv[1]
-with open(os.path.join(staging, 'manifest.json'), 'r', encoding='utf-8') as fp:
-    manifest = json.load(fp)
-for rel_p, expected_h in manifest.get('files', {}).items():
-    full_p = os.path.join(staging, rel_p)
-    if not os.path.isfile(full_p):
-        sys.exit(f'Missing backed up file: {rel_p}')
-    with open(full_p, 'rb') as f:
-        actual_h = hashlib.sha256(f.read()).hexdigest()
-    if actual_h != expected_h:
-        sys.exit(f'Checksum mismatch for {rel_p}: expected {expected_h}, got {actual_h}')
-" "$staging"; then
+        if ! run_backup_engine verify_manifest "$staging"; then
             rm -rf "$staging"
             die "Ошибка: Нарушена целостность файлов бэкапа по манифесту (T21.C02)!"
         fi
@@ -1232,31 +1440,10 @@ do_extract() {
     mkdir -p "$target" 2>/dev/null || true
     log "Аварийное безопасное извлечение архива в $target..."
 
-    local py_cmd
-    py_cmd=$(get_sqlite_backup_python || echo "python3")
-    if ! "$py_cmd" -c "
-import tarfile, sys, os
-
-archive, target = sys.argv[1], sys.argv[2]
-os.makedirs(target, exist_ok=True)
-dest = os.path.realpath(target)
-
-with tarfile.open(archive, 'r:gz') as tar:
-    if hasattr(tarfile, 'data_filter'):
-        tar.extractall(target, filter='data')
-    else:
-        for m in tar.getmembers():
-            mp = os.path.realpath(os.path.join(dest, m.name))
-            if not mp.startswith(dest + os.sep) and mp != dest:
-                raise RuntimeError(f'Попытка выхода за границы целевого каталога (Path Traversal): {m.name}')
-            if m.islnk() or m.issym():
-                continue
-            tar.extract(m, dest)
-
-print(f'[OK] Архив {archive} успешно и безопасно извлечён в {target}')
-" "$archive" "$target"; then
+    if ! run_backup_engine extract_archive "$archive" "$target"; then
         die "Ошибка извлечения архива $archive."
     fi
+    ok "Архив $archive успешно и безопасно извлечён в $target"
     return 0
 }
 
@@ -1268,47 +1455,14 @@ audit_restore_archive() {
     local staging
     staging=$(mktemp -d /tmp/vpn-audit-staging.XXXXXX 2>/dev/null || mktemp -d "${TMPDIR:-/tmp}/vpn-audit-staging.XXXXXX") || die "Не удалось создать временный каталог для аудита."
 
-    local py_cmd
-    py_cmd=$(get_sqlite_backup_python || echo "python3")
-
-    if ! "$py_cmd" -c "
-import tarfile, sys, os
-archive, target = sys.argv[1], sys.argv[2]
-os.makedirs(target, exist_ok=True)
-dest = os.path.realpath(target)
-
-with tarfile.open(archive, 'r:gz') as tar:
-    if hasattr(tarfile, 'data_filter'):
-        tar.extractall(target, filter='data')
-    else:
-        for m in tar.getmembers():
-            mp = os.path.realpath(os.path.join(dest, m.name))
-            if not mp.startswith(dest + os.sep) and mp != dest:
-                raise RuntimeError(f'Попытка выхода за границы целевого каталога (Path Traversal): {m.name}')
-            if m.islnk() or m.issym():
-                continue
-            tar.extract(m, dest)
-" "$archive" "$staging"; then
+    if ! run_backup_engine extract_archive "$archive" "$staging"; then
         rm -rf "$staging"
         die "Ошибка распаковки архива $archive при аудите."
     fi
 
     # 1. Проверка манифеста (T21.C01, T21.C02)
     if [ -f "$staging/manifest.json" ]; then
-        if ! "$py_cmd" -c "
-import json, os, hashlib, sys
-staging = sys.argv[1]
-with open(os.path.join(staging, 'manifest.json'), 'r', encoding='utf-8') as fp:
-    manifest = json.load(fp)
-for rel_p, expected_h in manifest.get('files', {}).items():
-    full_p = os.path.join(staging, rel_p)
-    if not os.path.isfile(full_p):
-        sys.exit(f'Missing backed up file: {rel_p}')
-    with open(full_p, 'rb') as f:
-        actual_h = hashlib.sha256(f.read()).hexdigest()
-    if actual_h != expected_h:
-        sys.exit(f'Checksum mismatch for {rel_p}: expected {expected_h}, got {actual_h}')
-" "$staging"; then
+        if ! run_backup_engine verify_manifest "$staging"; then
             rm -rf "$staging"
             die "Ошибка аудита: Нарушена целостность файлов по манифесту архива (T21.C02)!"
         fi
@@ -2011,7 +2165,7 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         -v|--version)
-            echo "maintain.sh (Nginx L4 Stream Router Mask for 3X-UI) v9.2.0"
+            echo "maintain.sh (Nginx L4 Stream Router Mask for 3X-UI) v9.3.0"
             exit 0
             ;;
         *)
@@ -2321,22 +2475,47 @@ import json
 import uuid
 import secrets
 import base64
+import time
+import urllib.request
+import urllib.parse
+import re
+import shlex
+
+if "generate_dnstt_keypair" not in globals():
+    try:
+        from src.common.crypto_engine import generate_dnstt_keypair
+    except ImportError:
+        try:
+            from common.crypto_engine import generate_dnstt_keypair
+        except ImportError:
+            try:
+                from crypto_engine import generate_dnstt_keypair
+            except ImportError:
+                try:
+                    from pathlib import Path
+                    _p = (Path(__file__).resolve().parent.parent / "common").as_posix()
+                    if _p not in sys.path:
+                        sys.path.insert(0, _p)
+                    from crypto_engine import generate_dnstt_keypair
+                except Exception:
+                    pass
 
 db_path = os.environ["DB_PATH"]
 dry_run = os.environ.get("DRY_RUN", "0") == "1"
+force_sub = os.environ.get("FORCE_SUB", "0") == "1"
+force_remarks = os.environ.get("FORCE_REMARKS", "0") == "1"
 
-# Чтение и синхронизация параметров
 conn = sqlite3.connect(db_path, timeout=30.0)
 cur = conn.cursor()
 
-# 1. Извлечение существующих параметров из таблицы settings
+# Извлечение существующих параметров из таблицы settings
 existing_settings = {}
 try:
     cur.execute("SELECT key, value FROM settings")
     for k, v in cur.fetchall():
         existing_settings[k] = v
 except Exception as e:
-    print(f"[!] Ошибка чтения таблицы settings: {e}")
+    print(f"[!] Предупреждение: ошибка чтения таблицы settings: {e}")
 
 domain = os.environ.get("PRIMARY_DOMAIN") or existing_settings.get("subDomain") or "localhost"
 panel_port = os.environ.get("PANEL_PORT") or existing_settings.get("webPort") or "10443"
@@ -2372,15 +2551,25 @@ def resolve_wstunnel_prefix(configured, service_file="/etc/systemd/system/wstunn
 panel_path = resolve_panel_path(os.environ.get("PANEL_PATH"), existing_settings.get("webBasePath"))
 
 sub_port = os.environ.get("SUB_PORT") or existing_settings.get("subPort") or "55443"
-sub_path = os.environ.get("SUB_PATH") or existing_settings.get("subPath") or "my-post-key"
-sub_path = sub_path.strip("/")
-sub_clash_env = os.environ.get("SUB_CLASH_PATH", "").strip().strip("/")
+sub_env = (os.environ.get("SUB_PATH") or "").strip("/")
+if sub_env and sub_env != "my-post-key":
+    sub_path = sub_env
+else:
+    sub_db = (existing_settings.get("subPath") or "").strip("/")
+    if sub_db and sub_db != "my-post-key":
+        sub_path = sub_db
+    else:
+        import secrets
+        sub_path = "sub-" + secrets.token_hex(4)
+sub_clash_env = (os.environ.get("SUB_CLASH_PATH") or "").strip().strip("/")
 if sub_clash_env:
     sub_clash_path = sub_clash_env
-elif existing_settings.get("subClashPath") and existing_settings.get("subClashPath").strip("/") != f"{sub_path}clash":
-    sub_clash_path = existing_settings.get("subClashPath").strip("/")
 else:
-    sub_clash_path = f"{sub_path}/clash"
+    sub_clash_db = (existing_settings.get("subClashPath") or "").strip().strip("/")
+    if sub_clash_db and sub_clash_db != f"{sub_path}clash":
+        sub_clash_path = sub_clash_db
+    else:
+        sub_clash_path = f"{sub_path}/clash"
 
 xhttp_port = int(os.environ.get("XHTTP_STREAM_PORT") or "50443")
 xhttp_raw_path = (os.environ.get("XHTTP_STREAM_PATH") or "").strip("/")
@@ -2411,23 +2600,50 @@ classic_port = int(os.environ.get("CLASSIC_PORT") or "46443")
 classic_sni = os.environ.get("CLASSIC_SNI") or "avito.ru"
 classic_sni = classic_sni.split()[0] if classic_sni.strip() else "avito.ru"
 
+def resolve_cert_key_paths(target_dom: str, env_cert: str = "", env_key: str = "") -> tuple:
+    """
+    Unified SSL certificate resolver: returns (cert_path, key_path).
+    Prioritizes explicit valid files, then Let's Encrypt (/etc/letsencrypt/live),
+    then ACME (/etc/ssl/acme for Cloudflare DNS-01 API).
+    """
+    if env_cert and env_key and os.path.isfile(env_cert) and os.path.isfile(env_key):
+        return env_cert, env_key
+    le_cert = f"/etc/letsencrypt/live/{target_dom}/fullchain.pem"
+    le_key = f"/etc/letsencrypt/live/{target_dom}/privkey.pem"
+    if os.path.isfile(le_cert) and os.path.isfile(le_key):
+        return le_cert, le_key
+    acme_cert = f"/etc/ssl/acme/{target_dom}/fullchain.pem"
+    acme_key = f"/etc/ssl/acme/{target_dom}/privkey.pem"
+    if os.path.isfile(acme_cert) and os.path.isfile(acme_key):
+        return acme_cert, acme_key
+    return env_cert or le_cert, env_key or le_key
+
+
+ssl_cert, ssl_key = resolve_cert_key_paths(domain, os.environ.get("SSL_CERT_PATH", ""), os.environ.get("SSL_KEY_PATH", ""))
+
 enable_hy2 = os.environ.get("ENABLE_HY2", "y").lower() in ("1", "y", "true")
 hy2_port = int(os.environ.get("HY2_PORT") or "443")
+hy2_domain = (os.environ.get("HY2_DOMAIN") or domain).strip()
+hy2_cert, hy2_key = resolve_cert_key_paths(hy2_domain, os.environ.get("HY2_CERT_PATH", ""), os.environ.get("HY2_KEY_PATH", ""))
 
 enable_awg_v3 = os.environ.get("ENABLE_AWG_V3", "y").lower() in ("1", "y", "true")
 awg_v3_port = int(os.environ.get("AWG_V3_PORT") or "8443")
-awg_hpk_env = os.environ.get("AWG_HEADER_PROTECTION_KEY", "").strip()
-awg_random_trailers_env = os.environ.get("AWG_RANDOM_TRAILERS", "false").strip().lower() in ("1", "y", "true")
-awg_primary_dns = os.environ.get("AWG_PRIMARY_DNS") or "9.9.9.9"
-awg_secondary_dns = os.environ.get("AWG_SECONDARY_DNS") or "76.76.2.0"
 
 enable_awg_v2 = os.environ.get("ENABLE_AWG_V2", "n").lower() in ("1", "y", "true")
 awg_v2_port = int(os.environ.get("AWG_V2_PORT") or "8444")
+awg_primary_dns = os.environ.get("AWG_PRIMARY_DNS") or "9.9.9.9"
+awg_secondary_dns = os.environ.get("AWG_SECONDARY_DNS") or "76.76.2.0"
+awg_subnet_ip = os.environ.get("AWG_SUBNET_IP") or "10.8.0.0"
+awg_subnet_cidr = int(os.environ.get("AWG_SUBNET_CIDR") or "22")
+awg_hpk_env = os.environ.get("AWG_HEADER_PROTECTION_KEY", "").strip()
+awg_random_trailers_env = os.environ.get("AWG_RANDOM_TRAILERS", "false").strip().lower() in ("1", "y", "true")
 
 enable_ss2022 = os.environ.get("ENABLE_SS2022", "n").lower() in ("1", "y", "true")
 ss2022_port = int(os.environ.get("SS2022_PORT") or "8388")
 enable_shadowtls = os.environ.get("ENABLE_SHADOWTLS", "n").lower() in ("1", "y", "true")
 shadowtls_port = int(os.environ.get("SHADOWTLS_PORT") or "8543")
+shadowtls_sni = (os.environ.get("SHADOWTLS_SNI") or "gateway.icloud.com").strip()
+shadowtls_password = os.environ.get("SHADOWTLS_PASSWORD", "").strip()
 
 enable_tuic = os.environ.get("ENABLE_TUIC", "n").lower() in ("1", "y", "true")
 tuic_port = int(os.environ.get("TUIC_PORT") or "8448")
@@ -2437,22 +2653,51 @@ mtproto_port = int(os.environ.get("MTPROTO_PORT") or "8444")
 mtproto_faketls_domain = (os.environ.get("MTPROTO_FAKETLS_DOMAIN") or "gateway.icloud.com").strip()
 mtproto_adtag = os.environ.get("MTPROTO_ADTAG", "").strip()
 
-ssl_engine = os.environ.get("SSL_ENGINE_CHOICE", "1")
-if ssl_engine == "1":
-    ssl_cert = f"/etc/letsencrypt/live/{domain}/fullchain.pem"
-    ssl_key = f"/etc/letsencrypt/live/{domain}/privkey.pem"
-else:
-    ssl_cert = f"/etc/ssl/acme/{domain}/fullchain.pem"
-    ssl_key = f"/etc/ssl/acme/{domain}/privkey.pem"
+# Определение ID администратора и настройка учетных данных
+admin_user = os.environ.get("ADMIN_USERNAME", "").strip()
+admin_pass = os.environ.get("ADMIN_PASSWORD", "").strip()
+server_prefix = os.environ.get("SERVER_PREFIX", "").strip()
+if server_prefix.lower() in ("-", "none", "off", "no"):
+    server_prefix = ""
 
-# Определение ID администратора
-cur.execute("SELECT id FROM users LIMIT 1")
+def make_remark(method):
+    if server_prefix:
+        return f"{server_prefix} ({method})"
+    return method
+
+hashed_pass = None
+if admin_pass:
+    if admin_pass.startswith("$2a$") or admin_pass.startswith("$2b$") or admin_pass.startswith("$2y$"):
+        hashed_pass = admin_pass
+    else:
+        try:
+            import bcrypt
+            hashed_pass = bcrypt.hashpw(admin_pass.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+        except Exception:
+            pass
+
+cur.execute("SELECT id, username, password FROM users LIMIT 1")
 user_row = cur.fetchone()
-admin_id = user_row[0] if user_row else 1
-
-# Curve25519 helper (RFC 7748) для валидации и починки ключей
-P = 2**255 - 19
-A24 = 121665
+if user_row:
+    admin_id, curr_user, curr_pass = user_row
+    new_user = admin_user if admin_user else curr_user
+    new_pass = hashed_pass if hashed_pass else curr_pass
+    if admin_user or hashed_pass:
+        if not dry_run:
+            if hashed_pass:
+                cur.execute("UPDATE users SET username = ?, password = ? WHERE id = ?", (new_user, new_pass, admin_id))
+            else:
+                cur.execute("UPDATE users SET username = ? WHERE id = ?", (new_user, admin_id))
+        status_msg = "пароль обновлен (bcrypt)" if hashed_pass else "пароль будет синхронизирован через CLI x-ui"
+        print(f"  [ИСПРАВЛЕНО] Администратор (ID {admin_id}): логин='{new_user}', {status_msg}.")
+    elif admin_pass:
+        print(f"  [ИНФО] Администратор (ID {admin_id}): логин='{new_user}', пароль ожидает хэширования через CLI x-ui.")
+else:
+    admin_id = 1
+    new_pass = hashed_pass if hashed_pass else "admin"
+    if not dry_run:
+        cur.execute("INSERT INTO users (id, username, password) VALUES (1, ?, ?)", (admin_user or "admin", new_pass))
+    print(f"  [СОЗДАНО] Администратор: логин='{admin_user or 'admin'}', пароль создан.")
 
 # Инспекция существующих таблиц и колонок для гарантированной синхронизации клиентов
 cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -2648,18 +2893,69 @@ import secrets
 import subprocess
 import uuid
 
-# Curve25519 helper (RFC 7748) для генерации, валидации и починки ключей
+# Curve25519 helper (RFC 7748) via common crypto engine
+try:
+    from src.common.crypto_engine import (
+        P, A24, clamp, x25519, curve25519_pubkey, curve25519_reality_pubkey,
+        generate_reality_keypair, generate_wg_keypair, generate_dnstt_keypair,
+        dnstt_pubkey_from_privkey, validate_dnstt_pubkey
+    )
+except ImportError:
+    try:
+        from common.crypto_engine import (
+            P, A24, clamp, x25519, curve25519_pubkey, curve25519_reality_pubkey,
+            generate_reality_keypair, generate_wg_keypair, generate_dnstt_keypair,
+            dnstt_pubkey_from_privkey, validate_dnstt_pubkey
+        )
+    except ImportError:
+        try:
+            from crypto_engine import (
+                P, A24, clamp, x25519, curve25519_pubkey, curve25519_reality_pubkey,
+                generate_reality_keypair, generate_wg_keypair, generate_dnstt_keypair,
+                dnstt_pubkey_from_privkey, validate_dnstt_pubkey
+            )
+        except ImportError:
+            try:
+                import sys
+                from pathlib import Path
+                _p = (Path(__file__).resolve().parent.parent / "common").as_posix()
+                if _p not in sys.path:
+                    sys.path.insert(0, _p)
+                from crypto_engine import (
+                    P, A24, clamp, x25519, curve25519_pubkey, curve25519_reality_pubkey,
+                    generate_reality_keypair, generate_wg_keypair, generate_dnstt_keypair,
+                    dnstt_pubkey_from_privkey, validate_dnstt_pubkey
+                )
+            except Exception:
+                pass
+"""
+src/common/crypto_engine.py - Unified RFC 7748 X25519 / Curve25519 Cryptographic Engine.
+
+Single Source of Truth for Curve25519 key exchange, clamping, public key derivation,
+and keypair generation across AmneziaWG, Reality, DNSTT, and 3X-UI panel reconciliation.
+"""
+
+import base64
+import os
+from typing import Optional, Tuple
+
 P = 2**255 - 19
 A24 = 121665
 
+
 def clamp(k_bytes):
+    """Apply RFC 7748 clamping to 32 private key bytes."""
+    if len(k_bytes) != 32:
+        raise ValueError(f"Expected 32 private key bytes, got {len(k_bytes)}")
     b = bytearray(k_bytes)
     b[0] &= 248
     b[31] &= 127
     b[31] |= 64
     return int.from_bytes(b, "little")
 
-def x25519(k, u=9):
+
+def x25519(k: int, u: int = 9) -> int:
+    """RFC 7748 scalar multiplication on Curve25519 using Montgomery ladder."""
     x1 = u
     x2, z2 = 1, 0
     x3, z3 = u, 1
@@ -2686,26 +2982,36 @@ def x25519(k, u=9):
             z2, z3 = z3, z2
     return (x2 * pow(z2, P - 2, P)) % P
 
-def curve25519_pubkey(priv_b64):
+
+def curve25519_pubkey(priv_b64: str) -> Optional[str]:
+    """Derive standard Base64 Curve25519 public key (AmneziaWG / WireGuard format)."""
     try:
         raw_priv = base64.b64decode(priv_b64)
+        if len(raw_priv) != 32:
+            return None
         k = clamp(raw_priv)
         pub_raw = x25519(k, 9).to_bytes(32, "little")
         return base64.b64encode(pub_raw).decode()
     except Exception:
         return None
 
-def curve25519_reality_pubkey(priv_b64url):
+
+def curve25519_reality_pubkey(priv_b64url: str) -> Optional[str]:
+    """Derive unpadded URL-safe Base64 Curve25519 public key (Reality format)."""
     try:
         padding = "=" * ((4 - len(priv_b64url) % 4) % 4)
         raw_priv = base64.urlsafe_b64decode(priv_b64url + padding)
+        if len(raw_priv) != 32:
+            return None
         k = clamp(raw_priv)
         pub_raw = x25519(k, 9).to_bytes(32, "little")
         return base64.urlsafe_b64encode(pub_raw).decode().rstrip("=")
     except Exception:
         return None
 
-def generate_reality_keypair():
+
+def generate_reality_keypair() -> Tuple[str, str]:
+    """Generate a random (private_key, public_key) pair in Reality URL-safe Base64 format."""
     priv_raw = os.urandom(32)
     k = clamp(priv_raw)
     pub_raw = x25519(k, 9).to_bytes(32, "little")
@@ -2713,13 +3019,70 @@ def generate_reality_keypair():
     pub_b64 = base64.urlsafe_b64encode(pub_raw).decode().rstrip("=")
     return priv_b64, pub_b64
 
-def generate_wg_keypair():
+
+def generate_wg_keypair() -> Tuple[str, str]:
+    """Generate a random (private_key, public_key) pair in standard WireGuard / AWG Base64 format."""
     priv_raw = os.urandom(32)
     k = clamp(priv_raw)
     pub_raw = x25519(k, 9).to_bytes(32, "little")
     priv_b64 = base64.b64encode(priv_raw).decode()
     pub_b64 = base64.b64encode(pub_raw).decode()
     return priv_b64, pub_b64
+
+
+def generate_dnstt_keypair() -> Tuple[str, str]:
+    """Generate a random (private_key_hex, public_key_hex) pair for DNSTT tunnels."""
+    raw_priv = os.urandom(32)
+    k = clamp(raw_priv)
+    pub_hex = ((x25519(k, 9)) % P).to_bytes(32, "little").hex()
+    return raw_priv.hex(), pub_hex
+
+
+def dnstt_pubkey_from_privkey(priv_hex: str) -> Optional[str]:
+    """Derive DNSTT public key (hex) from private key (hex)."""
+    try:
+        raw_priv = bytes.fromhex(priv_hex.strip())
+        if len(raw_priv) != 32:
+            return None
+        k = clamp(raw_priv)
+        return ((x25519(k, 9)) % P).to_bytes(32, "little").hex()
+    except Exception:
+        return None
+
+
+def validate_dnstt_pubkey(pubkey: str) -> bool:
+    """Validate 64-char hex string as DNSTT public key."""
+    if not isinstance(pubkey, str):
+        return False
+    s = pubkey.strip().lower()
+    return len(s) == 64 and all(c in "0123456789abcdef" for c in s)
+
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) > 1:
+        cmd = sys.argv[1]
+        if cmd == "wg_pubkey" and len(sys.argv) > 2:
+            print(curve25519_pubkey(sys.argv[2]) or "")
+        elif cmd == "wg_keypair":
+            priv, pub = generate_wg_keypair()
+            print(f"{priv} {pub}")
+        elif cmd == "reality_pubkey" and len(sys.argv) > 2:
+            print(curve25519_reality_pubkey(sys.argv[2]) or "")
+        elif cmd == "reality_keypair":
+            priv, pub = generate_reality_keypair()
+            print(f"{priv} {pub}")
+        elif cmd == "dnstt_keypair":
+            priv, pub = generate_dnstt_keypair()
+            if len(sys.argv) > 3:
+                with open(sys.argv[2], "w", encoding="utf-8") as kf:
+                    kf.write(priv + "\n")
+                with open(sys.argv[3], "w", encoding="utf-8") as pf:
+                    pf.write(pub + "\n")
+            else:
+                print(f"{priv} {pub}")
+        elif cmd == "dnstt_pubkey" and len(sys.argv) > 2:
+            print(dnstt_pubkey_from_privkey(sys.argv[2]) or "")
 
 def generate_vlessenc_keypair():
     for candidate in ["/usr/local/x-ui/bin/xray-linux-amd64", "/usr/local/x-ui/bin/xray-linux-arm64", "/usr/local/x-ui/bin/xray", "xray"]:
@@ -2781,33 +3144,19 @@ def generate_naiveproxy_credentials(default_user="user"):
 def generate_tuic_credentials(default_uuid=None):
     return default_uuid or str(uuid.uuid4()), secrets.token_urlsafe(16)
 
-def generate_dnstt_keypair():
-    priv_raw = os.urandom(32)
-    k = clamp(priv_raw)
-    pub_raw = ((x25519(k, 9)) % P).to_bytes(32, "little")
-    return priv_raw.hex(), pub_raw.hex()
 
-def validate_dnstt_pubkey(pubkey):
-    if not isinstance(pubkey, str):
-        return False
-    s = pubkey.strip().lower()
-    return len(s) == 64 and all(c in "0123456789abcdef" for c in s)
+# ----------------- 1. Настройки панели и подписок (settings) -----------------
+print("\n[+] Синхронизация системных настроек панели и подписок...")
 
-# --- 1. СИНХРОНИЗАЦИЯ НАСТРОЕК СИСТЕМЫ (SETTINGS) ---
-print("\n[+] Проверка системных настроек панели и подписок...")
-
-force_sub = os.environ.get("FORCE_SUB", "0") == "1"
-
-# ЗАЩИТА 1: Детектирование и сохранение существующей кастомной подписки
 old_sub_domain = existing_settings.get("subDomain", "").strip()
 old_sub_uri = existing_settings.get("subURI", "").strip()
 old_sub_path = existing_settings.get("subPath", "").strip()
 
-is_custom_sub = bool(old_sub_uri and (old_sub_domain != domain or old_sub_path.strip("/") != sub_path))
+# Проверка: настроена ли кастомная подписка
+is_custom_sub = bool(old_sub_uri and (old_sub_domain != domain or (old_sub_path.strip("/") != sub_path and old_sub_path.strip("/") != "my-post-key")))
 
 if is_custom_sub and not force_sub:
-    print(f"  [СОХРАНЕНО] Обнаружена существующая кастомная подписка: {old_sub_uri}")
-    print(f"    -> subDomain: '{old_sub_domain}', subPath: '{old_sub_path}' сохранены без изменений.")
+    print(f"  [СОХРАНЕНО] Кастомная подписка сохранена: {old_sub_uri}")
     target_sub_uri = old_sub_uri
     target_sub_domain = old_sub_domain
     target_sub_path = old_sub_path
@@ -2887,8 +3236,177 @@ for k, v in settings_updates.items():
     else:
         print(f"  [В ПОРЯДКЕ] Настройка {k}: '{v}'")
 
-# --- 1.1. АУДИТ И ТЮНИНГ ШАБЛОНА XRAY (XRAYTEMPLATECONFIG) ---
-print("\n[+] Аудит шаблона конфигурации Xray (DNS, безопасность и защита от спама)...")
+# ----------------- 1.0. Интеграция Mieru в шаблон подписки Clash (subClashTemplate) -----------------
+enable_mieru = os.environ.get("ENABLE_MIERU", "n").lower() in ("1", "y", "true") or os.path.exists("/etc/systemd/system/mita.service") or os.path.exists("/etc/mita/config.json")
+mieru_port_mode = (os.environ.get("MIERU_PORT_MODE") or "single").strip().lower()
+mieru_port = (os.environ.get("MIERU_PORT") or ("8450-8455" if mieru_port_mode == "range" else "8450")).strip()
+mieru_transport = (os.environ.get("MIERU_TRANSPORT") or "").strip().upper()
+mieru_user = (os.environ.get("MIERU_USER") or "").strip()
+mieru_pass = (os.environ.get("MIERU_PASS") or "").strip()
+
+if enable_mieru and (not mieru_user or not mieru_pass or not mieru_transport):
+    for m_cfg_candidate in ["/etc/mita/config.json", "/etc/mita_server_config.json"]:
+        if os.path.isfile(m_cfg_candidate):
+            try:
+                with open(m_cfg_candidate, "r", encoding="utf-8") as mf:
+                    mdata = json.load(mf)
+                    if not mieru_user and mdata.get("users") and len(mdata["users"]) > 0:
+                        mieru_user = mdata["users"][0].get("name", "")
+                    if not mieru_pass and mdata.get("users") and len(mdata["users"]) > 0:
+                        mieru_pass = mdata["users"][0].get("password", "")
+                    if not mieru_transport and mdata.get("portBindings"):
+                        protos = [str(b.get("protocol", "")).upper() for b in mdata["portBindings"] if "protocol" in b]
+                        if "UDP" in protos and "TCP" not in protos:
+                            mieru_transport = "UDP"
+                        elif "TCP" in protos and "UDP" not in protos:
+                            mieru_transport = "TCP"
+                        elif "TCP" in protos and "UDP" in protos:
+                            mieru_transport = "BOTH"
+                break
+            except Exception:
+                pass
+
+if not mieru_transport:
+    mieru_transport = "BOTH"
+
+if enable_mieru and mieru_user and mieru_pass:
+    server_title = (sub_title or domain or "VPN").strip()
+    mieru_node_name = f"{server_title} — Mieru"
+    if mieru_port_mode == "range" or "-" in mieru_port:
+        m_port_field = f"port-range: {mieru_port}"
+    else:
+        m_port_clean = mieru_port.split("-")[0].split(":")[0]
+        m_port_field = f"port: {m_port_clean}"
+
+    safe_node_name = json.dumps(mieru_node_name)
+    safe_user = json.dumps(mieru_user)
+    safe_pass = json.dumps(mieru_pass)
+    clash_transport = "UDP" if mieru_transport == "UDP" else "TCP"
+    mieru_yaml_block = f"""  - name: {safe_node_name}
+    type: mieru
+    server: {domain}
+    {m_port_field}
+    transport: {clash_transport}
+    udp: true
+    username: {safe_user}
+    password: {safe_pass}
+    multiplexing: MULTIPLEXING_LOW
+    handshake-mode: HANDSHAKE_STANDARD"""
+
+    raw_clash_tpl = existing_settings.get("subClashTemplate", "")
+    if not raw_clash_tpl or not raw_clash_tpl.strip():
+        new_clash_tpl = f"""port: 7890
+socks-port: 7891
+allow-lan: false
+mode: rule
+log-level: info
+unified-delay: true
+global-client-fingerprint: chrome
+dns:
+  enable: true
+  listen: :1053
+  ipv6: false
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  default-nameserver:
+    - 1.1.1.1
+    - 8.8.8.8
+  nameserver:
+    - https://dns.google/dns-query
+    - https://1.1.1.1/dns-query
+proxies:
+{mieru_yaml_block}
+proxy-groups:
+  - name: "PROXIES"
+    type: select
+    proxies:
+      - "{mieru_node_name}"
+  - name: "AUTO"
+    type: url-test
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+    proxies:
+      - "{mieru_node_name}"
+rules:
+  - GEOIP,private,DIRECT
+  - MATCH,PROXIES
+"""
+    elif "type: mieru" not in raw_clash_tpl:
+        lines = raw_clash_tpl.splitlines()
+        new_lines = []
+        proxies_injected = False
+        has_proxies = any(l.strip().startswith("proxies:") for l in lines)
+        if not has_proxies:
+            new_lines.append("proxies:")
+            new_lines.append(mieru_yaml_block)
+            new_lines.extend(lines)
+        else:
+            for l in lines:
+                new_lines.append(l)
+                if not proxies_injected and l.strip().startswith("proxies:"):
+                    new_lines.append(mieru_yaml_block)
+                    proxies_injected = True
+        
+        final_lines = []
+        in_tg = False
+        for l in new_lines:
+            final_lines.append(l)
+            if re.search(r'name:\s*["\']?(PROXIES|AUTO|PROXY|Default|FALLBACK)["\']?', l, re.IGNORECASE):
+                in_tg = True
+            elif in_tg and l.strip().startswith("proxies:"):
+                final_lines.append(f'      - "{mieru_node_name}"')
+                in_tg = False
+            elif in_tg and l.strip() and not l.startswith(" ") and not l.startswith("\t"):
+                in_tg = False
+        new_clash_tpl = "\n".join(final_lines) + "\n"
+    else:
+        new_clash_tpl = raw_clash_tpl
+
+    if new_clash_tpl != raw_clash_tpl:
+        if not dry_run:
+            cur.execute("SELECT id FROM settings WHERE key = 'subClashTemplate'")
+            if cur.fetchone():
+                cur.execute("UPDATE settings SET value = ? WHERE key = 'subClashTemplate'", (new_clash_tpl,))
+            else:
+                cur.execute("INSERT INTO settings (key, value) VALUES ('subClashTemplate', ?)", (new_clash_tpl,))
+        print(f"  [ИСПРАВЛЕНО] Узел Mieru ({mieru_port}) интегрирован в шаблон подписки subClashTemplate.")
+
+# ----------------- 1.1. Тюнинг безопасности и шаблона ядра Xray (xrayTemplateConfig) -----------------
+print("\n[+] Синхронизация шаблона конфигурации Xray (DNS, безопасность и защита от абуз)...")
+
+enable_warp = os.environ.get("ENABLE_WARP", "n").lower() in ("1", "y", "true")
+warp_license_key = os.environ.get("WARP_LICENSE_KEY", "").strip()
+
+DEFAULT_XRAY_TEMPLATE = {
+    "api": {
+        "services": ["HandlerService", "LoggerService", "StatsService", "RoutingService"],
+        "tag": "api"
+    },
+    "inbounds": [{
+        "listen": "127.0.0.1", "port": 62789, "protocol": "tunnel",
+        "settings": {"rewriteAddress": "127.0.0.1"}, "tag": "api"
+    }],
+    "log": {"access": "none", "dnsLog": False, "error": "", "loglevel": "warning", "maskAddress": ""},
+    "metrics": {"listen": "127.0.0.1:11111", "tag": "metrics_out"},
+    "outbounds": [
+        {"protocol": "freedom", "settings": {"domainStrategy": "AsIs"}, "tag": "direct"},
+        {"protocol": "blackhole", "settings": {}, "tag": "blocked"}
+    ],
+    "policy": {
+        "levels": {"0": {"statsUserDownlink": True, "statsUserUplink": True}},
+        "system": {"statsInboundDownlink": True, "statsInboundUplink": True, "statsOutboundDownlink": False, "statsOutboundUplink": False}
+    },
+    "routing": {
+        "domainStrategy": "AsIs",
+        "rules": [
+            {"inboundTag": ["api"], "outboundTag": "api", "type": "field"},
+            {"ip": ["geoip:private"], "outboundTag": "blocked", "type": "field"}
+        ]
+    },
+    "stats": {}
+}
+
+# Чтение и инициализация шаблона Xray
 raw_tpl = existing_settings.get("xrayTemplateConfig")
 tpl = None
 if raw_tpl:
@@ -2896,251 +3414,647 @@ if raw_tpl:
         tpl = json.loads(raw_tpl)
     except Exception:
         pass
+if not tpl or not isinstance(tpl, dict):
+    tpl = json.loads(json.dumps(DEFAULT_XRAY_TEMPLATE))
 
-if tpl and isinstance(tpl, dict):
-    tpl_modified = False
+# 1. DNS: UseIPv4 стратегия для предотвращения задержек AAAA
+dns_cfg = tpl.get("dns", {})
+if not isinstance(dns_cfg, dict):
+    dns_cfg = {}
+if dns_cfg.get("queryStrategy") != "UseIPv4":
+    dns_cfg["queryStrategy"] = "UseIPv4"
+    print("  [ОБНОВЛЕН] DNS queryStrategy: зафиксирован 'UseIPv4' (устранение задержек IPv6).")
+else:
+    print("  [В ПОРЯДКЕ] DNS queryStrategy: 'UseIPv4'.")
 
-    # 1. DNS: UseIPv4 стратегия для предотвращения задержек AAAA
-    dns_cfg = tpl.get("dns", {})
-    if not isinstance(dns_cfg, dict):
-        dns_cfg = {}
-    if dns_cfg.get("queryStrategy") != "UseIPv4":
-        dns_cfg["queryStrategy"] = "UseIPv4"
-        tpl["dns"] = dns_cfg
-        tpl_modified = True
-        print("  [ИСПРАВЛЕНО] DNS queryStrategy: установлен 'UseIPv4' (устранение микрозадержек).")
+enable_agh = os.environ.get("ENABLE_AGH", "").lower() in ("1", "y", "true")
+agh_xray_dns = os.environ.get("AGH_XRAY_DNS", "").lower() in ("1", "y", "true")
+if enable_agh and agh_xray_dns:
+    agh_dns_port = int(os.environ.get("PORT_AGH_DNS") or "10053")
+    target_servers = [{"address": "127.0.0.1", "port": agh_dns_port}]
+    if dns_cfg.get("servers") != target_servers:
+        dns_cfg["servers"] = target_servers
+        print(f"  [ОБНОВЛЕН] DNS servers: зафиксирован '127.0.0.1:{agh_dns_port}' (AdGuard Home локальный фильтр).")
     else:
-        print("  [В ПОРЯДКЕ] DNS queryStrategy: 'UseIPv4'.")
+        print(f"  [В ПОРЯДКЕ] DNS servers: '127.0.0.1:{agh_dns_port}' (AdGuard Home).")
+tpl["dns"] = dns_cfg
 
-    # 2. Логирование (тихий безопасный режим)
-    log_cfg = tpl.get("log", {})
-    if not isinstance(log_cfg, dict):
-        log_cfg = {}
-    if log_cfg.get("loglevel") != "warning" and not log_cfg.get("loglevel"):
-        log_cfg["loglevel"] = "warning"
-        log_cfg["dnsLog"] = False
-        tpl["log"] = log_cfg
-        tpl_modified = True
+# 2. Логирование (тихий безопасный режим, без записи посещаемых URL)
+log_cfg = tpl.get("log", {})
+if not isinstance(log_cfg, dict):
+    log_cfg = {}
+log_cfg["loglevel"] = log_cfg.get("loglevel") or "warning"
+log_cfg["dnsLog"] = False
+if "access" not in log_cfg:
+    log_cfg["access"] = "none"
+tpl["log"] = log_cfg
 
-    # 3. Гарантия blackhole outbound 'blocked'
-    outbounds = tpl.get("outbounds", [])
-    if isinstance(outbounds, list):
-        if not any(isinstance(ob, dict) and ob.get("tag") == "blocked" for ob in outbounds):
-            outbounds.append({"protocol": "blackhole", "settings": {}, "tag": "blocked"})
-            tpl["outbounds"] = outbounds
-            tpl_modified = True
-            print("  [СОЗДАНО] Outbound 'blocked' (blackhole) добавлен в шаблон.")
+# 3. Гарантируем наличие blackhole outbound 'blocked'
+outbounds = tpl.get("outbounds", [])
+if not isinstance(outbounds, list):
+    outbounds = []
+has_blocked_ob = any(isinstance(ob, dict) and ob.get("tag") == "blocked" for ob in outbounds)
+if not has_blocked_ob:
+    outbounds.append({"protocol": "blackhole", "settings": {}, "tag": "blocked"})
+    print("  [СОЗДАНО] Outbound 'blocked' (blackhole) добавлен в шаблон.")
+tpl["outbounds"] = outbounds
 
-    # 4. Роутинг: Блокировка SMTP (порт 25), SSRF-защита, разделение RU и YouTube -> Direct
-    routing = tpl.get("routing", {})
-    if isinstance(routing, dict):
-        rules = routing.get("rules", [])
-        if isinstance(rules, list):
-            bad_geosites = {
-                "geosite:ru", "geosite:yandex", "geosite:vk", "geosite:youtube",
-                "geosite:openai", "geosite:google-gemini", "geosite:anthropic", "geosite:cloudflare"
-            }
-            # Очистка от отсутствующих geosite меток
-            for r in rules:
-                if isinstance(r, dict) and "domain" in r and isinstance(r["domain"], list):
-                    clean_d = [d for d in r["domain"] if d not in bad_geosites]
-                    if len(clean_d) != len(r["domain"]):
-                        r["domain"] = clean_d
-                        tpl_modified = True
+# 4. Правила маршрутизации: Блокировка SMTP (порт 25) и приватных сетей (SSRF)
+routing = tpl.get("routing", {})
+if not isinstance(routing, dict):
+    routing = {}
+rules = routing.get("rules", [])
+if not isinstance(rules, list):
+    rules = []
 
-            if block_smtp:
-                has_smtp = any(isinstance(r, dict) and r.get("outboundTag") == "blocked" and "25" in str(r.get("port", "")).split(",") for r in rules)
-                if not has_smtp:
-                    rules.insert(0, {"type": "field", "port": "25", "outboundTag": "blocked"})
-                    tpl_modified = True
-                    print("  [СОЗДАНО] Блокировка SMTP: исходящий порт 25 заблокирован (защита от бана хостером).")
-                else:
-                    print("  [В ПОРЯДКЕ] Блокировка SMTP: порт 25 защищен.")
+# А. Блокировка спама (строго порт 25, не затрагивая клиентские 465/587)
+if block_smtp:
+    has_smtp_block = any(
+        isinstance(r, dict) and r.get("outboundTag") == "blocked" and "25" in str(r.get("port", "")).split(",")
+        for r in rules
+    )
+    if not has_smtp_block:
+        rules.insert(0, {
+            "type": "field",
+            "port": "25",
+            "outboundTag": "blocked"
+        })
+        print("  [СОЗДАНО] Защита от спама: исходящий порт 25 заблокирован (outboundTag: blocked).")
+    else:
+        print("  [В ПОРЯДКЕ] Защита от спама: порт 25 уже заблокирован.")
 
-            if block_lan:
-                lan_ips = ["geoip:private", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "fc00::/7", "fe80::/10"]
-                has_lan = any(isinstance(r, dict) and r.get("outboundTag") == "blocked" and any(ip_e in str(r.get("ip", [])) for ip_e in ["geoip:private", "127.0.0.0/8", "10.0.0.0/8"]) for r in rules)
-                if not has_lan:
-                    rules.insert(0, {"type": "field", "ip": lan_ips, "outboundTag": "blocked"})
-                    tpl_modified = True
-                    print("  [СОЗДАНО] SSRF-защита: доступ к приватным IP хоста заблокирован.")
-                else:
-                    print("  [В ПОРЯДКЕ] SSRF-защита: локальные сети изолированы.")
+# Б. Блокировка доступа к приватным IP и хосту (SSRF защита)
+if block_lan:
+    lan_ips = ["geoip:private", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "fc00::/7", "fe80::/10"]
+    has_lan_block = any(
+        isinstance(r, dict) and r.get("outboundTag") == "blocked" and any(ip_elem in str(r.get("ip", [])) for ip_elem in ["geoip:private", "127.0.0.0/8", "10.0.0.0/8"])
+        for r in rules
+    )
+    if not has_lan_block:
+        rules.insert(0, {
+            "type": "field",
+            "ip": lan_ips,
+            "outboundTag": "blocked"
+        })
+        print("  [СОЗДАНО] SSRF-защита: доступ к приватным IP хоста заблокирован (outboundTag: blocked).")
+    else:
+        print("  [В ПОРЯДКЕ] SSRF-защита: локальные сети уже изолированы.")
 
-            yt_domains = [
-                "domain:youtube.com", "domain:googlevideo.com", "domain:ytimg.com",
-                "domain:youtu.be", "domain:youtubei.googleapis.com", "domain:yt.be"
-            ]
-            ru_domains = [
-                "domain:ru", "domain:su", "domain:рф", "domain:xn--p1ai",
-                "domain:yandex.ru", "domain:yandex.net", "domain:ya.ru",
-                "domain:vk.com", "domain:vk.ru", "domain:vkvideo.ru", "domain:gosuslugi.ru",
-                "domain:sberbank.ru", "domain:tbank.ru", "domain:tinkoff.ru", "domain:dzen.ru",
-                "domain:mail.ru", "domain:rutube.ru", "domain:ozon.ru", "domain:wildberries.ru", "domain:avito.ru"
-            ]
-            warp_domains = [
-                "domain:openai.com", "domain:chatgpt.com", "domain:oaistatic.com",
-                "domain:oaiusercontent.com", "domain:anthropic.com", "domain:claude.ai",
-                "domain:gemini.google.com", "domain:aistudio.google.com", "domain:deepmind.google",
-                "domain:makersuite.google.com", "domain:generativelanguage.googleapis.com",
-                "domain:ai.google.dev", "domain:google.com", "domain:cloudflare.com", "domain:challenges.cloudflare.com"
-            ]
+routing["rules"] = rules
+tpl["routing"] = routing
 
-            # Исключаем YouTube домены из WARP правил
-            for r in rules:
-                if isinstance(r, dict) and r.get("outboundTag") == "warp":
-                    if "domain" in r and isinstance(r["domain"], list):
-                        clean_warp_d = [d for d in r["domain"] if not any(y in str(d).lower() for y in ["youtube", "googlevideo", "ytimg", "youtu.be"])]
-                        if len(clean_warp_d) != len(r["domain"]):
-                            r["domain"] = clean_warp_d
-                            tpl_modified = True
+# 5. Опциональная интеграция Cloudflare WARP и выборочной маршрутизации
+if enable_warp:
+    print("\n[+] Интеграция Cloudflare WARP (Outbound WireGuard, MTU: 1280 & Smart Routing)...")
+    warp_data = {}
+    if existing_settings.get("warpData"):
+        try:
+            warp_data = json.loads(existing_settings["warpData"])
+        except Exception:
+            warp_data = {}
 
-            yt_rule = None
-            ru_domain_rule = None
-            ru_ip_rule = None
-            cleaned_existing_rules = []
+    priv_b64 = warp_data.get("private_key")
+    device_id = warp_data.get("device_id")
+    client_id = warp_data.get("client_id", "")
+    token = warp_data.get("access_token", "")
+    endpoint_host = "162.159.192.1:2408"
+    v4_address = "172.16.0.2/32"
+    v6_address = "2606:4700:110:8780:4178:f4a4:a997:2167/128"
+    peer_pub = "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo="
 
-            for r in rules:
-                if not isinstance(r, dict):
-                    continue
-                tag = r.get("outboundTag")
-                # Direct-правило для YouTube
-                if tag == "direct" and any("youtube" in str(d).lower() or "googlevideo" in str(d).lower() for d in r.get("domain", [])):
-                    cur_domains = set(r.get("domain", [])) - bad_geosites
-                    cur_domains.update(yt_domains)
-                    r["domain"] = list(cur_domains)
-                    yt_rule = r
-                    continue
-                # Direct-правило для RU: разделяем domain и ip (устранение AND бага Xray) с сохранением пользовательских ограничений
-                if tag == "direct" and ("geoip:ru" in r.get("ip", []) or any("domain:ru" in str(d).lower() for d in r.get("domain", []))):
-                    cur_d = [d for d in r.get("domain", []) if d not in bad_geosites]
-                    cur_ip = list(r.get("ip", []))
-                    has_custom_constraints = bool(
-                        r.get("user") or r.get("inboundTag") or r.get("network") or r.get("port") or r.get("protocol") or
-                        any(ip != "geoip:ru" for ip in cur_ip)
+    if priv_b64 and device_id:
+        print(f"  [СОХРАНЕНО] Действующий аккаунт WARP (Device ID: {device_id})")
+    elif dry_run:
+        print("  [DRY-RUN] Регистрация WARP пропущена (холостой прогон)")
+        priv_b64, pub_b64 = "dryrun-privkey", "dryrun-pubkey"
+        device_id, token, client_id = "dryrun-device", "dryrun-token", ""
+    else:
+        # Регистрация нового аккаунта через официальный API Cloudflare
+        priv_b64, pub_b64 = generate_wg_keypair()
+        reg_payload = {
+            "key": pub_b64,
+            "tos": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
+            "type": "PC",
+            "model": "x-ui",
+            "name": "x-ui"
+        }
+        reg_req = urllib.request.Request(
+            "https://api.cloudflareclient.com/v0a4005/reg",
+            data=json.dumps(reg_payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "CF-Client-Version": "a-6.30-3596",
+                "User-Agent": "okhttp/3.12.1"
+            },
+            method="POST"
+        )
+        try:
+            with urllib.request.urlopen(reg_req, timeout=12) as reg_resp:
+                reg_res = json.loads(reg_resp.read().decode("utf-8"))
+            device_id = reg_res.get("id", "")
+            token = reg_res.get("token", "")
+            cfg = reg_res.get("config", {})
+            client_id = cfg.get("client_id", "")
+            peers = cfg.get("peers", [])
+            if peers:
+                peer_pub = peers[0].get("public_key", peer_pub)
+                peer_ep_data = peers[0].get("endpoint", {})
+                if isinstance(peer_ep_data, dict) and peer_ep_data.get("host"):
+                    endpoint_host = peer_ep_data["host"]
+            addrs = cfg.get("interface", {}).get("addresses", {})
+            if addrs.get("v4"):
+                v4_address = f"{addrs['v4']}/32"
+            if addrs.get("v6"):
+                v6_address = f"{addrs['v6']}/128"
+
+            # Опциональная привязка лицензии WARP+
+            if warp_license_key and device_id and token:
+                try:
+                    lic_req = urllib.request.Request(
+                        f"https://api.cloudflareclient.com/v0a4005/reg/{device_id}/account",
+                        data=json.dumps({"license": warp_license_key}).encode("utf-8"),
+                        headers={
+                            "Content-Type": "application/json",
+                            "Authorization": f"Bearer {token}",
+                            "User-Agent": "okhttp/3.12.1"
+                        },
+                        method="PUT"
                     )
-                    if has_custom_constraints:
-                        # Пользовательское правило с ограничениями или кастомными сетями:
-                        # сохраняем все ограничения и исходные IP, аккуратно разделяя domain и ip
-                        if cur_d and cur_ip:
-                            r_d = dict(r)
-                            r_d["domain"] = cur_d
-                            r_d.pop("ip", None)
-                            cleaned_existing_rules.append(r_d)
+                    with urllib.request.urlopen(lic_req, timeout=10) as lic_resp:
+                        pass
+                    print("  [АКТИВИРОВАНО] Лицензия WARP+ успешно привязана к аккаунту.")
+                except Exception as e_lic:
+                    print(f"  [!] Не удалось привязать ключ WARP+: {e_lic}")
 
-                            r_ip = dict(r)
-                            r_ip["ip"] = cur_ip
-                            r_ip.pop("domain", None)
-                            cleaned_existing_rules.append(r_ip)
-                        else:
-                            cleaned_existing_rules.append(r)
-                        tpl_modified = True
-                        continue
-
-                    # Системное общее правило RU без ограничений:
-                    if cur_d:
-                        cur_d_set = set(cur_d)
-                        cur_d_set.update(ru_domains)
-                        ru_domain_rule = {
-                            "type": "field",
-                            "outboundTag": "direct",
-                            "domain": list(cur_d_set)
-                        }
-                    if cur_ip:
-                        cur_ip_set = set(cur_ip)
-                        cur_ip_set.add("geoip:ru")
-                        ru_ip_rule = {
-                            "type": "field",
-                            "outboundTag": "direct",
-                            "ip": list(cur_ip_set)
-                        }
+            warp_data = {
+                "access_token": token,
+                "device_id": device_id,
+                "license_key": warp_license_key,
+                "private_key": priv_b64,
+                "client_id": client_id
+            }
+            if not dry_run:
+                for wk, wv in [("warpData", json.dumps(warp_data)), ("warpUpdateInterval", "0"), ("warpLastUpdate", str(int(time.time())))]:
+                    cur.execute("SELECT id FROM settings WHERE key = ?", (wk,))
+                    if cur.fetchone():
+                        cur.execute("UPDATE settings SET value = ? WHERE key = ?", (wv, wk))
                     else:
-                        ru_ip_rule = {
-                            "type": "field",
-                            "outboundTag": "direct",
-                            "ip": ["geoip:ru"]
-                        }
-                    tpl_modified = True
-                    continue
-                cleaned_existing_rules.append(r)
+                        cur.execute("INSERT INTO settings (key, value) VALUES (?, ?)", (wk, wv))
+            print(f"  [СОЗДАНО] Cloudflare WARP аккаунт зарегистрирован (Device ID: {device_id})")
+        except Exception as e_reg:
+            print(f"  [!] Предупреждение: Cloudflare API недоступен ({e_reg}).")
+            print("      Шаблон Xray сконфигурирован с MTU 1280. Регистрацию можно завершить в 1 клик в панели 3X-UI.")
+            warp_data = {"private_key": priv_b64, "client_id": ""}
 
-            has_warp_outbound = any(isinstance(ob, dict) and ob.get("tag") == "warp" for ob in tpl.get("outbounds", []))
+    # Декодирование reserved bytes
+    reserved = [0, 0, 0]
+    if client_id:
+        try:
+            dec = list(base64.b64decode(client_id))
+            if len(dec) >= 3:
+                reserved = dec[:3]
+        except Exception:
+            pass
 
-            new_rules = []
-            for r in cleaned_existing_rules:
-                if r.get("outboundTag") in ("api", "blocked"):
-                    new_rules.append(r)
-
-            if not yt_rule:
-                yt_rule = {
-                    "type": "field",
-                    "outboundTag": "direct",
-                    "domain": yt_domains
+    # Формирование объекта outbound 'warp'
+    warp_outbound = {
+        "tag": "warp",
+        "protocol": "wireguard",
+        "settings": {
+            "secretKey": priv_b64,
+            "address": [v4_address, v6_address] if v6_address else [v4_address],
+            "peers": [
+                {
+                    "publicKey": peer_pub,
+                    "endpoint": endpoint_host
                 }
-                tpl_modified = True
-                print("  [СОЗДАНО] Маршрут YouTube -> DIRECT (без задержек и буферизации).")
-            new_rules.append(yt_rule)
+            ],
+            "reserved": reserved,
+            "mtu": 1280
+        }
+    }
 
-            if not ru_domain_rule:
+    # Согласование outbounds WARP
+    outbounds = tpl.get("outbounds", [])
+    warp_ob_idx = -1
+    for i, ob in enumerate(outbounds):
+        if isinstance(ob, dict) and ob.get("tag") == "warp":
+            warp_ob_idx = i
+            break
+
+    if warp_ob_idx >= 0:
+        existing_ob = outbounds[warp_ob_idx]
+        ob_settings = existing_ob.get("settings", {})
+        ob_settings["mtu"] = 1280
+        if not ob_settings.get("secretKey") and priv_b64:
+            ob_settings["secretKey"] = priv_b64
+        if not ob_settings.get("reserved") and reserved != [0, 0, 0]:
+            ob_settings["reserved"] = reserved
+        outbounds[warp_ob_idx] = existing_ob
+        print("  [ОБНОВЛЕН] Outbound 'warp': зафиксирован MTU 1280 и проверены ключи WireGuard.")
+    else:
+        outbounds.append(warp_outbound)
+        print("  [СОЗДАНО] Outbound 'warp' (WireGuard, MTU: 1280) добавлен в шаблон Xray.")
+    tpl["outbounds"] = outbounds
+
+    # Маршрутизация WARP
+    routing = tpl.get("routing", {})
+    rules = routing.get("rules", [])
+
+    bad_geosites = {
+        "geosite:ru", "geosite:yandex", "geosite:vk", "geosite:youtube",
+        "geosite:openai", "geosite:google-gemini", "geosite:anthropic", "geosite:cloudflare"
+    }
+
+    # Очистка всех существующих правил от отсутствующих/невалидных geosite меток
+    for r in rules:
+        if isinstance(r, dict) and "domain" in r and isinstance(r["domain"], list):
+            r["domain"] = [d for d in r["domain"] if d not in bad_geosites]
+
+    yt_domains = [
+        "domain:youtube.com",
+        "domain:googlevideo.com",
+        "domain:ytimg.com",
+        "domain:youtu.be",
+        "domain:youtubei.googleapis.com",
+        "domain:yt.be"
+    ]
+    ru_domains = [
+        "domain:ru",
+        "domain:su",
+        "domain:рф",
+        "domain:xn--p1ai",
+        "domain:yandex.ru",
+        "domain:yandex.net",
+        "domain:ya.ru",
+        "domain:vk.com",
+        "domain:vk.ru",
+        "domain:vkvideo.ru",
+        "domain:gosuslugi.ru",
+        "domain:sberbank.ru",
+        "domain:tbank.ru",
+        "domain:tinkoff.ru",
+        "domain:dzen.ru",
+        "domain:mail.ru",
+        "domain:rutube.ru",
+        "domain:ozon.ru",
+        "domain:wildberries.ru",
+        "domain:avito.ru"
+    ]
+    warp_domains = [
+        "domain:openai.com",
+        "domain:chatgpt.com",
+        "domain:oaistatic.com",
+        "domain:oaiusercontent.com",
+        "domain:anthropic.com",
+        "domain:claude.ai",
+        "domain:gemini.google.com",
+        "domain:aistudio.google.com",
+        "domain:deepmind.google",
+        "domain:makersuite.google.com",
+        "domain:generativelanguage.googleapis.com",
+        "domain:ai.google.dev",
+        "domain:google.com",
+        "domain:cloudflare.com",
+        "domain:challenges.cloudflare.com"
+    ]
+
+    # 1. Из правил WARP исключаем любые YouTube домены
+    for r in rules:
+        if isinstance(r, dict) and r.get("outboundTag") == "warp":
+            if "domain" in r and isinstance(r["domain"], list):
+                r["domain"] = [d for d in r["domain"] if not any(y in str(d).lower() for y in ["youtube", "googlevideo", "ytimg", "youtu.be"])]
+
+    # 2. Обработка и нормализация существующих правил
+    yt_rule = None
+    ru_domain_rule = None
+    ru_ip_rule = None
+
+    cleaned_existing_rules = []
+    for r in rules:
+        if not isinstance(r, dict):
+            continue
+        tag = r.get("outboundTag")
+        # Direct-правило для YouTube
+        if tag == "direct" and any("youtube" in str(d).lower() or "googlevideo" in str(d).lower() for d in r.get("domain", [])):
+            cur_domains = set(r.get("domain", [])) - bad_geosites
+            cur_domains.update(yt_domains)
+            r["domain"] = list(cur_domains)
+            yt_rule = r
+            continue
+        # Direct-правило для RU: разделяем domain и ip с сохранением пользовательских ограничений
+        if tag == "direct" and ("geoip:ru" in r.get("ip", []) or any("domain:ru" in str(d).lower() for d in r.get("domain", []))):
+            cur_d = [d for d in r.get("domain", []) if d not in bad_geosites]
+            cur_ip = list(r.get("ip", []))
+            has_custom_constraints = bool(
+                r.get("user") or r.get("inboundTag") or r.get("network") or r.get("port") or r.get("protocol") or
+                any(ip != "geoip:ru" for ip in cur_ip)
+            )
+            if has_custom_constraints:
+                # Пользовательское правило с ограничениями или кастомными сетями:
+                # сохраняем все ограничения и исходные IP, аккуратно разделяя domain и ip
+                if cur_d and cur_ip:
+                    r_d = dict(r)
+                    r_d["domain"] = cur_d
+                    r_d.pop("ip", None)
+                    cleaned_existing_rules.append(r_d)
+
+                    r_ip = dict(r)
+                    r_ip["ip"] = cur_ip
+                    r_ip.pop("domain", None)
+                    cleaned_existing_rules.append(r_ip)
+                else:
+                    cleaned_existing_rules.append(r)
+                continue
+
+            # Системное общее правило RU без ограничений:
+            if cur_d:
+                cur_d_set = set(cur_d)
+                cur_d_set.update(ru_domains)
                 ru_domain_rule = {
                     "type": "field",
                     "outboundTag": "direct",
-                    "domain": ru_domains
+                    "domain": list(cur_d_set)
                 }
-                tpl_modified = True
-            new_rules.append(ru_domain_rule)
-
-            if not ru_ip_rule:
+            if cur_ip:
+                cur_ip_set = set(cur_ip)
+                cur_ip_set.add("geoip:ru")
+                ru_ip_rule = {
+                    "type": "field",
+                    "outboundTag": "direct",
+                    "ip": list(cur_ip_set)
+                }
+            else:
                 ru_ip_rule = {
                     "type": "field",
                     "outboundTag": "direct",
                     "ip": ["geoip:ru"]
                 }
-                tpl_modified = True
-            new_rules.append(ru_ip_rule)
+            continue
+        cleaned_existing_rules.append(r)
 
-            if has_warp_outbound:
-                warp_rule = None
-                for r in cleaned_existing_rules:
-                    if r.get("outboundTag") == "warp":
-                        cur_d = set(r.get("domain", [])) - bad_geosites
-                        cur_d.update(warp_domains)
-                        cur_d = {d for d in cur_d if not any(y in str(d).lower() for y in ["youtube", "googlevideo", "ytimg", "youtu.be"])}
-                        r["domain"] = list(cur_d)
-                        warp_rule = r
-                        break
-                if not warp_rule:
-                    warp_rule = {
-                        "type": "field",
-                        "outboundTag": "warp",
-                        "domain": [d for d in warp_domains if not any(y in str(d).lower() for y in ["youtube", "googlevideo", "ytimg", "youtu.be"])]
-                    }
-                    tpl_modified = True
-                    print("  [СОЗДАНО] Маршрут Google, Gemini, OpenAI, Claude -> WARP (обход капч и AI).")
-                new_rules.append(warp_rule)
+    new_rules = []
+    # 1. Системные правила (api, blocked)
+    for r in cleaned_existing_rules:
+        if r.get("outboundTag") in ("api", "blocked"):
+            new_rules.append(r)
 
-            for r in cleaned_existing_rules:
-                if r not in new_rules and r.get("outboundTag") != "warp":
-                    new_rules.append(r)
+    # 2. YouTube -> Direct (СТРОГО ВЫШЕ WARP)
+    if not yt_rule:
+        yt_rule = {
+            "type": "field",
+            "outboundTag": "direct",
+            "domain": yt_domains
+        }
+        print("  [СОЗДАНО] Маршрут YouTube -> DIRECT (без задержек и буферизации).")
+    new_rules.append(yt_rule)
 
-            final_rules = []
-            for r in new_rules:
-                if "domain" in r and isinstance(r["domain"], list):
-                    r["domain"] = [d for d in r["domain"] if d not in bad_geosites]
-                    if not r["domain"] and not r.get("ip") and not r.get("port"):
-                        continue
-                final_rules.append(r)
+    # 3. RU -> Direct (раздельные независимые правила)
+    if not ru_domain_rule:
+        ru_domain_rule = {
+            "type": "field",
+            "outboundTag": "direct",
+            "domain": ru_domains
+        }
+    new_rules.append(ru_domain_rule)
 
-            routing["rules"] = final_rules
-            tpl["routing"] = routing
+    if not ru_ip_rule:
+        ru_ip_rule = {
+            "type": "field",
+            "outboundTag": "direct",
+            "ip": ["geoip:ru"]
+        }
+    new_rules.append(ru_ip_rule)
+    print("  [СОЗДАНО/ОБНОВЛЕНО] Маршруты RU-доменов и RU-IP -> DIRECT (раздельные независимые правила).")
 
-    if tpl_modified and not dry_run:
-        new_tpl_json = json.dumps(tpl, indent=2, ensure_ascii=False)
-        cur.execute("UPDATE settings SET value = ? WHERE key = 'xrayTemplateConfig'", (new_tpl_json,))
-        print("  [ИСПРАВЛЕНО] Конфигурация xrayTemplateConfig обновлена в базе данных.")
+    # 4. WARP правило (после direct правил YouTube и RU)
+    warp_rule = None
+    for r in cleaned_existing_rules:
+        if r.get("outboundTag") == "warp":
+            cur_d = set(r.get("domain", [])) - bad_geosites
+            cur_d.update(warp_domains)
+            cur_d = {d for d in cur_d if not any(y in str(d).lower() for y in ["youtube", "googlevideo", "ytimg", "youtu.be"])}
+            r["domain"] = list(cur_d)
+            warp_rule = r
+            break
 
-# --- 2. СМАРТ-СВЕРКА И РЕМОНТ ИНБАУНДОВ ---
-print("\n[+] Аудит и согласование инбаундов (Inbounds Smart Reconcile)...")
+    if not warp_rule:
+        warp_rule = {
+            "type": "field",
+            "outboundTag": "warp",
+            "domain": [d for d in warp_domains if not any(y in str(d).lower() for y in ["youtube", "googlevideo", "ytimg", "youtu.be"])]
+        }
+        print("  [СОЗДАНО] Маршрут Google, Gemini, OpenAI, Claude -> WARP (обход капч и AI).")
+    new_rules.append(warp_rule)
+
+    # 5. Остальные пользовательские правила
+    for r in cleaned_existing_rules:
+        if r not in new_rules and r.get("outboundTag") != "warp":
+            new_rules.append(r)
+
+    routing["rules"] = new_rules
+    tpl["routing"] = routing
+else:
+    print("\n[-] Исходящий туннель Cloudflare WARP отключен в конфигурации.")
+
+# Очистка всех потенциально опасных / отсутствующих geosite из всех маршрутов шаблона
+bad_geosites = {
+    "geosite:ru", "geosite:yandex", "geosite:vk", "geosite:youtube",
+    "geosite:openai", "geosite:google-gemini", "geosite:anthropic", "geosite:cloudflare"
+}
+routing = tpl.get("routing", {})
+if isinstance(routing, dict):
+    clean_rules = []
+    for r in routing.get("rules", []):
+        if isinstance(r, dict):
+            if "domain" in r and isinstance(r["domain"], list):
+                r["domain"] = [d for d in r["domain"] if d not in bad_geosites]
+                if not r["domain"] and not r.get("ip") and not r.get("port"):
+                    continue
+            clean_rules.append(r)
+    routing["rules"] = clean_rules
+    tpl["routing"] = routing
+
+# Сохранение обновленного шаблона xrayTemplateConfig
+new_xray_json = json.dumps(tpl, indent=2, ensure_ascii=False)
+if not dry_run:
+    cur.execute("SELECT id FROM settings WHERE key = 'xrayTemplateConfig'")
+    if cur.fetchone():
+        cur.execute("UPDATE settings SET value = ? WHERE key = 'xrayTemplateConfig'", (new_xray_json,))
+    else:
+        cur.execute("INSERT INTO settings (key, value) VALUES ('xrayTemplateConfig', ?)", (new_xray_json,))
+print("  [ИСПРАВЛЕНО] Конфигурация xrayTemplateConfig синхронизирована и сохранена в базе данных.")
+
+# ----------------- 2. Интеллектуальное согласование инбаундов (Smart Reconcile) -----------------
+print("\n[+] Аудит и согласование инбаундов (Smart Reconcile Engine)...")
+
+# --- Единый клиент для всех протоколов и инбаундов (консолидация реестра) ---
+client_email_env = os.environ.get("CLIENT_EMAIL", "").strip() or os.environ.get("CLIENT_NAME", "").strip()
+safe_prefix_clean = re.sub(r'[^a-zA-Z0-9_-]', '', server_prefix) if server_prefix else ""
+unified_email = client_email_env or (f"Client-{safe_prefix_clean}" if safe_prefix_clean and safe_prefix_clean.lower() != "server" else "Client")
+
+# Регулярное выражение для поиска устаревших раздельных клиентов (Client-Steal, Client-Classic и т.п.)
+obsolete_pattern = re.compile(r'-(steal|classic|xhttp|hy2|hysteria|hysteria2|awg-v3|awg-v2)$', re.IGNORECASE)
+
+# Сканирование и сбор существующих реквизитов (UUID, subId, пароли, ключи) для бесшовного обновления
+harvested_uuid = None
+harvested_sub_id = None
+harvested_hy2_pass = None
+harvested_wg_c_priv = None
+harvested_wg_c_pub = None
+harvested_wg_hpk = None
+harvested_ss_server_pass = None
+harvested_ss_client_pass = None
+harvested_tuic_uuid = None
+harvested_tuic_pass = None
+harvested_mtp_secret = None
+harvested_mtp_adtag = None
+harvested_vless_dekey = None
+harvested_vless_enkey = None
+
+if "clients" in all_tables and "email" in clients_cols:
+    cand_cols = ["uuid", "sub_id", "password", "wg_private_key", "wg_public_key", "secret", "ad_tag", "encryption"]
+    avail_cols = [c for c in cand_cols if c in clients_cols]
+    if avail_cols:
+        col_list = ", ".join(avail_cols)
+        cur.execute(f"SELECT {col_list} FROM clients WHERE email = ?", (unified_email,))
+        row_c = cur.fetchone()
+        if row_c:
+            c_map = dict(zip(avail_cols, row_c))
+            if c_map.get("uuid"): harvested_uuid = c_map["uuid"]
+            if c_map.get("sub_id"): harvested_sub_id = c_map["sub_id"]
+            if c_map.get("password"): harvested_hy2_pass = c_map["password"]
+            if c_map.get("wg_private_key"): harvested_wg_c_priv = c_map["wg_private_key"]
+            if c_map.get("wg_public_key"): harvested_wg_c_pub = c_map["wg_public_key"]
+            if c_map.get("secret"): harvested_mtp_secret = c_map["secret"]
+            if c_map.get("ad_tag"): harvested_mtp_adtag = c_map["ad_tag"]
+            if c_map.get("encryption"): harvested_vless_enkey = c_map["encryption"]
+
+harvested_reality_priv = None
+harvested_reality_pub = None
+harvested_reality_sids = None
+
+cur.execute("SELECT port, protocol, settings, stream_settings FROM inbounds")
+for p, proto, raw_s, raw_st in cur.fetchall():
+    try:
+        s_obj = json.loads(raw_s) if raw_s else {}
+    except Exception:
+        continue
+    c_list = s_obj.get("clients", [])
+    if c_list and isinstance(c_list, list) and len(c_list) > 0:
+        for c_cand in c_list:
+            c_cand_email = c_cand.get("email") or c_cand.get("Email")
+            if c_cand_email == unified_email:
+                if proto == "vless":
+                    if not harvested_uuid and c_cand.get("id"): harvested_uuid = c_cand.get("id")
+                    if not harvested_sub_id and c_cand.get("subId"): harvested_sub_id = c_cand.get("subId")
+                elif proto == "hysteria":
+                    if not harvested_hy2_pass and (c_cand.get("id") or c_cand.get("password") or c_cand.get("auth")):
+                        harvested_hy2_pass = c_cand.get("id") or c_cand.get("password") or c_cand.get("auth")
+                elif proto == "shadowsocks":
+                    if not harvested_ss_client_pass and c_cand.get("password"):
+                        harvested_ss_client_pass = c_cand.get("password")
+                elif proto == "tuic":
+                    if not harvested_tuic_uuid and c_cand.get("uuid"):
+                        harvested_tuic_uuid = c_cand.get("uuid")
+                    elif not harvested_tuic_uuid and c_cand.get("id"):
+                        harvested_tuic_uuid = c_cand.get("id")
+                    if not harvested_tuic_pass and c_cand.get("password"):
+                        harvested_tuic_pass = c_cand.get("password")
+                elif proto == "mtproto":
+                    if not harvested_mtp_secret and c_cand.get("secret"):
+                        harvested_mtp_secret = c_cand.get("secret")
+                    if not harvested_mtp_adtag and (c_cand.get("ad_tag") or c_cand.get("adTag")):
+                        harvested_mtp_adtag = c_cand.get("ad_tag") or c_cand.get("adTag")
+                elif proto == "amneziawg":
+                    if not harvested_wg_c_priv and c_cand.get("privateKey"):
+                        harvested_wg_c_priv = c_cand.get("privateKey")
+                        harvested_wg_c_pub = c_cand.get("publicKey")
+                    srv_conf = s_obj.get("server", {})
+                    if srv_conf.get("headerProtectionKey") and not harvested_wg_hpk:
+                        harvested_wg_hpk = srv_conf["headerProtectionKey"]
+    if proto == "vless":
+        if s_obj.get("decryption") and s_obj["decryption"] != "none":
+            if not harvested_vless_dekey: harvested_vless_dekey = s_obj["decryption"]
+            if not harvested_vless_enkey and s_obj.get("encryption"):
+                harvested_vless_enkey = s_obj["encryption"]
+        if not harvested_vless_enkey and c_list:
+            for _c in c_list:
+                if _c.get("encryption"):
+                    harvested_vless_enkey = _c["encryption"]
+                    break
+    if proto == "shadowsocks":
+        if not harvested_ss_server_pass and s_obj.get("password"):
+            harvested_ss_server_pass = s_obj.get("password")
+    if raw_st and not harvested_reality_priv:
+        try:
+            st_obj = json.loads(raw_st)
+            r_set = st_obj.get("realitySettings", {})
+            if r_set.get("privateKey"):
+                harvested_reality_priv = r_set.get("privateKey")
+                harvested_reality_pub = r_set.get("settings", {}).get("publicKey") or r_set.get("publicKey") or curve25519_reality_pubkey(harvested_reality_priv)
+                if r_set.get("shortIds"):
+                    harvested_reality_sids = r_set.get("shortIds")
+        except Exception:
+            pass
+
+# Итоговые эталонные согласованные реквизиты единого клиента
+unified_uuid = harvested_uuid or str(uuid.uuid4())
+unified_sub_id = harvested_sub_id or secrets.token_hex(8)
+unified_hy2_pass = harvested_hy2_pass or secrets.token_hex(12)
+
+# Реквизиты Shadowsocks 2022
+ss_method = "2022-blake3-aes-256-gcm"
+if harvested_ss_server_pass and validate_ss2022_key(harvested_ss_server_pass, ss_method):
+    unified_ss_server_pass = harvested_ss_server_pass
+else:
+    unified_ss_server_pass = generate_ss2022_key(ss_method)
+
+if harvested_ss_client_pass and validate_ss2022_key(harvested_ss_client_pass, ss_method):
+    unified_ss_client_pass = harvested_ss_client_pass
+else:
+    unified_ss_client_pass = generate_ss2022_key(ss_method)
+
+# Реквизиты TUIC v5
+unified_tuic_uuid = harvested_tuic_uuid or unified_uuid
+# ВАЖНО: Пароль TUIC v5 должен строго совпадать с clients.password (unified_ss_client_pass),
+# чтобы прямая ссылка tuic:// и экспорт подписки Clash/Mihomo содержали один и тот же пароль
+unified_tuic_pass = unified_ss_client_pass
+tuic_cert, tuic_key = resolve_cert_key_paths(domain, os.environ.get("TUIC_CERT_PATH", ""), os.environ.get("TUIC_KEY_PATH", ""))
+
+# Реквизиты Telegram MTProxy
+if harvested_mtp_secret and validate_mtproto_secret(harvested_mtp_secret):
+    unified_mtp_secret = harvested_mtp_secret
+else:
+    unified_mtp_secret = generate_mtproto_secret(mtproto_faketls_domain)
+
+unified_mtp_adtag = mtproto_adtag or harvested_mtp_adtag or ""
+if unified_mtp_adtag and not validate_mtproto_adtag(unified_mtp_adtag):
+    unified_mtp_adtag = ""
+
+if harvested_reality_priv:
+    def_reality_priv = harvested_reality_priv
+    def_reality_pub = harvested_reality_pub or curve25519_reality_pubkey(def_reality_priv)
+    def_reality_sids = harvested_reality_sids or ([unified_sub_id] + [secrets.token_hex(n) for n in (1, 2, 3, 6)])
+    print(f"  [СОХРАНЕНО] Серверные ключи VLESS-REALITY сохранены из базы SQLite")
+else:
+    def_reality_priv, def_reality_pub = generate_reality_keypair()
+    def_reality_sid = unified_sub_id
+    def_reality_sids = [def_reality_sid] + [secrets.token_hex(n) for n in (1, 2, 3, 6)]
+
+def_wg_s_priv, def_wg_s_pub = generate_wg_keypair()
+if harvested_wg_c_priv and harvested_wg_c_pub:
+    def_wg_c_priv, def_wg_c_pub = harvested_wg_c_priv, harvested_wg_c_pub
+else:
+    def_wg_c_priv, def_wg_c_pub = generate_wg_keypair()
+
+# AWG v3.1: Защита заголовков Handshake (HeaderProtectionKey) и RandomTrailers
+unified_awg_hpk = awg_hpk_env or harvested_wg_hpk or base64.b64encode(secrets.token_bytes(32)).decode()
+unified_awg_random_trailers = awg_random_trailers_env
+
+# Защита от потери данных: деструктивное удаление клиентов (DELETE FROM clients) заблокировано
+obsolete_emails = []
+print(f"  [ЕДИНЫЙ КЛИЕНТ] Профиль: '{unified_email}' (привязка ко всем инбаундам, subId: {unified_sub_id[:6]}...)")
 
 def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, default_stream, listen="127.0.0.1"):
     cur.execute("SELECT id, settings, stream_settings, protocol, tag, remark, listen, enable FROM inbounds WHERE port = ? OR tag = ?", (port, tag))
@@ -3671,28 +4585,12 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
     print(status_str)
     return inbound_id
 
-# --- Формирование эталонных конфигураций протоколов ---
-def_uuid = str(uuid.uuid4())
-def_reality_priv, def_reality_pub = generate_reality_keypair()
-def_reality_sid = secrets.token_hex(8)
-def_reality_sids = [def_reality_sid] + [secrets.token_hex(n) for n in (1, 2, 3, 6)]
-def_hy2_pass = secrets.token_hex(12)
-def_wg_s_priv, def_wg_s_pub = generate_wg_keypair()
-def_wg_c_priv, def_wg_c_pub = generate_wg_keypair()
-def_wg_hpk = awg_hpk_env or base64.b64encode(secrets.token_bytes(32)).decode()
-def_ss_method = "2022-blake3-aes-256-gcm"
-def_ss_server_pass = generate_ss2022_key(def_ss_method)
-def_ss_client_pass = generate_ss2022_key(def_ss_method)
-def_tuic_uuid, _ = generate_tuic_credentials()
-def_tuic_pass = def_ss_client_pass
-def_mtp_secret = generate_mtproto_secret(mtproto_faketls_domain)
 
-cur.execute("SELECT port, protocol FROM inbounds")
-existing_inbound_protos = {r[1] for r in cur.fetchall()}
+# --- Применение эталонных конфигураций инбаундов с единым клиентом ---
 
-# 1. VLESS REALITY (маскировка под свой сайт)
+# 1. Steal-Oneself REALITY (45443)
 if enable_steal:
-    s_set = {"clients": [{"id": def_uuid, "flow": "xtls-rprx-vision"}], "decryption": "none", "testseed": [900, 500, 900, 256]}
+    s_set = {"clients": [{"id": unified_uuid, "flow": "xtls-rprx-vision", "email": unified_email, "subId": unified_sub_id, "enable": True}], "decryption": "none", "testseed": [900, 500, 900, 256]}
     s_str = {
         "network": "tcp",
         "tcpSettings": {"acceptProxyProtocol": True, "header": {"type": "none"}},
@@ -3703,13 +4601,14 @@ if enable_steal:
             "shortIds": def_reality_sids,
             "settings": {"publicKey": def_reality_pub, "fingerprint": "firefox", "serverName": steal_dom, "spiderX": "/"}
         },
-        "externalProxy": [{"dest": domain, "port": 443, "forceTls": "same", "sni": steal_dom, "fingerprint": "firefox", "remark": "VLESS_STEAL"}]
+        "externalProxy": [{"dest": domain, "port": 443, "forceTls": "same", "sni": steal_dom, "fingerprint": "firefox", "remark": make_remark("VLESS Steal")}]
     }
-    smart_reconcile_inbound(steal_port, "vless", "in-steal-reality", "VLESS_STEAL", s_set, s_str, listen="127.0.0.1")
+    steal_remark = make_remark("VLESS Steal")
+    steal_ib_id = smart_reconcile_inbound(steal_port, "vless", "in-steal-reality", steal_remark, s_set, s_str, listen="127.0.0.1")
 
-# 2. VLESS REALITY (маскировка под внешние сервисы)
+# 2. Classic REALITY (46443)
 if enable_classic:
-    c_set = {"clients": [{"id": def_uuid, "flow": "xtls-rprx-vision"}], "decryption": "none", "testseed": [900, 500, 900, 256]}
+    c_set = {"clients": [{"id": unified_uuid, "flow": "xtls-rprx-vision", "email": unified_email, "subId": unified_sub_id, "enable": True}], "decryption": "none", "testseed": [900, 500, 900, 256]}
     c_str = {
         "network": "tcp",
         "tcpSettings": {"acceptProxyProtocol": True, "header": {"type": "none"}},
@@ -3720,38 +4619,23 @@ if enable_classic:
             "shortIds": def_reality_sids,
             "settings": {"publicKey": def_reality_pub, "fingerprint": "firefox", "serverName": classic_sni, "spiderX": "/"}
         },
-        "externalProxy": [{"dest": domain, "port": 443, "forceTls": "same", "sni": classic_sni, "fingerprint": "firefox", "remark": "VLESS_CLASSIC"}]
+        "externalProxy": [{"dest": domain, "port": 443, "forceTls": "same", "sni": classic_sni, "fingerprint": "firefox", "remark": make_remark("VLESS Classic")}]
     }
-    smart_reconcile_inbound(classic_port, "vless", "in-classic-reality", "VLESS_CLASSIC", c_set, c_str, listen="127.0.0.1")
+    classic_remark = make_remark("VLESS Classic")
+    classic_ib_id = smart_reconcile_inbound(classic_port, "vless", "in-classic-reality", classic_remark, c_set, c_str, listen="127.0.0.1")
 
-# 3. VLESS xHTTP (Stream-One) - сохраняем или генерируем постквантовый ML-KEM-768
-cur.execute("SELECT settings FROM inbounds WHERE port = ? OR tag = 'in-xhttp-stream'", (xhttp_port,))
-row_xh = cur.fetchone()
-prev_xh_dec = "none"
-prev_xh_enc = None
-if row_xh and row_xh[0]:
-    try:
-        prev_s = json.loads(row_xh[0])
-        if prev_s.get("decryption") and prev_s["decryption"] != "none":
-            prev_xh_dec = prev_s["decryption"]
-            prev_xh_enc = prev_s.get("encryption")
-            if not prev_xh_enc and prev_s.get("clients"):
-                for _c in prev_s["clients"]:
-                    if _c.get("encryption"):
-                        prev_xh_enc = _c["encryption"]
-                        break
-    except Exception:
-        pass
-
-if prev_xh_dec != "none" and prev_xh_enc:
-    c_xh = {"id": def_uuid, "flow": "", "encryption": prev_xh_enc}
-    x_set = {"clients": [c_xh], "decryption": prev_xh_dec, "encryption": prev_xh_enc}
+# 3. VLESS xHTTP (50443)
+if harvested_vless_dekey and harvested_vless_enkey:
+    vless_dekey, vless_enkey = harvested_vless_dekey, harvested_vless_enkey
 else:
     vless_dekey, vless_enkey = generate_vlessenc_keypair()
-    if vless_dekey and vless_enkey:
-        x_set = {"clients": [{"id": def_uuid, "flow": "", "encryption": vless_enkey}], "decryption": vless_dekey, "encryption": vless_enkey}
-    else:
-        x_set = {"clients": [{"id": def_uuid, "flow": ""}], "decryption": "none"}
+
+xhttp_client = {"id": unified_uuid, "flow": "", "email": unified_email, "subId": unified_sub_id, "enable": True}
+if vless_dekey and vless_enkey:
+    xhttp_client["encryption"] = vless_enkey
+    x_set = {"clients": [xhttp_client], "decryption": vless_dekey, "encryption": vless_enkey}
+else:
+    x_set = {"clients": [xhttp_client], "decryption": "none"}
 x_str = {
     "network": "xhttp",
     "xhttpSettings": {
@@ -3768,12 +4652,13 @@ x_str = {
         }
     },
     "security": "none",
-    "externalProxy": [{"dest": domain, "port": 443, "forceTls": "tls", "sni": domain, "fingerprint": "firefox", "alpn": "h2", "remark": "VLESS_XHTTP"}]
+    "externalProxy": [{"dest": domain, "port": 443, "forceTls": "tls", "sni": domain, "fingerprint": "firefox", "alpn": "h2", "remark": make_remark("VLESS xHTTP")}]
 }
-smart_reconcile_inbound(xhttp_port, "vless", "in-xhttp-stream", "VLESS_XHTTP", x_set, x_str, listen="127.0.0.1")
+xhttp_remark = make_remark("VLESS xHTTP")
+xhttp_ib_id = smart_reconcile_inbound(xhttp_port, "vless", "in-xhttp-stream", xhttp_remark, x_set, x_str, listen="127.0.0.1")
 
 unified_vless_enkey = ""
-cur.execute("SELECT settings FROM inbounds WHERE port = ? OR tag = 'in-xhttp-stream'", (xhttp_port,))
+cur.execute("SELECT settings FROM inbounds WHERE id = ? OR port = ?", (xhttp_ib_id, xhttp_port))
 _row_xh = cur.fetchone()
 if _row_xh and _row_xh[0]:
     try:
@@ -3787,24 +4672,25 @@ if _row_xh and _row_xh[0]:
     except Exception:
         pass
 if not unified_vless_enkey:
-    unified_vless_enkey = prev_xh_enc or (vless_enkey if 'vless_enkey' in locals() else "") or ""
+    unified_vless_enkey = vless_enkey or ""
 
-# 4. Hysteria 2
+# 4. Hysteria 2 (443)
 if enable_hy2:
-    h_set = {"clients": [{"id": def_hy2_pass}], "version": 2}
+    h_set = {"clients": [{"id": unified_hy2_pass, "auth": unified_hy2_pass, "password": unified_hy2_pass, "email": unified_email, "subId": unified_sub_id, "enable": True}], "version": 2}
     h_str = {
         "network": "hysteria",
         "hysteriaSettings": {"version": 2, "udpIdleTimeout": 60, "masquerade": {"type": "proxy", "url": "http://127.0.0.1:80"}},
         "security": "tls",
         "tlsSettings": {
-            "serverName": domain, "minVersion": "1.3", "maxVersion": "1.3",
-            "certificates": [{"certificateFile": ssl_cert, "keyFile": ssl_key}], "alpn": ["h3"]
+            "serverName": hy2_domain, "minVersion": "1.3", "maxVersion": "1.3",
+            "certificates": [{"certificateFile": hy2_cert, "keyFile": hy2_key}], "alpn": ["h3"]
         },
-        "externalProxy": [{"dest": domain, "port": hy2_port, "forceTls": "tls", "remark": "Hysteria 2"}]
+        "externalProxy": [{"dest": hy2_domain, "port": hy2_port, "forceTls": "tls", "remark": make_remark("Hysteria 2")}]
     }
-    smart_reconcile_inbound(hy2_port, "hysteria", "in-hysteria2", "Hysteria 2", h_set, h_str, listen="0.0.0.0")
+    hy2_remark = make_remark("Hysteria 2")
+    smart_reconcile_inbound(hy2_port, "hysteria", "in-hysteria2", hy2_remark, h_set, h_str, listen="0.0.0.0")
 
-# 5. AmneziaWG v3.1
+# 5. AmneziaWG v3.1 (8443)
 if enable_awg_v3:
     awg_i1_env = os.environ.get("AWG_I1", "").strip()
     if awg_i1_env.lower() == "dns":
@@ -3812,67 +4698,82 @@ if enable_awg_v3:
     a3_set = {
         "clients": [{
             "privateKey": def_wg_c_priv, "publicKey": def_wg_c_pub,
-            "allowedIPs": ["10.8.1.2/32"], "email": "Client-1", "enable": True
+            "allowedIPs": ["10.8.1.2/32"], "email": unified_email, "subId": unified_sub_id, "enable": True
         }],
         "server": {
-            "disableCookies": False,
-            "h1": "1", "h2": "2", "h3": "3", "h4": "4", "jc": 4, "jmax": 70, "jmin": 40,
-            "keepaliveTimeout": "15-20", "maxHandshakeAttempts": "20-25", "mtu": 1280,
+            "h1": "1", "h2": "2", "h3": "3", "h4": "4",
+            "jc": 4, "jmin": 40, "jmax": 70,
+            "s1": 16, "s2": 16, "s3": 16, "s4": 16,
+            "mtu": 1280,
             "primaryDns": awg_primary_dns, "secondaryDns": awg_secondary_dns,
             "privateKey": def_wg_s_priv, "publicKey": def_wg_s_pub,
-            "headerProtectionKey": def_wg_hpk,
+            "headerProtectionKey": unified_awg_hpk,
             "randomTrailers": True,
-            "rejectAfterTime": "180-210", "rekeyAfterTime": "120-170",
-            "rekeyTimeout": "3-4", "s1": 16, "s2": 16, "s3": 16, "s4": 16,
-            "subnetCidr": 22, "subnetIp": "10.8.0.0",
+            "disableCookies": False,
+            "keepaliveTimeout": "15-20",
+            "rekeyAfterTime": "120-170",
+            "rekeyTimeout": "3-4",
+            "rejectAfterTime": "180-210",
+            "maxHandshakeAttempts": "20-25",
+            "subnetCidr": awg_subnet_cidr, "subnetIp": awg_subnet_ip,
             "i1": awg_i1_env
         }
     }
-    a3_str = {"externalProxy": [{"dest": domain, "port": awg_v3_port, "remark": "AmneziaWG v3.1"}]}
-    smart_reconcile_inbound(awg_v3_port, "amneziawg", "in-8443-udp", "AmneziaWG v3.1", a3_set, a3_str, listen="0.0.0.0")
+    a3_str = {"externalProxy": [{"dest": domain, "port": awg_v3_port, "remark": make_remark("AmneziaWG v3")}]}
+    awg_v3_remark = make_remark("AmneziaWG v3")
+    smart_reconcile_inbound(awg_v3_port, "amneziawg", "in-8443-udp", awg_v3_remark, a3_set, a3_str, listen="0.0.0.0")
 
-# 6. AmneziaWG v2.0
+# 6. AmneziaWG v2.0 (8444)
 if enable_awg_v2:
     a2_set = {
         "clients": [{
             "privateKey": def_wg_c_priv, "publicKey": def_wg_c_pub,
-            "allowedIPs": ["10.8.2.2/32"], "email": "Client-Router", "enable": True
+            "allowedIPs": ["10.8.2.2/32"], "email": unified_email, "subId": unified_sub_id, "enable": True
         }],
         "server": {
             "h1": "149419586", "h2": "878791997", "h3": "1251051976", "h4": "1657628296",
-            "jc": 2, "jmax": 50, "jmin": 20, "mtu": 1280, "primaryDns": awg_primary_dns, "secondaryDns": awg_secondary_dns,
+            "jc": 2, "jmin": 20, "jmax": 50, "mtu": 1280,
+            "primaryDns": awg_primary_dns, "secondaryDns": awg_secondary_dns,
             "privateKey": def_wg_s_priv, "publicKey": def_wg_s_pub,
-            "s1": 16, "s2": 20, "s3": 24, "s4": 16, "subnetCidr": 24, "subnetIp": "10.8.2.0"
+            "s1": 16, "s2": 20, "s3": 24, "s4": 16,
+            "subnetCidr": 24, "subnetIp": "10.8.2.0"
         }
     }
-    a2_str = {"externalProxy": [{"dest": domain, "port": awg_v2_port, "remark": "AmneziaWG v2.0"}]}
-    smart_reconcile_inbound(awg_v2_port, "amneziawg", "in-awg-v2", "AmneziaWG v2.0", a2_set, a2_str, listen="0.0.0.0")
+    a2_str = {"externalProxy": [{"dest": domain, "port": awg_v2_port, "remark": make_remark("AmneziaWG v2")}]}
+    awg_v2_remark = make_remark("AmneziaWG v2")
+    smart_reconcile_inbound(awg_v2_port, "amneziawg", "in-awg-v2", awg_v2_remark, a2_set, a2_str, listen="0.0.0.0")
 
-# 7. Shadowsocks 2022
-if enable_ss2022 or "shadowsocks" in existing_inbound_protos:
+# 7. Shadowsocks 2022 (8388)
+if enable_ss2022:
     ss_set = {
-        "method": def_ss_method,
-        "password": def_ss_server_pass,
+        "method": ss_method,
+        "password": unified_ss_server_pass,
         "network": "tcp,udp",
         "udpOverTcp": True,
         "udp_over_tcp": True,
-        "clients": [{"email": "Client", "password": def_ss_client_pass, "enable": True}]
+        "clients": [{
+            "email": unified_email,
+            "password": unified_ss_client_pass,
+            "subId": unified_sub_id,
+            "enable": True
+        }]
     }
-    ss_ext_proxies = [{"dest": domain, "port": ss2022_port, "forceTls": "none", "remark": "Shadowsocks 2022"}]
+    ss_ext_proxies = [{"dest": domain, "port": ss2022_port, "forceTls": "none", "remark": make_remark("Shadowsocks 2022")}]
     if enable_shadowtls:
-        ss_ext_proxies.append({"dest": domain, "port": shadowtls_port, "forceTls": "tls", "remark": "ShadowTLS v4 + SS-2022"})
+        ss_ext_proxies.append({"dest": domain, "port": shadowtls_port, "forceTls": "tls", "remark": make_remark("ShadowTLS v4 + SS-2022")})
     ss_str = {
         "network": "tcp",
         "security": "none",
         "externalProxy": ss_ext_proxies
     }
-    smart_reconcile_inbound(ss2022_port, "shadowsocks", "in-shadowsocks-2022", "Shadowsocks 2022", ss_set, ss_str, listen="0.0.0.0")
+    ss_remark = make_remark("Shadowsocks 2022")
+    smart_reconcile_inbound(ss2022_port, "shadowsocks", "in-shadowsocks-2022", ss_remark, ss_set, ss_str, listen="0.0.0.0")
 
-# 8. TUIC v5
-if enable_tuic or "tuic" in existing_inbound_protos:
+# 8. TUIC v5 (8448)
+if enable_tuic:
     tuic_set = {
-        "certificate": ssl_cert,
-        "private_key": ssl_key,
+        "certificate": tuic_cert,
+        "private_key": tuic_key,
         "congestion_control": "bbr",
         "alpn": ["h3", "spdy/3.1"],
         "udp_relay_mode": "native",
@@ -3881,28 +4782,46 @@ if enable_tuic or "tuic" in existing_inbound_protos:
         "authentication_timeout": 3,
         "max_udp_relay_packet_size": 1500,
         "sni": domain,
-        "clients": [{"uuid": def_tuic_uuid, "password": def_tuic_pass, "email": "Client", "enable": True}]
+        "clients": [{
+            "uuid": unified_tuic_uuid,
+            "password": unified_tuic_pass,
+            "email": unified_email,
+            "subId": unified_sub_id,
+            "enable": True
+        }]
     }
     tuic_str = {
         "network": "quic",
         "security": "tls",
-        "externalProxy": [{"dest": domain, "port": tuic_port, "forceTls": "tls", "remark": "TUIC v5"}]
+        "externalProxy": [{"dest": domain, "port": tuic_port, "forceTls": "tls", "remark": make_remark("TUIC v5")}]
     }
-    smart_reconcile_inbound(tuic_port, "tuic", "in-tuic-v5", "TUIC v5", tuic_set, tuic_str, listen="0.0.0.0")
+    tuic_remark = make_remark("TUIC v5")
+    smart_reconcile_inbound(tuic_port, "tuic", "in-tuic-v5", tuic_remark, tuic_set, tuic_str, listen="0.0.0.0")
 
-# 9. Telegram MTProxy FakeTLS
-if enable_mtproto or "mtproto" in existing_inbound_protos:
+# 9. Telegram MTProxy FakeTLS (8444)
+if enable_mtproto:
     mtp_set = {
         "preferIp": "prefer-ipv4",
-        "domainFronting": {"ip": mtproto_faketls_domain, "port": 443, "proxyProtocol": False},
-        "clients": [{"email": "Client", "secret": def_mtp_secret, "adTag": mtproto_adtag, "enable": True}]
+        "domainFronting": {
+            "ip": mtproto_faketls_domain,
+            "port": 443,
+            "proxyProtocol": False
+        },
+        "clients": [{
+            "email": unified_email,
+            "secret": unified_mtp_secret,
+            "adTag": unified_mtp_adtag,
+            "subId": unified_sub_id,
+            "enable": True
+        }]
     }
     mtp_str = {
         "network": "tcp",
         "security": "none",
-        "externalProxy": [{"dest": domain, "port": mtproto_port, "forceTls": "none", "remark": "Telegram MTProxy"}]
+        "externalProxy": [{"dest": domain, "port": mtproto_port, "forceTls": "none", "remark": make_remark("Telegram MTProxy")}]
     }
-    smart_reconcile_inbound(mtproto_port, "mtproto", "in-mtproto-faketls", "Telegram MTProxy", mtp_set, mtp_str, listen="0.0.0.0")
+    mtp_remark = make_remark("Telegram MTProxy")
+    smart_reconcile_inbound(mtproto_port, "mtproto", "in-mtproto-faketls", mtp_remark, mtp_set, mtp_str, listen="0.0.0.0")
 
 # --- Синхронизация реестра Hosts для персональных подписок 3X-UI ---
 cur.execute("""
@@ -3974,237 +4893,155 @@ def lookup_inbound_id(tag_val, port_val):
     return r[0] if r else None
 
 if enable_steal:
-    s_iid = lookup_inbound_id("in-steal-reality", steal_port)
+    s_iid = steal_ib_id if ('steal_ib_id' in locals() and steal_ib_id) else lookup_inbound_id("in-steal-reality", steal_port)
     if s_iid:
         cur.execute("SELECT remark FROM inbounds WHERE id = ?", (s_iid,))
         r_rem = cur.fetchone()
-        s_rem = r_rem[0] if r_rem and r_rem[0] else "VLESS Steal"
+        s_rem = r_rem[0] if r_rem and r_rem[0] else steal_remark
         sync_host_entry(s_iid, s_rem, domain, 443, "same", host_sni=steal_dom, host_fp="firefox", sort_order=1)
 
 if enable_classic:
-    c_iid = lookup_inbound_id("in-classic-reality", classic_port)
+    c_iid = classic_ib_id if ('classic_ib_id' in locals() and classic_ib_id) else lookup_inbound_id("in-classic-reality", classic_port)
     if c_iid:
         cur.execute("SELECT remark FROM inbounds WHERE id = ?", (c_iid,))
         r_rem = cur.fetchone()
-        c_rem = r_rem[0] if r_rem and r_rem[0] else "VLESS Classic"
+        c_rem = r_rem[0] if r_rem and r_rem[0] else classic_remark
         sync_host_entry(c_iid, c_rem, domain, 443, "same", host_sni=classic_sni, host_fp="firefox", sort_order=1)
 
-x_iid = lookup_inbound_id("in-xhttp-stream", xhttp_port)
+x_iid = xhttp_ib_id if ('xhttp_ib_id' in locals() and xhttp_ib_id) else lookup_inbound_id("in-xhttp-stream", xhttp_port)
 if x_iid:
     cur.execute("SELECT remark FROM inbounds WHERE id = ?", (x_iid,))
     r_rem = cur.fetchone()
-    x_rem = r_rem[0] if r_rem and r_rem[0] else "VLESS xHTTP"
+    x_rem = r_rem[0] if r_rem and r_rem[0] else xhttp_remark
     sync_host_entry(x_iid, x_rem, domain, 443, "tls", host_sni=domain, host_path=f"/{xhttp_path.strip('/')}/", host_alpn=json.dumps(["h2"]), host_fp="firefox", sort_order=2)
 
 
+# Формирование клиентских ссылок для новых протоколов
+# SIP002 Base64: ss://BASE64(method:server_psk:user_psk)@host:port#name (совместим с Happ, Shadowrocket, v2rayNG)
+raw_ss_userinfo = f"{ss_method}:{unified_ss_server_pass}:{unified_ss_client_pass}"
+b64_ss_userinfo = base64.urlsafe_b64encode(raw_ss_userinfo.encode("utf-8")).decode("utf-8").rstrip("=")
+ss2022_uri = f"ss://{b64_ss_userinfo}@{domain}:{ss2022_port}#{urllib.parse.quote(make_remark('Shadowsocks 2022'))}"
+tuic_uri = f"tuic://{unified_tuic_uuid}:{unified_tuic_pass}@{domain}:{tuic_port}?congestion_control=bbr&alpn=h3&udp_relay_mode=native&sni={domain}#{urllib.parse.quote(make_remark('TUIC v5'))}"
+mtproto_tg_uri = f"tg://proxy?server={domain}&port={mtproto_port}&secret={unified_mtp_secret}"
+mtproto_https_uri = f"https://t.me/proxy?server={domain}&port={mtproto_port}&secret={unified_mtp_secret}"
+mtproto_bot_secret = unified_mtp_secret[2:34] if len(unified_mtp_secret) >= 34 else unified_mtp_secret
+
+# Формирование клиентских реквизитов для протоколов нового поколения (Next-Gen Protocols)
+enable_masque = os.environ.get("ENABLE_MASQUE", "n").lower() in ("1", "y", "true")
+masque_port = int(os.environ.get("MASQUE_PORT") or "8449")
+masque_user = (os.environ.get("MASQUE_USER") or "client").strip()
+masque_password = os.environ.get("MASQUE_PASSWORD", "").strip() or unified_ss_client_pass
+masque_uri = f"masque://{masque_user}:{masque_password}@{domain}:{masque_port}?alpn=h3#{urllib.parse.quote(make_remark('MASQUE RFC 9484'))}"
+
+enable_shadowtls = os.environ.get("ENABLE_SHADOWTLS", "n").lower() in ("1", "y", "true")
+shadowtls_port = int(os.environ.get("SHADOWTLS_PORT") or "8543")
+shadowtls_sni = (os.environ.get("SHADOWTLS_SNI") or "gateway.icloud.com").strip()
+shadowtls_password = os.environ.get("SHADOWTLS_PASSWORD", "").strip()
+shadowtls_uri = f"shadowtls://{shadowtls_password}@{domain}:443?sni={shadowtls_sni}&version=4#{urllib.parse.quote(make_remark('ShadowTLS v4'))}"
+ss_shadowtls_uri = f"ss://{b64_ss_userinfo}@{domain}:443?plugin=shadow-tls;host={shadowtls_sni};password={shadowtls_password};version=4#{urllib.parse.quote(make_remark('ShadowTLS + SS-2022'))}"
+
+enable_wstunnel = os.environ.get("ENABLE_WSTUNNEL", "n").lower() in ("1", "y", "true")
+wstunnel_port = int(os.environ.get("WSTUNNEL_PORT") or "8080")
+wstunnel_prefix = resolve_wstunnel_prefix(os.environ.get("WSTUNNEL_PREFIX"))
+wstunnel_cli = f"wstunnel client -L socks5://127.0.0.1:1080 --http-upgrade-path-prefix {wstunnel_prefix} wss://{domain}:443"
+wstunnel_uri = f"wstunnel://{domain}:443/{wstunnel_prefix}"
+
+enable_zapret = os.environ.get("ENABLE_ZAPRET", "n").lower() in ("1", "y", "true")
+zapret_qnum = os.environ.get("ZAPRET_QNUM", "200").strip()
+zapret_desync = os.environ.get("ZAPRET_DESYNC", "split2").strip()
+zapret_fooling = os.environ.get("ZAPRET_FOOLING", "md5sig,badseq").strip()
+zapret_info = f"Active (NFQUEUE {zapret_qnum}, desync: {zapret_desync}, fooling: {zapret_fooling})"
+
+enable_naive = os.environ.get("ENABLE_NAIVE", "n").lower() in ("1", "y", "true")
+naive_port = int(os.environ.get("NAIVE_PORT") or "8446")
+naive_domain = (os.environ.get("NAIVE_DOMAIN") or (f"naive.{domain}" if domain else "localhost")).strip()
+naive_user = (os.environ.get("NAIVE_USER") or "user").strip()
+naive_pass = (os.environ.get("NAIVE_PASS") or "").strip()
+if not naive_pass and os.path.isfile("/etc/caddy/Caddyfile"):
+    try:
+        with open("/etc/caddy/Caddyfile", "r") as cf:
+            for cline in cf:
+                if "basic_auth" in cline:
+                    cparts = cline.strip().split()
+                    if len(cparts) >= 3:
+                        naive_user = cparts[1]
+                        naive_pass = cparts[2]
+                        break
+    except Exception:
+        pass
+if not naive_pass:
+    naive_pass = unified_ss_client_pass
+naive_uri = f"naive+https://{naive_user}:{naive_pass}@{naive_domain}:443#{urllib.parse.quote(make_remark('NaïveProxy'))}"
+
+enable_dnstt = os.environ.get("ENABLE_DNSTT", "n").lower() in ("1", "y", "true")
+dnstt_port = int(os.environ.get("DNSTT_PORT") or "53053")
+dnstt_domain = (os.environ.get("DNSTT_DOMAIN") or (f"t.{domain}" if domain else "t.example.com")).strip()
+dnstt_pubkey = os.environ.get("DNSTT_PUBKEY", "").strip()
+if not dnstt_pubkey and os.path.isfile("/etc/dnstt/server.pub"):
+    try:
+        with open("/etc/dnstt/server.pub", "r") as pf:
+            dnstt_pubkey = pf.read().strip()
+    except Exception:
+        pass
+if not dnstt_pubkey and enable_dnstt and not dry_run:
+    try:
+        _raw_priv_hex, dnstt_pubkey = generate_dnstt_keypair()
+        os.makedirs("/etc/dnstt", exist_ok=True)
+        with open("/etc/dnstt/server.key", "w") as kf:
+            kf.write(_raw_priv_hex + "\n")
+        with open("/etc/dnstt/server.pub", "w") as pf:
+            pf.write(dnstt_pubkey + "\n")
+        os.chmod("/etc/dnstt/server.key", 0o600)
+        os.chmod("/etc/dnstt/server.pub", 0o600)
+    except Exception:
+        pass
+dnstt_cli = f"dnstt-client -doh https://dns.google/dns-query -pubkey {dnstt_pubkey} {dnstt_domain} 127.0.0.1:1080"
+
+if enable_mieru and mieru_user and mieru_pass:
+    client_m_port = int(mieru_port.split("-")[0].split(":")[0]) if "-" not in mieru_port and ":" not in mieru_port else mieru_port
+    m_protocols = ["UDP"] if mieru_transport == "UDP" else (["TCP"] if mieru_transport == "TCP" else ["TCP", "UDP"])
+    m_client_bindings = []
+    for p in m_protocols:
+        if isinstance(client_m_port, int) or ("-" not in str(client_m_port)):
+            m_client_bindings.append({"port": int(str(client_m_port).split("-")[0].split(":")[0]), "protocol": p})
+        else:
+            m_client_bindings.append({"portRange": str(client_m_port), "protocol": p})
+
+    mieru_client_config = {
+        "profiles": [{
+            "profileName": "default",
+            "user": {
+                "name": mieru_user,
+                "password": mieru_pass
+            },
+            "servers": [{
+                "ipAddress": domain,
+                "portBindings": m_client_bindings
+            }],
+            "handshakeMode": "HANDSHAKE_STANDARD"
+        }],
+        "activeProfile": "default",
+        "rpcPort": 0,
+        "socks5Port": 1080,
+        "loggingLevel": "INFO",
+        "httpProxyPort": 8080
+    }
+    if not dry_run:
+        try:
+            with open("/root/mieru-client.json", "w", encoding="utf-8") as mcf:
+                json.dump(mieru_client_config, mcf, indent=2)
+            os.chmod("/root/mieru-client.json", 0o600)
+        except Exception:
+            pass
+
 if not dry_run:
-    import urllib.parse
-
-    unified_email = os.environ.get("UNIFIED_CLIENT_TAG") or "Client"
-    unified_uuid = def_uuid
-    unified_sub_id = secrets.token_hex(8)
-    unified_awg_hpk = def_wg_hpk
-    ss_method = def_ss_method
-    unified_ss_server_pass = def_ss_server_pass
-    unified_ss_client_pass = def_ss_client_pass
-    unified_tuic_uuid = def_tuic_uuid
-    unified_tuic_pass = def_tuic_pass
-    unified_mtp_secret = def_mtp_secret
-
-    if "clients" in all_tables:
-        try:
-            cur.execute("SELECT uuid, sub_id, email FROM clients LIMIT 1")
-            r_c = cur.fetchone()
-            if r_c:
-                if r_c[0]: unified_uuid = r_c[0]
-                if r_c[1]: unified_sub_id = r_c[1]
-                if r_c[2]: unified_email = r_c[2]
-        except Exception:
-            pass
-
-    try:
-        cur.execute("SELECT settings FROM inbounds WHERE protocol = 'shadowsocks' LIMIT 1")
-        r_ss = cur.fetchone()
-        if r_ss and r_ss[0]:
-            s_ss = json.loads(r_ss[0])
-            ss_method = s_ss.get("method", def_ss_method)
-            if s_ss.get("password"): unified_ss_server_pass = s_ss["password"]
-            c_ss = s_ss.get("clients", [])
-            if c_ss and c_ss[0].get("password"): unified_ss_client_pass = c_ss[0]["password"]
-    except Exception:
-        pass
-
-    try:
-        cur.execute("SELECT settings FROM inbounds WHERE protocol = 'tuic' LIMIT 1")
-        r_tu = cur.fetchone()
-        if r_tu and r_tu[0]:
-            s_tu = json.loads(r_tu[0])
-            c_tu = s_tu.get("clients", [])
-            if c_tu and c_tu[0].get("uuid"): unified_tuic_uuid = c_tu[0]["uuid"]
-            if c_tu and c_tu[0].get("password"): unified_tuic_pass = c_tu[0]["password"]
-    except Exception:
-        pass
-
-    try:
-        cur.execute("SELECT settings FROM inbounds WHERE protocol = 'mtproto' LIMIT 1")
-        r_mt = cur.fetchone()
-        if r_mt and r_mt[0]:
-            s_mt = json.loads(r_mt[0])
-            c_mt = s_mt.get("clients", [])
-            if c_mt and c_mt[0].get("secret"): unified_mtp_secret = c_mt[0]["secret"]
-    except Exception:
-        pass
-
-    try:
-        cur.execute("SELECT settings FROM inbounds WHERE protocol = 'amneziawg' LIMIT 1")
-        r_awg = cur.fetchone()
-        if r_awg and r_awg[0]:
-            s_awg = json.loads(r_awg[0])
-            srv_awg = s_awg.get("server", {})
-            if srv_awg.get("headerProtectionKey"): unified_awg_hpk = srv_awg["headerProtectionKey"]
-    except Exception:
-        pass
-
-    try:
-        cur.execute("SELECT settings FROM inbounds WHERE protocol = 'vless' LIMIT 1")
-        r_vl = cur.fetchone()
-        if r_vl and r_vl[0]:
-            s_vl = json.loads(r_vl[0])
-            c_vl = s_vl.get("clients", [])
-            if c_vl and c_vl[0].get("id"): unified_uuid = c_vl[0]["id"]
-            if c_vl and c_vl[0].get("subId"): unified_sub_id = c_vl[0]["subId"]
-    except Exception:
-        pass
-
-    raw_ss_userinfo = f"{ss_method}:{unified_ss_server_pass}:{unified_ss_client_pass}"
-    b64_ss_userinfo = base64.urlsafe_b64encode(raw_ss_userinfo.encode("utf-8")).decode("utf-8").rstrip("=")
-    ss2022_uri = f"ss://{b64_ss_userinfo}@{domain}:{ss2022_port}#{urllib.parse.quote('Shadowsocks 2022')}"
-    tuic_uri = f"tuic://{unified_tuic_uuid}:{unified_tuic_pass}@{domain}:{tuic_port}?congestion_control=bbr&alpn=h3&udp_relay_mode=native&sni={domain}#{urllib.parse.quote('TUIC v5')}"
-    mtproto_tg_uri = f"tg://proxy?server={domain}&port={mtproto_port}&secret={unified_mtp_secret}"
-    mtproto_https_uri = f"https://t.me/proxy?server={domain}&port={mtproto_port}&secret={unified_mtp_secret}"
-    mtproto_bot_secret = unified_mtp_secret[2:34] if len(unified_mtp_secret) >= 34 else unified_mtp_secret
-
-    enable_masque = os.environ.get("ENABLE_MASQUE", "n").lower() in ("1", "y", "true")
-    masque_port = int(os.environ.get("MASQUE_PORT") or "8449")
-    masque_user = (os.environ.get("MASQUE_USER") or "client").strip()
-    masque_password = os.environ.get("MASQUE_PASSWORD", "").strip() or unified_ss_client_pass
-    masque_uri = f"masque://{masque_user}:{masque_password}@{domain}:{masque_port}?alpn=h3#{urllib.parse.quote('MASQUE RFC 9484')}"
-
-    enable_shadowtls = os.environ.get("ENABLE_SHADOWTLS", "n").lower() in ("1", "y", "true")
-    shadowtls_port = int(os.environ.get("SHADOWTLS_PORT") or "8543")
-    shadowtls_sni = (os.environ.get("SHADOWTLS_SNI") or "gateway.icloud.com").strip()
-    shadowtls_password = os.environ.get("SHADOWTLS_PASSWORD", "").strip()
-    shadowtls_uri = f"shadowtls://{shadowtls_password}@{domain}:443?sni={shadowtls_sni}&version=4#{urllib.parse.quote('ShadowTLS v4')}"
-    ss_shadowtls_uri = f"ss://{b64_ss_userinfo}@{domain}:443?plugin=shadow-tls;host={shadowtls_sni};password={shadowtls_password};version=4#{urllib.parse.quote('ShadowTLS + SS-2022')}"
-
-    enable_wstunnel = os.environ.get("ENABLE_WSTUNNEL", "n").lower() in ("1", "y", "true")
-    wstunnel_port = int(os.environ.get("WSTUNNEL_PORT") or "8080")
-    wstunnel_prefix = resolve_wstunnel_prefix(os.environ.get("WSTUNNEL_PREFIX"))
-    wstunnel_cli = f"wstunnel client -L socks5://127.0.0.1:1080 --http-upgrade-path-prefix {wstunnel_prefix} wss://{domain}:443"
-    wstunnel_uri = f"wstunnel://{domain}:443/{wstunnel_prefix}"
-
-    enable_zapret = os.environ.get("ENABLE_ZAPRET", "n").lower() in ("1", "y", "true")
-    zapret_qnum = os.environ.get("ZAPRET_QNUM", "200").strip()
-    zapret_desync = os.environ.get("ZAPRET_DESYNC", "split2").strip()
-    zapret_fooling = os.environ.get("ZAPRET_FOOLING", "md5sig,badseq").strip()
-    zapret_info = f"Active (NFQUEUE {zapret_qnum}, desync: {zapret_desync}, fooling: {zapret_fooling})"
-
-    enable_naive = os.environ.get("ENABLE_NAIVE", "n").lower() in ("1", "y", "true")
-    naive_port = int(os.environ.get("NAIVE_PORT") or "8446")
-    naive_domain = (os.environ.get("NAIVE_DOMAIN") or (f"naive.{domain}" if domain else "localhost")).strip()
-    naive_user = (os.environ.get("NAIVE_USER") or "user").strip()
-    naive_pass = (os.environ.get("NAIVE_PASS") or "").strip()
-    if not naive_pass and os.path.isfile("/etc/caddy/Caddyfile"):
-        try:
-            with open("/etc/caddy/Caddyfile", "r") as cf:
-                for cline in cf:
-                    if "basic_auth" in cline:
-                        cparts = cline.strip().split()
-                        if len(cparts) >= 3:
-                            naive_user = cparts[1]
-                            naive_pass = cparts[2]
-                            break
-        except Exception:
-            pass
-    if not naive_pass:
-        naive_pass = unified_ss_client_pass
-    naive_uri = f"naive+https://{naive_user}:{naive_pass}@{naive_domain}:443#{urllib.parse.quote('NaïveProxy')}"
-
-    enable_dnstt = os.environ.get("ENABLE_DNSTT", "n").lower() in ("1", "y", "true")
-    dnstt_port = int(os.environ.get("DNSTT_PORT") or "53053")
-    dnstt_domain = (os.environ.get("DNSTT_DOMAIN") or (f"t.{domain}" if domain else "t.example.com")).strip()
-    dnstt_pubkey = os.environ.get("DNSTT_PUBKEY", "").strip()
-    if not dnstt_pubkey and os.path.isfile("/etc/dnstt/server.pub"):
-        try:
-            with open("/etc/dnstt/server.pub", "r") as pf:
-                dnstt_pubkey = pf.read().strip()
-        except Exception:
-            pass
-    if not dnstt_pubkey and enable_dnstt and not dry_run:
-        try:
-            _P = 2**255 - 19
-            def _clamp(kb):
-                b = bytearray(kb)
-                b[0] &= 248; b[31] &= 127; b[31] |= 64
-                return int.from_bytes(b, "little")
-            def _x25519(k, u=9):
-                x1, x2, z2, x3, z3 = u, 1, 0, u, 1
-                for i in range(254, -1, -1):
-                    bit = (k >> i) & 1
-                    if bit: x2, x3 = x3, x2; z2, z3 = z3, z2
-                    A = (x2 + z2) % _P; AA = (A * A) % _P; B = (x2 - z2) % _P; BB = (B * B) % _P; E = (AA - BB) % _P
-                    x3 = ((x2 * x3 - z2 * z3)**2) % _P; z3 = (x1 * ((x2 * z3 - z2 * x3)**2)) % _P
-                    x2 = (AA * BB) % _P; z2 = (E * (AA + ((121665 * E) % _P))) % _P
-                    if bit: x2, x3 = x3, x2; z2, z3 = z3, z2
-                return (x2 * pow(z2, _P - 2, _P)) % _P
-            _raw_priv = os.urandom(32)
-            _k = _clamp(_raw_priv)
-            dnstt_pubkey = ((_x25519(_k, 9)) % _P).to_bytes(32, "little").hex()
-            os.makedirs("/etc/dnstt", exist_ok=True)
-            with open("/etc/dnstt/server.key", "w") as kf:
-                kf.write(_raw_priv.hex() + "\n")
-            with open("/etc/dnstt/server.pub", "w") as pf:
-                pf.write(dnstt_pubkey + "\n")
-            os.chmod("/etc/dnstt/server.key", 0o600)
-            os.chmod("/etc/dnstt/server.pub", 0o600)
-        except Exception:
-            pass
-    dnstt_cli = f"dnstt-client -doh https://dns.google/dns-query -pubkey {dnstt_pubkey} {dnstt_domain} 127.0.0.1:1080"
-
-    enable_mieru = os.environ.get("ENABLE_MIERU", "n").lower() in ("1", "y", "true")
-    mieru_port = (os.environ.get("MIERU_PORT") or "8450").strip()
-    mieru_transport = (os.environ.get("MIERU_TRANSPORT") or "").strip().upper()
-    mieru_user = (os.environ.get("MIERU_USER") or "").strip()
-    mieru_pass = (os.environ.get("MIERU_PASS") or "").strip()
-    if not mieru_user or not mieru_pass or not mieru_transport:
-        for m_cfg_candidate in ["/etc/mita/config.json", "/etc/mita_server_config.json"]:
-            if os.path.isfile(m_cfg_candidate):
-                try:
-                    with open(m_cfg_candidate, "r", encoding="utf-8") as mf:
-                        mdata = json.load(mf)
-                        if mdata.get("users") and len(mdata["users"]) > 0:
-                            if not mieru_user: mieru_user = mdata["users"][0].get("name", "")
-                            if not mieru_pass: mieru_pass = mdata["users"][0].get("password", "")
-                        if not mieru_transport and mdata.get("portBindings"):
-                            protos = [str(b.get("protocol", "")).upper() for b in mdata["portBindings"] if "protocol" in b]
-                            if "UDP" in protos and "TCP" not in protos:
-                                mieru_transport = "UDP"
-                            elif "TCP" in protos and "UDP" not in protos:
-                                mieru_transport = "TCP"
-                            elif "TCP" in protos and "UDP" in protos:
-                                mieru_transport = "BOTH"
-                    break
-                except Exception:
-                    pass
-    if not mieru_transport:
-        mieru_transport = "BOTH"
-
     try:
         cur.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     except Exception:
         pass
     conn.commit()
 
+    # Сохранение параметров единого клиента во временный файл в /run (tmpfs) с безопасными правами
     try:
         run_file = "/run/3xui_unified_client.env" if os.path.isdir("/run") else "/tmp/3xui_unified_client.env"
         old_umask = os.umask(0o077)
@@ -4218,13 +5055,13 @@ if not dry_run:
             f.write(f"UNIFIED_AWG_PORT='{awg_v3_port}'\n")
             if unified_vless_enkey:
                 f.write(f"UNIFIED_VLESS_ENKEY='{unified_vless_enkey}'\n")
-            if enable_ss2022 or "shadowsocks" in existing_inbound_protos:
+            if enable_ss2022:
                 f.write(f"SS2022_URI='{ss2022_uri}'\n")
                 f.write(f"SS2022_PORT='{ss2022_port}'\n")
-            if enable_tuic or "tuic" in existing_inbound_protos:
+            if enable_tuic:
                 f.write(f"TUIC_URI='{tuic_uri}'\n")
                 f.write(f"TUIC_PORT='{tuic_port}'\n")
-            if enable_mtproto or "mtproto" in existing_inbound_protos:
+            if enable_mtproto:
                 f.write(f"MTPROTO_TG_URI='{mtproto_tg_uri}'\n")
                 f.write(f"MTPROTO_HTTPS_URI='{mtproto_https_uri}'\n")
                 f.write(f"MTPROTO_SECRET='{unified_mtp_secret}'\n")
@@ -4233,13 +5070,18 @@ if not dry_run:
             if enable_masque or os.path.exists("/etc/sing-box/masque.json"):
                 f.write(f"MASQUE_URI='{masque_uri}'\n")
                 f.write(f"MASQUE_PORT='{masque_port}'\n")
+                f.write(f"MASQUE_USER='{masque_user}'\n")
+                f.write(f"MASQUE_PASSWORD='{masque_password}'\n")
             if enable_shadowtls or os.path.exists("/etc/systemd/system/shadow-tls.service"):
                 f.write(f"SHADOWTLS_URI='{shadowtls_uri}'\n")
                 f.write(f"SS_SHADOWTLS_URI='{ss_shadowtls_uri}'\n")
                 f.write(f"SHADOWTLS_PORT='{shadowtls_port}'\n")
-            if wstunnel_prefix and (enable_wstunnel or os.path.exists("/etc/systemd/system/wstunnel.service")):
+                f.write(f"SHADOWTLS_SNI='{shadowtls_sni}'\n")
+                f.write(f"SHADOWTLS_PASSWORD='{shadowtls_password}'\n")
+            if (enable_wstunnel or os.path.exists("/etc/systemd/system/wstunnel.service")) and wstunnel_prefix:
                 f.write(f"WSTUNNEL_CLI='{wstunnel_cli}'\n")
                 f.write(f"WSTUNNEL_URI='{wstunnel_uri}'\n")
+                f.write(f"WSTUNNEL_PREFIX='{wstunnel_prefix}'\n")
                 f.write(f"WSTUNNEL_PORT='{wstunnel_port}'\n")
             if enable_zapret or os.path.exists("/etc/systemd/system/zapret-server.service"):
                 f.write(f"ZAPRET_INFO='{zapret_info}'\n")
@@ -4256,9 +5098,12 @@ if not dry_run:
             if (enable_mieru or os.path.exists("/etc/systemd/system/mita.service")) and mieru_user and mieru_pass:
                 f.write(f"ENABLE_MIERU='1'\n")
                 f.write(f"MIERU_PORT={shlex.quote(mieru_port)}\n")
+                f.write(f"MIERU_PORT_MODE={shlex.quote(mieru_port_mode)}\n")
                 f.write(f"MIERU_TRANSPORT={shlex.quote(mieru_transport)}\n")
                 f.write(f"MIERU_USER={shlex.quote(mieru_user)}\n")
                 f.write(f"MIERU_PASS={shlex.quote(mieru_pass)}\n")
+                if 'mieru_node_name' in locals():
+                    f.write(f"MIERU_NODE_NAME={shlex.quote(mieru_node_name)}\n")
         os.umask(old_umask)
         os.chmod(run_file, 0o600)
     except Exception:

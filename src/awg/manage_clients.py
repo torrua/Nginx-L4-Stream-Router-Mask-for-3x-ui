@@ -306,38 +306,33 @@ def ensure_backend_networking():
         run_cmd("iptables -t mangle -C FORWARD -o awg0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || iptables -t mangle -A FORWARD -o awg0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true")
         run_cmd("iptables -t mangle -C FORWARD -i awg0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || iptables -t mangle -A FORWARD -i awg0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true")
 
-P = 2**255 - 19
-def clamp(k_bytes):
-    b = bytearray(k_bytes)
-    b[0] &= 248; b[31] &= 127; b[31] |= 64
-    return int.from_bytes(b, "little")
-
-def x25519(k, u=9):
-    x1, x2, z2, x3, z3 = u, 1, 0, u, 1
-    for i in range(254, -1, -1):
-        bit = (k >> i) & 1
-        if bit: x2, x3 = x3, x2; z2, z3 = z3, z2
-        A = (x2 + z2) % P; AA = (A * A) % P; B = (x2 - z2) % P; BB = (B * B) % P
-        E = (AA - BB) % P; C = (x3 + z3) % P; D = (x3 - z3) % P
-        x3 = pow(D * A + C * B, 2, P); z3 = (x1 * pow(D * A - C * B, 2, P)) % P
-        x2 = (AA * BB) % P; z2 = (E * (AA + 121665 * E)) % P
-        if bit: x2, x3 = x3, x2; z2, z3 = z3, z2
-    return (x2 * pow(z2, P - 2, P)) % P
-
-def curve25519_pubkey(priv_b64):
+# Curve25519 helper (RFC 7748) via common crypto engine
+try:
+    from src.common.crypto_engine import (
+        P, A24, clamp, x25519, curve25519_pubkey, generate_wg_keypair
+    )
+except ImportError:
     try:
-        raw_priv = base64.b64decode(priv_b64)
-        k = clamp(raw_priv)
-        pub_raw = x25519(k, 9).to_bytes(32, "little")
-        return base64.b64encode(pub_raw).decode()
-    except Exception:
-        return None
-
-def generate_wg_keypair():
-    priv_raw = os.urandom(32)
-    k = clamp(priv_raw)
-    pub_raw = x25519(k, 9).to_bytes(32, "little")
-    return base64.b64encode(priv_raw).decode(), base64.b64encode(pub_raw).decode()
+        from common.crypto_engine import (
+            P, A24, clamp, x25519, curve25519_pubkey, generate_wg_keypair
+        )
+    except ImportError:
+        try:
+            from crypto_engine import (
+                P, A24, clamp, x25519, curve25519_pubkey, generate_wg_keypair
+            )
+        except ImportError:
+            try:
+                from pathlib import Path
+                _p = (Path(__file__).resolve().parent.parent / "common").as_posix()
+                if _p not in sys.path:
+                    sys.path.insert(0, _p)
+                from crypto_engine import (
+                    P, A24, clamp, x25519, curve25519_pubkey, generate_wg_keypair
+                )
+            except Exception:
+                pass
+# @include "common/crypto_engine.py"
 
 def get_server_pubkey():
     for cand_path in [

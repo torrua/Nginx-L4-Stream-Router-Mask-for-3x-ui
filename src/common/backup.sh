@@ -15,25 +15,38 @@ get_sqlite_backup_python() {
     return 1
 }
 
+run_backup_engine() {
+    local py_cmd
+    py_cmd=$(get_sqlite_backup_python || return 1)
+    local script_loc=""
+    for cand in \
+        "$(dirname "${BASH_SOURCE[0]}")/backup_engine.py" \
+        "$(dirname "${BASH_SOURCE[0]}")/../common/backup_engine.py" \
+        "$(dirname "${BASH_SOURCE[0]}")/src/common/backup_engine.py" \
+        "${SCRIPT_DIR:-.}/src/common/backup_engine.py" \
+        "${SCRIPT_DIR:-.}/backup_engine.py"; do
+        if [ -f "$cand" ]; then
+            script_loc="$cand"
+            break
+        fi
+    done
+    if [ -n "$script_loc" ]; then
+        "$py_cmd" "$script_loc" "$@"
+        return $?
+    fi
+    "$py_cmd" - "$@" << 'EOF_BACKUP_ENGINE'
+# @include "common/backup_engine.py"
+EOF_BACKUP_ENGINE
+}
+
 verify_sqlite_backup() {
     local bkp="$1"
-    local py_cmd="$2"
+    local py_cmd="${2:-}"
     if [ ! -s "$bkp" ]; then
         return 1
     fi
-    if [ -n "$py_cmd" ]; then
-        "$py_cmd" -c "
-import sqlite3, sys
-try:
-    conn = sqlite3.connect(sys.argv[1])
-    res = conn.execute('PRAGMA integrity_check;').fetchall()
-    conn.close()
-    if res and res[0][0] == 'ok':
-        sys.exit(0)
-    sys.exit(1)
-except Exception:
-    sys.exit(1)
-" "$bkp" 2>/dev/null && return 0
+    if [ -n "$py_cmd" ] || get_sqlite_backup_python >/dev/null 2>&1; then
+        run_backup_engine verify_db "$bkp" 2>/dev/null && return 0
     elif command -v sqlite3 >/dev/null 2>&1; then
         local check
         check=$(sqlite3 "$bkp" "PRAGMA integrity_check;" 2>/dev/null || true)
@@ -55,23 +68,7 @@ backup_sqlite_db() {
 
     # 1. Primary: Python SQLite Online Backup API (atomic, WAL-safe)
     if [ -n "$py_cmd" ]; then
-        if "$py_cmd" -c "
-import sqlite3, sys
-src_p, dst_p = sys.argv[1], sys.argv[2]
-try:
-    try:
-        src_conn = sqlite3.connect(f'file:{src_p}?mode=ro', uri=True)
-    except Exception:
-        src_conn = sqlite3.connect(src_p)
-    dst_conn = sqlite3.connect(dst_p)
-    with dst_conn:
-        src_conn.backup(dst_conn)
-    dst_conn.close()
-    src_conn.close()
-    sys.exit(0)
-except Exception:
-    sys.exit(1)
-" "$src" "$dst" 2>/dev/null; then
+        if run_backup_engine backup_db "$src" "$dst" 2>/dev/null; then
             if verify_sqlite_backup "$dst" "$py_cmd"; then
                 backup_ok=1
             fi
@@ -190,7 +187,9 @@ do_backup() {
         cfg=$(find_config_file "${SCRIPT_DIR:-.}" 2>/dev/null || true)
     fi
     if [ -n "$cfg" ] && [ -f "$cfg" ]; then
-        source "$cfg" 2>/dev/null || true
+        if command -v load_config_data_safe >/dev/null 2>&1; then
+            load_config_data_safe "$cfg" 2>/dev/null || true
+        fi
         mkdir -p "$staging/env"
         cp -a "$cfg" "$staging/env/server-setup.env" 2>/dev/null || true
     fi
@@ -299,48 +298,10 @@ do_backup() {
     fi
 
     # 8.5 Создание manifest.json со списком файлов и SHA256 (T21.C01)
-    local py_cmd
-    py_cmd=$(get_sqlite_backup_python || echo "python3")
-    "$py_cmd" -c "
-import json, os, hashlib, sys
-
-staging = sys.argv[1]
-manifest_path = os.path.join(staging, 'manifest.json')
-files_map = {}
-
-for root, dirs, files in os.walk(staging):
-    for f in sorted(files):
-        if f == 'manifest.json':
-            continue
-        full_p = os.path.join(root, f)
-        rel_p = os.path.relpath(full_p, staging).replace('\\\\', '/')
-        try:
-            with open(full_p, 'rb') as fp:
-                h = hashlib.sha256(fp.read()).hexdigest()
-            files_map[rel_p] = h
-        except Exception:
-            pass
-
-data = {
-    'format_version': '2.0',
-    'project_version': os.environ.get('SCRIPT_VERSION', 'v9.2.0'),
-    'created_at': os.popen('date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null').read().strip(),
-    'db_path': os.environ.get('DB_PATH', '/etc/x-ui/x-ui.db'),
-    'files': files_map
-}
-
-with open(manifest_path, 'w', encoding='utf-8') as out:
-    json.dump(data, out, indent=2)
-" "$staging" 2>/dev/null || true
+    run_backup_engine create_manifest "$staging" 2>/dev/null || true
 
     # 9. Упаковка архива
-    if ! "$py_cmd" -c "
-import tarfile, sys, os
-archive, staging = sys.argv[1], sys.argv[2]
-with tarfile.open(archive, 'w:gz') as tar:
-    for item in os.listdir(staging):
-        tar.add(os.path.join(staging, item), arcname=item)
-" "$archive" "$staging"; then
+    if ! run_backup_engine create_archive "$archive" "$staging"; then
         rm -rf "$staging"
         die "Ошибка создания tar-архива $archive."
     fi
@@ -398,46 +359,14 @@ do_restore() {
     staging=$(mktemp -d /tmp/vpn-restore-staging.XXXXXX) || die "Не удалось создать временный каталог для распаковки."
 
     # Распаковываем во временный каталог через безопасный фильтр Python
-    local py_cmd
-    py_cmd=$(get_sqlite_backup_python || echo "python3")
-    if ! "$py_cmd" -c "
-import tarfile, sys, os
-archive, target = sys.argv[1], sys.argv[2]
-os.makedirs(target, exist_ok=True)
-dest = os.path.realpath(target)
-
-with tarfile.open(archive, 'r:gz') as tar:
-    if hasattr(tarfile, 'data_filter'):
-        tar.extractall(target, filter='data')
-    else:
-        for m in tar.getmembers():
-            mp = os.path.realpath(os.path.join(dest, m.name))
-            if not mp.startswith(dest + os.sep) and mp != dest:
-                raise RuntimeError(f'Попытка выхода за границы целевого каталога (Path Traversal): {m.name}')
-            if m.islnk() or m.issym():
-                continue
-            tar.extract(m, dest)
-" "$archive" "$staging"; then
+    if ! run_backup_engine extract_archive "$archive" "$staging"; then
         rm -rf "$staging"
         die "Ошибка безопасной распаковки архива $archive."
     fi
 
     # 0. Проверка целостности файлов бэкапа по manifest.json (T21.C01, T21.C02)
     if [ -f "$staging/manifest.json" ]; then
-        if ! "$py_cmd" -c "
-import json, os, hashlib, sys
-staging = sys.argv[1]
-with open(os.path.join(staging, 'manifest.json'), 'r', encoding='utf-8') as fp:
-    manifest = json.load(fp)
-for rel_p, expected_h in manifest.get('files', {}).items():
-    full_p = os.path.join(staging, rel_p)
-    if not os.path.isfile(full_p):
-        sys.exit(f'Missing backed up file: {rel_p}')
-    with open(full_p, 'rb') as f:
-        actual_h = hashlib.sha256(f.read()).hexdigest()
-    if actual_h != expected_h:
-        sys.exit(f'Checksum mismatch for {rel_p}: expected {expected_h}, got {actual_h}')
-" "$staging"; then
+        if ! run_backup_engine verify_manifest "$staging"; then
             rm -rf "$staging"
             die "Ошибка: Нарушена целостность файлов бэкапа по манифесту (T21.C02)!"
         fi
@@ -654,31 +583,10 @@ do_extract() {
     mkdir -p "$target" 2>/dev/null || true
     log "Аварийное безопасное извлечение архива в $target..."
 
-    local py_cmd
-    py_cmd=$(get_sqlite_backup_python || echo "python3")
-    if ! "$py_cmd" -c "
-import tarfile, sys, os
-
-archive, target = sys.argv[1], sys.argv[2]
-os.makedirs(target, exist_ok=True)
-dest = os.path.realpath(target)
-
-with tarfile.open(archive, 'r:gz') as tar:
-    if hasattr(tarfile, 'data_filter'):
-        tar.extractall(target, filter='data')
-    else:
-        for m in tar.getmembers():
-            mp = os.path.realpath(os.path.join(dest, m.name))
-            if not mp.startswith(dest + os.sep) and mp != dest:
-                raise RuntimeError(f'Попытка выхода за границы целевого каталога (Path Traversal): {m.name}')
-            if m.islnk() or m.issym():
-                continue
-            tar.extract(m, dest)
-
-print(f'[OK] Архив {archive} успешно и безопасно извлечён в {target}')
-" "$archive" "$target"; then
+    if ! run_backup_engine extract_archive "$archive" "$target"; then
         die "Ошибка извлечения архива $archive."
     fi
+    ok "Архив $archive успешно и безопасно извлечён в $target"
     return 0
 }
 
@@ -690,47 +598,14 @@ audit_restore_archive() {
     local staging
     staging=$(mktemp -d /tmp/vpn-audit-staging.XXXXXX 2>/dev/null || mktemp -d "${TMPDIR:-/tmp}/vpn-audit-staging.XXXXXX") || die "Не удалось создать временный каталог для аудита."
 
-    local py_cmd
-    py_cmd=$(get_sqlite_backup_python || echo "python3")
-
-    if ! "$py_cmd" -c "
-import tarfile, sys, os
-archive, target = sys.argv[1], sys.argv[2]
-os.makedirs(target, exist_ok=True)
-dest = os.path.realpath(target)
-
-with tarfile.open(archive, 'r:gz') as tar:
-    if hasattr(tarfile, 'data_filter'):
-        tar.extractall(target, filter='data')
-    else:
-        for m in tar.getmembers():
-            mp = os.path.realpath(os.path.join(dest, m.name))
-            if not mp.startswith(dest + os.sep) and mp != dest:
-                raise RuntimeError(f'Попытка выхода за границы целевого каталога (Path Traversal): {m.name}')
-            if m.islnk() or m.issym():
-                continue
-            tar.extract(m, dest)
-" "$archive" "$staging"; then
+    if ! run_backup_engine extract_archive "$archive" "$staging"; then
         rm -rf "$staging"
         die "Ошибка распаковки архива $archive при аудите."
     fi
 
     # 1. Проверка манифеста (T21.C01, T21.C02)
     if [ -f "$staging/manifest.json" ]; then
-        if ! "$py_cmd" -c "
-import json, os, hashlib, sys
-staging = sys.argv[1]
-with open(os.path.join(staging, 'manifest.json'), 'r', encoding='utf-8') as fp:
-    manifest = json.load(fp)
-for rel_p, expected_h in manifest.get('files', {}).items():
-    full_p = os.path.join(staging, rel_p)
-    if not os.path.isfile(full_p):
-        sys.exit(f'Missing backed up file: {rel_p}')
-    with open(full_p, 'rb') as f:
-        actual_h = hashlib.sha256(f.read()).hexdigest()
-    if actual_h != expected_h:
-        sys.exit(f'Checksum mismatch for {rel_p}: expected {expected_h}, got {actual_h}')
-" "$staging"; then
+        if ! run_backup_engine verify_manifest "$staging"; then
             rm -rf "$staging"
             die "Ошибка аудита: Нарушена целостность файлов по манифесту архива (T21.C02)!"
         fi

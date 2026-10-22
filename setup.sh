@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # ==============================================================================
-# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v9.2.0 Universal
+# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v9.3.0 Universal
 # Nginx L4 Stream + 3X-UI + Unix Sockets + Native proxy_http_version 2 + 3 Decoys
 # ==============================================================================
 # Архитектура:
@@ -27,7 +27,7 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="v9.2.0"
+SCRIPT_VERSION="v9.3.0"
 
 
 # Checkpoints use stable step IDs and input signatures, independent of UI numbering.
@@ -1014,7 +1014,7 @@ generate_config_template() {
     local target_file="${1:-server-setup.env.example}"
     cat << 'EOF_CONF' > "$target_file"
 # ==============================================================================
-# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v9.2.0 Universal)
+# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v9.3.0 Universal)
 # ==============================================================================
 # Данный файл позволяет выполнять полностью автоматическую установку:
 # ./setup.sh --config server-setup.env --non-interactive --force
@@ -1544,6 +1544,15 @@ load_config_data_safe() {
         if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
             local key="${BASH_REMATCH[1]}"
             local val="${BASH_REMATCH[2]}"
+
+            # Security check: forbid overwriting critical system environment variables
+            local upper_key="${key^^}"
+            case "$upper_key" in
+                PATH|LD_PRELOAD|LD_LIBRARY_PATH|LD_AUDIT|IFS|SHELL|EUID|UID|PPID|BASH_ENV|ENV|CDPATH|PYTHONPATH|PYTHONHOME|PROMPT_COMMAND|BASH_OPTS|SHELLOPTS|GLOBIGNORE|BASH_XTRACEFD)
+                    echo "[ERROR] Security violation in $env_file line $line_no: overwriting critical system variable '$key' is forbidden!" >&2
+                    return 1
+                    ;;
+            esac
 
             # Handle quotes safely: single quotes preserve raw literal content without expansion (T13.C04)
             if [[ "$val" =~ $re_squote ]]; then
@@ -6231,10 +6240,14 @@ setup_amneziawg_controller() {
 
     log "Развертывание универсального контроллера AmneziaWG в $awg_dir..."
 
-    # Копирование или запись manage_clients.py
+    # Копирование или запись manage_clients.py и crypto_engine.py
     local src_py="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/manage_clients.py"
     if [ -f "$src_py" ]; then
         cp -f "$src_py" "$awg_dir/manage_clients.py"
+    fi
+    local src_crypto="$(cd "$(dirname "${BASH_SOURCE[0]}")/../common" 2>/dev/null && pwd)/crypto_engine.py"
+    if [ -f "$src_crypto" ]; then
+        cp -f "$src_crypto" "$awg_dir/crypto_engine.py"
     fi
 
     # Если файл не существует (например, запуск через curl монолита), пишем встроенную версию
@@ -6548,38 +6561,187 @@ def ensure_backend_networking():
         run_cmd("iptables -t mangle -C FORWARD -o awg0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || iptables -t mangle -A FORWARD -o awg0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true")
         run_cmd("iptables -t mangle -C FORWARD -i awg0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || iptables -t mangle -A FORWARD -i awg0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true")
 
+# Curve25519 helper (RFC 7748) via common crypto engine
+try:
+    from src.common.crypto_engine import (
+        P, A24, clamp, x25519, curve25519_pubkey, generate_wg_keypair
+    )
+except ImportError:
+    try:
+        from common.crypto_engine import (
+            P, A24, clamp, x25519, curve25519_pubkey, generate_wg_keypair
+        )
+    except ImportError:
+        try:
+            from crypto_engine import (
+                P, A24, clamp, x25519, curve25519_pubkey, generate_wg_keypair
+            )
+        except ImportError:
+            try:
+                from pathlib import Path
+                _p = (Path(__file__).resolve().parent.parent / "common").as_posix()
+                if _p not in sys.path:
+                    sys.path.insert(0, _p)
+                from crypto_engine import (
+                    P, A24, clamp, x25519, curve25519_pubkey, generate_wg_keypair
+                )
+            except Exception:
+                pass
+"""
+src/common/crypto_engine.py - Unified RFC 7748 X25519 / Curve25519 Cryptographic Engine.
+
+Single Source of Truth for Curve25519 key exchange, clamping, public key derivation,
+and keypair generation across AmneziaWG, Reality, DNSTT, and 3X-UI panel reconciliation.
+"""
+
+import base64
+import os
+from typing import Optional, Tuple
+
 P = 2**255 - 19
+A24 = 121665
+
+
 def clamp(k_bytes):
+    """Apply RFC 7748 clamping to 32 private key bytes."""
+    if len(k_bytes) != 32:
+        raise ValueError(f"Expected 32 private key bytes, got {len(k_bytes)}")
     b = bytearray(k_bytes)
-    b[0] &= 248; b[31] &= 127; b[31] |= 64
+    b[0] &= 248
+    b[31] &= 127
+    b[31] |= 64
     return int.from_bytes(b, "little")
 
-def x25519(k, u=9):
-    x1, x2, z2, x3, z3 = u, 1, 0, u, 1
+
+def x25519(k: int, u: int = 9) -> int:
+    """RFC 7748 scalar multiplication on Curve25519 using Montgomery ladder."""
+    x1 = u
+    x2, z2 = 1, 0
+    x3, z3 = u, 1
     for i in range(254, -1, -1):
         bit = (k >> i) & 1
-        if bit: x2, x3 = x3, x2; z2, z3 = z3, z2
-        A = (x2 + z2) % P; AA = (A * A) % P; B = (x2 - z2) % P; BB = (B * B) % P
-        E = (AA - BB) % P; C = (x3 + z3) % P; D = (x3 - z3) % P
-        x3 = pow(D * A + C * B, 2, P); z3 = (x1 * pow(D * A - C * B, 2, P)) % P
-        x2 = (AA * BB) % P; z2 = (E * (AA + 121665 * E)) % P
-        if bit: x2, x3 = x3, x2; z2, z3 = z3, z2
+        if bit:
+            x2, x3 = x3, x2
+            z2, z3 = z3, z2
+        A = (x2 + z2) % P
+        AA = (A * A) % P
+        B = (x2 - z2) % P
+        BB = (B * B) % P
+        E = (AA - BB) % P
+        C = (x3 + z3) % P
+        D = (x3 - z3) % P
+        DA = (D * A) % P
+        CB = (C * B) % P
+        x3 = pow(DA + CB, 2, P)
+        z3 = (x1 * pow(DA - CB, 2, P)) % P
+        x2 = (AA * BB) % P
+        z2 = (E * (AA + A24 * E)) % P
+        if bit:
+            x2, x3 = x3, x2
+            z2, z3 = z3, z2
     return (x2 * pow(z2, P - 2, P)) % P
 
-def curve25519_pubkey(priv_b64):
+
+def curve25519_pubkey(priv_b64: str) -> Optional[str]:
+    """Derive standard Base64 Curve25519 public key (AmneziaWG / WireGuard format)."""
     try:
         raw_priv = base64.b64decode(priv_b64)
+        if len(raw_priv) != 32:
+            return None
         k = clamp(raw_priv)
         pub_raw = x25519(k, 9).to_bytes(32, "little")
         return base64.b64encode(pub_raw).decode()
     except Exception:
         return None
 
-def generate_wg_keypair():
+
+def curve25519_reality_pubkey(priv_b64url: str) -> Optional[str]:
+    """Derive unpadded URL-safe Base64 Curve25519 public key (Reality format)."""
+    try:
+        padding = "=" * ((4 - len(priv_b64url) % 4) % 4)
+        raw_priv = base64.urlsafe_b64decode(priv_b64url + padding)
+        if len(raw_priv) != 32:
+            return None
+        k = clamp(raw_priv)
+        pub_raw = x25519(k, 9).to_bytes(32, "little")
+        return base64.urlsafe_b64encode(pub_raw).decode().rstrip("=")
+    except Exception:
+        return None
+
+
+def generate_reality_keypair() -> Tuple[str, str]:
+    """Generate a random (private_key, public_key) pair in Reality URL-safe Base64 format."""
     priv_raw = os.urandom(32)
     k = clamp(priv_raw)
     pub_raw = x25519(k, 9).to_bytes(32, "little")
-    return base64.b64encode(priv_raw).decode(), base64.b64encode(pub_raw).decode()
+    priv_b64 = base64.urlsafe_b64encode(priv_raw).decode().rstrip("=")
+    pub_b64 = base64.urlsafe_b64encode(pub_raw).decode().rstrip("=")
+    return priv_b64, pub_b64
+
+
+def generate_wg_keypair() -> Tuple[str, str]:
+    """Generate a random (private_key, public_key) pair in standard WireGuard / AWG Base64 format."""
+    priv_raw = os.urandom(32)
+    k = clamp(priv_raw)
+    pub_raw = x25519(k, 9).to_bytes(32, "little")
+    priv_b64 = base64.b64encode(priv_raw).decode()
+    pub_b64 = base64.b64encode(pub_raw).decode()
+    return priv_b64, pub_b64
+
+
+def generate_dnstt_keypair() -> Tuple[str, str]:
+    """Generate a random (private_key_hex, public_key_hex) pair for DNSTT tunnels."""
+    raw_priv = os.urandom(32)
+    k = clamp(raw_priv)
+    pub_hex = ((x25519(k, 9)) % P).to_bytes(32, "little").hex()
+    return raw_priv.hex(), pub_hex
+
+
+def dnstt_pubkey_from_privkey(priv_hex: str) -> Optional[str]:
+    """Derive DNSTT public key (hex) from private key (hex)."""
+    try:
+        raw_priv = bytes.fromhex(priv_hex.strip())
+        if len(raw_priv) != 32:
+            return None
+        k = clamp(raw_priv)
+        return ((x25519(k, 9)) % P).to_bytes(32, "little").hex()
+    except Exception:
+        return None
+
+
+def validate_dnstt_pubkey(pubkey: str) -> bool:
+    """Validate 64-char hex string as DNSTT public key."""
+    if not isinstance(pubkey, str):
+        return False
+    s = pubkey.strip().lower()
+    return len(s) == 64 and all(c in "0123456789abcdef" for c in s)
+
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) > 1:
+        cmd = sys.argv[1]
+        if cmd == "wg_pubkey" and len(sys.argv) > 2:
+            print(curve25519_pubkey(sys.argv[2]) or "")
+        elif cmd == "wg_keypair":
+            priv, pub = generate_wg_keypair()
+            print(f"{priv} {pub}")
+        elif cmd == "reality_pubkey" and len(sys.argv) > 2:
+            print(curve25519_reality_pubkey(sys.argv[2]) or "")
+        elif cmd == "reality_keypair":
+            priv, pub = generate_reality_keypair()
+            print(f"{priv} {pub}")
+        elif cmd == "dnstt_keypair":
+            priv, pub = generate_dnstt_keypair()
+            if len(sys.argv) > 3:
+                with open(sys.argv[2], "w", encoding="utf-8") as kf:
+                    kf.write(priv + "\n")
+                with open(sys.argv[3], "w", encoding="utf-8") as pf:
+                    pf.write(pub + "\n")
+            else:
+                print(f"{priv} {pub}")
+        elif cmd == "dnstt_pubkey" and len(sys.argv) > 2:
+            print(dnstt_pubkey_from_privkey(sys.argv[2]) or "")
 
 def get_server_pubkey():
     for cand_path in [
@@ -7824,7 +7986,167 @@ if __name__ == "__main__":
     main()
 EOF_AWG_PY
     fi
+    if [ ! -f "$awg_dir/crypto_engine.py" ]; then
+        cat << 'EOF_AWG_CRYPTO' > "$awg_dir/crypto_engine.py"
+"""
+src/common/crypto_engine.py - Unified RFC 7748 X25519 / Curve25519 Cryptographic Engine.
+
+Single Source of Truth for Curve25519 key exchange, clamping, public key derivation,
+and keypair generation across AmneziaWG, Reality, DNSTT, and 3X-UI panel reconciliation.
+"""
+
+import base64
+import os
+from typing import Optional, Tuple
+
+P = 2**255 - 19
+A24 = 121665
+
+
+def clamp(k_bytes):
+    """Apply RFC 7748 clamping to 32 private key bytes."""
+    if len(k_bytes) != 32:
+        raise ValueError(f"Expected 32 private key bytes, got {len(k_bytes)}")
+    b = bytearray(k_bytes)
+    b[0] &= 248
+    b[31] &= 127
+    b[31] |= 64
+    return int.from_bytes(b, "little")
+
+
+def x25519(k: int, u: int = 9) -> int:
+    """RFC 7748 scalar multiplication on Curve25519 using Montgomery ladder."""
+    x1 = u
+    x2, z2 = 1, 0
+    x3, z3 = u, 1
+    for i in range(254, -1, -1):
+        bit = (k >> i) & 1
+        if bit:
+            x2, x3 = x3, x2
+            z2, z3 = z3, z2
+        A = (x2 + z2) % P
+        AA = (A * A) % P
+        B = (x2 - z2) % P
+        BB = (B * B) % P
+        E = (AA - BB) % P
+        C = (x3 + z3) % P
+        D = (x3 - z3) % P
+        DA = (D * A) % P
+        CB = (C * B) % P
+        x3 = pow(DA + CB, 2, P)
+        z3 = (x1 * pow(DA - CB, 2, P)) % P
+        x2 = (AA * BB) % P
+        z2 = (E * (AA + A24 * E)) % P
+        if bit:
+            x2, x3 = x3, x2
+            z2, z3 = z3, z2
+    return (x2 * pow(z2, P - 2, P)) % P
+
+
+def curve25519_pubkey(priv_b64: str) -> Optional[str]:
+    """Derive standard Base64 Curve25519 public key (AmneziaWG / WireGuard format)."""
+    try:
+        raw_priv = base64.b64decode(priv_b64)
+        if len(raw_priv) != 32:
+            return None
+        k = clamp(raw_priv)
+        pub_raw = x25519(k, 9).to_bytes(32, "little")
+        return base64.b64encode(pub_raw).decode()
+    except Exception:
+        return None
+
+
+def curve25519_reality_pubkey(priv_b64url: str) -> Optional[str]:
+    """Derive unpadded URL-safe Base64 Curve25519 public key (Reality format)."""
+    try:
+        padding = "=" * ((4 - len(priv_b64url) % 4) % 4)
+        raw_priv = base64.urlsafe_b64decode(priv_b64url + padding)
+        if len(raw_priv) != 32:
+            return None
+        k = clamp(raw_priv)
+        pub_raw = x25519(k, 9).to_bytes(32, "little")
+        return base64.urlsafe_b64encode(pub_raw).decode().rstrip("=")
+    except Exception:
+        return None
+
+
+def generate_reality_keypair() -> Tuple[str, str]:
+    """Generate a random (private_key, public_key) pair in Reality URL-safe Base64 format."""
+    priv_raw = os.urandom(32)
+    k = clamp(priv_raw)
+    pub_raw = x25519(k, 9).to_bytes(32, "little")
+    priv_b64 = base64.urlsafe_b64encode(priv_raw).decode().rstrip("=")
+    pub_b64 = base64.urlsafe_b64encode(pub_raw).decode().rstrip("=")
+    return priv_b64, pub_b64
+
+
+def generate_wg_keypair() -> Tuple[str, str]:
+    """Generate a random (private_key, public_key) pair in standard WireGuard / AWG Base64 format."""
+    priv_raw = os.urandom(32)
+    k = clamp(priv_raw)
+    pub_raw = x25519(k, 9).to_bytes(32, "little")
+    priv_b64 = base64.b64encode(priv_raw).decode()
+    pub_b64 = base64.b64encode(pub_raw).decode()
+    return priv_b64, pub_b64
+
+
+def generate_dnstt_keypair() -> Tuple[str, str]:
+    """Generate a random (private_key_hex, public_key_hex) pair for DNSTT tunnels."""
+    raw_priv = os.urandom(32)
+    k = clamp(raw_priv)
+    pub_hex = ((x25519(k, 9)) % P).to_bytes(32, "little").hex()
+    return raw_priv.hex(), pub_hex
+
+
+def dnstt_pubkey_from_privkey(priv_hex: str) -> Optional[str]:
+    """Derive DNSTT public key (hex) from private key (hex)."""
+    try:
+        raw_priv = bytes.fromhex(priv_hex.strip())
+        if len(raw_priv) != 32:
+            return None
+        k = clamp(raw_priv)
+        return ((x25519(k, 9)) % P).to_bytes(32, "little").hex()
+    except Exception:
+        return None
+
+
+def validate_dnstt_pubkey(pubkey: str) -> bool:
+    """Validate 64-char hex string as DNSTT public key."""
+    if not isinstance(pubkey, str):
+        return False
+    s = pubkey.strip().lower()
+    return len(s) == 64 and all(c in "0123456789abcdef" for c in s)
+
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) > 1:
+        cmd = sys.argv[1]
+        if cmd == "wg_pubkey" and len(sys.argv) > 2:
+            print(curve25519_pubkey(sys.argv[2]) or "")
+        elif cmd == "wg_keypair":
+            priv, pub = generate_wg_keypair()
+            print(f"{priv} {pub}")
+        elif cmd == "reality_pubkey" and len(sys.argv) > 2:
+            print(curve25519_reality_pubkey(sys.argv[2]) or "")
+        elif cmd == "reality_keypair":
+            priv, pub = generate_reality_keypair()
+            print(f"{priv} {pub}")
+        elif cmd == "dnstt_keypair":
+            priv, pub = generate_dnstt_keypair()
+            if len(sys.argv) > 3:
+                with open(sys.argv[2], "w", encoding="utf-8") as kf:
+                    kf.write(priv + "\n")
+                with open(sys.argv[3], "w", encoding="utf-8") as pf:
+                    pf.write(pub + "\n")
+            else:
+                print(f"{priv} {pub}")
+        elif cmd == "dnstt_pubkey" and len(sys.argv) > 2:
+            print(dnstt_pubkey_from_privkey(sys.argv[2]) or "")
+EOF_AWG_CRYPTO
+    fi
     chmod 750 "$awg_dir/manage_clients.py"
+    chmod 640 "$awg_dir/crypto_engine.py" 2>/dev/null || true
 
     # Настройка порта и хоста
     local awg_port="${AWG_SERVER_PORT:-${AWG_STANDALONE_PORT:-}}"
@@ -7928,26 +8250,174 @@ deploy_amneziawg_backend() {
                 srv_pub=$(echo "$srv_priv" | awg pubkey 2>/dev/null || true)
             else
                 srv_priv="$(generate_base64_token 32)"
-                srv_pub=$(python3 -c "
-import base64, os
+                srv_pub=$(python3 - "$srv_priv" << 'EOF_CRYPTO_PUB' 2>/dev/null || true
+try:
+    from src.common.crypto_engine import curve25519_pubkey
+except ImportError:
+    try:
+        from common.crypto_engine import curve25519_pubkey
+    except ImportError:
+        pass
+"""
+src/common/crypto_engine.py - Unified RFC 7748 X25519 / Curve25519 Cryptographic Engine.
+
+Single Source of Truth for Curve25519 key exchange, clamping, public key derivation,
+and keypair generation across AmneziaWG, Reality, DNSTT, and 3X-UI panel reconciliation.
+"""
+
+import base64
+import os
+from typing import Optional, Tuple
+
 P = 2**255 - 19
-def x25519(k, u=9):
-    x1, x2, z2, x3, z3 = u, 1, 0, u, 1
+A24 = 121665
+
+
+def clamp(k_bytes):
+    """Apply RFC 7748 clamping to 32 private key bytes."""
+    if len(k_bytes) != 32:
+        raise ValueError(f"Expected 32 private key bytes, got {len(k_bytes)}")
+    b = bytearray(k_bytes)
+    b[0] &= 248
+    b[31] &= 127
+    b[31] |= 64
+    return int.from_bytes(b, "little")
+
+
+def x25519(k: int, u: int = 9) -> int:
+    """RFC 7748 scalar multiplication on Curve25519 using Montgomery ladder."""
+    x1 = u
+    x2, z2 = 1, 0
+    x3, z3 = u, 1
     for i in range(254, -1, -1):
         bit = (k >> i) & 1
-        if bit: x2, x3 = x3, x2; z2, z3 = z3, z2
-        A = (x2 + z2) % P; AA = (A * A) % P; B = (x2 - z2) % P; BB = (B * B) % P
-        E = (AA - BB) % P; C = (x3 + z3) % P; D = (x3 - z3) % P
-        x3 = pow(D * A + C * B, 2, P); z3 = (x1 * pow(D * A - C * B, 2, P)) % P
-        x2 = (AA * BB) % P; z2 = (E * (AA + 121665 * E)) % P
-        if bit: x2, x3 = x3, x2; z2, z3 = z3, z2
+        if bit:
+            x2, x3 = x3, x2
+            z2, z3 = z3, z2
+        A = (x2 + z2) % P
+        AA = (A * A) % P
+        B = (x2 - z2) % P
+        BB = (B * B) % P
+        E = (AA - BB) % P
+        C = (x3 + z3) % P
+        D = (x3 - z3) % P
+        DA = (D * A) % P
+        CB = (C * B) % P
+        x3 = pow(DA + CB, 2, P)
+        z3 = (x1 * pow(DA - CB, 2, P)) % P
+        x2 = (AA * BB) % P
+        z2 = (E * (AA + A24 * E)) % P
+        if bit:
+            x2, x3 = x3, x2
+            z2, z3 = z3, z2
     return (x2 * pow(z2, P - 2, P)) % P
-raw = bytearray(base64.b64decode('$srv_priv'))
-raw[0] &= 248; raw[31] &= 127; raw[31] |= 64
-k = int.from_bytes(raw, 'little')
-pub = x25519(k, 9).to_bytes(32, 'little')
-print(base64.b64encode(pub).decode())
-" 2>/dev/null || echo "")
+
+
+def curve25519_pubkey(priv_b64: str) -> Optional[str]:
+    """Derive standard Base64 Curve25519 public key (AmneziaWG / WireGuard format)."""
+    try:
+        raw_priv = base64.b64decode(priv_b64)
+        if len(raw_priv) != 32:
+            return None
+        k = clamp(raw_priv)
+        pub_raw = x25519(k, 9).to_bytes(32, "little")
+        return base64.b64encode(pub_raw).decode()
+    except Exception:
+        return None
+
+
+def curve25519_reality_pubkey(priv_b64url: str) -> Optional[str]:
+    """Derive unpadded URL-safe Base64 Curve25519 public key (Reality format)."""
+    try:
+        padding = "=" * ((4 - len(priv_b64url) % 4) % 4)
+        raw_priv = base64.urlsafe_b64decode(priv_b64url + padding)
+        if len(raw_priv) != 32:
+            return None
+        k = clamp(raw_priv)
+        pub_raw = x25519(k, 9).to_bytes(32, "little")
+        return base64.urlsafe_b64encode(pub_raw).decode().rstrip("=")
+    except Exception:
+        return None
+
+
+def generate_reality_keypair() -> Tuple[str, str]:
+    """Generate a random (private_key, public_key) pair in Reality URL-safe Base64 format."""
+    priv_raw = os.urandom(32)
+    k = clamp(priv_raw)
+    pub_raw = x25519(k, 9).to_bytes(32, "little")
+    priv_b64 = base64.urlsafe_b64encode(priv_raw).decode().rstrip("=")
+    pub_b64 = base64.urlsafe_b64encode(pub_raw).decode().rstrip("=")
+    return priv_b64, pub_b64
+
+
+def generate_wg_keypair() -> Tuple[str, str]:
+    """Generate a random (private_key, public_key) pair in standard WireGuard / AWG Base64 format."""
+    priv_raw = os.urandom(32)
+    k = clamp(priv_raw)
+    pub_raw = x25519(k, 9).to_bytes(32, "little")
+    priv_b64 = base64.b64encode(priv_raw).decode()
+    pub_b64 = base64.b64encode(pub_raw).decode()
+    return priv_b64, pub_b64
+
+
+def generate_dnstt_keypair() -> Tuple[str, str]:
+    """Generate a random (private_key_hex, public_key_hex) pair for DNSTT tunnels."""
+    raw_priv = os.urandom(32)
+    k = clamp(raw_priv)
+    pub_hex = ((x25519(k, 9)) % P).to_bytes(32, "little").hex()
+    return raw_priv.hex(), pub_hex
+
+
+def dnstt_pubkey_from_privkey(priv_hex: str) -> Optional[str]:
+    """Derive DNSTT public key (hex) from private key (hex)."""
+    try:
+        raw_priv = bytes.fromhex(priv_hex.strip())
+        if len(raw_priv) != 32:
+            return None
+        k = clamp(raw_priv)
+        return ((x25519(k, 9)) % P).to_bytes(32, "little").hex()
+    except Exception:
+        return None
+
+
+def validate_dnstt_pubkey(pubkey: str) -> bool:
+    """Validate 64-char hex string as DNSTT public key."""
+    if not isinstance(pubkey, str):
+        return False
+    s = pubkey.strip().lower()
+    return len(s) == 64 and all(c in "0123456789abcdef" for c in s)
+
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) > 1:
+        cmd = sys.argv[1]
+        if cmd == "wg_pubkey" and len(sys.argv) > 2:
+            print(curve25519_pubkey(sys.argv[2]) or "")
+        elif cmd == "wg_keypair":
+            priv, pub = generate_wg_keypair()
+            print(f"{priv} {pub}")
+        elif cmd == "reality_pubkey" and len(sys.argv) > 2:
+            print(curve25519_reality_pubkey(sys.argv[2]) or "")
+        elif cmd == "reality_keypair":
+            priv, pub = generate_reality_keypair()
+            print(f"{priv} {pub}")
+        elif cmd == "dnstt_keypair":
+            priv, pub = generate_dnstt_keypair()
+            if len(sys.argv) > 3:
+                with open(sys.argv[2], "w", encoding="utf-8") as kf:
+                    kf.write(priv + "\n")
+                with open(sys.argv[3], "w", encoding="utf-8") as pf:
+                    pf.write(pub + "\n")
+            else:
+                print(f"{priv} {pub}")
+        elif cmd == "dnstt_pubkey" and len(sys.argv) > 2:
+            print(dnstt_pubkey_from_privkey(sys.argv[2]) or "")
+import sys
+if len(sys.argv) > 1:
+    print(curve25519_pubkey(sys.argv[1]) or "")
+EOF_CRYPTO_PUB
+)
             fi
         fi
 
@@ -8398,7 +8868,7 @@ setup_naive_service() {
         local caddy_tmp="/tmp/caddy_naive_$$"
         mkdir -p "$caddy_tmp"
         local rel_ver="${SCRIPT_VERSION:-v9.1.0}"
-        [[ "$rel_ver" == "v9.2.0" ]] && rel_ver="v9.1.0"
+        [[ "$rel_ver" == "v9.3.0" ]] && rel_ver="v9.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/caddy-naive-linux-${caddy_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
@@ -8544,7 +9014,7 @@ setup_dnstt_service() {
         local dnstt_tmp="/tmp/dnstt_$$"
         mkdir -p "$dnstt_tmp"
         local rel_ver="${SCRIPT_VERSION:-v9.1.0}"
-        [[ "$rel_ver" == "v9.2.0" ]] && rel_ver="v9.1.0"
+        [[ "$rel_ver" == "v9.3.0" ]] && rel_ver="v9.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/dnstt-server-linux-${dnstt_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
@@ -8586,37 +9056,181 @@ setup_dnstt_service() {
             "$dnstt_bin" -gen-key -privkey-file /etc/dnstt/server.key -pubkey-file /etc/dnstt/server.pub 2>/dev/null || true
         fi
         if [ ! -f /etc/dnstt/server.key ] || [ ! -f /etc/dnstt/server.pub ]; then
-            python3 -c "
+            python3 - /etc/dnstt/server.key /etc/dnstt/server.pub << 'EOF_DNSTT_KEY' 2>/dev/null || true
+try:
+    from src.common.crypto_engine import generate_dnstt_keypair
+except ImportError:
+    try:
+        from common.crypto_engine import generate_dnstt_keypair
+    except ImportError:
+        pass
+"""
+src/common/crypto_engine.py - Unified RFC 7748 X25519 / Curve25519 Cryptographic Engine.
+
+Single Source of Truth for Curve25519 key exchange, clamping, public key derivation,
+and keypair generation across AmneziaWG, Reality, DNSTT, and 3X-UI panel reconciliation.
+"""
+
+import base64
 import os
+from typing import Optional, Tuple
+
 P = 2**255 - 19
 A24 = 121665
+
+
 def clamp(k_bytes):
+    """Apply RFC 7748 clamping to 32 private key bytes."""
+    if len(k_bytes) != 32:
+        raise ValueError(f"Expected 32 private key bytes, got {len(k_bytes)}")
     b = bytearray(k_bytes)
     b[0] &= 248
     b[31] &= 127
     b[31] |= 64
-    return int.from_bytes(b, 'little')
-def x25519(k, u=9):
-    x1, x2, z2, x3, z3 = u, 1, 0, u, 1
+    return int.from_bytes(b, "little")
+
+
+def x25519(k: int, u: int = 9) -> int:
+    """RFC 7748 scalar multiplication on Curve25519 using Montgomery ladder."""
+    x1 = u
+    x2, z2 = 1, 0
+    x3, z3 = u, 1
     for i in range(254, -1, -1):
         bit = (k >> i) & 1
-        if bit: x2, x3 = x3, x2; z2, z3 = z3, z2
-        A = (x2 + z2) % P; AA = (A * A) % P; B = (x2 - z2) % P; BB = (B * B) % P; E = (AA - BB) % P
-        C = (x3 + z3) % P; D = (x3 - z3) % P; DA = (D * A) % P; CB = (C * B) % P
-        x3 = pow(DA + CB, 2, P); z3 = (x1 * pow(DA - CB, 2, P)) % P; x2 = (AA * BB) % P; z2 = (E * (AA + A24 * E)) % P
-        if bit: x2, x3 = x3, x2; z2, z3 = z3, z2
+        if bit:
+            x2, x3 = x3, x2
+            z2, z3 = z3, z2
+        A = (x2 + z2) % P
+        AA = (A * A) % P
+        B = (x2 - z2) % P
+        BB = (B * B) % P
+        E = (AA - BB) % P
+        C = (x3 + z3) % P
+        D = (x3 - z3) % P
+        DA = (D * A) % P
+        CB = (C * B) % P
+        x3 = pow(DA + CB, 2, P)
+        z3 = (x1 * pow(DA - CB, 2, P)) % P
+        x2 = (AA * BB) % P
+        z2 = (E * (AA + A24 * E)) % P
+        if bit:
+            x2, x3 = x3, x2
+            z2, z3 = z3, z2
     return (x2 * pow(z2, P - 2, P)) % P
-raw_priv = os.urandom(32)
-k = clamp(raw_priv)
-pub = ((x25519(k, 9)) % P).to_bytes(32, 'little').hex()
-with open('/etc/dnstt/server.key', 'w') as kf:
-    kf.write(raw_priv.hex() + '\n')
-with open('/etc/dnstt/server.pub', 'w') as pf:
-    pf.write(pub + '\n')
-" 2>/dev/null || {
+
+
+def curve25519_pubkey(priv_b64: str) -> Optional[str]:
+    """Derive standard Base64 Curve25519 public key (AmneziaWG / WireGuard format)."""
+    try:
+        raw_priv = base64.b64decode(priv_b64)
+        if len(raw_priv) != 32:
+            return None
+        k = clamp(raw_priv)
+        pub_raw = x25519(k, 9).to_bytes(32, "little")
+        return base64.b64encode(pub_raw).decode()
+    except Exception:
+        return None
+
+
+def curve25519_reality_pubkey(priv_b64url: str) -> Optional[str]:
+    """Derive unpadded URL-safe Base64 Curve25519 public key (Reality format)."""
+    try:
+        padding = "=" * ((4 - len(priv_b64url) % 4) % 4)
+        raw_priv = base64.urlsafe_b64decode(priv_b64url + padding)
+        if len(raw_priv) != 32:
+            return None
+        k = clamp(raw_priv)
+        pub_raw = x25519(k, 9).to_bytes(32, "little")
+        return base64.urlsafe_b64encode(pub_raw).decode().rstrip("=")
+    except Exception:
+        return None
+
+
+def generate_reality_keypair() -> Tuple[str, str]:
+    """Generate a random (private_key, public_key) pair in Reality URL-safe Base64 format."""
+    priv_raw = os.urandom(32)
+    k = clamp(priv_raw)
+    pub_raw = x25519(k, 9).to_bytes(32, "little")
+    priv_b64 = base64.urlsafe_b64encode(priv_raw).decode().rstrip("=")
+    pub_b64 = base64.urlsafe_b64encode(pub_raw).decode().rstrip("=")
+    return priv_b64, pub_b64
+
+
+def generate_wg_keypair() -> Tuple[str, str]:
+    """Generate a random (private_key, public_key) pair in standard WireGuard / AWG Base64 format."""
+    priv_raw = os.urandom(32)
+    k = clamp(priv_raw)
+    pub_raw = x25519(k, 9).to_bytes(32, "little")
+    priv_b64 = base64.b64encode(priv_raw).decode()
+    pub_b64 = base64.b64encode(pub_raw).decode()
+    return priv_b64, pub_b64
+
+
+def generate_dnstt_keypair() -> Tuple[str, str]:
+    """Generate a random (private_key_hex, public_key_hex) pair for DNSTT tunnels."""
+    raw_priv = os.urandom(32)
+    k = clamp(raw_priv)
+    pub_hex = ((x25519(k, 9)) % P).to_bytes(32, "little").hex()
+    return raw_priv.hex(), pub_hex
+
+
+def dnstt_pubkey_from_privkey(priv_hex: str) -> Optional[str]:
+    """Derive DNSTT public key (hex) from private key (hex)."""
+    try:
+        raw_priv = bytes.fromhex(priv_hex.strip())
+        if len(raw_priv) != 32:
+            return None
+        k = clamp(raw_priv)
+        return ((x25519(k, 9)) % P).to_bytes(32, "little").hex()
+    except Exception:
+        return None
+
+
+def validate_dnstt_pubkey(pubkey: str) -> bool:
+    """Validate 64-char hex string as DNSTT public key."""
+    if not isinstance(pubkey, str):
+        return False
+    s = pubkey.strip().lower()
+    return len(s) == 64 and all(c in "0123456789abcdef" for c in s)
+
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) > 1:
+        cmd = sys.argv[1]
+        if cmd == "wg_pubkey" and len(sys.argv) > 2:
+            print(curve25519_pubkey(sys.argv[2]) or "")
+        elif cmd == "wg_keypair":
+            priv, pub = generate_wg_keypair()
+            print(f"{priv} {pub}")
+        elif cmd == "reality_pubkey" and len(sys.argv) > 2:
+            print(curve25519_reality_pubkey(sys.argv[2]) or "")
+        elif cmd == "reality_keypair":
+            priv, pub = generate_reality_keypair()
+            print(f"{priv} {pub}")
+        elif cmd == "dnstt_keypair":
+            priv, pub = generate_dnstt_keypair()
+            if len(sys.argv) > 3:
+                with open(sys.argv[2], "w", encoding="utf-8") as kf:
+                    kf.write(priv + "\n")
+                with open(sys.argv[3], "w", encoding="utf-8") as pf:
+                    pf.write(pub + "\n")
+            else:
+                print(f"{priv} {pub}")
+        elif cmd == "dnstt_pubkey" and len(sys.argv) > 2:
+            print(dnstt_pubkey_from_privkey(sys.argv[2]) or "")
+import sys
+key_file, pub_file = sys.argv[1], sys.argv[2]
+priv_hex, pub_hex = generate_dnstt_keypair()
+with open(key_file, 'w') as kf:
+    kf.write(priv_hex + '\n')
+with open(pub_file, 'w') as pf:
+    pf.write(pub_hex + '\n')
+EOF_DNSTT_KEY
+            if [ ! -f /etc/dnstt/server.key ] || [ ! -f /etc/dnstt/server.pub ]; then
                 head /dev/urandom 2>/dev/null | tr -dc 0-9a-f | head -c 64 > /etc/dnstt/server.key 2>/dev/null || echo "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" > /etc/dnstt/server.key
                 head /dev/urandom 2>/dev/null | tr -dc 0-9a-f | head -c 64 > /etc/dnstt/server.pub 2>/dev/null || echo "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210" > /etc/dnstt/server.pub
-            }
+            fi
         fi
         chmod 600 /etc/dnstt/server.key /etc/dnstt/server.pub 2>/dev/null || true
     fi
@@ -12059,6 +12673,15 @@ load_config_data_safe() {
             local key="${BASH_REMATCH[1]}"
             local val="${BASH_REMATCH[2]}"
 
+            # Security check: forbid overwriting critical system environment variables
+            local upper_key="${key^^}"
+            case "$upper_key" in
+                PATH|LD_PRELOAD|LD_LIBRARY_PATH|LD_AUDIT|IFS|SHELL|EUID|UID|PPID|BASH_ENV|ENV|CDPATH|PYTHONPATH|PYTHONHOME|PROMPT_COMMAND|BASH_OPTS|SHELLOPTS|GLOBIGNORE|BASH_XTRACEFD)
+                    echo "[ERROR] Security violation in $env_file line $line_no: overwriting critical system variable '$key' is forbidden!" >&2
+                    return 1
+                    ;;
+            esac
+
             # Handle quotes safely: single quotes preserve raw literal content without expansion (T13.C04)
             if [[ "$val" =~ $re_squote ]]; then
                 val="${BASH_REMATCH[1]}"
@@ -12330,25 +12953,308 @@ get_sqlite_backup_python() {
     return 1
 }
 
+run_backup_engine() {
+    local py_cmd
+    py_cmd=$(get_sqlite_backup_python || return 1)
+    local script_loc=""
+    for cand in \
+        "$(dirname "${BASH_SOURCE[0]}")/backup_engine.py" \
+        "$(dirname "${BASH_SOURCE[0]}")/../common/backup_engine.py" \
+        "$(dirname "${BASH_SOURCE[0]}")/src/common/backup_engine.py" \
+        "${SCRIPT_DIR:-.}/src/common/backup_engine.py" \
+        "${SCRIPT_DIR:-.}/backup_engine.py"; do
+        if [ -f "$cand" ]; then
+            script_loc="$cand"
+            break
+        fi
+    done
+    if [ -n "$script_loc" ]; then
+        "$py_cmd" "$script_loc" "$@"
+        return $?
+    fi
+    "$py_cmd" - "$@" << 'EOF_BACKUP_ENGINE'
+"""
+src/common/backup_engine.py - Unified Backup & Verification Engine.
+
+Structured Python engine for SQLite WAL-safe live backups, integrity verification,
+SHA-256 backup manifest generation/verification, and secure tarfile archive handling.
+"""
+
+import hashlib
+import json
+import os
+import sqlite3
+import sys
+import tarfile
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Dict, List, Optional, Union
+
+
+def _sha256_file(file_path: Union[str, Path]) -> Optional[str]:
+    """Calculate SHA-256 digest of a file in memory-efficient 64KB chunks."""
+    h = hashlib.sha256()
+    try:
+        with open(str(file_path), "rb") as f:
+            while True:
+                chunk = f.read(65536)
+                if not chunk:
+                    break
+                h.update(chunk)
+        return h.hexdigest()
+    except Exception:
+        return None
+
+
+def verify_db(db_path: Union[str, Path]) -> bool:
+    """Verify SQLite database integrity using PRAGMA integrity_check."""
+    p = str(db_path)
+    if not os.path.isfile(p) or os.path.getsize(p) == 0:
+        return False
+    conn = None
+    try:
+        abs_p = os.path.abspath(p)
+        try:
+            conn = sqlite3.connect(f"file:{abs_p}?mode=ro", uri=True, timeout=10.0)
+        except Exception:
+            conn = sqlite3.connect(p, timeout=10.0)
+        res = conn.execute("PRAGMA integrity_check;").fetchall()
+        return bool(res and res[0][0] == "ok")
+    except Exception:
+        return False
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def backup_db(src_path: Union[str, Path], dst_path: Union[str, Path]) -> bool:
+    """Perform atomic, WAL-safe online backup of an SQLite database."""
+    src_p = str(src_path)
+    dst_p = str(dst_path)
+
+    if not os.path.isfile(src_p):
+        return False
+
+    # Ensure parent directory for destination exists
+    dst_dir = os.path.dirname(os.path.abspath(dst_p))
+    if dst_dir:
+        os.makedirs(dst_dir, exist_ok=True)
+
+    src_conn = None
+    dst_conn = None
+    try:
+        try:
+            src_conn = sqlite3.connect(f"file:{src_p}?mode=ro", uri=True, timeout=10.0)
+        except Exception:
+            src_conn = sqlite3.connect(src_p, timeout=10.0)
+
+        dst_conn = sqlite3.connect(dst_p, timeout=10.0)
+        with dst_conn:
+            src_conn.backup(dst_conn)
+        dst_conn.close()
+        dst_conn = None
+        src_conn.close()
+        src_conn = None
+
+        return verify_db(dst_p)
+    except Exception:
+        try:
+            if os.path.exists(dst_p):
+                os.remove(dst_p)
+        except OSError:
+            pass
+        return False
+    finally:
+        if dst_conn:
+            try:
+                dst_conn.close()
+            except Exception:
+                pass
+        if src_conn:
+            try:
+                src_conn.close()
+            except Exception:
+                pass
+
+
+def create_manifest(staging_dir: Union[str, Path], output_path: Optional[Union[str, Path]] = None) -> bool:
+    """Generate manifest.json with SHA-256 hashes of all files in staging directory."""
+    staging = str(staging_dir)
+    manifest_path = str(output_path) if output_path else os.path.join(staging, "manifest.json")
+    files_map: Dict[str, str] = {}
+
+    for root, _, files in os.walk(staging):
+        for f in sorted(files):
+            if f == "manifest.json":
+                continue
+            full_p = os.path.join(root, f)
+            rel_p = os.path.relpath(full_p, staging).replace("\\", "/")
+            h = _sha256_file(full_p)
+            if h is not None:
+                files_map[rel_p] = h
+
+    created_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    data = {
+        "format_version": "2.0",
+        "project_version": os.environ.get("SCRIPT_VERSION", "v9.3.0"),
+        "created_at": created_iso,
+        "db_path": os.environ.get("DB_PATH", "/etc/x-ui/x-ui.db"),
+        "files": files_map,
+    }
+
+    try:
+        with open(manifest_path, "w", encoding="utf-8") as out:
+            json.dump(data, out, indent=2)
+        return True
+    except Exception:
+        return False
+
+
+def verify_manifest(staging_dir: Union[str, Path], manifest_path: Optional[Union[str, Path]] = None) -> bool:
+    """Verify integrity of backed up files against manifest.json with path traversal protection."""
+    staging = str(staging_dir)
+    man_p = str(manifest_path) if manifest_path else os.path.join(staging, "manifest.json")
+
+    if not os.path.isfile(man_p):
+        print(f"[ERROR] Manifest file not found: {man_p}", file=sys.stderr)
+        return False
+
+    try:
+        with open(man_p, "r", encoding="utf-8") as fp:
+            manifest = json.load(fp)
+    except Exception as e:
+        print(f"[ERROR] Failed to parse manifest {man_p}: {e}", file=sys.stderr)
+        return False
+
+    staging_real = os.path.realpath(staging)
+
+    for rel_p, expected_h in manifest.get("files", {}).items():
+        # Security: reject entries attempting path traversal or absolute references
+        norm_rel = rel_p.replace("\\", "/")
+        if os.path.isabs(norm_rel) or norm_rel.startswith("/") or ".." in norm_rel.split("/"):
+            print(f"[ERROR] Path traversal detected in manifest entry: {rel_p}", file=sys.stderr)
+            return False
+
+        full_p = os.path.realpath(os.path.join(staging, rel_p))
+        if not full_p.startswith(staging_real + os.sep) and full_p != staging_real:
+            print(f"[ERROR] Manifest entry escapes staging directory: {rel_p}", file=sys.stderr)
+            return False
+
+        if not os.path.isfile(full_p):
+            print(f"[ERROR] Missing backed up file: {rel_p}", file=sys.stderr)
+            return False
+
+        actual_h = _sha256_file(full_p)
+        if actual_h is None or actual_h != expected_h:
+            print(f"[ERROR] Checksum mismatch for {rel_p}: expected {expected_h}, got {actual_h}", file=sys.stderr)
+            return False
+
+    return True
+
+
+def create_archive(archive_path: Union[str, Path], staging_dir: Union[str, Path]) -> bool:
+    """Create gzip-compressed tar archive from items in staging directory."""
+    archive = str(archive_path)
+    staging = str(staging_dir)
+
+    try:
+        with tarfile.open(archive, "w:gz") as tar:
+            for item in sorted(os.listdir(staging)):
+                tar.add(os.path.join(staging, item), arcname=item)
+        return True
+    except Exception as e:
+        print(f"[ERROR] Failed to create tar archive {archive}: {e}", file=sys.stderr)
+        return False
+
+
+def extract_archive(archive_path: Union[str, Path], target_dir: Union[str, Path]) -> bool:
+    """Safely extract gzip-compressed tar archive with path traversal protection."""
+    archive = str(archive_path)
+    target = str(target_dir)
+
+    os.makedirs(target, exist_ok=True)
+    dest = os.path.realpath(target)
+
+    try:
+        with tarfile.open(archive, "r:gz") as tar:
+            if hasattr(tarfile, "data_filter"):
+                tar.extractall(target, filter="data")
+            else:
+                for m in tar.getmembers():
+                    mp = os.path.realpath(os.path.join(dest, m.name))
+                    if not mp.startswith(dest + os.sep) and mp != dest:
+                        raise RuntimeError(f"Path Traversal detected: {m.name}")
+                    if m.islnk() or m.issym():
+                        continue
+                    tar.extract(m, dest)
+        return True
+    except Exception as e:
+        print(f"[ERROR] Failed to safely extract archive {archive}: {e}", file=sys.stderr)
+        return False
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    """CLI dispatcher for backup engine operations."""
+    if argv is None:
+        argv = sys.argv[1:]
+    if not argv:
+        print("Usage: backup_engine.py <command> [args...]", file=sys.stderr)
+        return 1
+
+    cmd = argv[0]
+    if cmd == "backup_db":
+        if len(argv) < 3:
+            print("Usage: backup_engine.py backup_db <src> <dst>", file=sys.stderr)
+            return 1
+        return 0 if backup_db(argv[1], argv[2]) else 1
+    elif cmd == "verify_db":
+        if len(argv) < 2:
+            print("Usage: backup_engine.py verify_db <db_path>", file=sys.stderr)
+            return 1
+        return 0 if verify_db(argv[1]) else 1
+    elif cmd == "create_manifest":
+        if len(argv) < 2:
+            print("Usage: backup_engine.py create_manifest <staging_dir> [manifest_path]", file=sys.stderr)
+            return 1
+        out_p = argv[2] if len(argv) > 2 else None
+        return 0 if create_manifest(argv[1], out_p) else 1
+    elif cmd == "verify_manifest":
+        if len(argv) < 2:
+            print("Usage: backup_engine.py verify_manifest <staging_dir> [manifest_path]", file=sys.stderr)
+            return 1
+        man_p = argv[2] if len(argv) > 2 else None
+        return 0 if verify_manifest(argv[1], man_p) else 1
+    elif cmd == "create_archive":
+        if len(argv) < 3:
+            print("Usage: backup_engine.py create_archive <archive_path> <staging_dir>", file=sys.stderr)
+            return 1
+        return 0 if create_archive(argv[1], argv[2]) else 1
+    elif cmd == "extract_archive":
+        if len(argv) < 3:
+            print("Usage: backup_engine.py extract_archive <archive_path> <target_dir>", file=sys.stderr)
+            return 1
+        return 0 if extract_archive(argv[1], argv[2]) else 1
+    else:
+        print(f"Unknown command: {cmd}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+EOF_BACKUP_ENGINE
+}
+
 verify_sqlite_backup() {
     local bkp="$1"
-    local py_cmd="$2"
+    local py_cmd="${2:-}"
     if [ ! -s "$bkp" ]; then
         return 1
     fi
-    if [ -n "$py_cmd" ]; then
-        "$py_cmd" -c "
-import sqlite3, sys
-try:
-    conn = sqlite3.connect(sys.argv[1])
-    res = conn.execute('PRAGMA integrity_check;').fetchall()
-    conn.close()
-    if res and res[0][0] == 'ok':
-        sys.exit(0)
-    sys.exit(1)
-except Exception:
-    sys.exit(1)
-" "$bkp" 2>/dev/null && return 0
+    if [ -n "$py_cmd" ] || get_sqlite_backup_python >/dev/null 2>&1; then
+        run_backup_engine verify_db "$bkp" 2>/dev/null && return 0
     elif command -v sqlite3 >/dev/null 2>&1; then
         local check
         check=$(sqlite3 "$bkp" "PRAGMA integrity_check;" 2>/dev/null || true)
@@ -12370,23 +13276,7 @@ backup_sqlite_db() {
 
     # 1. Primary: Python SQLite Online Backup API (atomic, WAL-safe)
     if [ -n "$py_cmd" ]; then
-        if "$py_cmd" -c "
-import sqlite3, sys
-src_p, dst_p = sys.argv[1], sys.argv[2]
-try:
-    try:
-        src_conn = sqlite3.connect(f'file:{src_p}?mode=ro', uri=True)
-    except Exception:
-        src_conn = sqlite3.connect(src_p)
-    dst_conn = sqlite3.connect(dst_p)
-    with dst_conn:
-        src_conn.backup(dst_conn)
-    dst_conn.close()
-    src_conn.close()
-    sys.exit(0)
-except Exception:
-    sys.exit(1)
-" "$src" "$dst" 2>/dev/null; then
+        if run_backup_engine backup_db "$src" "$dst" 2>/dev/null; then
             if verify_sqlite_backup "$dst" "$py_cmd"; then
                 backup_ok=1
             fi
@@ -12505,7 +13395,9 @@ do_backup() {
         cfg=$(find_config_file "${SCRIPT_DIR:-.}" 2>/dev/null || true)
     fi
     if [ -n "$cfg" ] && [ -f "$cfg" ]; then
-        source "$cfg" 2>/dev/null || true
+        if command -v load_config_data_safe >/dev/null 2>&1; then
+            load_config_data_safe "$cfg" 2>/dev/null || true
+        fi
         mkdir -p "$staging/env"
         cp -a "$cfg" "$staging/env/server-setup.env" 2>/dev/null || true
     fi
@@ -12614,48 +13506,10 @@ do_backup() {
     fi
 
     # 8.5 Создание manifest.json со списком файлов и SHA256 (T21.C01)
-    local py_cmd
-    py_cmd=$(get_sqlite_backup_python || echo "python3")
-    "$py_cmd" -c "
-import json, os, hashlib, sys
-
-staging = sys.argv[1]
-manifest_path = os.path.join(staging, 'manifest.json')
-files_map = {}
-
-for root, dirs, files in os.walk(staging):
-    for f in sorted(files):
-        if f == 'manifest.json':
-            continue
-        full_p = os.path.join(root, f)
-        rel_p = os.path.relpath(full_p, staging).replace('\\\\', '/')
-        try:
-            with open(full_p, 'rb') as fp:
-                h = hashlib.sha256(fp.read()).hexdigest()
-            files_map[rel_p] = h
-        except Exception:
-            pass
-
-data = {
-    'format_version': '2.0',
-    'project_version': os.environ.get('SCRIPT_VERSION', 'v9.2.0'),
-    'created_at': os.popen('date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null').read().strip(),
-    'db_path': os.environ.get('DB_PATH', '/etc/x-ui/x-ui.db'),
-    'files': files_map
-}
-
-with open(manifest_path, 'w', encoding='utf-8') as out:
-    json.dump(data, out, indent=2)
-" "$staging" 2>/dev/null || true
+    run_backup_engine create_manifest "$staging" 2>/dev/null || true
 
     # 9. Упаковка архива
-    if ! "$py_cmd" -c "
-import tarfile, sys, os
-archive, staging = sys.argv[1], sys.argv[2]
-with tarfile.open(archive, 'w:gz') as tar:
-    for item in os.listdir(staging):
-        tar.add(os.path.join(staging, item), arcname=item)
-" "$archive" "$staging"; then
+    if ! run_backup_engine create_archive "$archive" "$staging"; then
         rm -rf "$staging"
         die "Ошибка создания tar-архива $archive."
     fi
@@ -12713,46 +13567,14 @@ do_restore() {
     staging=$(mktemp -d /tmp/vpn-restore-staging.XXXXXX) || die "Не удалось создать временный каталог для распаковки."
 
     # Распаковываем во временный каталог через безопасный фильтр Python
-    local py_cmd
-    py_cmd=$(get_sqlite_backup_python || echo "python3")
-    if ! "$py_cmd" -c "
-import tarfile, sys, os
-archive, target = sys.argv[1], sys.argv[2]
-os.makedirs(target, exist_ok=True)
-dest = os.path.realpath(target)
-
-with tarfile.open(archive, 'r:gz') as tar:
-    if hasattr(tarfile, 'data_filter'):
-        tar.extractall(target, filter='data')
-    else:
-        for m in tar.getmembers():
-            mp = os.path.realpath(os.path.join(dest, m.name))
-            if not mp.startswith(dest + os.sep) and mp != dest:
-                raise RuntimeError(f'Попытка выхода за границы целевого каталога (Path Traversal): {m.name}')
-            if m.islnk() or m.issym():
-                continue
-            tar.extract(m, dest)
-" "$archive" "$staging"; then
+    if ! run_backup_engine extract_archive "$archive" "$staging"; then
         rm -rf "$staging"
         die "Ошибка безопасной распаковки архива $archive."
     fi
 
     # 0. Проверка целостности файлов бэкапа по manifest.json (T21.C01, T21.C02)
     if [ -f "$staging/manifest.json" ]; then
-        if ! "$py_cmd" -c "
-import json, os, hashlib, sys
-staging = sys.argv[1]
-with open(os.path.join(staging, 'manifest.json'), 'r', encoding='utf-8') as fp:
-    manifest = json.load(fp)
-for rel_p, expected_h in manifest.get('files', {}).items():
-    full_p = os.path.join(staging, rel_p)
-    if not os.path.isfile(full_p):
-        sys.exit(f'Missing backed up file: {rel_p}')
-    with open(full_p, 'rb') as f:
-        actual_h = hashlib.sha256(f.read()).hexdigest()
-    if actual_h != expected_h:
-        sys.exit(f'Checksum mismatch for {rel_p}: expected {expected_h}, got {actual_h}')
-" "$staging"; then
+        if ! run_backup_engine verify_manifest "$staging"; then
             rm -rf "$staging"
             die "Ошибка: Нарушена целостность файлов бэкапа по манифесту (T21.C02)!"
         fi
@@ -12969,31 +13791,10 @@ do_extract() {
     mkdir -p "$target" 2>/dev/null || true
     log "Аварийное безопасное извлечение архива в $target..."
 
-    local py_cmd
-    py_cmd=$(get_sqlite_backup_python || echo "python3")
-    if ! "$py_cmd" -c "
-import tarfile, sys, os
-
-archive, target = sys.argv[1], sys.argv[2]
-os.makedirs(target, exist_ok=True)
-dest = os.path.realpath(target)
-
-with tarfile.open(archive, 'r:gz') as tar:
-    if hasattr(tarfile, 'data_filter'):
-        tar.extractall(target, filter='data')
-    else:
-        for m in tar.getmembers():
-            mp = os.path.realpath(os.path.join(dest, m.name))
-            if not mp.startswith(dest + os.sep) and mp != dest:
-                raise RuntimeError(f'Попытка выхода за границы целевого каталога (Path Traversal): {m.name}')
-            if m.islnk() or m.issym():
-                continue
-            tar.extract(m, dest)
-
-print(f'[OK] Архив {archive} успешно и безопасно извлечён в {target}')
-" "$archive" "$target"; then
+    if ! run_backup_engine extract_archive "$archive" "$target"; then
         die "Ошибка извлечения архива $archive."
     fi
+    ok "Архив $archive успешно и безопасно извлечён в $target"
     return 0
 }
 
@@ -13005,47 +13806,14 @@ audit_restore_archive() {
     local staging
     staging=$(mktemp -d /tmp/vpn-audit-staging.XXXXXX 2>/dev/null || mktemp -d "${TMPDIR:-/tmp}/vpn-audit-staging.XXXXXX") || die "Не удалось создать временный каталог для аудита."
 
-    local py_cmd
-    py_cmd=$(get_sqlite_backup_python || echo "python3")
-
-    if ! "$py_cmd" -c "
-import tarfile, sys, os
-archive, target = sys.argv[1], sys.argv[2]
-os.makedirs(target, exist_ok=True)
-dest = os.path.realpath(target)
-
-with tarfile.open(archive, 'r:gz') as tar:
-    if hasattr(tarfile, 'data_filter'):
-        tar.extractall(target, filter='data')
-    else:
-        for m in tar.getmembers():
-            mp = os.path.realpath(os.path.join(dest, m.name))
-            if not mp.startswith(dest + os.sep) and mp != dest:
-                raise RuntimeError(f'Попытка выхода за границы целевого каталога (Path Traversal): {m.name}')
-            if m.islnk() or m.issym():
-                continue
-            tar.extract(m, dest)
-" "$archive" "$staging"; then
+    if ! run_backup_engine extract_archive "$archive" "$staging"; then
         rm -rf "$staging"
         die "Ошибка распаковки архива $archive при аудите."
     fi
 
     # 1. Проверка манифеста (T21.C01, T21.C02)
     if [ -f "$staging/manifest.json" ]; then
-        if ! "$py_cmd" -c "
-import json, os, hashlib, sys
-staging = sys.argv[1]
-with open(os.path.join(staging, 'manifest.json'), 'r', encoding='utf-8') as fp:
-    manifest = json.load(fp)
-for rel_p, expected_h in manifest.get('files', {}).items():
-    full_p = os.path.join(staging, rel_p)
-    if not os.path.isfile(full_p):
-        sys.exit(f'Missing backed up file: {rel_p}')
-    with open(full_p, 'rb') as f:
-        actual_h = hashlib.sha256(f.read()).hexdigest()
-    if actual_h != expected_h:
-        sys.exit(f'Checksum mismatch for {rel_p}: expected {expected_h}, got {actual_h}')
-" "$staging"; then
+        if ! run_backup_engine verify_manifest "$staging"; then
             rm -rf "$staging"
             die "Ошибка аудита: Нарушена целостность файлов по манифесту архива (T21.C02)!"
         fi
@@ -13749,6 +14517,26 @@ import time
 import urllib.request
 import urllib.parse
 import re
+import shlex
+
+if "generate_dnstt_keypair" not in globals():
+    try:
+        from src.common.crypto_engine import generate_dnstt_keypair
+    except ImportError:
+        try:
+            from common.crypto_engine import generate_dnstt_keypair
+        except ImportError:
+            try:
+                from crypto_engine import generate_dnstt_keypair
+            except ImportError:
+                try:
+                    from pathlib import Path
+                    _p = (Path(__file__).resolve().parent.parent / "common").as_posix()
+                    if _p not in sys.path:
+                        sys.path.insert(0, _p)
+                    from crypto_engine import generate_dnstt_keypair
+                except Exception:
+                    pass
 
 db_path = os.environ["DB_PATH"]
 dry_run = os.environ.get("DRY_RUN", "0") == "1"
@@ -14143,18 +14931,69 @@ import secrets
 import subprocess
 import uuid
 
-# Curve25519 helper (RFC 7748) для генерации, валидации и починки ключей
+# Curve25519 helper (RFC 7748) via common crypto engine
+try:
+    from src.common.crypto_engine import (
+        P, A24, clamp, x25519, curve25519_pubkey, curve25519_reality_pubkey,
+        generate_reality_keypair, generate_wg_keypair, generate_dnstt_keypair,
+        dnstt_pubkey_from_privkey, validate_dnstt_pubkey
+    )
+except ImportError:
+    try:
+        from common.crypto_engine import (
+            P, A24, clamp, x25519, curve25519_pubkey, curve25519_reality_pubkey,
+            generate_reality_keypair, generate_wg_keypair, generate_dnstt_keypair,
+            dnstt_pubkey_from_privkey, validate_dnstt_pubkey
+        )
+    except ImportError:
+        try:
+            from crypto_engine import (
+                P, A24, clamp, x25519, curve25519_pubkey, curve25519_reality_pubkey,
+                generate_reality_keypair, generate_wg_keypair, generate_dnstt_keypair,
+                dnstt_pubkey_from_privkey, validate_dnstt_pubkey
+            )
+        except ImportError:
+            try:
+                import sys
+                from pathlib import Path
+                _p = (Path(__file__).resolve().parent.parent / "common").as_posix()
+                if _p not in sys.path:
+                    sys.path.insert(0, _p)
+                from crypto_engine import (
+                    P, A24, clamp, x25519, curve25519_pubkey, curve25519_reality_pubkey,
+                    generate_reality_keypair, generate_wg_keypair, generate_dnstt_keypair,
+                    dnstt_pubkey_from_privkey, validate_dnstt_pubkey
+                )
+            except Exception:
+                pass
+"""
+src/common/crypto_engine.py - Unified RFC 7748 X25519 / Curve25519 Cryptographic Engine.
+
+Single Source of Truth for Curve25519 key exchange, clamping, public key derivation,
+and keypair generation across AmneziaWG, Reality, DNSTT, and 3X-UI panel reconciliation.
+"""
+
+import base64
+import os
+from typing import Optional, Tuple
+
 P = 2**255 - 19
 A24 = 121665
 
+
 def clamp(k_bytes):
+    """Apply RFC 7748 clamping to 32 private key bytes."""
+    if len(k_bytes) != 32:
+        raise ValueError(f"Expected 32 private key bytes, got {len(k_bytes)}")
     b = bytearray(k_bytes)
     b[0] &= 248
     b[31] &= 127
     b[31] |= 64
     return int.from_bytes(b, "little")
 
-def x25519(k, u=9):
+
+def x25519(k: int, u: int = 9) -> int:
+    """RFC 7748 scalar multiplication on Curve25519 using Montgomery ladder."""
     x1 = u
     x2, z2 = 1, 0
     x3, z3 = u, 1
@@ -14181,26 +15020,36 @@ def x25519(k, u=9):
             z2, z3 = z3, z2
     return (x2 * pow(z2, P - 2, P)) % P
 
-def curve25519_pubkey(priv_b64):
+
+def curve25519_pubkey(priv_b64: str) -> Optional[str]:
+    """Derive standard Base64 Curve25519 public key (AmneziaWG / WireGuard format)."""
     try:
         raw_priv = base64.b64decode(priv_b64)
+        if len(raw_priv) != 32:
+            return None
         k = clamp(raw_priv)
         pub_raw = x25519(k, 9).to_bytes(32, "little")
         return base64.b64encode(pub_raw).decode()
     except Exception:
         return None
 
-def curve25519_reality_pubkey(priv_b64url):
+
+def curve25519_reality_pubkey(priv_b64url: str) -> Optional[str]:
+    """Derive unpadded URL-safe Base64 Curve25519 public key (Reality format)."""
     try:
         padding = "=" * ((4 - len(priv_b64url) % 4) % 4)
         raw_priv = base64.urlsafe_b64decode(priv_b64url + padding)
+        if len(raw_priv) != 32:
+            return None
         k = clamp(raw_priv)
         pub_raw = x25519(k, 9).to_bytes(32, "little")
         return base64.urlsafe_b64encode(pub_raw).decode().rstrip("=")
     except Exception:
         return None
 
-def generate_reality_keypair():
+
+def generate_reality_keypair() -> Tuple[str, str]:
+    """Generate a random (private_key, public_key) pair in Reality URL-safe Base64 format."""
     priv_raw = os.urandom(32)
     k = clamp(priv_raw)
     pub_raw = x25519(k, 9).to_bytes(32, "little")
@@ -14208,13 +15057,70 @@ def generate_reality_keypair():
     pub_b64 = base64.urlsafe_b64encode(pub_raw).decode().rstrip("=")
     return priv_b64, pub_b64
 
-def generate_wg_keypair():
+
+def generate_wg_keypair() -> Tuple[str, str]:
+    """Generate a random (private_key, public_key) pair in standard WireGuard / AWG Base64 format."""
     priv_raw = os.urandom(32)
     k = clamp(priv_raw)
     pub_raw = x25519(k, 9).to_bytes(32, "little")
     priv_b64 = base64.b64encode(priv_raw).decode()
     pub_b64 = base64.b64encode(pub_raw).decode()
     return priv_b64, pub_b64
+
+
+def generate_dnstt_keypair() -> Tuple[str, str]:
+    """Generate a random (private_key_hex, public_key_hex) pair for DNSTT tunnels."""
+    raw_priv = os.urandom(32)
+    k = clamp(raw_priv)
+    pub_hex = ((x25519(k, 9)) % P).to_bytes(32, "little").hex()
+    return raw_priv.hex(), pub_hex
+
+
+def dnstt_pubkey_from_privkey(priv_hex: str) -> Optional[str]:
+    """Derive DNSTT public key (hex) from private key (hex)."""
+    try:
+        raw_priv = bytes.fromhex(priv_hex.strip())
+        if len(raw_priv) != 32:
+            return None
+        k = clamp(raw_priv)
+        return ((x25519(k, 9)) % P).to_bytes(32, "little").hex()
+    except Exception:
+        return None
+
+
+def validate_dnstt_pubkey(pubkey: str) -> bool:
+    """Validate 64-char hex string as DNSTT public key."""
+    if not isinstance(pubkey, str):
+        return False
+    s = pubkey.strip().lower()
+    return len(s) == 64 and all(c in "0123456789abcdef" for c in s)
+
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) > 1:
+        cmd = sys.argv[1]
+        if cmd == "wg_pubkey" and len(sys.argv) > 2:
+            print(curve25519_pubkey(sys.argv[2]) or "")
+        elif cmd == "wg_keypair":
+            priv, pub = generate_wg_keypair()
+            print(f"{priv} {pub}")
+        elif cmd == "reality_pubkey" and len(sys.argv) > 2:
+            print(curve25519_reality_pubkey(sys.argv[2]) or "")
+        elif cmd == "reality_keypair":
+            priv, pub = generate_reality_keypair()
+            print(f"{priv} {pub}")
+        elif cmd == "dnstt_keypair":
+            priv, pub = generate_dnstt_keypair()
+            if len(sys.argv) > 3:
+                with open(sys.argv[2], "w", encoding="utf-8") as kf:
+                    kf.write(priv + "\n")
+                with open(sys.argv[3], "w", encoding="utf-8") as pf:
+                    pf.write(pub + "\n")
+            else:
+                print(f"{priv} {pub}")
+        elif cmd == "dnstt_pubkey" and len(sys.argv) > 2:
+            print(dnstt_pubkey_from_privkey(sys.argv[2]) or "")
 
 def generate_vlessenc_keypair():
     for candidate in ["/usr/local/x-ui/bin/xray-linux-amd64", "/usr/local/x-ui/bin/xray-linux-arm64", "/usr/local/x-ui/bin/xray", "xray"]:
@@ -14276,17 +15182,6 @@ def generate_naiveproxy_credentials(default_user="user"):
 def generate_tuic_credentials(default_uuid=None):
     return default_uuid or str(uuid.uuid4()), secrets.token_urlsafe(16)
 
-def generate_dnstt_keypair():
-    priv_raw = os.urandom(32)
-    k = clamp(priv_raw)
-    pub_raw = ((x25519(k, 9)) % P).to_bytes(32, "little")
-    return priv_raw.hex(), pub_raw.hex()
-
-def validate_dnstt_pubkey(pubkey):
-    if not isinstance(pubkey, str):
-        return False
-    s = pubkey.strip().lower()
-    return len(s) == 64 and all(c in "0123456789abcdef" for c in s)
 
 # ----------------- 1. Настройки панели и подписок (settings) -----------------
 print("\n[+] Синхронизация системных настроек панели и подписок...")
@@ -14380,7 +15275,7 @@ for k, v in settings_updates.items():
         print(f"  [В ПОРЯДКЕ] Настройка {k}: '{v}'")
 
 # ----------------- 1.0. Интеграция Mieru в шаблон подписки Clash (subClashTemplate) -----------------
-enable_mieru = os.environ.get("ENABLE_MIERU", "n").lower() in ("1", "y", "true")
+enable_mieru = os.environ.get("ENABLE_MIERU", "n").lower() in ("1", "y", "true") or os.path.exists("/etc/systemd/system/mita.service") or os.path.exists("/etc/mita/config.json")
 mieru_port_mode = (os.environ.get("MIERU_PORT_MODE") or "single").strip().lower()
 mieru_port = (os.environ.get("MIERU_PORT") or ("8450-8455" if mieru_port_mode == "range" else "8450")).strip()
 mieru_transport = (os.environ.get("MIERU_TRANSPORT") or "").strip().upper()
@@ -16038,16 +16933,25 @@ def lookup_inbound_id(tag_val, port_val):
 if enable_steal:
     s_iid = steal_ib_id if ('steal_ib_id' in locals() and steal_ib_id) else lookup_inbound_id("in-steal-reality", steal_port)
     if s_iid:
-        sync_host_entry(s_iid, steal_remark, domain, 443, "same", host_sni=steal_dom, host_fp="firefox", sort_order=1)
+        cur.execute("SELECT remark FROM inbounds WHERE id = ?", (s_iid,))
+        r_rem = cur.fetchone()
+        s_rem = r_rem[0] if r_rem and r_rem[0] else steal_remark
+        sync_host_entry(s_iid, s_rem, domain, 443, "same", host_sni=steal_dom, host_fp="firefox", sort_order=1)
 
 if enable_classic:
     c_iid = classic_ib_id if ('classic_ib_id' in locals() and classic_ib_id) else lookup_inbound_id("in-classic-reality", classic_port)
     if c_iid:
-        sync_host_entry(c_iid, classic_remark, domain, 443, "same", host_sni=classic_sni, host_fp="firefox", sort_order=1)
+        cur.execute("SELECT remark FROM inbounds WHERE id = ?", (c_iid,))
+        r_rem = cur.fetchone()
+        c_rem = r_rem[0] if r_rem and r_rem[0] else classic_remark
+        sync_host_entry(c_iid, c_rem, domain, 443, "same", host_sni=classic_sni, host_fp="firefox", sort_order=1)
 
 x_iid = xhttp_ib_id if ('xhttp_ib_id' in locals() and xhttp_ib_id) else lookup_inbound_id("in-xhttp-stream", xhttp_port)
 if x_iid:
-    sync_host_entry(x_iid, xhttp_remark, domain, 443, "tls", host_sni=domain, host_path=f"/{xhttp_path.strip('/')}/", host_alpn=json.dumps(["h2"]), host_fp="firefox", sort_order=2)
+    cur.execute("SELECT remark FROM inbounds WHERE id = ?", (x_iid,))
+    r_rem = cur.fetchone()
+    x_rem = r_rem[0] if r_rem and r_rem[0] else xhttp_remark
+    sync_host_entry(x_iid, x_rem, domain, 443, "tls", host_sni=domain, host_path=f"/{xhttp_path.strip('/')}/", host_alpn=json.dumps(["h2"]), host_fp="firefox", sort_order=2)
 
 
 # Формирование клиентских ссылок для новых протоколов
@@ -16119,27 +17023,10 @@ if not dnstt_pubkey and os.path.isfile("/etc/dnstt/server.pub"):
         pass
 if not dnstt_pubkey and enable_dnstt and not dry_run:
     try:
-        _P = 2**255 - 19
-        def _clamp(kb):
-            b = bytearray(kb)
-            b[0] &= 248; b[31] &= 127; b[31] |= 64
-            return int.from_bytes(b, "little")
-        def _x25519(k, u=9):
-            x1, x2, z2, x3, z3 = u, 1, 0, u, 1
-            for i in range(254, -1, -1):
-                bit = (k >> i) & 1
-                if bit: x2, x3 = x3, x2; z2, z3 = z3, z2
-                A = (x2 + z2) % _P; AA = (A * A) % _P; B = (x2 - z2) % _P; BB = (B * B) % _P; E = (AA - BB) % _P
-                x3 = ((x2 * x3 - z2 * z3)**2) % _P; z3 = (x1 * ((x2 * z3 - z2 * x3)**2)) % _P
-                x2 = (AA * BB) % _P; z2 = (E * (AA + ((121665 * E) % _P))) % _P
-                if bit: x2, x3 = x3, x2; z2, z3 = z3, z2
-            return (x2 * pow(z2, _P - 2, _P)) % _P
-        _raw_priv = os.urandom(32)
-        _k = _clamp(_raw_priv)
-        dnstt_pubkey = ((_x25519(_k, 9)) % _P).to_bytes(32, "little").hex()
+        _raw_priv_hex, dnstt_pubkey = generate_dnstt_keypair()
         os.makedirs("/etc/dnstt", exist_ok=True)
         with open("/etc/dnstt/server.key", "w") as kf:
-            kf.write(_raw_priv.hex() + "\n")
+            kf.write(_raw_priv_hex + "\n")
         with open("/etc/dnstt/server.pub", "w") as pf:
             pf.write(dnstt_pubkey + "\n")
         os.chmod("/etc/dnstt/server.key", 0o600)
@@ -16218,35 +17105,35 @@ if not dry_run:
                 f.write(f"MTPROTO_SECRET='{unified_mtp_secret}'\n")
                 f.write(f"MTPROTO_BOT_SECRET='{mtproto_bot_secret}'\n")
                 f.write(f"MTPROTO_PORT='{mtproto_port}'\n")
-            if enable_masque:
+            if enable_masque or os.path.exists("/etc/sing-box/masque.json"):
                 f.write(f"MASQUE_URI='{masque_uri}'\n")
                 f.write(f"MASQUE_PORT='{masque_port}'\n")
                 f.write(f"MASQUE_USER='{masque_user}'\n")
                 f.write(f"MASQUE_PASSWORD='{masque_password}'\n")
-            if enable_shadowtls:
+            if enable_shadowtls or os.path.exists("/etc/systemd/system/shadow-tls.service"):
                 f.write(f"SHADOWTLS_URI='{shadowtls_uri}'\n")
                 f.write(f"SS_SHADOWTLS_URI='{ss_shadowtls_uri}'\n")
                 f.write(f"SHADOWTLS_PORT='{shadowtls_port}'\n")
                 f.write(f"SHADOWTLS_SNI='{shadowtls_sni}'\n")
                 f.write(f"SHADOWTLS_PASSWORD='{shadowtls_password}'\n")
-            if enable_wstunnel and wstunnel_prefix:
+            if (enable_wstunnel or os.path.exists("/etc/systemd/system/wstunnel.service")) and wstunnel_prefix:
                 f.write(f"WSTUNNEL_CLI='{wstunnel_cli}'\n")
                 f.write(f"WSTUNNEL_URI='{wstunnel_uri}'\n")
                 f.write(f"WSTUNNEL_PREFIX='{wstunnel_prefix}'\n")
                 f.write(f"WSTUNNEL_PORT='{wstunnel_port}'\n")
-            if enable_zapret:
+            if enable_zapret or os.path.exists("/etc/systemd/system/zapret-server.service"):
                 f.write(f"ZAPRET_INFO='{zapret_info}'\n")
-            if enable_naive:
+            if enable_naive or os.path.exists("/etc/systemd/system/caddy-naive.service"):
                 f.write(f"NAIVE_URI='{naive_uri}'\n")
                 f.write(f"NAIVE_PORT='{naive_port}'\n")
                 f.write(f"NAIVE_USER='{naive_user}'\n")
                 f.write(f"NAIVE_PASS='{naive_pass}'\n")
-            if enable_dnstt:
+            if enable_dnstt or os.path.exists("/etc/systemd/system/dnstt-server.service"):
                 f.write(f"DNSTT_CLI='{dnstt_cli}'\n")
                 f.write(f"DNSTT_PORT='{dnstt_port}'\n")
                 f.write(f"DNSTT_DOMAIN='{dnstt_domain}'\n")
                 f.write(f"DNSTT_PUBKEY='{dnstt_pubkey}'\n")
-            if enable_mieru:
+            if (enable_mieru or os.path.exists("/etc/systemd/system/mita.service")) and mieru_user and mieru_pass:
                 f.write(f"ENABLE_MIERU='1'\n")
                 f.write(f"MIERU_PORT={shlex.quote(mieru_port)}\n")
                 f.write(f"MIERU_PORT_MODE={shlex.quote(mieru_port_mode)}\n")
@@ -16874,7 +17761,7 @@ EOF_GOMEM
             [ -f "$xui_db" ] || xui_db="/usr/local/x-ui/bin/x-ui.db"
             if [ -f "$xui_db" ]; then
                 python3 -c "
-import sqlite3, json
+import sqlite3, json, os
 
 db_path = '$xui_db'
 conn = sqlite3.connect(db_path)

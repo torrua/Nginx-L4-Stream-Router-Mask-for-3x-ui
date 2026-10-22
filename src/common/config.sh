@@ -65,6 +65,15 @@ load_config_data_safe() {
             local key="${BASH_REMATCH[1]}"
             local val="${BASH_REMATCH[2]}"
 
+            # Security check: forbid overwriting critical system environment variables
+            local upper_key="${key^^}"
+            case "$upper_key" in
+                PATH|LD_PRELOAD|LD_LIBRARY_PATH|LD_AUDIT|IFS|SHELL|EUID|UID|PPID|BASH_ENV|ENV|CDPATH|PYTHONPATH|PYTHONHOME|PROMPT_COMMAND|BASH_OPTS|SHELLOPTS|GLOBIGNORE|BASH_XTRACEFD)
+                    echo "[ERROR] Security violation in $env_file line $line_no: overwriting critical system variable '$key' is forbidden!" >&2
+                    return 1
+                    ;;
+            esac
+
             # Handle quotes safely: single quotes preserve raw literal content without expansion (T13.C04)
             if [[ "$val" =~ $re_squote ]]; then
                 val="${BASH_REMATCH[1]}"

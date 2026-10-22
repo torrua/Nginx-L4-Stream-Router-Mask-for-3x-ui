@@ -13,6 +13,26 @@ import time
 import urllib.request
 import urllib.parse
 import re
+import shlex
+
+if "generate_dnstt_keypair" not in globals():
+    try:
+        from src.common.crypto_engine import generate_dnstt_keypair
+    except ImportError:
+        try:
+            from common.crypto_engine import generate_dnstt_keypair
+        except ImportError:
+            try:
+                from crypto_engine import generate_dnstt_keypair
+            except ImportError:
+                try:
+                    from pathlib import Path
+                    _p = (Path(__file__).resolve().parent.parent / "common").as_posix()
+                    if _p not in sys.path:
+                        sys.path.insert(0, _p)
+                    from crypto_engine import generate_dnstt_keypair
+                except Exception:
+                    pass
 
 db_path = os.environ["DB_PATH"]
 dry_run = os.environ.get("DRY_RUN", "0") == "1"
@@ -296,7 +316,7 @@ for k, v in settings_updates.items():
         print(f"  [В ПОРЯДКЕ] Настройка {k}: '{v}'")
 
 # ----------------- 1.0. Интеграция Mieru в шаблон подписки Clash (subClashTemplate) -----------------
-enable_mieru = os.environ.get("ENABLE_MIERU", "n").lower() in ("1", "y", "true")
+enable_mieru = os.environ.get("ENABLE_MIERU", "n").lower() in ("1", "y", "true") or os.path.exists("/etc/systemd/system/mita.service") or os.path.exists("/etc/mita/config.json")
 mieru_port_mode = (os.environ.get("MIERU_PORT_MODE") or "single").strip().lower()
 mieru_port = (os.environ.get("MIERU_PORT") or ("8450-8455" if mieru_port_mode == "range" else "8450")).strip()
 mieru_transport = (os.environ.get("MIERU_TRANSPORT") or "").strip().upper()
@@ -1427,16 +1447,25 @@ def lookup_inbound_id(tag_val, port_val):
 if enable_steal:
     s_iid = steal_ib_id if ('steal_ib_id' in locals() and steal_ib_id) else lookup_inbound_id("in-steal-reality", steal_port)
     if s_iid:
-        sync_host_entry(s_iid, steal_remark, domain, 443, "same", host_sni=steal_dom, host_fp="firefox", sort_order=1)
+        cur.execute("SELECT remark FROM inbounds WHERE id = ?", (s_iid,))
+        r_rem = cur.fetchone()
+        s_rem = r_rem[0] if r_rem and r_rem[0] else steal_remark
+        sync_host_entry(s_iid, s_rem, domain, 443, "same", host_sni=steal_dom, host_fp="firefox", sort_order=1)
 
 if enable_classic:
     c_iid = classic_ib_id if ('classic_ib_id' in locals() and classic_ib_id) else lookup_inbound_id("in-classic-reality", classic_port)
     if c_iid:
-        sync_host_entry(c_iid, classic_remark, domain, 443, "same", host_sni=classic_sni, host_fp="firefox", sort_order=1)
+        cur.execute("SELECT remark FROM inbounds WHERE id = ?", (c_iid,))
+        r_rem = cur.fetchone()
+        c_rem = r_rem[0] if r_rem and r_rem[0] else classic_remark
+        sync_host_entry(c_iid, c_rem, domain, 443, "same", host_sni=classic_sni, host_fp="firefox", sort_order=1)
 
 x_iid = xhttp_ib_id if ('xhttp_ib_id' in locals() and xhttp_ib_id) else lookup_inbound_id("in-xhttp-stream", xhttp_port)
 if x_iid:
-    sync_host_entry(x_iid, xhttp_remark, domain, 443, "tls", host_sni=domain, host_path=f"/{xhttp_path.strip('/')}/", host_alpn=json.dumps(["h2"]), host_fp="firefox", sort_order=2)
+    cur.execute("SELECT remark FROM inbounds WHERE id = ?", (x_iid,))
+    r_rem = cur.fetchone()
+    x_rem = r_rem[0] if r_rem and r_rem[0] else xhttp_remark
+    sync_host_entry(x_iid, x_rem, domain, 443, "tls", host_sni=domain, host_path=f"/{xhttp_path.strip('/')}/", host_alpn=json.dumps(["h2"]), host_fp="firefox", sort_order=2)
 
 
 # Формирование клиентских ссылок для новых протоколов
@@ -1508,27 +1537,10 @@ if not dnstt_pubkey and os.path.isfile("/etc/dnstt/server.pub"):
         pass
 if not dnstt_pubkey and enable_dnstt and not dry_run:
     try:
-        _P = 2**255 - 19
-        def _clamp(kb):
-            b = bytearray(kb)
-            b[0] &= 248; b[31] &= 127; b[31] |= 64
-            return int.from_bytes(b, "little")
-        def _x25519(k, u=9):
-            x1, x2, z2, x3, z3 = u, 1, 0, u, 1
-            for i in range(254, -1, -1):
-                bit = (k >> i) & 1
-                if bit: x2, x3 = x3, x2; z2, z3 = z3, z2
-                A = (x2 + z2) % _P; AA = (A * A) % _P; B = (x2 - z2) % _P; BB = (B * B) % _P; E = (AA - BB) % _P
-                x3 = ((x2 * x3 - z2 * z3)**2) % _P; z3 = (x1 * ((x2 * z3 - z2 * x3)**2)) % _P
-                x2 = (AA * BB) % _P; z2 = (E * (AA + ((121665 * E) % _P))) % _P
-                if bit: x2, x3 = x3, x2; z2, z3 = z3, z2
-            return (x2 * pow(z2, _P - 2, _P)) % _P
-        _raw_priv = os.urandom(32)
-        _k = _clamp(_raw_priv)
-        dnstt_pubkey = ((_x25519(_k, 9)) % _P).to_bytes(32, "little").hex()
+        _raw_priv_hex, dnstt_pubkey = generate_dnstt_keypair()
         os.makedirs("/etc/dnstt", exist_ok=True)
         with open("/etc/dnstt/server.key", "w") as kf:
-            kf.write(_raw_priv.hex() + "\n")
+            kf.write(_raw_priv_hex + "\n")
         with open("/etc/dnstt/server.pub", "w") as pf:
             pf.write(dnstt_pubkey + "\n")
         os.chmod("/etc/dnstt/server.key", 0o600)
@@ -1607,35 +1619,35 @@ if not dry_run:
                 f.write(f"MTPROTO_SECRET='{unified_mtp_secret}'\n")
                 f.write(f"MTPROTO_BOT_SECRET='{mtproto_bot_secret}'\n")
                 f.write(f"MTPROTO_PORT='{mtproto_port}'\n")
-            if enable_masque:
+            if enable_masque or os.path.exists("/etc/sing-box/masque.json"):
                 f.write(f"MASQUE_URI='{masque_uri}'\n")
                 f.write(f"MASQUE_PORT='{masque_port}'\n")
                 f.write(f"MASQUE_USER='{masque_user}'\n")
                 f.write(f"MASQUE_PASSWORD='{masque_password}'\n")
-            if enable_shadowtls:
+            if enable_shadowtls or os.path.exists("/etc/systemd/system/shadow-tls.service"):
                 f.write(f"SHADOWTLS_URI='{shadowtls_uri}'\n")
                 f.write(f"SS_SHADOWTLS_URI='{ss_shadowtls_uri}'\n")
                 f.write(f"SHADOWTLS_PORT='{shadowtls_port}'\n")
                 f.write(f"SHADOWTLS_SNI='{shadowtls_sni}'\n")
                 f.write(f"SHADOWTLS_PASSWORD='{shadowtls_password}'\n")
-            if enable_wstunnel and wstunnel_prefix:
+            if (enable_wstunnel or os.path.exists("/etc/systemd/system/wstunnel.service")) and wstunnel_prefix:
                 f.write(f"WSTUNNEL_CLI='{wstunnel_cli}'\n")
                 f.write(f"WSTUNNEL_URI='{wstunnel_uri}'\n")
                 f.write(f"WSTUNNEL_PREFIX='{wstunnel_prefix}'\n")
                 f.write(f"WSTUNNEL_PORT='{wstunnel_port}'\n")
-            if enable_zapret:
+            if enable_zapret or os.path.exists("/etc/systemd/system/zapret-server.service"):
                 f.write(f"ZAPRET_INFO='{zapret_info}'\n")
-            if enable_naive:
+            if enable_naive or os.path.exists("/etc/systemd/system/caddy-naive.service"):
                 f.write(f"NAIVE_URI='{naive_uri}'\n")
                 f.write(f"NAIVE_PORT='{naive_port}'\n")
                 f.write(f"NAIVE_USER='{naive_user}'\n")
                 f.write(f"NAIVE_PASS='{naive_pass}'\n")
-            if enable_dnstt:
+            if enable_dnstt or os.path.exists("/etc/systemd/system/dnstt-server.service"):
                 f.write(f"DNSTT_CLI='{dnstt_cli}'\n")
                 f.write(f"DNSTT_PORT='{dnstt_port}'\n")
                 f.write(f"DNSTT_DOMAIN='{dnstt_domain}'\n")
                 f.write(f"DNSTT_PUBKEY='{dnstt_pubkey}'\n")
-            if enable_mieru:
+            if (enable_mieru or os.path.exists("/etc/systemd/system/mita.service")) and mieru_user and mieru_pass:
                 f.write(f"ENABLE_MIERU='1'\n")
                 f.write(f"MIERU_PORT={shlex.quote(mieru_port)}\n")
                 f.write(f"MIERU_PORT_MODE={shlex.quote(mieru_port_mode)}\n")

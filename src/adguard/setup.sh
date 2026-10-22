@@ -122,7 +122,7 @@ EOF_GOMEM
             [ -f "$xui_db" ] || xui_db="/usr/local/x-ui/bin/x-ui.db"
             if [ -f "$xui_db" ]; then
                 python3 -c "
-import sqlite3, json
+import sqlite3, json, os
 
 db_path = '$xui_db'
 conn = sqlite3.connect(db_path)

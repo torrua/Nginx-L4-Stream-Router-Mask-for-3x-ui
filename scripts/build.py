@@ -88,6 +88,19 @@ def sync_version_in_docs(version: str, root_dir: Path = ROOT_DIR) -> list[str]:
             arch.write_text(new_content, encoding="utf-8")
             updated.append("docs/ARCHITECTURE.md")
 
+    # 3. server-setup.env.example header
+    env_example = root_dir / "server-setup.env.example"
+    if env_example.is_file():
+        content = env_example.read_text(encoding="utf-8")
+        new_content = re.sub(
+            r"\(v[0-9.]+\s+Universal\)",
+            f"({v_norm} Universal)",
+            content,
+        )
+        if new_content != content:
+            env_example.write_text(new_content, encoding="utf-8")
+            updated.append("server-setup.env.example")
+
     return updated
 
 
@@ -257,7 +270,15 @@ def build_all(
         else:
             # Leave unchanged files alone, including compatibility launchers.
             if not dest_path.is_file() or dest_path.read_text(encoding="utf-8") != bundled:
-                dest_path.write_text(bundled, encoding="utf-8", newline="\n")
+                import time
+                for attempt in range(5):
+                    try:
+                        dest_path.write_text(bundled, encoding="utf-8", newline="\n")
+                        break
+                    except OSError:
+                        if attempt == 4:
+                            raise
+                        time.sleep(0.1 * (attempt + 1))
             # Preserve executable permissions
             try:
                 dest_path.chmod(0o755)

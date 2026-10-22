@@ -107,10 +107,14 @@ EOF
         arch = docs_dir / "ARCHITECTURE.md"
         arch.write_text("# Архитектура (v7.0.0)\nТекст", encoding="utf-8")
 
-        updated = build.sync_version_in_docs("8.5.0", root)
-        self.assertEqual(len(updated), 2)
-        self.assertIn("v8.5.0", readme.read_text(encoding="utf-8"))
-        self.assertIn("(v8.5.0)", arch.read_text(encoding="utf-8"))
+        # Also test with server-setup.env.example present
+        env_ex = root / "server-setup.env.example"
+        env_ex.write_text("# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v7.0.0 Universal)\n", encoding="utf-8")
+        updated2 = build.sync_version_in_docs("8.6.0", root)
+        self.assertEqual(len(updated2), 3)
+        self.assertIn("v8.6.0", readme.read_text(encoding="utf-8"))
+        self.assertIn("(v8.6.0)", arch.read_text(encoding="utf-8"))
+        self.assertIn("(v8.6.0 Universal)", env_ex.read_text(encoding="utf-8"))
 
     def test_bump_version_validation(self):
         root = Path(self.temp_dir.name)

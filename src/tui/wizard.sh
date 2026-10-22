@@ -741,6 +741,11 @@ for item in res:
             CLASSIC_PORTS_LIST+=("$CLASSIC_PORT")
         fi
 
+        local pool_google="dl.google.com www.google.com"
+        local pool_microsoft="www.microsoft.com wwwqa.microsoft.com staticview.microsoft.com"
+        local pool_apple="www.apple.com icloud.com"
+        local pool_samsung="www.samsung.com"
+
         if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
             local fp_keys=("firefox" "chrome" "safari" "ios" "android" "edge" "randomized")
             local fp_labels=(
@@ -754,45 +759,65 @@ for item in res:
             )
             prompt_select "  Выберите uTLS TLS Fingerprint для REALITY" REALITY_FINGERPRINT "${REALITY_FINGERPRINT:-firefox}" fp_keys fp_labels || return $?
 
-            local sni_preset_keys=(
-                "dl.google.com www.google.com"
-                "www.microsoft.com wwwqa.microsoft.com staticview.microsoft.com"
-                "www.apple.com icloud.com"
-                "www.samsung.com"
-                "custom"
-            )
+            local sni_preset_keys=("google" "microsoft" "apple" "samsung" "custom")
             local sni_preset_labels=(
-                "Google пул (dl.google.com, www.google.com — по умолчанию)"
-                "Microsoft пул (www.microsoft.com, wwwqa, staticview)"
-                "Apple пул (www.apple.com, icloud.com)"
-                "Samsung (www.samsung.com)"
-                "Ввести свой собственный SNI или пул доменов вручную"
+                "Google пул (по умолчанию)"
+                "Microsoft пул"
+                "Apple пул"
+                "Samsung"
+                "Свой SNI или пул доменов вручную"
             )
-            local default_sni_choice="${CLASSIC_SNI:-dl.google.com www.google.com}"
-            local chosen_sni_preset=""
+            local current_sni="${CLASSIC_SNI:-$pool_google}"
             local matched_preset="custom"
-            for pk in "${sni_preset_keys[@]}"; do
-                if [ "$pk" = "$default_sni_choice" ]; then
-                    matched_preset="$pk"
-                    break
-                fi
-            done
-            if [ "$matched_preset" = "custom" ] && [ -z "${CLASSIC_SNI:-}" ]; then
-                matched_preset="${sni_preset_keys[0]}"
-            fi
+            case "$current_sni" in
+                "$pool_google"|"dl.google.com")
+                    matched_preset="google"
+                    ;;
+                "$pool_microsoft"|"www.microsoft.com")
+                    matched_preset="microsoft"
+                    ;;
+                "$pool_apple"|"www.apple.com")
+                    matched_preset="apple"
+                    ;;
+                "$pool_samsung")
+                    matched_preset="samsung"
+                    ;;
+                "google"|"microsoft"|"apple"|"samsung"|"custom")
+                    matched_preset="$current_sni"
+                    ;;
+                "")
+                    matched_preset="google"
+                    ;;
+                *)
+                    matched_preset="custom"
+                    ;;
+            esac
 
+            local chosen_sni_preset=""
             prompt_select "  Выберите SNI для маскировки REALITY (или свой пул)" chosen_sni_preset "$matched_preset" sni_preset_keys sni_preset_labels || return $?
 
-            if [ "$chosen_sni_preset" = "custom" ]; then
-                local custom_sni_input=""
-                prompt_default "  Введите внешний SNI или пул доменов через пробел/запятую" "${CLASSIC_SNI:-dl.google.com}" custom_sni_input || return $?
-                CLASSIC_SNI="$custom_sni_input"
-            else
-                CLASSIC_SNI="$chosen_sni_preset"
-            fi
+            case "$chosen_sni_preset" in
+                google)
+                    CLASSIC_SNI="$pool_google"
+                    ;;
+                microsoft)
+                    CLASSIC_SNI="$pool_microsoft"
+                    ;;
+                apple)
+                    CLASSIC_SNI="$pool_apple"
+                    ;;
+                samsung)
+                    CLASSIC_SNI="$pool_samsung"
+                    ;;
+                custom)
+                    local custom_sni_input=""
+                    prompt_default "  Введите внешний SNI или пул доменов через пробел/запятую" "${CLASSIC_SNI:-dl.google.com}" custom_sni_input || return $?
+                    CLASSIC_SNI="$custom_sni_input"
+                    ;;
+            esac
         else
             REALITY_FINGERPRINT="${REALITY_FINGERPRINT:-firefox}"
-            CLASSIC_SNI="${CLASSIC_SNI:-dl.google.com}"
+            CLASSIC_SNI="${CLASSIC_SNI:-$pool_google}"
         fi
 
         local classic_raw="${CLASSIC_SNI:-dl.google.com}"

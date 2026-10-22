@@ -588,6 +588,10 @@ prompt_select_tui() {
         fi
         [[ "$cols" =~ ^[0-9]+$ ]] && [ "$cols" -ge 20 ] || cols=80
         local num_width="${#count}"
+        local key_col_width=14
+        local overhead=$((num_width + 14 + key_col_width))
+        local max_label_width=$((cols - overhead))
+        [ "$max_label_width" -ge 8 ] || max_label_width=8
         local i
         for ((i=0; i<count; i++)); do
             local mark=" "
@@ -600,7 +604,13 @@ prompt_select_tui() {
             fi
             local num=$((i+1))
             local key_display="${_tui_s_keys[$i]}"
+            if [ "${#key_display}" -gt "$key_col_width" ]; then
+                key_display="${key_display:0:key_col_width-1}…"
+            fi
             local label_display="${_tui_s_labels[$i]}"
+            if [ "${#label_display}" -gt "$max_label_width" ]; then
+                label_display="${label_display:0:max_label_width-1}…"
+            fi
             printf "\033[2K  %b[${color}%*s${NC}] [%b] %-14s ${DIM}%s${NC}\n" "$prefix" "$num_width" "$num" "$mark" "$key_display" "$label_display"
         done
         local hint="↑/↓: курсор | Enter/Пробел: выбрать | ?: номера"

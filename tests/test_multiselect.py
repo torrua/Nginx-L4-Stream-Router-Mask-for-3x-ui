@@ -172,6 +172,41 @@ COLUMNS=80
         res = self.single_menu("2\n", default="firefox", capable=False)
         self.assertIn("RESULT=0:chrome", res.stdout)
 
+    def test_single_select_sni_preset_keys(self):
+        with tempfile.TemporaryDirectory() as temp:
+            work = Path(temp)
+            source = (ROOT / "src" / "tui" / "prompts.sh").read_text(encoding="utf-8")
+            source = source.replace("/dev/tty", (work / "no-controlling-terminal").as_posix())
+            script = work / "sni_menu.sh"
+            prelude = """export PATH=/usr/bin:/bin:$PATH
+set -euo pipefail
+source src/common/colors.sh
+ok() { :; }
+log() { :; }
+warn() { printf '%s\n' "$*" >&2; }
+NON_INTERACTIVE=0
+WIZARD_ALLOW_BACK=0
+COLUMNS=80
+"""
+            setup = """
+can_use_interactive_tui() { return 0; }
+sni_preset_keys=(google microsoft apple samsung custom)
+sni_preset_labels=("Google пул (по умолчанию)" "Microsoft пул" "Apple пул" "Samsung" "Свой SNI")
+chosen_sni_preset=""
+status=0
+prompt_select "Select SNI" chosen_sni_preset "google" sni_preset_keys sni_preset_labels || status=$?
+printf "\nRESULT=%s:%s\n" "$status" "$chosen_sni_preset"
+"""
+            script.write_text(prelude + source + setup, encoding="utf-8", newline="\n")
+            env = os.environ.copy()
+            env["TERM"] = "xterm-256color"
+            result = subprocess.run([str(BASH), script.as_posix()], input="\x1b[B\n".encode("utf-8"), cwd=ROOT, env=env,
+                                    capture_output=True, timeout=15)
+            out = result.stdout.decode("utf-8", "replace")
+            self.assertIn("RESULT=0:microsoft", out)
+            # Ensure menu line doesn't leak raw domain contents into preset keys
+            self.assertNotIn("staticview.microsoft.com", out)
+
 
 if __name__ == "__main__":
     unittest.main()

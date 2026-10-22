@@ -44,6 +44,7 @@ SCRIPT_VERSION="__VERSION__"
 
 # @include "system/snapshot.sh"
 # @include "system/uninstall.sh"
+# @include "system/log-export.sh"
 
 # @include "tui/prompts.sh"
 

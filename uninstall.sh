@@ -32,7 +32,13 @@ SHIELD="🛡"
 log()  { echo -e "  ${CYAN}[+]${NC} $*"; }
 ok()   { echo -e "  ${GREEN}${CHECK:-✔}${NC} $*"; }
 warn() { echo -e "  ${YELLOW}[!]${NC} $*"; }
-die()  { echo -e "  ${RED}${CROSS:-✖} $*${NC}" >&2; exit 1; }
+die()  {
+    echo -e "  ${RED}${CROSS:-✖} $*${NC}" >&2
+    if is_true "${DEBUG_MODE:-0}" && command -v offer_debug_log_export >/dev/null 2>&1; then
+        offer_debug_log_export || true
+    fi
+    exit 1
+}
 #!/usr/bin/env bash
 # ==============================================================================
 # src/common/lock.sh - Inter-Process Mutex for Mutating Operations (T07)
@@ -400,7 +406,13 @@ SHIELD="🛡"
 log()  { echo -e "  ${CYAN}[+]${NC} $*"; }
 ok()   { echo -e "  ${GREEN}${CHECK:-✔}${NC} $*"; }
 warn() { echo -e "  ${YELLOW}[!]${NC} $*"; }
-die()  { echo -e "  ${RED}${CROSS:-✖} $*${NC}" >&2; exit 1; }
+die()  {
+    echo -e "  ${RED}${CROSS:-✖} $*${NC}" >&2
+    if is_true "${DEBUG_MODE:-0}" && command -v offer_debug_log_export >/dev/null 2>&1; then
+        offer_debug_log_export || true
+    fi
+    exit 1
+}
 #!/usr/bin/env bash
 # ==============================================================================
 #  SNAPSHOT ENGINE: Initial System State Capture & Verification

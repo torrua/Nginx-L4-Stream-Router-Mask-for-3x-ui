@@ -37,4 +37,9 @@ report_installation() {
     done
     echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}\n"
 
+    if is_true "${DEBUG_MODE:-0}" || [ -n "${FORCE_LOG_EXPORT:-}" ]; then
+        if command -v offer_debug_log_export >/dev/null 2>&1; then
+            offer_debug_log_export
+        fi
+    fi
 }

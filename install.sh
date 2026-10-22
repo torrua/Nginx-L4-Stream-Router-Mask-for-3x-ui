@@ -2859,9 +2859,9 @@ run_uninstall() {
     if command -v ufw >/dev/null 2>&1; then
         local current_ssh_port
         current_ssh_port=$(command -v detect_active_ssh_port >/dev/null 2>&1 && detect_active_ssh_port || echo 22)
-        ufw allow "${current_ssh_port}/tcp" comment 'SSH (Active)' 2>/dev/null || true
-        [ -n "$orig_ssh_port" ] && ufw allow "${orig_ssh_port}/tcp" comment 'SSH (Restored)' 2>/dev/null || true
-        ufw reload 2>/dev/null || true
+        ufw allow "${current_ssh_port}/tcp" comment 'SSH (Active)' >/dev/null 2>&1 || true
+        [ -n "$orig_ssh_port" ] && ufw allow "${orig_ssh_port}/tcp" comment 'SSH (Restored)' >/dev/null 2>&1 || true
+        ufw reload >/dev/null 2>&1 || true
     fi
     ok "Правила Firewall очищены (SSH-порты защищены)."
 
@@ -9748,10 +9748,10 @@ EOF
     if command -v ufw >/dev/null 2>&1; then
         local ufw_m_port="${m_port//-/:}"
         if [ "$m_trans" = "BOTH" ] || [ "$m_trans" = "TCP" ]; then
-            ufw allow "${ufw_m_port}/tcp" comment 'VPN: Mieru TCP' 2>/dev/null || true
+            ufw allow "${ufw_m_port}/tcp" comment 'VPN: Mieru TCP' >/dev/null 2>&1 || true
         fi
         if [ "$m_trans" = "BOTH" ] || [ "$m_trans" = "UDP" ]; then
-            ufw allow "${ufw_m_port}/udp" comment 'VPN: Mieru UDP' 2>/dev/null || true
+            ufw allow "${ufw_m_port}/udp" comment 'VPN: Mieru UDP' >/dev/null 2>&1 || true
         fi
     fi
 
@@ -12723,7 +12723,7 @@ EOF
         die "Ошибка запуска Nginx. Конфигурация автоматически возвращена в исходное состояние."
     }
 }
-install_step_firewall() {
+apply_firewall_rules() {
     :
 # Apply only the ports owned by this installation, preserving existing rules.
 command -v ufw >/dev/null 2>&1 || die "UFW is not installed."
@@ -12912,6 +12912,14 @@ else
     fi
 fi
 
+}
+
+install_step_firewall() {
+    if command -v run_with_spinner >/dev/null 2>&1; then
+        run_with_spinner "Применение правил доступа и портов UFW" apply_firewall_rules
+    else
+        apply_firewall_rules
+    fi
 }
 #!/usr/bin/env bash
 # ==============================================================================

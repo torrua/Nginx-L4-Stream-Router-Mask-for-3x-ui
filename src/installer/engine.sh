@@ -41,9 +41,17 @@ install_step_nginx_config() {
     :
 # @include "nginx/config.sh"
 }
-install_step_firewall() {
+apply_firewall_rules() {
     :
 # @include "installer/firewall.sh"
+}
+
+install_step_firewall() {
+    if command -v run_with_spinner >/dev/null 2>&1; then
+        run_with_spinner "Применение правил доступа и портов UFW" apply_firewall_rules
+    else
+        apply_firewall_rules
+    fi
 }
 # @include "installer/panel.sh"
 install_step_adguard() {

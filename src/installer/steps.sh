@@ -807,10 +807,10 @@ EOF
     if command -v ufw >/dev/null 2>&1; then
         local ufw_m_port="${m_port//-/:}"
         if [ "$m_trans" = "BOTH" ] || [ "$m_trans" = "TCP" ]; then
-            ufw allow "${ufw_m_port}/tcp" comment 'VPN: Mieru TCP' 2>/dev/null || true
+            ufw allow "${ufw_m_port}/tcp" comment 'VPN: Mieru TCP' >/dev/null 2>&1 || true
         fi
         if [ "$m_trans" = "BOTH" ] || [ "$m_trans" = "UDP" ]; then
-            ufw allow "${ufw_m_port}/udp" comment 'VPN: Mieru UDP' 2>/dev/null || true
+            ufw allow "${ufw_m_port}/udp" comment 'VPN: Mieru UDP' >/dev/null 2>&1 || true
         fi
     fi
 

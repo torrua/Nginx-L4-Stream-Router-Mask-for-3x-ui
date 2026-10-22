@@ -356,6 +356,7 @@ ENABLE_AWG_STANDALONE=0
 ENABLE_AWG_V3=0; ENABLE_AWG_V2=0; ENABLE_SS2022=0; ENABLE_TUIC=0
 ENABLE_MTPROTO=0; ENABLE_MASQUE=0; ENABLE_DNSTT=0
 ufw() { echo "UFW:$*"; }
+run_with_spinner() { shift; "$@"; }
 install_step_firewall
 ''', "installer/engine.sh")
         self.assertEqual(result.returncode, 0, result.stderr)

@@ -94,11 +94,11 @@ setup_amneziawg_controller() {
     log "Развертывание универсального контроллера AmneziaWG в $awg_dir..."
 
     # Копирование или запись manage_clients.py и crypto_engine.py
-    local src_py="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/manage_clients.py"
+    local src_py="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)/manage_clients.py"
     if [ -f "$src_py" ]; then
         cp -f "$src_py" "$awg_dir/manage_clients.py"
     fi
-    local src_crypto="$(cd "$(dirname "${BASH_SOURCE[0]}")/../common" 2>/dev/null && pwd)/crypto_engine.py"
+    local src_crypto="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../common" 2>/dev/null && pwd)/crypto_engine.py"
     if [ -f "$src_crypto" ]; then
         cp -f "$src_crypto" "$awg_dir/crypto_engine.py"
     fi

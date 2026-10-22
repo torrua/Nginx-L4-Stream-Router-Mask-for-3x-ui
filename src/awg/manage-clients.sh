@@ -8,7 +8,7 @@ AWG_DIR="${AWG_DIR:-/root/awg}"
 PYTHON_BIN="$(command -v python3 2>/dev/null || echo /usr/bin/python3)"
 
 if [ ! -f "$AWG_DIR/manage_clients.py" ]; then
-    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "/root/awg")"
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo "/root/awg")"
     if [ -f "$script_dir/manage_clients.py" ]; then
         exec "$PYTHON_BIN" "$script_dir/manage_clients.py" "$@"
     fi

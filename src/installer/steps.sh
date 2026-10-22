@@ -839,7 +839,7 @@ EOF
     fi
 
     # Развертывание CLI-менеджера пользователей Mieru
-    local src_mgr="$(cd "$(dirname "${BASH_SOURCE[0]}")/../system" 2>/dev/null && pwd)/mieru-mgr.sh"
+    local src_mgr="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../system" 2>/dev/null && pwd)/mieru-mgr.sh"
     if [ -f "$src_mgr" ]; then
         cp -f "$src_mgr" "${bin_dir}/mieru-mgr"
     fi

@@ -511,6 +511,6 @@ mieru_mgr_main() {
     esac
 }
 
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ "$(basename "${0:-}")" == *"mieru-"* ]]; then
+if [[ "${BASH_SOURCE[0]:-}" == "${0:-}" ]] && [[ "$(basename "${0:-}")" == *"mieru-"* ]]; then
     mieru_mgr_main "$@"
 fi

@@ -4327,7 +4327,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Автообнаружение конфигурационного файла, если путь не передан явно
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo "")"
 if [ -z "$CONFIG_FILE" ]; then
     CONFIG_FILE=$(find_config_file "$SCRIPT_DIR" || true)
     if [ -n "$CONFIG_FILE" ]; then
@@ -6515,11 +6515,11 @@ setup_amneziawg_controller() {
     log "Развертывание универсального контроллера AmneziaWG в $awg_dir..."
 
     # Копирование или запись manage_clients.py и crypto_engine.py
-    local src_py="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/manage_clients.py"
+    local src_py="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)/manage_clients.py"
     if [ -f "$src_py" ]; then
         cp -f "$src_py" "$awg_dir/manage_clients.py"
     fi
-    local src_crypto="$(cd "$(dirname "${BASH_SOURCE[0]}")/../common" 2>/dev/null && pwd)/crypto_engine.py"
+    local src_crypto="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../common" 2>/dev/null && pwd)/crypto_engine.py"
     if [ -f "$src_crypto" ]; then
         cp -f "$src_crypto" "$awg_dir/crypto_engine.py"
     fi
@@ -9768,7 +9768,7 @@ EOF
     fi
 
     # Развертывание CLI-менеджера пользователей Mieru
-    local src_mgr="$(cd "$(dirname "${BASH_SOURCE[0]}")/../system" 2>/dev/null && pwd)/mieru-mgr.sh"
+    local src_mgr="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../system" 2>/dev/null && pwd)/mieru-mgr.sh"
     if [ -f "$src_mgr" ]; then
         cp -f "$src_mgr" "${bin_dir}/mieru-mgr"
     fi
@@ -10287,7 +10287,7 @@ mieru_mgr_main() {
     esac
 }
 
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ "$(basename "${0:-}")" == *"mieru-"* ]]; then
+if [[ "${BASH_SOURCE[0]:-}" == "${0:-}" ]] && [[ "$(basename "${0:-}")" == *"mieru-"* ]]; then
     mieru_mgr_main "$@"
 fi
 EOF_MIERU_MGR
@@ -13287,9 +13287,9 @@ run_backup_engine() {
     py_cmd=$(get_sqlite_backup_python || return 1)
     local script_loc=""
     for cand in \
-        "$(dirname "${BASH_SOURCE[0]}")/backup_engine.py" \
-        "$(dirname "${BASH_SOURCE[0]}")/../common/backup_engine.py" \
-        "$(dirname "${BASH_SOURCE[0]}")/src/common/backup_engine.py" \
+        "$(dirname "${BASH_SOURCE[0]:-$0}")/backup_engine.py" \
+        "$(dirname "${BASH_SOURCE[0]:-$0}")/../common/backup_engine.py" \
+        "$(dirname "${BASH_SOURCE[0]:-$0}")/src/common/backup_engine.py" \
         "${SCRIPT_DIR:-.}/src/common/backup_engine.py" \
         "${SCRIPT_DIR:-.}/backup_engine.py"; do
         if [ -f "$cand" ]; then

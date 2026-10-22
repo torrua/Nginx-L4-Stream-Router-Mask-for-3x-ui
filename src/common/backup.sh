@@ -20,9 +20,9 @@ run_backup_engine() {
     py_cmd=$(get_sqlite_backup_python || return 1)
     local script_loc=""
     for cand in \
-        "$(dirname "${BASH_SOURCE[0]}")/backup_engine.py" \
-        "$(dirname "${BASH_SOURCE[0]}")/../common/backup_engine.py" \
-        "$(dirname "${BASH_SOURCE[0]}")/src/common/backup_engine.py" \
+        "$(dirname "${BASH_SOURCE[0]:-$0}")/backup_engine.py" \
+        "$(dirname "${BASH_SOURCE[0]:-$0}")/../common/backup_engine.py" \
+        "$(dirname "${BASH_SOURCE[0]:-$0}")/src/common/backup_engine.py" \
         "${SCRIPT_DIR:-.}/src/common/backup_engine.py" \
         "${SCRIPT_DIR:-.}/backup_engine.py"; do
         if [ -f "$cand" ]; then

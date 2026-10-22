@@ -7,7 +7,7 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 COMPOSE_DIR="${SCRIPT_DIR}/compose"
 ENV_FILE="${COMPOSE_DIR}/.env"
 ENV_EXAMPLE="${COMPOSE_DIR}/.env.example"

@@ -1298,7 +1298,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Автообнаружение конфигурационного файла, если путь не передан явно
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo "")"
 if [ -z "$CONFIG_FILE" ]; then
     CONFIG_FILE=$(find_config_file "$SCRIPT_DIR" || true)
     if [ -n "$CONFIG_FILE" ]; then

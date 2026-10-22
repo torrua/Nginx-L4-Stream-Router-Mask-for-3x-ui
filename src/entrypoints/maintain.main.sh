@@ -18,17 +18,24 @@ set -euo pipefail
 # @include "common/colors.sh"
 # @include "common/logger.sh"
 # @include "common/config.sh"
+# @include "common/lock.sh"
+# @include "common/download.sh"
 # @include "common/backup.sh"
 # @include "system/mieru-mgr.sh"
 
 
 show_help() {
     cat << 'EOF_HELP'
-Использование: ./maintain.sh [ОПЦИИ]
+Использование: ./maintain.sh [КОМАНДА | ОПЦИИ]
 
-Утилита безопасного обновления и самовосстановления (Smart Reconcile) для Nginx L4 + 3X-UI.
+Утилита безопасного обновления, резервного копирования и восстановления для Nginx L4 + 3X-UI.
 
-Опции:
+Команды резервного копирования и восстановления:
+  backup, -b, --backup          Создать полный транзакционный бэкап стека (WAL-safe + селективный SSL)
+  restore, --restore <АРХИВ>    Безопасно восстановить конфигурацию с валидацией SSL и автооткатом
+  extract, --extract <АРХ> <DIR> Аварийно распаковать архив без прав root (PEP 706 Path Traversal safe)
+
+Опции обслуживания:
   -c, --config <FILE>     Путь к файлу конфигурации (.env) (по умолчанию: ./server-setup.env)
   --db <PATH>             Путь к базе данных 3X-UI (по умолчанию: /etc/x-ui/x-ui.db)
   --dry-run               Только аудит и проверка (без внесения изменений)
@@ -39,22 +46,24 @@ show_help() {
   --mieru-add-user <NAME> [PASS] Добавить пользователя Mieru и создать клиентский .json
   --mieru-del-user <NAME> Удалить пользователя Mieru
   --mieru-mgr <CMD> ...   Прямой вызов диспетчера пользователей Mieru (list, add, del)
+  -v, --version           Показать версию утилиты и выйти
   -h, --help              Показать эту справку и выйти
 
 Примеры использования:
-  # 1. Предварительный безопасный аудит (посмотреть, что будет исправлено):
+  # 1. Создать резервную копию всей системы:
+  ./maintain.sh backup
+
+  # 2. Восстановить конфигурацию из бэкапа:
+  ./maintain.sh restore /var/backups/vpn-stack/vpn-backup-20261021_120000.tar.gz
+
+  # 3. Аварийно извлечь файлы бэкапа без root на любой машине:
+  ./maintain.sh extract /var/backups/vpn-stack/vpn-backup-20261021_120000.tar.gz ./backup_files
+
+  # 4. Предварительный аудит настроек сервера (без записи):
   ./maintain.sh --dry-run
 
-  # 2. Выполнить обновление и исправление с авто-бэкапом:
-  ./maintain.sh -y
-
-  # 3. Мгновенный откат системы к состоянию до обновления:
-  ./maintain.sh --rollback
-
-  # 4. Управление пользователями Mieru:
-  ./maintain.sh --mieru-list-users
-  ./maintain.sh --mieru-add-user alice
-  ./maintain.sh --mieru-del-user alice
+  # 5. Запуск аудита напрямую через curl в 1 команду:
+  curl -sSL https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/maintain.sh | sudo bash -s -- --dry-run
 EOF_HELP
 }
 
@@ -68,9 +77,31 @@ MIERU_ACTION=""
 MIERU_TARGET_USER=""
 MIERU_TARGET_PASS=""
 MIERU_MGR_ARGS=()
+COMMAND=""
+COMMAND_ARGS=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        backup|-b|--backup)
+            COMMAND="backup"
+            shift
+            ;;
+        restore|--restore)
+            COMMAND="restore"
+            shift
+            if [[ $# -gt 0 && "${1:0:1}" != "-" ]]; then
+                COMMAND_ARGS+=("$1")
+                shift
+            fi
+            ;;
+        extract|--extract)
+            COMMAND="extract"
+            shift
+            while [[ $# -gt 0 && "${1:0:1}" != "-" ]]; do
+                COMMAND_ARGS+=("$1")
+                shift
+            done
+            ;;
         -c|--config)
             [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: путь к файлу конфигурации."
             CONFIG_FILE="$2"
@@ -127,12 +158,47 @@ while [[ $# -gt 0 ]]; do
             show_help
             exit 0
             ;;
+        -v|--version)
+            echo "maintain.sh (Nginx L4 Stream Router Mask for 3X-UI) __VERSION__"
+            exit 0
+            ;;
         *)
-            warn "Неизвестный параметр: $1"
-            shift
+            echo "Ошибка: Неизвестный параметр: $1. Используйте --help для вывода доступных опций." >&2
+            exit 2
             ;;
     esac
 done
+
+if [ -n "$COMMAND" ]; then
+    case "$COMMAND" in
+        backup)
+            if [ "$DRY_RUN" -eq 1 ]; then
+                log "[DRY-RUN] Аудит готовности к созданию бэкапа..."
+                get_sqlite_backup_python >/dev/null || die "Python sqlite3 не найден"
+                ok "[DRY-RUN] Окружение SQLite валидно для создания бэкапа"
+                exit 0
+            fi
+            acquire_stack_lock "${VPN_STACK_LOCK_TIMEOUT:-10}" "maintain-backup" || exit $?
+            do_backup "${COMMAND_ARGS[@]}"
+            exit $?
+            ;;
+        restore)
+            if [ "$DRY_RUN" -eq 1 ]; then
+                log "[DRY-RUN] Режим предварительного аудита архива перед восстановлением..."
+                [[ -n "${COMMAND_ARGS[0]:-}" ]] || die "Укажите путь к архиву: ./maintain.sh --dry-run restore <архив.tar.gz>"
+                audit_restore_archive "${COMMAND_ARGS[0]}"
+                exit 0
+            fi
+            acquire_stack_lock "${VPN_STACK_LOCK_TIMEOUT:-10}" "maintain-restore" || exit $?
+            do_restore "${COMMAND_ARGS[@]}"
+            exit $?
+            ;;
+        extract)
+            do_extract "${COMMAND_ARGS[@]}"
+            exit $?
+            ;;
+    esac
+fi
 
 if [ -n "$MIERU_ACTION" ]; then
     case "$MIERU_ACTION" in
@@ -176,8 +242,16 @@ if [ "$ROLLBACK" -eq 1 ]; then
 
     log "Восстановление базы данных 3X-UI из: $LATEST_DB_BAK"
     if command -v systemctl >/dev/null 2>&1; then
-        systemctl stop x-ui 2>/dev/null || true
+        if ! systemctl stop x-ui 2>/dev/null; then
+            if systemctl is-active --quiet x-ui 2>/dev/null; then
+                die "Критическая ошибка: невозможно остановить работающую службу x-ui перед откатом."
+            fi
+        fi
+        if systemctl is-active --quiet x-ui 2>/dev/null; then
+            die "Критическая ошибка: служба x-ui продолжает работать после команды остановки. Откат базы отменен."
+        fi
     fi
+    rm -f "$DB_PATH-wal" "$DB_PATH-shm" 2>/dev/null || true
     cp -a "$LATEST_DB_BAK" "$DB_PATH"
     chmod 600 "$DB_PATH"
     if command -v systemctl >/dev/null 2>&1; then
@@ -213,22 +287,14 @@ fi
 # Загрузка параметров
 if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
     log "Загрузка конфигурации из: $CONFIG_FILE"
-    re_dquote='^"(.*)"$'
-    re_squote="^'(.*)'\$"
-    while IFS= read -r line || [ -n "$line" ]; do
-        [[ "$line" =~ ^[[:space:]]*# ]] && continue
-        [[ -z "${line// }" ]] && continue
-        if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
-            key="${BASH_REMATCH[1]}"
-            val="${BASH_REMATCH[2]}"
-            if [[ "$val" =~ $re_dquote ]] || [[ "$val" =~ $re_squote ]]; then
-                val="${BASH_REMATCH[1]}"
-            fi
-            declare -g "$key=$val"
-        fi
-    done < "$CONFIG_FILE"
+    load_config_data_safe "$CONFIG_FILE" || die "Ошибка загрузки параметров из $CONFIG_FILE"
 else
     warn "Конфигурационный файл .env не найден. Параметры будут считаны из базы данных 3X-UI."
+fi
+
+# Захват блокировки для изменяющих операций обслуживания (T07)
+if [ "$DRY_RUN" -eq 0 ]; then
+    acquire_stack_lock "${VPN_STACK_LOCK_TIMEOUT:-10}" "maintain-repair" || exit $?
 fi
 
 # Поиск базы данных 3X-UI
@@ -373,6 +439,7 @@ cleanup_xui() {
             fi
         fi
     fi
+    command -v release_stack_lock >/dev/null 2>&1 && release_stack_lock
     exit "$exit_code"
 }
 trap cleanup_xui EXIT INT TERM

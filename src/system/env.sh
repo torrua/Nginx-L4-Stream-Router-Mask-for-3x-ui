@@ -74,14 +74,17 @@ ensure_wstunnel_prefix() {
 
 rotate_secret_paths() {
     # Only the full installer may rotate paths; companion scripts preserve them.
-    local panel_token ws_token client_token
+    local panel_token ws_token client_token diag_token
     panel_token=$(generate_secret_token) || return 1
     ws_token=$(generate_secret_token) || return 1
     client_token=$(generate_secret_token) || return 1
+    diag_token=$(generate_secret_token) || return 1
     RAW_PATH="panel-${panel_token}"
     PANEL_PATH="/${RAW_PATH}/"
     WSTUNNEL_PREFIX="/ws-${ws_token}/"
     AGH_CLIENT_ID="client-${client_token}"
+    DIAG_PATH="/diag-${diag_token}/"
+    DIAG_TOKEN="$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 16 || echo "tok${RANDOM}")"
     AUTO_SETUP_3XUI=y
     LAST_COMPLETED_STEP=0
     RESUME_STEP=1
@@ -245,7 +248,19 @@ reconstruct_arrays_from_vars() {
     AUTO_SETUP_3XUI="${AUTO_SETUP_3XUI:-y}"
     _v="${SHOW_MANUAL_STEPS:-n}"; if is_true "$_v"; then SHOW_MANUAL_STEPS=1; else SHOW_MANUAL_STEPS=0; fi
     PORT_AGH_WEB="${PORT_AGH_WEB:-3000}"
+    PORT_AGH_DNS="${PORT_AGH_DNS:-10053}"
     ensure_agh_client_id || return 1
+
+    if [ -z "${DIAG_PATH:-}" ]; then
+        local diag_tok
+        diag_tok=$(generate_secret_token) || return 1
+        DIAG_PATH="/diag-${diag_tok}/"
+    fi
+    DIAG_PATH="/${DIAG_PATH#/}"
+    DIAG_PATH="${DIAG_PATH%/}/"
+    if [ -z "${DIAG_TOKEN:-}" ]; then
+        DIAG_TOKEN="$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 16 || echo "tok${RANDOM}")"
+    fi
 
     # Сосуществование с Dokploy и протоколы следующего поколения
     _v="${DOKPLOY_COEXISTENCE:-n}"; if is_true "$_v"; then DOKPLOY_COEXISTENCE="y"; else DOKPLOY_COEXISTENCE="n"; fi
@@ -343,22 +358,9 @@ load_env_file() {
     local env_file="$1"
     [ -f "$env_file" ] || return 0
     log "Загрузка параметров из конфигурационного файла: $env_file"
-    local re_dquote='^"(.*)"$'
-    local re_squote="^'(.*)'\$"
-    while IFS= read -r line || [ -n "$line" ]; do
-        line="${line%$'\r'}"
-        [[ "$line" =~ ^[[:space:]]*# ]] && continue
-        [[ -z "${line// }" ]] && continue
-        if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
-            local key="${BASH_REMATCH[1]}"
-            local val="${BASH_REMATCH[2]}"
-            if [[ "$val" =~ $re_dquote ]] || [[ "$val" =~ $re_squote ]]; then
-                val="${BASH_REMATCH[1]}"
-            fi
-            declare -g "$key=$val"
-            CONFIG_EXPLICIT_KEYS[$key]=1
-        fi
-    done < "$env_file"
+    if ! load_config_data_safe "$env_file"; then
+        die "Ошибка синтаксиса или безопасности при загрузке конфигурации $env_file"
+    fi
     reconstruct_arrays_from_vars
 }
 
@@ -569,6 +571,9 @@ AGH_USER="${AGH_USER:-admin}"
 AGH_PASS="${AGH_PASS:-}"
 AGH_CLIENT_ID="${AGH_CLIENT_ID}"
 PORT_AGH_WEB="${PORT_AGH_WEB:-3000}"
+PORT_AGH_DNS="${PORT_AGH_DNS:-10053}"
+DIAG_PATH="${DIAG_PATH:-}"
+DIAG_TOKEN="${DIAG_TOKEN:-}"
 AGH_XRAY_DNS="$agh_xray_save"
 SHOW_TIPS="${SHOW_TIPS:-y}"
 

@@ -54,7 +54,8 @@ installation_listeners() {
             for port in "${CLASSIC_PORTS_LIST[@]:-${CLASSIC_PORT:-46443}}"; do printf 'Reality-external tcp %s\n' "$port"; done
         fi
         if is_true "${ENABLE_AGH:-n}"; then
-            printf 'AdGuard-web tcp %s\nAdGuard-DNS tcp 53\nAdGuard-DNS udp 53\n' "${PORT_AGH_WEB:-3000}"
+            local agh_dns_p="${PORT_AGH_DNS:-10053}"
+            printf 'AdGuard-web tcp %s\nAdGuard-DNS tcp %s\nAdGuard-DNS udp %s\n' "${PORT_AGH_WEB:-3000}" "$agh_dns_p" "$agh_dns_p"
         fi
     fi
     selected_protocol_ports

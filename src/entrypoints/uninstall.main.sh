@@ -9,6 +9,7 @@ set -euo pipefail
 
 # @include "common/colors.sh"
 # @include "common/logger.sh"
+# @include "common/lock.sh"
 # @include "system/snapshot.sh"
 # @include "system/uninstall.sh"
 
@@ -24,6 +25,7 @@ show_uninstall_help() {
   --purge                     Полное удаление установленных пакетов (Nginx, AWG DKMS)
   --remove-certs              Удалить выданные SSL-сертификаты (/etc/letsencrypt, /etc/ssl/acme)
   --keep-certs                Сохранить SSL-сертификаты (по умолчанию: да)
+  -v, --version               Показать версию и выйти
   -h, --help                  Показать эту справку и выйти
 
 Примеры:
@@ -53,6 +55,10 @@ while [ $# -gt 0 ]; do
             UNINSTALL_CERTS_EXPLICIT=1
             shift
             ;;
+        -v|--version)
+            echo "uninstall.sh (Nginx L4 Stream Router Mask for 3X-UI) __VERSION__"
+            exit 0
+            ;;
         -h|--help)
             show_uninstall_help
             exit 0
@@ -65,4 +71,5 @@ while [ $# -gt 0 ]; do
     esac
 done
 
+acquire_stack_lock "${VPN_STACK_LOCK_TIMEOUT:-10}" "uninstall" || exit $?
 run_uninstall

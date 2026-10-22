@@ -12,6 +12,9 @@ set -euo pipefail
 # + Extended Utilities
 #####################################
 
+# @include "common/lock.sh"
+# @include "common/download.sh"
+
 DEFAULT_SSH_PORT=22
 MIN_SSH_PORT=22
 MAX_SSH_PORT=65535
@@ -23,6 +26,8 @@ if [[ $EUID -ne 0 ]]; then
     echo "Ошибка: Запустите скрипт от пользователя root (sudo)" >&2
     exit 1
 fi
+
+acquire_stack_lock "${VPN_STACK_LOCK_TIMEOUT:-10}" "prepare-server" || exit $?
 
 # Определение операционной системы
 OS_ID=""
@@ -585,11 +590,9 @@ if [[ "${ENABLE_ZAPRET:-n}" == "y" || "${ENABLE_ZAPRET:-0}" == "1" ]] || prompt_
         *) z_arch="x86_64" ;;
     esac
     if [ ! -x /usr/local/bin/nfqws ]; then
-        z_ver="${ZAPRET_VERSION:-v69.2}"
-        z_tmp="/tmp/zapret_${z_ver}"
+        z_tmp="/tmp/zapret_staging_$$"
         mkdir -p "$z_tmp"
-        if curl -fsSL --connect-timeout 15 "https://github.com/bol-van/zapret/releases/download/${z_ver}/zapret-${z_ver}.tar.gz" -o "$z_tmp/zapret.tar.gz" 2>/dev/null || \
-           curl -fsSL --connect-timeout 15 "https://ghfast.top/https://github.com/bol-van/zapret/releases/download/${z_ver}/zapret-${z_ver}.tar.gz" -o "$z_tmp/zapret.tar.gz" 2>/dev/null; then
+        if download_manifest_component "zapret" "$z_tmp/zapret.tar.gz" "all"; then
             tar -zxf "$z_tmp/zapret.tar.gz" -C "$z_tmp" --strip-components=1 2>/dev/null || true
             if [ -f "$z_tmp/binaries/${z_arch}/nfqws" ]; then
                 cp "$z_tmp/binaries/${z_arch}/nfqws" /usr/local/bin/nfqws

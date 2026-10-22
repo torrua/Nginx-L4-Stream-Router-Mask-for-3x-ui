@@ -9,7 +9,7 @@
 [Инструкция для новичков](docs/BEGINNER_GUIDE.md) • [Техническая архитектура](docs/ARCHITECTURE.md) • [Бэклог задач (РФ)](docs/BACKLOG.md) • [Быстрый старт](#-быстрый-старт-установка-в-1-команду)
 
 [![CI](https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/actions/workflows/ci.yml/badge.svg)](https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/actions/workflows/ci.yml)
-[![Версия](https://img.shields.io/badge/версия-v9.1.0-blue)](https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui)
+[![Версия](https://img.shields.io/badge/версия-v9.2.0-blue)](https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui)
 [![ОС](https://img.shields.io/badge/ОС-Ubuntu%20%7C%20Debian-informational)](docs/BEGINNER_GUIDE.md#1-сервер-vps)
 [![Лицензия](https://img.shields.io/badge/лицензия-MIT-success)](LICENSE)
 
@@ -136,12 +136,14 @@ flowchart TD
    * **NaïveProxy + Caddy** (порт `8446/tcp`): сетевой стек Chromium и выпуск SSL через Cloudflare DNS-01 ACME.
    * **Server-Side Zapret** (`nfqws` с `connbytes 1:6`): серверная десинхронизация DPI ТСПУ без снижения скорости.
    * **Wstunnel поверх Dokploy Traefik**: туннелирование WireGuard/AmneziaWG через порт `443` Dokploy без конфликтов с Traefik.
+   * **Mieru Proxy** (порт `8450` TCP/UDP, либо диапазон портов `8450-8455`): криптографически стойкий прокси на базе шифрования XChaCha20-Poly1305, устойчивый к активному зондированию (active probing) и блокировкам по TLS-отпечаткам (JA3/JA4).
 6. **Умный исходящий трафик (Cloudflare WARP Smart Routing):**
    * Запросы к Google, AI-сервисам (ChatGPT, Claude, Gemini) и сайтам с капчей Cloudflare идут через чистый IP Cloudflare WARP (MTU 1280).
    * Видео YouTube и российские сервисы (банки, Госуслуги) идут напрямую с VPS для максимальной скорости и отсутствия блокировок.
-7. **Автоматическая проверка занятости портов (Preflight Inspector):**
+7. **Автоматическая проверка занятости портов (Preflight Inspector) и изоляция DNS:**
    * Автоматически проверяет порты (53, 80/443, 3000 и внутренние порты стека) перед установкой.
    * Если порт 3000 уже занят другими сервисами или контейнерами, скрипт автоматически подберёт свободный порт для AdGuard Home из диапазона 3001–3053.
+   * AdGuard Home изолируется на локальном порту `10053` (`PORT_AGH_DNS`), полностью устраняя конфликт со стандартным портом 53 `systemd-resolved`, а запросы клиентов туннелей направляются на локальный фильтр `127.0.0.1:10053`.
    * Поддерживает режим бесконфликтного сосуществования с Dokploy (`DOKPLOY_COEXISTENCE=y`).
 8. **Безопасная настройка UFW, Nginx и защита Anti-Loop:**
    * UFW настраивается без сброса существующих правил (`ufw reset`), полностью сохраняя существующие правила и SSH-доступ администратора.
@@ -159,7 +161,7 @@ flowchart TD
 | 🛡️ **[Протоколы следующего поколения & Dokploy](docs/NEXTGEN_PROTOCOLS_DOKPLOY.md)** | Развертывание MASQUE, ShadowTLS v4, NaïveProxy, Zapret и Wstunnel через Docker Compose с нулевым конфликтом с Dokploy Traefik на портах 80/443. |
 | 🎛️ **[Автонастройка 3X-UI (`configure-panel.sh`)](#-ручная-пошаговая-установка-для-экспертов)** | Скрипт, который сам создаёт подключения в панели, генерирует клиентские ссылки `:443` через `externalProxy`, настраивает Cloudflare WARP, задает часовой пояс, ежемесячный сброс трафика, защиту от SMTP-спама (порт 25) и блокировку SSRF к локальным службам VPS. |
 | ✍️ **[Редакционная политика](docs/EDITORIAL_POLICY.md)** | Стандарт коммуникации проекта: Tone of Voice, словарь понятных терминов для новичков, запрет пафоса и псевдомаркетинга. |
-| 📝 **[История версий и Release Notes](docs/RELEASE_NOTES_v9.1.0.md)** | Подробные отчеты о релизах: [v9.1.0](docs/RELEASE_NOTES_v9.1.0.md) (Mieru Proxy Protocol, User Management & UX Optimization), [v9.0.0](docs/RELEASE_NOTES_v9.0.0.md) (Unified Engine, Snapshot Rollback & Offline Autonomy), [v8.2.2](docs/RELEASE_NOTES_v8.2.2.md) (Случайные пути и сохранение действующих настроек), [v8.2.1](docs/RELEASE_NOTES_v8.2.1.md) (Stability & UX Polish), [v8.2.0](docs/RELEASE_NOTES_v8.2.0.md) (Next-Gen & Extreme Stealth Suite), [v8.1.0](docs/RELEASE_NOTES_v8.1.0.md), [v8.0.2](docs/RELEASE_NOTES_v8.0.2.md), [v8.0.1](docs/RELEASE_NOTES_v8.0.1.md), [v8.0.0](docs/RELEASE_NOTES_v8.0.0.md). |
+| 📝 **[История версий и Release Notes](docs/RELEASE_NOTES_v9.2.0.md)** | Подробные отчеты о релизах: [v9.2.0](docs/RELEASE_NOTES_v9.2.0.md) (SSO Diagnostics, Transactional Backup & DNS Isolation), [v9.1.0](docs/RELEASE_NOTES_v9.1.0.md) (Mieru Proxy Protocol, User Management & UX Optimization), [v9.0.0](docs/RELEASE_NOTES_v9.0.0.md) (Unified Engine, Snapshot Rollback & Offline Autonomy), [v8.2.2](docs/RELEASE_NOTES_v8.2.2.md) (Случайные пути и сохранение действующих настроек), [v8.2.1](docs/RELEASE_NOTES_v8.2.1.md) (Stability & UX Polish), [v8.2.0](docs/RELEASE_NOTES_v8.2.0.md) (Next-Gen & Extreme Stealth Suite), [v8.1.0](docs/RELEASE_NOTES_v8.1.0.md), [v8.0.2](docs/RELEASE_NOTES_v8.0.2.md), [v8.0.1](docs/RELEASE_NOTES_v8.0.1.md), [v8.0.0](docs/RELEASE_NOTES_v8.0.0.md). |
 
 ---
 
@@ -173,7 +175,7 @@ flowchart TD
 | [`setup.sh`](setup.sh) | Пошаговая настройка сервера, диагностика и продолжение установки. |
 | [`uninstall.sh`](uninstall.sh) | Полное удаление стека и возврат сервера к исходному состоянию из снимка. |
 | [`configure-panel.sh`](configure-panel.sh) | Настройка подключений и параметров панели. |
-| [`maintain.sh`](maintain.sh) | Проверка, восстановление настроек и откат к резервной копии. |
+| [`maintain.sh`](maintain.sh) | Обслуживание, аудит (`--dry-run`), транзакционный бэкап/восстановление и откат. |
 | [`prepare-server.sh`](prepare-server.sh) | Первичная подготовка ОС, SSH и файрвола. |
 | [`manage-services.sh`](manage-services.sh) | Управление дополнительными сервисами через Docker Compose. |
 | [`src/awg/manage-clients.sh`](src/awg/manage-clients.sh) | Управление клиентами; реализация — `manage_clients.py` рядом с лаунчером. |
@@ -236,6 +238,7 @@ curl -sSL "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-
 | **TUIC v5** | Мобильные устройства при частой смене сетей (Wi-Fi ↔ сотовая связь) | Высокоскоростной транспорт на базе QUIC с 0-RTT установлением сессий и бесшовной миграцией соединений (Connection Migration) без разрыва связности. |
 | **Shadowsocks 2022** | Компьютеры, игры и приложения с чувствительностью к задержкам | Современный стандарт с аутентифицированным шифрованием Blake3-AES-128-GCM и защитой от атак повторного воспроизведения сессий (порт 8388 TCP/UDP). |
 | **Telegram MTProxy (FakeTLS)** | Мессенджер Telegram на смартфонах и компьютерах | Подключается прямо внутри Telegram в 1 клик без сторонних VPN-клиентов. Маскирует служебный трафик MTProto под защищенное TLS-соединение с сайтом (порт 8444/tcp). |
+| **Mieru Proxy** | Сети с жесткой фильтрацией TLS-отпечатков (JA3/JA4) и активным зондированием | Работает по TCP и UDP на базе шифрования XChaCha20-Poly1305 без использования TLS. Случайный пул портов и аутентификация до рукопожатия защищают от идентификации DPI-системами (порт 8450 TCP/UDP). |
 | **AdGuard Home DoH** | Защита от рекламы, трекеров и обход блокировок DNS | Шифрованный DNS (DoH) с раздельными маршрутами: запросы к российским сайтам (.ru, банки, Госуслуги) идут через быстрые локальные DNS, а зарубежные — через зашифрованные апстримы. |
 
 ---
@@ -244,10 +247,10 @@ curl -sSL "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-
 
 | Устройство | Рекомендуемые программы | Как настроить |
 | :--- | :--- | :--- |
-| **iPhone / iPad** | **Happ Proxy** (VLESS, TUIC v5, SS-2022, Hysteria 2), **FoXray**, **Streisand**, **Telegram** | Открыть приложение → отсканировать QR-код из панели 3X-UI (или нажать ссылку `tg://proxy` для Telegram) |
-| **Android** | **v2rayNG**, **Happ Proxy**, **NekoBox**, **Telegram** | Скопировать ссылку `vless://` / `tuic://` / `ss://` → импортировать из буфера или по QR |
-| **Windows** | **v2rayN**, **Happ**, **Flclash**, **Telegram Desktop** | Скопировать ссылку → нажать `Ctrl + V` → включить системный прокси |
-| **macOS** | **FoXray**, **V2RayXS**, **Karing**, **Telegram** | Добавить подключение по ссылке или QR-коду |
+| **iPhone / iPad** | **Happ Proxy** (VLESS, TUIC v5, SS-2022, Hysteria 2, Mieru), **FoXray**, **Streisand**, **Telegram** | Открыть приложение → отсканировать QR-код из панели 3X-UI (или нажать ссылку `tg://proxy` для Telegram) |
+| **Android** | **v2rayNG**, **Happ Proxy**, **NekoBox** (включая Mieru), **Flclash**, **Telegram** | Скопировать ссылку `vless://` / `tuic://` / `ss://` → импортировать из буфера или по QR |
+| **Windows** | **v2rayN**, **Happ**, **Flclash**, **Telegram Desktop**, **Mieru Client** | Скопировать ссылку → нажать `Ctrl + V` → включить системный прокси |
+| **macOS** | **FoXray**, **V2RayXS**, **Karing**, **Flclash**, **Telegram** | Добавить подключение по ссылке или QR-коду |
 | **Роутеры Keenetic** | Встроенный клиент WireGuard / AmneziaWG, Shadowsocks | Скачать `.conf` файл AmneziaWG в панели и загрузить в меню роутера |
 
 ---
@@ -278,6 +281,70 @@ curl -sSL "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-
 ### ⏱️ Хронометраж этапов и экспресс-проверка служб
 В финале скрипта запускается автоматическая экспресс-проверка всех служб и выводится детальный хронометраж каждого из этапов установки.
 
+### 🔍 Отладка, аудит и передача ключей в 1 команду
+
+#### Передача ключей в основную строку запуска (`curl | bash`):
+Чтобы передать ключи командной строки скрипту, запускаемому через `curl | sudo bash`, используйте разделитель Bash `-s --`:
+```bash
+# Запуск установки с подробной отладкой (--debug):
+curl -sSL "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/install.sh" | sudo bash -s -- --debug
+
+# Экспресс-диагностика сервера одной строкой без установки (--check):
+curl -sSL "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/install.sh" | sudo bash -s -- --check
+
+# Холостой аудит базы 3X-UI и конфигов Nginx без записи изменений (--dry-run):
+curl -sSL "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/maintain.sh" | sudo bash -s -- --dry-run
+```
+
+#### Режимы `--debug`, `--check` и `--dry-run`:
+* **`--debug` (или `DEBUG_MODE=1`)**: Отключает TUI-спиннеры, выводит весь поток команд в консоль в реальном времени, собирает детальную трассировку ошибок `[ERROR-TRACE]` (команда, строка, функция) и статусы аварийных служб `journalctl`. Все логи параллельно пишутся в `/var/log/server-setup.log`.
+* **`--check` (или `--doctor`)**: Неразрушающий аудит работающего сервера в `setup.sh` (проверка ОС, портов, служб, SSL Let's Encrypt и маскировки от сканеров Censys) без изменения системы.
+* **`--dry-run`**: Безопасный холостой аудит в `maintain.sh` и `configure-panel.sh` (проверка базы SQLite 3X-UI, шаблона Xray, маршрутов и сокетов) без записи в базу данных и без перезапуска служб (работает даже без root).
+
+#### Как выгрузить и сохранить отчет:
+```bash
+# 1. Сохранить отчет аудита в чистый текстовый файл (без ANSI-кодов цветов):
+./maintain.sh --dry-run | sed 's/\x1b\[[0-9;]*m//g' > audit-report.txt
+
+# 2. Сохранить диагностический отчет состояния сервера:
+sudo ./setup.sh --check | sed 's/\x1b\[[0-9;]*m//g' > doctor-report.txt
+
+# 3. Просмотреть или отфильтровать системный журнал отладки:
+cat /var/log/server-setup.log
+grep -E '=== (START|END) TASK|ERROR-TRACE' /var/log/server-setup.log
+```
+
+### 🌐 Встроенный веб-портал диагностики (LibreSpeed + MTR)
+В комплекс интегрирован изолированный портал диагностики сетевого подключения и скорости канала:
+* **Единая точка входа (SSO):** Портал доступен по адресу `https://<ваш_домен>/<секретный_путь_панели>/diag` (например, `https://domain.online/panel-xxx/diag`).
+* **Безопасная авторизация Nginx:** Защищен сессионной кукой `diag_key` и токеном `DIAG_TOKEN`. Nginx валидирует токен на лету, не допуская неавторизованных внешних сканеров к API.
+* **Инструменты:**
+  * **LibreSpeed HTML5:** замер пинга, джиттера, скорости загрузки (download) и отдачи (upload) прямо в браузере клиента.
+  * **MTR Traceroute:** сетевая трассировка маршрута до сервера через бэкенд на Python/systemd (`vpn-diagnostics.service`), изолированный через сокет в оперативной памяти `/dev/shm/mtr-backend.sock`.
+* **Реквизиты:** Персональный URL и токен выводятся в итоговом отчете установщика и сохраняются в `/root/vpn_credentials.txt`.
+
+### 💾 Транзакционный бэкап и безопасное восстановление (`maintain.sh`)
+Утилита `maintain.sh` обеспечивает полное обслуживание, создание резервных копий и аварийный откат:
+```bash
+# 1. Создать резервную копию всей системы:
+# (горячий снимок SQLite WAL без остановки x-ui, селективный SSL, конфиги Mieru)
+sudo ./maintain.sh backup
+
+# 2. Восстановить систему из архива с валидацией ключей RSA/ECDSA и автооткатом:
+sudo ./maintain.sh restore /var/backups/vpn-stack/vpn-backup-20261021_120000.tar.gz
+
+# 3. Аварийно извлечь файлы бэкапа без root на любой машине (защита PEP 706):
+./maintain.sh extract /var/backups/vpn-stack/vpn-backup-20261021_120000.tar.gz ./backup_files
+
+# 4. Мгновенный откат к последнему сохраненному бэкапу при сбое:
+sudo ./maintain.sh --rollback
+
+# 5. Управление пользователями Mieru Proxy:
+sudo ./maintain.sh --mieru-mgr list
+sudo ./maintain.sh --mieru-mgr add client-1
+sudo ./maintain.sh --mieru-mgr del client-1
+```
+
 ### Ключи командной строки:
 ```bash
 # Интерактивный запуск с мастером настройки (b — назад, экран проверки)
@@ -286,22 +353,14 @@ sudo ./setup.sh
 # Экспресс-диагностика всех сервисов, портов и SSL за 2 секунды
 sudo ./setup.sh --check
 
-# Выбор компонентов установки (только веб-стек или только AmneziaWG)
-sudo ./setup.sh --web-stack
-sudo ./setup.sh --awg-standalone
-sudo ./setup.sh --awg-host vpn.domain.com
+# Создание полной резервной копии стека (WAL-safe + селективный SSL)
+sudo ./maintain.sh backup
 
-# Экспертный режим (компактный мастер без подробных подсказок к протоколам)
-sudo ./setup.sh --expert
+# Безопасное восстановление из резервной копии с валидацией SSL
+sudo ./maintain.sh restore /var/backups/vpn-stack/vpn-backup-<дата>.tar.gz
 
-# Возобновление прерванной установки с последнего шага
-sudo ./setup.sh --resume
-
-# Принудительный старт с указанного шага (1-12) в неинтерактивном режиме
-sudo ./setup.sh --step 4 -y
-
-# Режим отладки (вывод всех команд в консоль без спиннеров)
-sudo ./setup.sh --debug
+# Холостой аудит базы 3X-UI и Nginx без внесения изменений
+sudo ./maintain.sh --dry-run
 
 # Полное удаление и возврат сервера к исходному состоянию (по снимку)
 sudo ./uninstall.sh

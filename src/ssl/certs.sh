@@ -67,10 +67,28 @@ install_acmesh() {
     export DEBIAN_FRONTEND=noninteractive
     apt-get install -y cron socat -q
     local acme_mail="${LE_EMAIL:-admin@$PRIMARY_DOMAIN}"
-    curl -s https://get.acme.sh | sh -s email="$acme_mail"
     local _acme_bin="${HOME:-/root}/.acme.sh/acme.sh"
-    chmod +x "$_acme_bin"
-    "$_acme_bin" --register-account -m "$acme_mail" --server letsencrypt
+
+    if [ ! -x "$_acme_bin" ]; then
+        local acme_tmp="/tmp/acme_staging_$$"
+        mkdir -p "$acme_tmp"
+        if download_manifest_component "acme.sh" "$acme_tmp/acme.tar.gz" "all"; then
+            tar -zxf "$acme_tmp/acme.tar.gz" -C "$acme_tmp" --strip-components=1 2>/dev/null || tar -zxf "$acme_tmp/acme.tar.gz" -C "$acme_tmp" 2>/dev/null || true
+            local acme_src
+            acme_src="$(find "$acme_tmp" -name acme.sh -type f 2>/dev/null | head -n1)"
+            if [ -n "$acme_src" ] && [ -f "$acme_src" ]; then
+                bash "$acme_src" --install --home "${HOME:-/root}/.acme.sh" --accountemail "$acme_mail" >/dev/null 2>&1 || true
+            fi
+        else
+            warn "Не удалось скачать проверенный дистрибутив acme.sh"
+        fi
+        rm -rf "$acme_tmp" 2>/dev/null || true
+    fi
+
+    if [ -f "$_acme_bin" ]; then
+        chmod +x "$_acme_bin" 2>/dev/null || true
+        "$_acme_bin" --register-account -m "$acme_mail" --server letsencrypt >/dev/null 2>&1 || true
+    fi
 }
 
 # Принимает $1 = домен (был closure-переменной $dom из цикла)

@@ -216,19 +216,13 @@ inspect_port_conflicts() {
         fi
     fi
 
-    # 2. Проверка системного DNS-порта 53 (TCP/UDP)
+    # 2. Проверка изоляции DNS (systemd-resolved DoT на 53 / AdGuard Home на PORT_AGH_DNS)
     if [[ "${ENABLE_AGH:-0}" == "1" || "${ENABLE_AGH,,}" == "y" ]]; then
-        if is_port_in_use "udp" 53 || is_port_in_use "tcp" 53; then
-            local dns_owner
-            dns_owner=$(get_port_listener_info "udp" 53)
-            [ -z "$dns_owner" ] && dns_owner=$(get_port_listener_info "tcp" 53)
-            if echo "$dns_owner" | grep -qi "systemd-resolve"; then
-                ok "Обнаружен локальный systemd-resolved на порту 53 — будет безопасно отключен стаб-слушатель (DNSStubListener=no) с сохранением системного DNS хоста."
-            else
-                warn "Порт 53 занят процессом: ${dns_owner:-сторонним DNS-сервером}. AdGuard Home требует свободного порта 53."
-            fi
+        local agh_dns_port="${PORT_AGH_DNS:-10053}"
+        if is_port_in_use "udp" "$agh_dns_port" || is_port_in_use "tcp" "$agh_dns_port"; then
+            warn "Порт $agh_dns_port (AdGuard Home DNS) уже используется. Рекомендуется освободить порт."
         else
-            ok "Порт 53 (DNS) свободен."
+            ok "Порт $agh_dns_port (AdGuard Home DNS изоляция) свободен. Системный порт 53 сохранен для systemd-resolved DoT."
         fi
     fi
 
@@ -555,7 +549,8 @@ post_install_sanity_check() {
         if is_true "${ENABLE_AGH:-n}"; then
             check_required_service AdGuardHome || all_ok=0
             check_required_port tcp "${PORT_AGH_WEB:-3000}" || all_ok=0
-            check_required_port udp 53 || all_ok=0
+            local agh_dns_check="${PORT_AGH_DNS:-10053}"
+            check_required_port udp "$agh_dns_check" || all_ok=0
         fi
         # curl validates the certificate and hostname as well as HTTPS availability.
         if ! curl -fLsS --connect-timeout 3 --max-time 10 -o /dev/null \
@@ -703,10 +698,11 @@ run_doctor_check() {
         else
             echo -e "    • Статус:            ${RED}NOT RUNNING${NC}"
         fi
-        if ss -ulpn 2>/dev/null | grep -q ":53 "; then
-            echo -e "    • DNS Порт 53:       ${GREEN}СЛУШАЕТ${NC}"
+        local agh_dns_check="${PORT_AGH_DNS:-10053}"
+        if ss -ulpn 2>/dev/null | grep -q ":${agh_dns_check} "; then
+            echo -e "    • DNS Порт ${agh_dns_check}:    ${GREEN}СЛУШАЕТ${NC}"
         else
-            echo -e "    • DNS Порт 53:       ${YELLOW}не слушает 53${NC}"
+            echo -e "    • DNS Порт ${agh_dns_check}:    ${YELLOW}не слушает ${agh_dns_check}${NC}"
         fi
     else
         echo -e "    • AdGuard Home:      ${DIM}не установлен на этом сервере${NC}"

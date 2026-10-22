@@ -3,7 +3,7 @@
 #!/usr/bin/env bash
 #
 # ==============================================================================
-# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v9.1.0 Universal
+# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v9.2.0 Universal
 # Nginx L4 Stream + 3X-UI + Unix Sockets + Native proxy_http_version 2 + 3 Decoys
 # ==============================================================================
 # Архитектура:
@@ -29,7 +29,7 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="v9.1.0"
+SCRIPT_VERSION="v9.2.0"
 
 
 # Checkpoints use stable step IDs and input signatures, independent of UI numbering.
@@ -80,7 +80,7 @@ checkpoint_signature() {
         certificates) keys="PRIMARY_DOMAIN ALL_DOMAINS SSL_ENGINE_CHOICE CF_AUTH_METHOD CF_Token CF_Account_ID CF_Email CF_Key" ;;
         decoy) keys="PRIMARY_DOMAIN DECOY_MODE" ;;
         security) keys="SSH_PORT SSH_PUBLIC_KEY ENABLE_HOST_SECURITY ENABLE_FAIL2BAN DISABLE_PASSWORD_AUTH" ;;
-        *) keys="PRIMARY_DOMAIN ALL_DOMAINS STEAL_PORTS_LIST CLASSIC_PORTS_LIST EXT_SNI_LIST ALL_EXT_SNIS ADD_WWW ENABLE_WEB_STACK ENABLE_STEAL STEAL_DOMAINS STEAL_PORT ENABLE_CLASSIC CLASSIC_SNI CLASSIC_PORT PANEL_PORT PANEL_PATH ADMIN_USERNAME ADMIN_PASSWORD SUB_PORT SUB_PATH SUB_CLASH_PATH SUB_TITLE XHTTP_STREAM_PORT XHTTP_STREAM_PATH ENABLE_HY2 HY2_PORT HY2_DOMAIN HY2_PORT_HOPPING HY2_PORT_HOPPING_RANGE ENABLE_AWG_V3 AWG_V3_PORT ENABLE_AWG_V2 AWG_V2_PORT ENABLE_AWG_STANDALONE AWG_STANDALONE_PORT AWG_SERVER_HOST AWG_PRIMARY_DNS AWG_SECONDARY_DNS ENABLE_AGH AGH_MODE AGH_DOMAIN AGH_USER AGH_PASS AGH_CLIENT_ID AGH_XRAY_DNS PORT_AGH_WEB ENABLE_WARP WARP_LICENSE_KEY ENABLE_SS2022 SS2022_PORT SS2022_METHOD SS2022_PASSWORD ENABLE_TUIC TUIC_PORT TUIC_UUID TUIC_PASSWORD ENABLE_MTPROTO MTPROTO_PORT MTPROTO_SECRET ENABLE_MASQUE MASQUE_PORT MASQUE_PASSWORD ENABLE_SHADOWTLS SHADOWTLS_PORT SHADOWTLS_DOMAIN SHADOWTLS_PASSWORD ENABLE_NAIVE NAIVE_PORT NAIVE_DOMAIN NAIVE_USER NAIVE_PASS ENABLE_WSTUNNEL WSTUNNEL_PORT WSTUNNEL_PREFIX WSTUNNEL_SECRET ENABLE_DNSTT DNSTT_PORT DNSTT_DOMAIN DNSTT_PUBKEY ENABLE_ZAPRET ZAPRET_QNUM ZAPRET_DESYNC ZAPRET_FOOLING ENABLE_MIERU MIERU_PORT_MODE MIERU_PORT MIERU_TRANSPORT MIERU_USER MIERU_PASS MIERU_MTU AUTO_SETUP_3XUI ENABLE_NODE_TOKEN NODE_TOKEN NODE_TOKEN_NAME TIME_LOCATION BLOCK_SMTP BLOCK_LAN WEB_LISTEN SUB_LISTEN AWG_HEADER_PROTECTION_KEY AWG_RANDOM_TRAILERS AWG_SUBNET_IP AWG_SUBNET_CIDR MTPROTO_FAKETLS_DOMAIN MTPROTO_ADTAG SHADOWTLS_SNI WSTUNNEL_DOMAIN" ;;
+        *) keys="PRIMARY_DOMAIN ALL_DOMAINS STEAL_PORTS_LIST CLASSIC_PORTS_LIST EXT_SNI_LIST ALL_EXT_SNIS ADD_WWW ENABLE_WEB_STACK ENABLE_STEAL STEAL_DOMAINS STEAL_PORT ENABLE_CLASSIC CLASSIC_SNI CLASSIC_PORT PANEL_PORT PANEL_PATH ADMIN_USERNAME ADMIN_PASSWORD SUB_PORT SUB_PATH SUB_CLASH_PATH SUB_TITLE XHTTP_STREAM_PORT XHTTP_STREAM_PATH ENABLE_HY2 HY2_PORT HY2_DOMAIN HY2_PORT_HOPPING HY2_PORT_HOPPING_RANGE ENABLE_AWG_V3 AWG_V3_PORT ENABLE_AWG_V2 AWG_V2_PORT ENABLE_AWG_STANDALONE AWG_STANDALONE_PORT AWG_SERVER_HOST AWG_PRIMARY_DNS AWG_SECONDARY_DNS ENABLE_AGH AGH_MODE AGH_DOMAIN AGH_USER AGH_PASS AGH_CLIENT_ID AGH_XRAY_DNS PORT_AGH_WEB PORT_AGH_DNS DIAG_PATH DIAG_TOKEN ENABLE_WARP WARP_LICENSE_KEY ENABLE_SS2022 SS2022_PORT SS2022_METHOD SS2022_PASSWORD ENABLE_TUIC TUIC_PORT TUIC_UUID TUIC_PASSWORD ENABLE_MTPROTO MTPROTO_PORT MTPROTO_SECRET ENABLE_MASQUE MASQUE_PORT MASQUE_PASSWORD ENABLE_SHADOWTLS SHADOWTLS_PORT SHADOWTLS_DOMAIN SHADOWTLS_PASSWORD ENABLE_NAIVE NAIVE_PORT NAIVE_DOMAIN NAIVE_USER NAIVE_PASS ENABLE_WSTUNNEL WSTUNNEL_PORT WSTUNNEL_PREFIX WSTUNNEL_SECRET ENABLE_DNSTT DNSTT_PORT DNSTT_DOMAIN DNSTT_PUBKEY ENABLE_ZAPRET ZAPRET_QNUM ZAPRET_DESYNC ZAPRET_FOOLING ENABLE_MIERU MIERU_PORT_MODE MIERU_PORT MIERU_TRANSPORT MIERU_USER MIERU_PASS MIERU_MTU AUTO_SETUP_3XUI ENABLE_NODE_TOKEN NODE_TOKEN NODE_TOKEN_NAME TIME_LOCATION BLOCK_SMTP BLOCK_LAN WEB_LISTEN SUB_LISTEN AWG_HEADER_PROTECTION_KEY AWG_RANDOM_TRAILERS AWG_SUBNET_IP AWG_SUBNET_CIDR MTPROTO_FAKETLS_DOMAIN MTPROTO_ADTAG SHADOWTLS_SNI WSTUNNEL_DOMAIN" ;;
     esac
     {
         printf '%s\0' "${SCRIPT_VERSION:-unknown}" "$id"
@@ -253,6 +253,393 @@ step_finish() {
     ok "${INSTALLATION_TITLES[$id]} [OK] ($(format_duration "$duration"))"
     record_step_completed "$id"
 }
+#!/usr/bin/env bash
+# ==============================================================================
+# src/common/lock.sh - Inter-Process Mutex for Mutating Operations (T07)
+# ==============================================================================
+# Ensures single-writer mutual exclusion across install, setup, maintain,
+# configure-panel, prepare-server, manage-services, and uninstall.
+# Supports re-entrancy for nested invocations (e.g., install calling setup).
+# ==============================================================================
+
+VPN_STACK_LOCK_FILE="${VPN_STACK_LOCK_FILE:-/run/lock/vpn-stack.lock}"
+VPN_STACK_LOCK_TIMEOUT="${VPN_STACK_LOCK_TIMEOUT:-10}"
+VPN_STACK_LOCK_FD=200
+
+_get_vpn_lock_path() {
+    if [ -n "${VPN_STACK_LOCK_FILE:-}" ] && [ "${VPN_STACK_LOCK_FILE}" != "/run/lock/vpn-stack.lock" ]; then
+        echo "$VPN_STACK_LOCK_FILE"
+        return 0
+    fi
+    if [ "${EUID:-$(id -u)}" -eq 0 ] && [ -d /run/lock ]; then
+        echo "/run/lock/vpn-stack.lock"
+    elif [ -d "${XDG_RUNTIME_DIR:-}" ]; then
+        echo "${XDG_RUNTIME_DIR}/vpn-stack.lock"
+    elif [ -d /var/run ]; then
+        echo "/var/run/vpn-stack.lock"
+    else
+        echo "/tmp/.vpn-stack-${EUID:-0}.lock"
+    fi
+}
+
+_is_lock_ancestor() {
+    local target="$1"
+    [ -n "$target" ] || return 1
+    [ "$target" = "$$" ] && return 0
+    [ "$target" = "${PPID:-}" ] && return 0
+    local cur_p="${PPID:-}"
+    local count=0
+    while [ -n "$cur_p" ] && [ "$cur_p" -gt 1 ] && [ "$count" -lt 10 ]; do
+        [ "$cur_p" = "$target" ] && return 0
+        if [ -f "/proc/$cur_p/stat" ]; then
+            cur_p=$(awk '{print $4}' "/proc/$cur_p/stat" 2>/dev/null || echo "")
+        elif command -v ps >/dev/null 2>&1; then
+            cur_p=$(ps -o ppid= -p "$cur_p" 2>/dev/null | tr -d ' ' || echo "")
+        else
+            break
+        fi
+        count=$((count + 1))
+    done
+    return 1
+}
+
+_on_stack_lock_exit() {
+    local exit_code=$?
+    release_stack_lock
+    if [ -n "${_PREV_LOCK_EXIT_TRAP:-}" ] && [ "${_PREV_LOCK_EXIT_TRAP}" != "release_stack_lock" ] && [ "${_PREV_LOCK_EXIT_TRAP}" != "_on_stack_lock_exit" ]; then
+        eval "$_PREV_LOCK_EXIT_TRAP"
+    fi
+    exit "$exit_code"
+}
+
+_setup_lock_traps() {
+    _PREV_LOCK_EXIT_TRAP=$(trap -p EXIT 2>/dev/null | sed -E "s/^trap -- ['\"]?(.*)['\"]? EXIT\$/\\1/" || true)
+    trap '_on_stack_lock_exit' EXIT INT TERM
+}
+
+acquire_stack_lock() {
+    local timeout="${1:-$VPN_STACK_LOCK_TIMEOUT}"
+    local op_name="${2:-${0##*/}}"
+
+    # 1. Re-entrancy check: if lock is already held by current process or ancestor in this session
+    if [ -n "${VPN_STACK_LOCK_HELD_BY:-}" ]; then
+        if [ "$VPN_STACK_LOCK_HELD_BY" = "$$" ] || _is_lock_ancestor "$VPN_STACK_LOCK_HELD_BY"; then
+            # Nested call within same operation hierarchy
+            return 0
+        fi
+    fi
+
+    local lock_path
+    lock_path="$(_get_vpn_lock_path)"
+    local lock_dir="${lock_path%/*}"
+    [ -d "$lock_dir" ] || mkdir -p "$lock_dir" 2>/dev/null || true
+
+    # Security check: lock file must NOT be a symlink (T07.C07)
+    if [ -L "$lock_path" ]; then
+        echo "[ERROR] Lock file $lock_path is a symbolic link! Aborting to prevent symlink attacks." >&2
+        return 75
+    fi
+
+    local start_time
+    start_time=$(date +%s 2>/dev/null || echo 0)
+
+    while true; do
+        if command -v flock >/dev/null 2>&1; then
+            # flock-based locking
+            eval "exec ${VPN_STACK_LOCK_FD}>\"\$lock_path\"" 2>/dev/null || {
+                echo "[ERROR] Unable to open lock file $lock_path" >&2
+                return 75
+            }
+            if flock -n "$VPN_STACK_LOCK_FD" 2>/dev/null; then
+                echo "$$" > "$lock_path" 2>/dev/null || true
+                export VPN_STACK_LOCK_HELD_BY="$$"
+                export VPN_STACK_LOCK_ACTIVE_PATH="$lock_path"
+                _setup_lock_traps
+                return 0
+            fi
+        else
+            # Directory-based atomic mutex fallback for platforms without flock
+            local lock_d="${lock_path}.d"
+            if mkdir "$lock_d" 2>/dev/null; then
+                echo "$$" > "$lock_path" 2>/dev/null || true
+                export VPN_STACK_LOCK_HELD_BY="$$"
+                export VPN_STACK_LOCK_ACTIVE_PATH="$lock_path"
+                _setup_lock_traps
+                return 0
+            fi
+        fi
+
+        # Check existing holder PID
+        local holder_pid=""
+        if [ -s "$lock_path" ]; then
+            holder_pid=$(head -n 1 "$lock_path" 2>/dev/null | tr -cd '0-9')
+        fi
+
+        # Check if holder PID is dead (stale lock recovery)
+        if [ -n "$holder_pid" ] && ! kill -0 "$holder_pid" 2>/dev/null; then
+            if command -v flock >/dev/null 2>&1; then
+                echo "$$" > "$lock_path" 2>/dev/null || true
+                if flock -n "$VPN_STACK_LOCK_FD" 2>/dev/null; then
+                    export VPN_STACK_LOCK_HELD_BY="$$"
+                    export VPN_STACK_LOCK_ACTIVE_PATH="$lock_path"
+                    _setup_lock_traps
+                    return 0
+                fi
+            else
+                rm -rf "${lock_path}.d" 2>/dev/null || true
+                if mkdir "${lock_path}.d" 2>/dev/null; then
+                    echo "$$" > "$lock_path" 2>/dev/null || true
+                    export VPN_STACK_LOCK_HELD_BY="$$"
+                    export VPN_STACK_LOCK_ACTIVE_PATH="$lock_path"
+                    _setup_lock_traps
+                    return 0
+                fi
+            fi
+        fi
+
+        local now
+        now=$(date +%s 2>/dev/null || echo 0)
+        local elapsed=$((now - start_time))
+        if [ "$elapsed" -ge "$timeout" ]; then
+            echo "[ERROR] Operation '$op_name' blocked by active operation (PID: ${holder_pid:-unknown})." >&2
+            echo "[ERROR] Timed out after ${timeout}s waiting for lock: $lock_path" >&2
+            return 75
+        fi
+
+        sleep 0.5 2>/dev/null || sleep 1
+    done
+}
+
+release_stack_lock() {
+    if [ -n "${VPN_STACK_LOCK_HELD_BY:-}" ] && [ "$VPN_STACK_LOCK_HELD_BY" = "$$" ]; then
+        local lock_path="${VPN_STACK_LOCK_ACTIVE_PATH:-$(_get_vpn_lock_path)}"
+        if [ -f "$lock_path" ]; then
+            rm -f "$lock_path" 2>/dev/null || true
+        fi
+        if [ -d "${lock_path}.d" ]; then
+            rmdir "${lock_path}.d" 2>/dev/null || rm -rf "${lock_path}.d" 2>/dev/null || true
+        fi
+        if command -v flock >/dev/null 2>&1; then
+            eval "exec ${VPN_STACK_LOCK_FD}>&-" 2>/dev/null || true
+        fi
+        unset VPN_STACK_LOCK_HELD_BY
+        unset VPN_STACK_LOCK_ACTIVE_PATH
+    fi
+}
+#!/usr/bin/env bash
+# ==============================================================================
+# src/common/download.sh - Verifiable Component Downloader (T04, T05)
+# ==============================================================================
+# Enforces timeouts, retry limits, temporary staging, and cryptographic SHA256
+# verification against components-manifest.json before any binary is installed.
+# ==============================================================================
+
+DOWNLOAD_TIMEOUT="${DOWNLOAD_TIMEOUT:-15}"
+DOWNLOAD_MAX_RETRIES="${DOWNLOAD_MAX_RETRIES:-3}"
+MANIFEST_FILE="${MANIFEST_FILE:-${ROOT_DIR:-.}/components-manifest.json}"
+
+verify_file_sha256() {
+    local file="$1"
+    local expected_hash="$2"
+
+    [ -f "$file" ] || return 1
+    [ -n "$expected_hash" ] || return 1
+
+    local actual_hash=""
+    if command -v sha256sum >/dev/null 2>&1; then
+        actual_hash=$(sha256sum "$file" | awk '{print $1}')
+    elif command -v shasum >/dev/null 2>&1; then
+        actual_hash=$(shasum -a 256 "$file" | awk '{print $1}')
+    elif command -v openssl >/dev/null 2>&1; then
+        actual_hash=$(openssl dgst -sha256 "$file" | awk '{print $NF}')
+    else
+        actual_hash=$(python3 -c "import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], 'rb').read()).hexdigest())" "$file" 2>/dev/null || echo "")
+    fi
+
+    [ -n "$actual_hash" ] && [ "${actual_hash,,}" = "${expected_hash,,}" ]
+}
+
+download_verified_file() {
+    local url="$1"
+    local dest_file="$2"
+    local expected_hash="${3:-}"
+    local max_size_bytes="${4:-104857600}" # Default 100MB limit
+
+    local staging_tmp
+    staging_tmp=$(mktemp "/tmp/dl-staging.XXXXXX" 2>/dev/null || mktemp "${TMPDIR:-/tmp}/dl-staging.XXXXXX") || return 1
+
+    local urls=("$url")
+    if [[ "$url" =~ ^https://github\.com/ ]]; then
+        urls+=("https://ghfast.top/$url")
+    fi
+
+    local success=0
+    for candidate_url in "${urls[@]}"; do
+        local attempt=1
+        while [ "$attempt" -le "$DOWNLOAD_MAX_RETRIES" ]; do
+            if curl -fsSL --connect-timeout "$DOWNLOAD_TIMEOUT" --max-time 120 "$candidate_url" -o "$staging_tmp" 2>/dev/null; then
+                # Size limit validation (T05.C04)
+                local file_size=0
+                file_size=$(wc -c < "$staging_tmp" 2>/dev/null || stat -c%s "$staging_tmp" 2>/dev/null || echo 0)
+                if [ "$file_size" -gt "$max_size_bytes" ] || [ "$file_size" -eq 0 ]; then
+                    rm -f "$staging_tmp"
+                    return 2
+                fi
+
+                # Checksum validation (T05.C02, T05.C03)
+                if [ -n "$expected_hash" ]; then
+                    if ! verify_file_sha256 "$staging_tmp" "$expected_hash"; then
+                        rm -f "$staging_tmp"
+                        return 3
+                    fi
+                fi
+
+                success=1
+                break 2
+            fi
+            attempt=$((attempt + 1))
+            sleep 1
+        done
+    done
+
+    if [ "$success" -eq 1 ]; then
+        mkdir -p "$(dirname "$dest_file")" 2>/dev/null || true
+        mv -f "$staging_tmp" "$dest_file"
+        return 0
+    else
+        rm -f "$staging_tmp" 2>/dev/null || true
+        return 1
+    fi
+}
+
+get_manifest_python() {
+    if [ -n "${PYTHON_CMD:-}" ] && "$PYTHON_CMD" -c "import json, sys" 2>/dev/null; then
+        echo "$PYTHON_CMD"
+        return 0
+    fi
+    if python3 -c "import json, sys" 2>/dev/null; then
+        echo "python3"
+        return 0
+    fi
+    if python -c "import json, sys" 2>/dev/null; then
+        echo "python"
+        return 0
+    fi
+    return 1
+}
+
+get_manifest_component_data() {
+    local comp_name="$1"
+    local arch="${2:-x86_64}"
+    local py_cmd
+    py_cmd=$(get_manifest_python || echo "")
+
+    [ -n "$py_cmd" ] || return 1
+
+    "$py_cmd" -c "
+import json, sys, os
+
+FALLBACK = {
+    'shadow-tls': {
+        'x86_64': ('https://github.com/ihciah/shadow-tls/releases/download/v0.2.25/shadow-tls-x86_64-unknown-linux-musl', '4bdfa57db9e8bf69f10cb9fa3268846c4f3ce2d4a2a1ea9174112e432c25ea7a', 15728640, '0.2.25'),
+        'aarch64': ('https://github.com/ihciah/shadow-tls/releases/download/v0.2.25/shadow-tls-aarch64-unknown-linux-musl', '81f211925b6a55543cbe24bc99015c90ec1ae62c3328e67ff8df82bb7da255ef', 15728640, '0.2.25')
+    },
+    'wstunnel': {
+        'x86_64': ('https://github.com/erebe/wstunnel/releases/download/v10.1.7/wstunnel_10.1.7_linux_amd64.tar.gz', 'ca6d77e4cfcf6ce4b06f528a47ea37cb9a941fcddff4a9df315f6068e5ff4e6b', 26214400, '10.1.7'),
+        'aarch64': ('https://github.com/erebe/wstunnel/releases/download/v10.1.7/wstunnel_10.1.7_linux_arm64.tar.gz', '7a353d2bf2cb4d3d81b24d7759ad4ba7eb04cf4c5478491d904ba6b44588df8e', 26214400, '10.1.7')
+    },
+    'sing-box': {
+        'x86_64': ('https://github.com/SagerNet/sing-box/releases/download/v1.11.4/sing-box-1.11.4-linux-amd64.tar.gz', '6b2cbb4ee2cb36a32cb5e2f7b8d4bb9f8e434f3c7e497ecb822d4f20bf8a0db8', 52428800, '1.11.4'),
+        'aarch64': ('https://github.com/SagerNet/sing-box/releases/download/v1.11.4/sing-box-1.11.4-linux-arm64.tar.gz', '9a01f68742b6c7314ec41be1aa7ee965ec3c457bc6a42247dc2bc89600a747ea', 52428800, '1.11.4')
+    },
+    'zapret': {
+        'all': ('https://github.com/bol-van/zapret/releases/download/v70/zapret-v70.tar.gz', '1517409c6ae9fa4513ec8b4bcf51e18b849cb19a57fb6bc12001358e5d3264c1', 20971520, '70')
+    },
+    'AdGuardHome': {
+        'x86_64': ('https://static.adguard.com/adguardhome/release/AdGuardHome_linux_amd64.tar.gz', '439265eb634ce5a87e02598380cf7bc51b0337d1d2b7c4a169fe5a1c3132e0c9', 41943040, '0.107.56'),
+        'aarch64': ('https://static.adguard.com/adguardhome/release/AdGuardHome_linux_arm64.tar.gz', 'c88f17a94ef933aa5a11dfbbf099ec16f28beae5c0bf323c21a19614457ee458', 41943040, '0.107.56')
+    },
+    'acme.sh': {
+        'all': ('https://github.com/acmesh-official/acme.sh/archive/refs/tags/3.0.8.tar.gz', 'bf4405d43899f8d16972e2762b9f67355030e20fb3ae7068565a0cbb02e53ef7', 2097152, '3.0.8')
+    }
+}
+
+comp_name = sys.argv[1]
+arch = sys.argv[2]
+manifest_p = os.environ.get('MANIFEST_FILE', '')
+
+if not manifest_p or not os.path.isfile(manifest_p):
+    for candidate in [
+        'components-manifest.json',
+        os.path.join(os.environ.get('ROOT_DIR', '.'), 'components-manifest.json'),
+        '/usr/local/share/vpn-stack/components-manifest.json',
+    ]:
+        if os.path.isfile(candidate):
+            manifest_p = candidate
+            break
+
+data = None
+if manifest_p and os.path.isfile(manifest_p):
+    try:
+        with open(manifest_p, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception:
+        data = None
+
+if data and 'components' in data and comp_name in data['components']:
+    comp = data['components'][comp_name]
+    artifacts = comp.get('artifacts', {})
+    art = artifacts.get(arch) or artifacts.get('all')
+    if art:
+        url = art.get('url', '')
+        sha256 = art.get('sha256', '')
+        max_sz = comp.get('max_size_bytes', 104857600)
+        version = comp.get('version', '')
+        print(f'{url}|{sha256}|{max_sz}|{version}')
+        sys.exit(0)
+
+# Fallback to embedded pinned metadata
+if comp_name in FALLBACK:
+    comp_map = FALLBACK[comp_name]
+    art = comp_map.get(arch) or comp_map.get('all')
+    if art:
+        url, sha256, max_sz, version = art
+        print(f'{url}|{sha256}|{max_sz}|{version}')
+        sys.exit(0)
+
+sys.exit(1)
+" "$comp_name" "$arch" 2>/dev/null
+}
+
+download_manifest_component() {
+    local comp_name="$1"
+    local dest_file="$2"
+    local cur_arch="${3:-}"
+
+    if [ -z "$cur_arch" ]; then
+        local raw_arch
+        raw_arch=$(uname -m 2>/dev/null || echo "x86_64")
+        case "$raw_arch" in
+            x86_64|amd64) cur_arch="x86_64" ;;
+            aarch64|arm64) cur_arch="aarch64" ;;
+            *) cur_arch="x86_64" ;;
+        esac
+    fi
+
+    local comp_meta
+    comp_meta=$(get_manifest_component_data "$comp_name" "$cur_arch")
+
+    if [ -n "$comp_meta" ]; then
+        local url sha256 max_size version
+        IFS='|' read -r url sha256 max_size version <<< "$comp_meta"
+        if [ -n "$url" ] && [ -n "$sha256" ]; then
+            download_verified_file "$url" "$dest_file" "$sha256" "$max_size"
+            return $?
+        fi
+    fi
+    return 1
+}
+
 
 _TUI_BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo "")"
 [ -f "$_TUI_BASE_DIR/../common/colors.sh" ] && . "$_TUI_BASE_DIR/../common/colors.sh" 2>/dev/null || true
@@ -585,6 +972,7 @@ show_help() {
   --node-token-name <NAME>      Имя API-ключа ноды
   --gen-config [FILE]          Сгенерировать шаблон конфигурации (.env.example) и выйти
   --debug                      Режим отладки: отключить спиннеры, вывод команд в реальном времени
+  --dry-run                    Информация о холостом аудите (см. ./maintain.sh --dry-run)
   -f, --force                  Игнорировать ошибки и несовпадения DNS в неинтерактивном режиме
   --uninstall                  Откат и полное удаление установленного стека к исходному состоянию
   -v, --version                Показать версию скрипта и выйти
@@ -594,8 +982,18 @@ show_help() {
   # Интерактивный режим (введенные параметры автоматически сохраняются в server-setup.env):
   ./setup.sh
 
-  # Быстрая экспресс-диагностика всех сервисов и портов:
+  # Запуск с подробным выводом всех команд в консоль (отладка без спиннеров):
+  ./setup.sh --debug
+
+  # Передача параметров в однострочник curl | bash (используйте разделитель -s --):
+  curl -sSL https://.../install.sh | sudo bash -s -- --debug
+  curl -sSL https://.../install.sh | sudo bash -s -- --check
+
+  # Быстрая экспресс-диагностика всех сервисов, портов и SSL (без изменений):
   ./setup.sh --check
+
+  # Безопасный холостой аудит базы 3X-UI и конфигов Nginx (без изменений):
+  ./maintain.sh --dry-run
 
   # Возобновление прерванной установки с последнего незавершенного шага:
   ./setup.sh --resume
@@ -618,13 +1016,18 @@ generate_config_template() {
     local target_file="${1:-server-setup.env.example}"
     cat << 'EOF_CONF' > "$target_file"
 # ==============================================================================
-# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v9.1.0 Universal)
+# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v9.2.0 Universal)
 # ==============================================================================
 # Данный файл позволяет выполнять полностью автоматическую установку:
 # ./setup.sh --config server-setup.env --non-interactive --force
 
+# --- 0. КОМПОНЕНТЫ УСТАНОВКИ ---
+# Установить комплекс веб-маскировки Nginx + 3X-UI + SSL + VLESS/Trojan [y/n]
+# Если 'n' и включен ENABLE_AWG_STANDALONE, настраивается только чистый автономный AmneziaWG (без веб-сервера и SSL)
+ENABLE_WEB_STACK="y"
+
 # --- 1. ДОМЕНЫ И СЕРТИФИКАТЫ ---
-# Основной домен сервера (для панели, подписок, xHTTP и веб-маски) [ОБЯЗАТЕЛЬНО]
+# Основной домен сервера (для панели, подписок, xHTTP и веб-маски) [ОБЯЗАТЕЛЬНО при ENABLE_WEB_STACK=y]
 PRIMARY_DOMAIN="yourdomain.online"
 
 # Добавить алиас 'www.<PRIMARY_DOMAIN>' в сертификационный стек [y/n]
@@ -653,20 +1056,21 @@ CF_Key=""
 FORCE_DNS="0"
 
 # --- 2. СЦЕНАРИИ REALITY ---
-# Сценарий 1: VLESS REALITY (маскировка под свой сайт с защитой Anti-Loop) [y/n]
+# Сценарий 1: Steal-Oneself REALITY (Кража у самого себя с Anti-Loop) [y/n]
 ENABLE_STEAL="y"
 STEAL_PORT="45443"
-# Домены для REALITY (свой сайт, через пробел, например: "cdn.yourdomain.online")
+# Домены для Steal-Oneself (через пробел, например: "cdn.yourdomain.online")
 STEAL_DOMAINS="cdn.yourdomain.online"
 
-# Сценарий 2: VLESS REALITY (маскировка под популярные внешние сервисы) [y/n]
+# Сценарий 2: Classic External REALITY (Внешний камуфляж) [y/n]
 ENABLE_CLASSIC="y"
 CLASSIC_PORT="46443"
-# Внешние доверенные адреса маскировки (через пробел, например: "avito.ru")
+# Внешние доверенные SNI (через пробел, например: "avito.ru")
 CLASSIC_SNI="avito.ru"
 
 # --- 3. ВНУТРЕННИЕ ПОРТЫ И ПУТИ 3X-UI И xHTTP ---
 PANEL_PORT="10443"
+# Секретный URI-путь к веб-панели 3X-UI (если пусто, генерируется автоматически: panel-<32 hex>)
 PANEL_PATH=""
 # Учетные данные администратора панели 3X-UI
 ADMIN_USERNAME="admin"
@@ -675,21 +1079,30 @@ ADMIN_PASSWORD=""
 SERVER_PREFIX="Server"
 
 SUB_PORT="55443"
+# Секретный путь для подписок (если пусто, генерируется автоматически: /sub-xxxxxxxx/)
 SUB_PATH=""
-# Секретный путь для Clash/Mihomo подписок (по умолчанию: <SUB_PATH>/clash)
+# Путь для подписок Clash / Mihomo (если пусто, генерируется автоматически: /${SUB_PATH}/clash/)
 SUB_CLASH_PATH=""
+# Заголовок подписки для клиентов (если пусто, заголовок не добавляется)
 SUB_TITLE=""
 
 XHTTP_STREAM_PORT="50443"
+# Секретный URI-путь для xHTTP Stream-One (если пусто, генерируется случайный 8-значный токен: /xxxxxxxx/)
 XHTTP_STREAM_PATH=""
+
+# Портал веб-диагностики LibreSpeed + MTR (доступ по ссылке https://<домен>/<PANEL_PATH>/diag)
+# Секретный URI-путь для портала диагностики (если пусто, генерируется автоматически: /diag-<16 hex>/)
+DIAG_PATH=""
+# Токен авторизации SSO диагностики (если пусто, генерируется автоматически: 16 hex-символов)
+DIAG_TOKEN=""
 
 # --- 4. UDP ТУННЕЛИ (Hysteria 2 / AmneziaWG) ---
 # Hysteria 2 (UDP 443) [y/n]
 ENABLE_HY2="y"
 HY2_PORT="443"
-# Отдельный домен для Hysteria 2 (по умолчанию равен PRIMARY_DOMAIN)
+# Домен/поддомен для Hysteria 2 (по умолчанию равен PRIMARY_DOMAIN)
 HY2_DOMAIN="yourdomain.online"
-# Port Hopping: клиент «прыгает» по UDP-портам (обход шейпинга UDP). ВНИМАНИЕ: открывает 20000-50000 в сканерах Censys. По умолчанию: n (стелс) [y/n]
+# Port Hopping: клиент «прыгает» по UDP-портам, усложняя блокировку ТСПУ [y/n]
 HY2_PORT_HOPPING="n"
 # Диапазон UDP-портов для Port Hopping (формат: START:END)
 HY2_PORT_HOPPING_RANGE="20000:50000"
@@ -700,31 +1113,43 @@ AWG_V3_PORT="8443"
 # Защита заголовков Handshake (пусто = автогенерация 32-байтного ключа, 'none' = выкл)
 AWG_HEADER_PROTECTION_KEY=""
 # Рандомизация хвостов пакетов против анализа длины трафика WireGuard [true/false]
+# ВНИМАНИЕ: false рекомендуется, так как включение randomTrailers в AWG 3.1 при активных S1-S4 обрушивает скорость в 100-300 раз!
 AWG_RANDOM_TRAILERS="false"
 
-# AmneziaWG v2.0 (Для роутеров Keenetic / OpenWrt) [y/n]
+# AmneziaWG v2.0 (Для роутеров Keenetic / OpenWrt, инбаунд 3X-UI) [y/n]
 ENABLE_AWG_V2="n"
 AWG_V2_PORT="8444"
 
-# TUIC v5 (QUIC 0-RTT, BBR Congestion Control) [y/n]
-ENABLE_TUIC="y"
-TUIC_PORT="8448"
+# Автономный сервер AmneziaWG (awg-mgr / системная служба awg-quick@awg0 на хосте) [y/n]
+ENABLE_AWG_STANDALONE="n"
+AWG_STANDALONE_PORT="8445"
+# Домен или IP сервера для подключения клиентов (Endpoint = host:port). SSL-сертификаты НЕ требуются!
+# Если не указан, автоматически определяется внешний WAN IP сервера.
+AWG_SERVER_HOST=""
 
-# Shadowsocks 2022 (L4 TCP/UDP, 2022-blake3-aes-256-gcm) [y/n]
+# Настройки сети и DNS для клиентов AmneziaWG:
+# Quad9 (9.9.9.9) и Control D Anycast (76.76.2.0) для защиты от DNS-спуфинга и высокой скорости в РФ
+AWG_PRIMARY_DNS="9.9.9.9"
+AWG_SECONDARY_DNS="76.76.2.0"
+# Подсеть /22 (10.8.0.0/22) с емкостью до 1022 клиентов
+AWG_SUBNET_IP="10.8.0.0"
+AWG_SUBNET_CIDR="22"
+
+# --- 4.1. ПРОТОКОЛЫ 3X-UI (Shadowsocks 2022 / TUIC v5 / MTProxy) ---
+# Shadowsocks 2022 (L4 TCP/UDP, 2022-blake3-aes-256-gcm, инбаунд 3X-UI) [y/n]
 ENABLE_SS2022="y"
 SS2022_PORT="8388"
 
-# Telegram MTProxy FakeTLS (mtg-multi) [y/n]
+# TUIC v5 (QUIC 0-RTT, BBR Congestion Control, инбаунд 3X-UI) [y/n]
+ENABLE_TUIC="y"
+TUIC_PORT="8448"
+
+# Telegram MTProxy FakeTLS (mtg-multi, инбаунд 3X-UI) [y/n]
 ENABLE_MTPROTO="y"
 MTPROTO_PORT="8444"
 MTPROTO_FAKETLS_DOMAIN="gateway.icloud.com"
+# Спонсорский промо-тег канала от @MTProxybot (32 hex-символа, опционально)
 MTPROTO_ADTAG=""
-
-# Настройки сети и DNS для клиентов AmneziaWG:
-AWG_PRIMARY_DNS="9.9.9.9"
-AWG_SECONDARY_DNS="76.76.2.0"
-AWG_SUBNET_IP="10.8.0.0"
-AWG_SUBNET_CIDR="22"
 
 # --- 5. САЙТ-МАСКИРОВКА (DECOY FRONT) ---
 # 1 = DataSphere Analytics (SPA с 3D-сферой и телеметрией)
@@ -741,8 +1166,28 @@ ENABLE_NODE_TOKEN="y"
 # Название API-токена ноды (если не указано, формируется как <SERVER_PREFIX>-Node или Master-Node-Cluster)
 NODE_TOKEN_NAME=""
 
-# Автоматически обновлять ядро Xray-core до последней официальной версии (v26.9.30+) [y/n]
+# Автоматически обновлять ядро Xray-core до последней официальной версии с GitHub (v26.9.30+) [y/n]
 UPDATE_XRAY_CORE="y"
+
+# --- 6.1. ТОНКИЕ НАСТРОЙКИ ПАНЕЛИ 3X-UI И РОУТИНГА XRAY ---
+# Часовой пояс панели (по умолчанию берется системный таймзон сервера или Europe/Moscow)
+TIME_LOCATION="Europe/Moscow"
+
+# Интервал автоматического обновления подписки клиентскими приложениями (в часах, 1 = каждый час)
+SUB_UPDATES="1"
+
+# Кодирование содержимого подписки в Base64 для защиты от открытой передачи ссылок [true/false]
+SUB_ENCRYPT="true"
+
+# Блокировка спам-трафика по порту 25 в Xray (порты 465 и 587 для обычной почты остаются открытыми) [y/n]
+BLOCK_SMTP="y"
+
+# Блокировка доступа клиентов прокси к локальным сетям сервера (SSRF-защита хоста и Docker) [y/n]
+BLOCK_LAN="y"
+
+# Адрес прослушивания веб-панели и подписок (127.0.0.1 при наличии Nginx, 0.0.0.0 для прямого доступа)
+WEB_LISTEN="127.0.0.1"
+SUB_LISTEN="127.0.0.1"
 
 # --- 7. ИСХОДЯЩИЙ ТУННЕЛЬ CLOUDFLARE WARP ---
 # Включить исходящий прокси Cloudflare WARP (WireGuard, MTU: 1280) для обхода капч Google
@@ -765,53 +1210,73 @@ AGH_DOMAIN=""
 # Учетные данные веб-панели AdGuard Home
 AGH_USER="admin"
 AGH_PASS=""
-# Секретный ClientID для роутера (часть URL DoH)
+# Секретный ClientID для роутера / часть URL DoH (если пусто, генерируется автоматически: client-<32 hex>)
 AGH_CLIENT_ID=""
 # Использовать AdGuard Home как DNS для VPN-клиентов (Xray DNS → 127.0.0.1) [y/n]
 AGH_XRAY_DNS="n"
+# Локальный DNS-порт AdGuard Home (10053 по умолчанию, предотвращает конфликт с портом 53 systemd-resolved)
+PORT_AGH_DNS="10053"
 
-# --- 9. ПРОТОКОЛЫ СЛЕДУЮЩЕГО ПОКОЛЕНИЯ (NEXT-GEN) ---
-# MASQUE (RFC 9484 / RFC 9298 via Sing-box daemon, HTTP/3 UDP) [y/n]
+# --- 9. ИНТЕГРАЦИЯ С DOKPLOY И ПРОТОКОЛЫ СЛЕДУЮЩЕГО ПОКОЛЕНИЯ ---
+# Режим бесконфликтного сосуществования с Dokploy [y/n]
+# Если 'y', порты 80 и 443 остаются за Traefik (Dokploy), Nginx не перехватывает их,
+# а сервисы прокси разворачиваются на независимых портах или через Traefik WebSocket/HTTP3.
+DOKPLOY_COEXISTENCE="n"
+
+# 9.1. MASQUE (RFC 9484 / RFC 9298 HTTP/3 Datagram Proxying via Sing-box 1.14+) [y/n]
+# Сверхскоростное проксирование UDP/IP поверх HTTP/3 QUIC (нативная поддержка в iOS 17+ / macOS 14+)
 ENABLE_MASQUE="n"
 MASQUE_PORT="8449"
 MASQUE_USER="client"
 MASQUE_PASSWORD=""
 
-# ShadowTLS v4 + Shadowsocks-2022 (Маскировка под Apple gateway.icloud.com через Nginx Stream L4) [y/n]
+# 9.2. ShadowTLS v4 + Shadowsocks-2022 (udp_over_tcp: true) [y/n]
+# Полная маскировка под подлинный TLS-сертификат Apple/Cloudflare с HMAC-авторизацией
+# и защитой от активного зондирования ТСПУ/DPI
 ENABLE_SHADOWTLS="n"
 SHADOWTLS_PORT="8543"
 SHADOWTLS_SNI="gateway.icloud.com"
 SHADOWTLS_PASSWORD=""
 
-# Wstunnel over Nginx L7 (Туннелирование WebSocket через порт 443 HTTPS с SSL) [y/n]
-ENABLE_WSTUNNEL="n"
-WSTUNNEL_PREFIX=""
-WSTUNNEL_PORT="8080"
-WSTUNNEL_SECRET=""
-
-# Server-Side Zapret nfqws (Десинхронизация DPI ТСПУ через iptables NFQUEUE connbytes 1:6) [y/n]
-ENABLE_ZAPRET="n"
-ZAPRET_QNUM="200"
-ZAPRET_DESYNC="split2"
-ZAPRET_FOOLING="md5sig,badseq"
-
-# NaïveProxy (Caddy with forwardproxy@naive via Nginx Stream L4) [y/n]
+# 9.3. NaïveProxy + Caddy (forwardproxy@naive + Cloudflare DNS-01 ACME) [y/n]
+# Маскировка сетевого стека под Google Chrome, автоматический выпуск SSL без портов 80/443
 ENABLE_NAIVE="n"
 NAIVE_PORT="8446"
 NAIVE_DOMAIN=""
 NAIVE_USER="user"
 NAIVE_PASS=""
 
-# DNSTT (Emergency DNS Tunneling over DoH via dnstt-server) [y/n]
+# 9.4. Server-Side Zapret (nfqws с iptables connbytes 1:6) [y/n]
+# Десинхронизация DPI/ТСПУ на сервере в первые 6 пакетов соединения без снижения скорости передачи
+ENABLE_ZAPRET="n"
+ZAPRET_QNUM="200"
+ZAPRET_DESYNC="split2"
+ZAPRET_FOOLING="md5sig,badseq"
+
+# 9.5. Wstunnel поверх Dokploy Traefik (WebSocket / HTTP/3) [y/n]
+# Туннелирование WireGuard/AmneziaWG через Traefik HTTPS WebSocket (порт 443) без конфликтов портов
+ENABLE_WSTUNNEL="n"
+WSTUNNEL_DOMAIN=""
+# Секретный URI-путь location для Wstunnel (если пусто, генерируется автоматически: /ws-<32 hex>/)
+WSTUNNEL_PREFIX=""
+WSTUNNEL_PORT="8080"
+WSTUNNEL_SECRET=""
+
+# 9.6. DNSTT (Emergency DNS Tunneling over DoH via dnstt-server) [y/n]
+# Аварийный DNS-туннель для обхода жестких белых списков
 ENABLE_DNSTT="n"
 DNSTT_PORT="53053"
 DNSTT_DOMAIN=""
 DNSTT_PUBKEY=""
 
-# Mieru Proxy (XChaCha20-Poly1305, без TLS, защита от активного зондирования и сигнатурного DPI) [y/n]
+# 9.7. Mieru Proxy (mita, XChaCha20-Poly1305, без TLS) [y/n]
+# Устойчив к активному зондированию ТСПУ, статистическому DPI и блокировкам по отпечаткам TLS
 ENABLE_MIERU="n"
+# Режим портов: single (одиночный) или range (пул портов для рандомизации)
 MIERU_PORT_MODE="single"
+# Порт (например 8450) или диапазон портов (например 8450-8455)
 MIERU_PORT="8450"
+# Транспорт: BOTH (TCP и UDP), TCP или UDP
 MIERU_TRANSPORT="BOTH"
 MIERU_USER=""
 MIERU_PASS=""
@@ -830,6 +1295,7 @@ DISABLE_PASSWORD_AUTH="n"
 SSH_PUBLIC_KEY=""
 # Принудительно закрыть старый порт SSH без подтверждения перехода [y/n]
 FORCE_CLOSE_OLD_SSH="n"
+
 EOF_CONF
     ok "Шаблон конфигурации успешно сгенерирован: '$target_file'"
 }
@@ -857,6 +1323,14 @@ for arg in "$@"; do
                 fi
             done
             generate_config_template "$target_gen_file"
+            exit 0
+            ;;
+        --dry-run)
+            echo -e "\n  ${YELLOW}${BOLD}[INFO] Режим --dry-run не поддерживается установщиком setup.sh.${NC}"
+            echo -e "  Развертывание ОС и сетевого стека требует реальных изменений системы.\n"
+            echo -e "  ${CYAN}Для безопасного аудита без внесения изменений используйте:${NC}"
+            echo -e "    • ${WHITE}./setup.sh --check${NC}         (быстрая диагностика сервисов, портов, SSL)"
+            echo -e "    • ${WHITE}./maintain.sh --dry-run${NC}    (холостой аудит базы 3X-UI и конфигов Nginx)\n"
             exit 0
             ;;
     esac
@@ -905,6 +1379,7 @@ install_prerequisites() {
         [cron]="cron"
         [ufw]="ufw"
         [python3]="python3"
+        [mtr]="mtr-tiny"
     )
     for cmd in "${!pkg_map[@]}"; do
         if ! command -v "$cmd" >/dev/null 2>&1; then
@@ -1005,7 +1480,15 @@ generate_base64_token() {
     printf '%s' "$token"
 }
 
-# Discover the closest saved configuration without renaming existing user files.
+# ==============================================================================
+# src/common/config.sh - Safe Configuration Loader & SSL Path Resolver (T13)
+# ==============================================================================
+# Treats configuration files strictly as structured data, forbidding eval/source
+# and command substitution $(...) or backticks to prevent arbitrary code execution.
+# ==============================================================================
+
+CONFIG_SCHEMA_VERSION=1
+
 is_true() {
     local val="${1:-0}"
     [[ "$val" == "1" || "${val,,}" == "y" || "${val,,}" == "true" ]]
@@ -1013,7 +1496,15 @@ is_true() {
 
 find_config_file() {
     local script_dir="${1:-.}" directory candidate
-    for directory in . "$script_dir" /etc /root; do
+    local dirs=()
+    if [ "${EUID:-$(id -u)}" -ne 0 ]; then
+        dirs=(. "$script_dir" /etc /root)
+    else
+        # When running as root, do not blindly load from arbitrary current working dir (T13.C09)
+        dirs=("$script_dir" /etc /root)
+    fi
+    for directory in "${dirs[@]}"; do
+        [ -d "$directory" ] || continue
         for candidate in "$directory/server-setup.env" "$directory/setup_mask.env"; do
             if [ -f "$candidate" ]; then
                 printf '%s\n' "$candidate"
@@ -1022,6 +1513,77 @@ find_config_file() {
         done
     done
     return 1
+}
+
+load_config_data_safe() {
+    local env_file="$1"
+    [ -f "$env_file" ] || return 1
+
+    # Security check: if running as root, reject world-writable config files (T13.C09)
+    if [ "${EUID:-$(id -u)}" -eq 0 ] && command -v stat >/dev/null 2>&1; then
+        local perms
+        perms=$(stat -c "%a" "$env_file" 2>/dev/null || stat -f "%Lp" "$env_file" 2>/dev/null || true)
+        if [[ "$perms" =~ [2367]$ ]]; then
+            echo "[ERROR] Security violation: $env_file is world-writable (mode $perms)! Refusing to load." >&2
+            return 1
+        fi
+    fi
+
+    local line_no=0
+    local re_dquote='^"(.*)"$'
+    local re_squote="^'(.*)'\$"
+    while IFS= read -r line || [ -n "$line" ]; do
+        line_no=$((line_no + 1))
+        line="${line%$'\r'}"
+        # Skip comments and empty lines
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "${line// }" ]] && continue
+
+        if [[ "$line" =~ ^[[:space:]]*export[[:space:]]+(.*)$ ]]; then
+            line="${BASH_REMATCH[1]}"
+        fi
+
+        if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+            local key="${BASH_REMATCH[1]}"
+            local val="${BASH_REMATCH[2]}"
+
+            # Handle quotes safely: single quotes preserve raw literal content without expansion (T13.C04)
+            if [[ "$val" =~ $re_squote ]]; then
+                val="${BASH_REMATCH[1]}"
+            elif [[ "$val" =~ $re_dquote ]]; then
+                val="${BASH_REMATCH[1]}"
+                # Reject command substitution $(...) or backticks (T13.C02, T13.C08)
+                if [[ "$val" == *'`'* || "$val" =~ \$\([^\)]*\) || "$val" =~ \$\(\( || "$val" =~ \$\{[^\}]*\} ]]; then
+                    echo "[ERROR] Unsafe executable syntax in $env_file line $line_no: command substitution forbidden!" >&2
+                    return 1
+                fi
+                val="${val//\\\"/\"}"
+                val="${val//\\\\/\\}"
+            else
+                # Unquoted: strip trailing comment if preceded by space
+                if [[ "$val" =~ ^(.*)[[:space:]]+#.*$ ]]; then
+                    val="${BASH_REMATCH[1]}"
+                fi
+                # Trim trailing whitespace
+                val="${val%"${val##*[![:space:]]}"}"
+
+                # Reject command substitution $(...) or backticks in unquoted values
+                if [[ "$val" == *'`'* || "$val" =~ \$\([^\)]*\) || "$val" =~ \$\(\( || "$val" =~ \$\{[^\}]*\} ]]; then
+                    echo "[ERROR] Unsafe executable syntax in $env_file line $line_no: command substitution forbidden!" >&2
+                    return 1
+                fi
+            fi
+
+            declare -g "$key=$val"
+            if declare -p CONFIG_EXPLICIT_KEYS >/dev/null 2>&1; then
+                CONFIG_EXPLICIT_KEYS["$key"]=1
+            fi
+        else
+            echo "[ERROR] Malformed syntax in $env_file line $line_no: '$line'" >&2
+            return 1
+        fi
+    done < "$env_file"
+    return 0
 }
 
 resolve_ssl_cert_paths() {
@@ -1165,14 +1727,17 @@ ensure_wstunnel_prefix() {
 
 rotate_secret_paths() {
     # Only the full installer may rotate paths; companion scripts preserve them.
-    local panel_token ws_token client_token
+    local panel_token ws_token client_token diag_token
     panel_token=$(generate_secret_token) || return 1
     ws_token=$(generate_secret_token) || return 1
     client_token=$(generate_secret_token) || return 1
+    diag_token=$(generate_secret_token) || return 1
     RAW_PATH="panel-${panel_token}"
     PANEL_PATH="/${RAW_PATH}/"
     WSTUNNEL_PREFIX="/ws-${ws_token}/"
     AGH_CLIENT_ID="client-${client_token}"
+    DIAG_PATH="/diag-${diag_token}/"
+    DIAG_TOKEN="$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 16 || echo "tok${RANDOM}")"
     AUTO_SETUP_3XUI=y
     LAST_COMPLETED_STEP=0
     RESUME_STEP=1
@@ -1336,7 +1901,19 @@ reconstruct_arrays_from_vars() {
     AUTO_SETUP_3XUI="${AUTO_SETUP_3XUI:-y}"
     _v="${SHOW_MANUAL_STEPS:-n}"; if is_true "$_v"; then SHOW_MANUAL_STEPS=1; else SHOW_MANUAL_STEPS=0; fi
     PORT_AGH_WEB="${PORT_AGH_WEB:-3000}"
+    PORT_AGH_DNS="${PORT_AGH_DNS:-10053}"
     ensure_agh_client_id || return 1
+
+    if [ -z "${DIAG_PATH:-}" ]; then
+        local diag_tok
+        diag_tok=$(generate_secret_token) || return 1
+        DIAG_PATH="/diag-${diag_tok}/"
+    fi
+    DIAG_PATH="/${DIAG_PATH#/}"
+    DIAG_PATH="${DIAG_PATH%/}/"
+    if [ -z "${DIAG_TOKEN:-}" ]; then
+        DIAG_TOKEN="$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 16 || echo "tok${RANDOM}")"
+    fi
 
     # Сосуществование с Dokploy и протоколы следующего поколения
     _v="${DOKPLOY_COEXISTENCE:-n}"; if is_true "$_v"; then DOKPLOY_COEXISTENCE="y"; else DOKPLOY_COEXISTENCE="n"; fi
@@ -1434,22 +2011,9 @@ load_env_file() {
     local env_file="$1"
     [ -f "$env_file" ] || return 0
     log "Загрузка параметров из конфигурационного файла: $env_file"
-    local re_dquote='^"(.*)"$'
-    local re_squote="^'(.*)'\$"
-    while IFS= read -r line || [ -n "$line" ]; do
-        line="${line%$'\r'}"
-        [[ "$line" =~ ^[[:space:]]*# ]] && continue
-        [[ -z "${line// }" ]] && continue
-        if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
-            local key="${BASH_REMATCH[1]}"
-            local val="${BASH_REMATCH[2]}"
-            if [[ "$val" =~ $re_dquote ]] || [[ "$val" =~ $re_squote ]]; then
-                val="${BASH_REMATCH[1]}"
-            fi
-            declare -g "$key=$val"
-            CONFIG_EXPLICIT_KEYS[$key]=1
-        fi
-    done < "$env_file"
+    if ! load_config_data_safe "$env_file"; then
+        die "Ошибка синтаксиса или безопасности при загрузке конфигурации $env_file"
+    fi
     reconstruct_arrays_from_vars
 }
 
@@ -1660,6 +2224,9 @@ AGH_USER="${AGH_USER:-admin}"
 AGH_PASS="${AGH_PASS:-}"
 AGH_CLIENT_ID="${AGH_CLIENT_ID}"
 PORT_AGH_WEB="${PORT_AGH_WEB:-3000}"
+PORT_AGH_DNS="${PORT_AGH_DNS:-10053}"
+DIAG_PATH="${DIAG_PATH:-}"
+DIAG_TOKEN="${DIAG_TOKEN:-}"
 AGH_XRAY_DNS="$agh_xray_save"
 SHOW_TIPS="${SHOW_TIPS:-y}"
 
@@ -3449,6 +4016,14 @@ while [[ $# -gt 0 ]]; do
             DEBUG_MODE=1
             shift
             ;;
+        --dry-run)
+            echo -e "\n  ${YELLOW}${BOLD}[INFO] Режим --dry-run не поддерживается установщиком setup.sh.${NC}"
+            echo -e "  Развертывание ОС и сетевого стека требует реальных изменений системы.\n"
+            echo -e "  ${CYAN}Для безопасного аудита без внесения изменений используйте:${NC}"
+            echo -e "    • ${WHITE}./setup.sh --check${NC}         (быстрая диагностика сервисов, портов, SSL)"
+            echo -e "    • ${WHITE}./maintain.sh --dry-run${NC}    (холостой аудит базы 3X-UI и конфигов Nginx)\n"
+            exit 0
+            ;;
         --uninstall)
             if command -v run_uninstall >/dev/null 2>&1; then
                 run_uninstall
@@ -3639,7 +4214,8 @@ installation_listeners() {
             for port in "${CLASSIC_PORTS_LIST[@]:-${CLASSIC_PORT:-46443}}"; do printf 'Reality-external tcp %s\n' "$port"; done
         fi
         if is_true "${ENABLE_AGH:-n}"; then
-            printf 'AdGuard-web tcp %s\nAdGuard-DNS tcp 53\nAdGuard-DNS udp 53\n' "${PORT_AGH_WEB:-3000}"
+            local agh_dns_p="${PORT_AGH_DNS:-10053}"
+            printf 'AdGuard-web tcp %s\nAdGuard-DNS tcp %s\nAdGuard-DNS udp %s\n' "${PORT_AGH_WEB:-3000}" "$agh_dns_p" "$agh_dns_p"
         fi
     fi
     selected_protocol_ports
@@ -3858,19 +4434,13 @@ inspect_port_conflicts() {
         fi
     fi
 
-    # 2. Проверка системного DNS-порта 53 (TCP/UDP)
+    # 2. Проверка изоляции DNS (systemd-resolved DoT на 53 / AdGuard Home на PORT_AGH_DNS)
     if [[ "${ENABLE_AGH:-0}" == "1" || "${ENABLE_AGH,,}" == "y" ]]; then
-        if is_port_in_use "udp" 53 || is_port_in_use "tcp" 53; then
-            local dns_owner
-            dns_owner=$(get_port_listener_info "udp" 53)
-            [ -z "$dns_owner" ] && dns_owner=$(get_port_listener_info "tcp" 53)
-            if echo "$dns_owner" | grep -qi "systemd-resolve"; then
-                ok "Обнаружен локальный systemd-resolved на порту 53 — будет безопасно отключен стаб-слушатель (DNSStubListener=no) с сохранением системного DNS хоста."
-            else
-                warn "Порт 53 занят процессом: ${dns_owner:-сторонним DNS-сервером}. AdGuard Home требует свободного порта 53."
-            fi
+        local agh_dns_port="${PORT_AGH_DNS:-10053}"
+        if is_port_in_use "udp" "$agh_dns_port" || is_port_in_use "tcp" "$agh_dns_port"; then
+            warn "Порт $agh_dns_port (AdGuard Home DNS) уже используется. Рекомендуется освободить порт."
         else
-            ok "Порт 53 (DNS) свободен."
+            ok "Порт $agh_dns_port (AdGuard Home DNS изоляция) свободен. Системный порт 53 сохранен для systemd-resolved DoT."
         fi
     fi
 
@@ -4197,7 +4767,8 @@ post_install_sanity_check() {
         if is_true "${ENABLE_AGH:-n}"; then
             check_required_service AdGuardHome || all_ok=0
             check_required_port tcp "${PORT_AGH_WEB:-3000}" || all_ok=0
-            check_required_port udp 53 || all_ok=0
+            local agh_dns_check="${PORT_AGH_DNS:-10053}"
+            check_required_port udp "$agh_dns_check" || all_ok=0
         fi
         # curl validates the certificate and hostname as well as HTTPS availability.
         if ! curl -fLsS --connect-timeout 3 --max-time 10 -o /dev/null \
@@ -4345,10 +4916,11 @@ run_doctor_check() {
         else
             echo -e "    • Статус:            ${RED}NOT RUNNING${NC}"
         fi
-        if ss -ulpn 2>/dev/null | grep -q ":53 "; then
-            echo -e "    • DNS Порт 53:       ${GREEN}СЛУШАЕТ${NC}"
+        local agh_dns_check="${PORT_AGH_DNS:-10053}"
+        if ss -ulpn 2>/dev/null | grep -q ":${agh_dns_check} "; then
+            echo -e "    • DNS Порт ${agh_dns_check}:    ${GREEN}СЛУШАЕТ${NC}"
         else
-            echo -e "    • DNS Порт 53:       ${YELLOW}не слушает 53${NC}"
+            echo -e "    • DNS Порт ${agh_dns_check}:    ${YELLOW}не слушает ${agh_dns_check}${NC}"
         fi
     else
         echo -e "    • AdGuard Home:      ${DIM}не установлен на этом сервере${NC}"
@@ -4899,10 +5471,22 @@ while true; do
         exit 0
     fi
 
-    # Ищем установленное внешнее соединение на целевой порт
-    EST=$(ss -tn sport = ":${TARGET_PORT}" state established 2>/dev/null | grep -vE '127\.0\.0\.1|::1|Local Address' | wc -l)
-    if [ "$EST" -gt 0 ]; then
-        logger -t ssh-watcher "Обнаружено успешное подключение на порт $TARGET_PORT! Финализация перехода и закрытие порта $ACTIVE_PORT..."
+    # Проверяем подтвержденную аутентифицированную сессию на целевом порту (T17.C06)
+    # TCP ESTABLISHED, проверка локального listener и попытка входа без авторизации НЕ считаются успешным входом.
+    AUTH_OK=0
+    if command -v journalctl >/dev/null 2>&1; then
+        if journalctl -u ssh -u sshd --since "@${START_TIME}" 2>/dev/null | grep -qE "Accepted (publickey|password|keyboard-interactive) for .* port ${TARGET_PORT}"; then
+            AUTH_OK=1
+        fi
+    fi
+    if [ "$AUTH_OK" -eq 0 ] && [ -f /var/log/auth.log ]; then
+        if grep -qE "Accepted (publickey|password|keyboard-interactive) for .* port ${TARGET_PORT}" /var/log/auth.log 2>/dev/null; then
+            AUTH_OK=1
+        fi
+    fi
+
+    if [ "$AUTH_OK" -eq 1 ]; then
+        logger -t ssh-watcher "Обнаружена подтвержденная аутентифицированная сессия на порт $TARGET_PORT! Финализация перехода и закрытие порта $ACTIVE_PORT..."
 
         # 1. Удаляем старый порт из drop-in sshd
         if [ -f /etc/ssh/sshd_config.d/99-hardening.conf ]; then
@@ -5097,25 +5681,38 @@ apply_fail2ban_configuration() {
         return 1
     fi
 
-    # 2. Формируем список защищаемых портов (и активный, и целевой)
-    local port_str="${active_port}"
-    if [ "$target_port" -ne "$active_port" ]; then
-        port_str="${active_port},${target_port}"
+    # 2. Формируем список защищаемых портов (и активный, и целевой, и сокет)
+    local ports_set=()
+    [ -n "$active_port" ] && ports_set+=("$active_port")
+    [ -n "$target_port" ] && [ "$target_port" != "$active_port" ] && ports_set+=("$target_port")
+
+    # Проверка фактических слушающих портов SSH
+    if command -v sshd >/dev/null 2>&1; then
+        local detected_p
+        detected_p=$(sshd -T 2>/dev/null | awk '/^port / {print $2}' || true)
+        if [ -n "$detected_p" ] && [[ ! " ${ports_set[*]} " =~ " ${detected_p} " ]]; then
+            ports_set+=("$detected_p")
+        fi
     fi
 
-    mkdir -p /etc/fail2ban
-    cat << EOF > /etc/fail2ban/jail.local
+    local port_str
+    port_str=$(IFS=,; echo "${ports_set[*]}")
+    [ -z "$port_str" ] && port_str="22"
+
+    mkdir -p /etc/fail2ban/jail.d 2>/dev/null || true
+    cat << EOF > /etc/fail2ban/jail.d/90-ssh-shield.local
 [DEFAULT]
 bantime = 1h
 findtime = 10m
 maxretry = 5
 backend = systemd
+banaction = ufw
 
 [sshd]
 enabled = true
 port = ${port_str}
 EOF
-    chmod 644 /etc/fail2ban/jail.local 2>/dev/null || true
+    chmod 644 /etc/fail2ban/jail.d/90-ssh-shield.local 2>/dev/null || true
 
     # 3. Активация и запуск службы
     systemctl enable fail2ban >/dev/null 2>&1 || true
@@ -5128,6 +5725,124 @@ EOF
         return 1
     fi
     return 0
+}
+
+setup_strict_dot_dns() {
+    log "Настройка защищенного системного резолвера Strict DNS-over-TLS (systemd-resolved)..."
+    if ! command -v systemctl >/dev/null 2>&1; then
+        return 0
+    fi
+
+    mkdir -p /etc/systemd/resolved.conf.d 2>/dev/null || true
+    cat << 'EOF_RESOLVED' > /etc/systemd/resolved.conf.d/00-strict-dot.conf
+[Resolve]
+DNS=1.1.1.1#cloudflare-dns.com 1.0.0.1#cloudflare-dns.com 8.8.8.8#dns.google 8.8.4.4#dns.google 9.9.9.9#dns.quad9.net
+FallbackDNS=1.1.1.1 8.8.8.8
+DNSOverTLS=yes
+DNSSEC=allow-downgrade
+Cache=yes
+DNSStubListener=yes
+MulticastDNS=no
+LLMNR=no
+EOF_RESOLVED
+    chmod 644 /etc/systemd/resolved.conf.d/00-strict-dot.conf 2>/dev/null || true
+
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable systemd-resolved >/dev/null 2>&1 || true
+    systemctl restart systemd-resolved 2>/dev/null || true
+
+    if [ -L /etc/resolv.conf ] || [ -f /etc/resolv.conf ]; then
+        ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf 2>/dev/null || true
+    fi
+    ok "Strict DNS-over-TLS (systemd-resolved, порт 853 TLS) активирован."
+}
+
+setup_unattended_upgrades() {
+    log "Настройка автоматических обновлений безопасности (unattended-upgrades)..."
+    if ! command -v apt-get >/dev/null 2>&1; then
+        return 0
+    fi
+
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -y >/dev/null 2>&1 || true
+    apt-get install -y -q unattended-upgrades update-notifier-common >/dev/null 2>&1 || true
+
+    mkdir -p /etc/apt/apt.conf.d 2>/dev/null || true
+    cat << 'EOF_UPG' > /etc/apt/apt.conf.d/50unattended-upgrades
+Unattended-Upgrade::Allowed-Origins {
+    "${distro_id}:${distro_codename}-security";
+    "${distro_id}ESMApps:${distro_codename}-apps-security";
+    "${distro_id}ESM:${distro_codename}-infra-security";
+};
+Unattended-Upgrade::Package-Blacklist {
+};
+Unattended-Upgrade::AutoFixInterruptedDpkg "true";
+Unattended-Upgrade::MinimalSteps "true";
+Unattended-Upgrade::InstallOnShutdown "false";
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+Unattended-Upgrade::Automatic-Reboot "true";
+Unattended-Upgrade::Automatic-Reboot-WithUsers "true";
+Unattended-Upgrade::Automatic-Reboot-Time "04:38";
+EOF_UPG
+
+    cat << 'EOF_AUTOS' > /etc/apt/apt.conf.d/20auto-upgrades
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";
+EOF_AUTOS
+
+    systemctl restart unattended-upgrades 2>/dev/null || true
+    ok "Автоматические ночные обновления безопасности настроены (ребут при необходимости в 04:38)."
+}
+
+setup_vpn_diagnostics() {
+    log "Развертывание веб-портала диагностики и демона MTR..."
+    local diag_dir="/var/www/diagnostics"
+    local bin_dir="/usr/local/lib/vpn-diagnostics"
+    local svc_file="/etc/systemd/system/vpn-diagnostics.service"
+
+    mkdir -p "$diag_dir" "$bin_dir" 2>/dev/null || true
+
+    local src_diag="${SCRIPT_DIR:-.}/diagnostics"
+    if [ ! -d "$src_diag" ]; then
+        for cand in ./diagnostics /root/diagnostics; do
+            if [ -d "$cand" ]; then
+                src_diag="$cand"
+                break
+            fi
+        done
+    fi
+
+    if [ -d "$src_diag" ]; then
+        cp -a "$src_diag/index.html" "$diag_dir/" 2>/dev/null || true
+        cp -a "$src_diag/speedtest.js" "$diag_dir/" 2>/dev/null || true
+        cp -a "$src_diag/speedtest_worker.js" "$diag_dir/" 2>/dev/null || true
+        cp -a "$src_diag/mtr-backend.py" "$bin_dir/" 2>/dev/null || true
+        cp -a "$src_diag/vpn-diagnostics.service" "$svc_file" 2>/dev/null || true
+    fi
+
+    # Гарантируем наличие утилиты mtr для бэкенда диагностики
+    if ! command -v mtr >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+        apt-get install -y -qq mtr-tiny >/dev/null 2>&1 || true
+    fi
+
+    # Назначение прав
+    chown -R www-data:www-data "$diag_dir" 2>/dev/null || chown -R nginx:nginx "$diag_dir" 2>/dev/null || true
+    chmod -R 755 "$diag_dir" 2>/dev/null || true
+    chmod 755 "$bin_dir/mtr-backend.py" 2>/dev/null || true
+
+    if command -v systemctl >/dev/null 2>&1 && [ -f "$svc_file" ]; then
+        systemctl daemon-reload 2>/dev/null || true
+        systemctl enable vpn-diagnostics >/dev/null 2>&1 || true
+        systemctl restart vpn-diagnostics 2>/dev/null || true
+        if systemctl is-active --quiet vpn-diagnostics; then
+            ok "Служба vpn-diagnostics запущена на сокете /run/vpn-diagnostics/mtr-backend.sock."
+        else
+            warn "Служба vpn-diagnostics не смогла запуститься."
+        fi
+    fi
 }
 
 ensure_nginx_stream_module() {
@@ -5378,10 +6093,28 @@ install_acmesh() {
     export DEBIAN_FRONTEND=noninteractive
     apt-get install -y cron socat -q
     local acme_mail="${LE_EMAIL:-admin@$PRIMARY_DOMAIN}"
-    curl -s https://get.acme.sh | sh -s email="$acme_mail"
     local _acme_bin="${HOME:-/root}/.acme.sh/acme.sh"
-    chmod +x "$_acme_bin"
-    "$_acme_bin" --register-account -m "$acme_mail" --server letsencrypt
+
+    if [ ! -x "$_acme_bin" ]; then
+        local acme_tmp="/tmp/acme_staging_$$"
+        mkdir -p "$acme_tmp"
+        if download_manifest_component "acme.sh" "$acme_tmp/acme.tar.gz" "all"; then
+            tar -zxf "$acme_tmp/acme.tar.gz" -C "$acme_tmp" --strip-components=1 2>/dev/null || tar -zxf "$acme_tmp/acme.tar.gz" -C "$acme_tmp" 2>/dev/null || true
+            local acme_src
+            acme_src="$(find "$acme_tmp" -name acme.sh -type f 2>/dev/null | head -n1)"
+            if [ -n "$acme_src" ] && [ -f "$acme_src" ]; then
+                bash "$acme_src" --install --home "${HOME:-/root}/.acme.sh" --accountemail "$acme_mail" >/dev/null 2>&1 || true
+            fi
+        else
+            warn "Не удалось скачать проверенный дистрибутив acme.sh"
+        fi
+        rm -rf "$acme_tmp" 2>/dev/null || true
+    fi
+
+    if [ -f "$_acme_bin" ]; then
+        chmod +x "$_acme_bin" 2>/dev/null || true
+        "$_acme_bin" --register-account -m "$acme_mail" --server letsencrypt >/dev/null 2>&1 || true
+    fi
 }
 
 # Принимает $1 = домен (был closure-переменной $dom из цикла)
@@ -7313,11 +8046,9 @@ setup_zapret_service() {
     [ -d "$bin_dir" ] || mkdir -p "$bin_dir" 2>/dev/null || true
 
     if [ ! -x "${bin_dir}/nfqws" ]; then
-        local z_ver="${ZAPRET_VERSION:-v69.2}"
-        local z_tmp="/tmp/zapret_${z_ver}"
+        local z_tmp="/tmp/zapret_staging_$$"
         mkdir -p "$z_tmp"
-        if curl -fsSL --connect-timeout 15 "https://github.com/bol-van/zapret/releases/download/${z_ver}/zapret-${z_ver}.tar.gz" -o "$z_tmp/zapret.tar.gz" 2>/dev/null || \
-           curl -fsSL --connect-timeout 15 "https://ghfast.top/https://github.com/bol-van/zapret/releases/download/${z_ver}/zapret-${z_ver}.tar.gz" -o "$z_tmp/zapret.tar.gz" 2>/dev/null; then
+        if download_manifest_component "zapret" "$z_tmp/zapret.tar.gz" "all"; then
             tar -zxf "$z_tmp/zapret.tar.gz" -C "$z_tmp" --strip-components=1 2>/dev/null || true
             if [ -f "$z_tmp/binaries/${z_arch}/nfqws" ]; then
                 cp "$z_tmp/binaries/${z_arch}/nfqws" "${bin_dir}/nfqws"
@@ -7527,8 +8258,7 @@ setup_shadowtls_service() {
     [ -d "$bin_dir" ] || mkdir -p "$bin_dir" 2>/dev/null || true
 
     if [ ! -x "${bin_dir}/shadow-tls" ]; then
-        if curl -fsSL --connect-timeout 15 "https://github.com/ihciah/shadow-tls/releases/latest/download/shadow-tls-${st_arch}-unknown-linux-musl" -o "${bin_dir}/shadow-tls" 2>/dev/null || \
-           curl -fsSL --connect-timeout 15 "https://ghfast.top/https://github.com/ihciah/shadow-tls/releases/latest/download/shadow-tls-${st_arch}-unknown-linux-musl" -o "${bin_dir}/shadow-tls" 2>/dev/null; then
+        if download_manifest_component "shadow-tls" "${bin_dir}/shadow-tls" "$st_arch"; then
             chmod +x "${bin_dir}/shadow-tls"
         fi
     fi
@@ -7582,12 +8312,10 @@ setup_wstunnel_service() {
     [ -d "$bin_dir" ] || mkdir -p "$bin_dir" 2>/dev/null || true
 
     if [ ! -x "${bin_dir}/wstunnel" ]; then
-        local ws_ver="11.0.0"
-        local ws_tmp="/tmp/wstunnel_${ws_ver}"
+        local ws_tmp="/tmp/wstunnel_staging_$$"
         mkdir -p "$ws_tmp"
-        if curl -fsSL --connect-timeout 15 "https://github.com/erebe/wstunnel/releases/download/v${ws_ver}/wstunnel_${ws_ver}_linux_${ws_arch}.tar.gz" -o "$ws_tmp/ws.tar.gz" 2>/dev/null || \
-           curl -fsSL --connect-timeout 15 "https://ghfast.top/https://github.com/erebe/wstunnel/releases/download/v${ws_ver}/wstunnel_${ws_ver}_linux_${ws_arch}.tar.gz" -o "$ws_tmp/ws.tar.gz" 2>/dev/null; then
-            tar -zxf "$ws_tmp/ws.tar.gz" -C "$ws_tmp" 2>/dev/null || true
+        if download_manifest_component "wstunnel" "$ws_tmp/wstunnel.tar.gz" "$ws_arch"; then
+            tar -zxf "$ws_tmp/wstunnel.tar.gz" -C "$ws_tmp" 2>/dev/null || true
             if [ -f "$ws_tmp/wstunnel" ]; then
                 cp "$ws_tmp/wstunnel" "${bin_dir}/wstunnel"
                 chmod +x "${bin_dir}/wstunnel"
@@ -7672,7 +8400,7 @@ setup_naive_service() {
         local caddy_tmp="/tmp/caddy_naive_$$"
         mkdir -p "$caddy_tmp"
         local rel_ver="${SCRIPT_VERSION:-v9.1.0}"
-        [[ "$rel_ver" == "v9.1.0" ]] && rel_ver="v9.1.0"
+        [[ "$rel_ver" == "v9.2.0" ]] && rel_ver="v9.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/caddy-naive-linux-${caddy_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
@@ -7818,7 +8546,7 @@ setup_dnstt_service() {
         local dnstt_tmp="/tmp/dnstt_$$"
         mkdir -p "$dnstt_tmp"
         local rel_ver="${SCRIPT_VERSION:-v9.1.0}"
-        [[ "$rel_ver" == "v9.1.0" ]] && rel_ver="v9.1.0"
+        [[ "$rel_ver" == "v9.2.0" ]] && rel_ver="v9.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/dnstt-server-linux-${dnstt_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
@@ -8800,7 +9528,8 @@ installation_listeners() {
             for port in "${CLASSIC_PORTS_LIST[@]:-${CLASSIC_PORT:-46443}}"; do printf 'Reality-external tcp %s\n' "$port"; done
         fi
         if is_true "${ENABLE_AGH:-n}"; then
-            printf 'AdGuard-web tcp %s\nAdGuard-DNS tcp 53\nAdGuard-DNS udp 53\n' "${PORT_AGH_WEB:-3000}"
+            local agh_dns_p="${PORT_AGH_DNS:-10053}"
+            printf 'AdGuard-web tcp %s\nAdGuard-DNS tcp %s\nAdGuard-DNS udp %s\n' "${PORT_AGH_WEB:-3000}" "$agh_dns_p" "$agh_dns_p"
         fi
     fi
     selected_protocol_ports
@@ -8925,6 +9654,11 @@ run_installation() {
     inspect_port_conflicts
     build_installation_plan
     confirm_installation_plan
+    if [ "${CHECK_MODE:-0}" -ne 1 ] && [ "${DRY_RUN:-0}" -ne 1 ]; then
+        if command -v acquire_stack_lock >/dev/null 2>&1; then
+            acquire_stack_lock "${VPN_STACK_LOCK_TIMEOUT:-10}" "install" || exit $?
+        fi
+    fi
     save_session_state "${SAVED_CONFIG_FILE:-server-setup.env}"
     if command -v create_initial_state_snapshot >/dev/null 2>&1; then
         create_initial_state_snapshot || true
@@ -8970,6 +9704,12 @@ install_step_security() {
             run_with_spinner "Установка и настройка службы Fail2ban" apply_fail2ban_configuration "$local_target_ssh" "$local_active_ssh" || die "Не удалось настроить Fail2ban."
         fi
     fi
+
+    # Настройка Strict DNS-over-TLS для системного резолвера ОС
+    run_with_spinner "Настройка Strict DNS-over-TLS (systemd-resolved)" setup_strict_dot_dns || warn "Не удалось настроить systemd-resolved DoT."
+
+    # Настройка автоматических ночных обновлений безопасности (ребут в 04:38)
+    run_with_spinner "Настройка автоматических обновлений (unattended-upgrades)" setup_unattended_upgrades || warn "Не удалось настроить unattended-upgrades."
 }
 
 issue_required_certificate() {
@@ -10066,6 +10806,7 @@ ${HTTP2_HTTP_PARAMS}
         ~^.*:/robots\.txt(\?|\$) 0;
         ~^.*:/.well-known/security\.txt(\?|\$) 0;
         ~^1:[01]:${PANEL_PATH} 0;
+        ~^1:[01]:${DIAG_PATH} 0;
         ~^1:[01]:${SUB_PATH} 0;
         ~^1:[01]:${SUB_JSON_PATH} 0;
         ~^1:[01]:${SUB_CLASH_PATH} 0;
@@ -10077,6 +10818,11 @@ ${wstunnel_badbot_bypass}        ~^1:[01]:/dns-query 0;
         ~^1:[01]:/agh/ 0;
         ~(^1:|:1) 1;
         default 0;
+    }
+
+    map \$cookie_diag_key \$diag_auth {
+        default 0;
+        "${DIAG_TOKEN}" 1;
     }
 
     limit_req_zone \$binary_remote_addr zone=bot:1m rate=4r/s;
@@ -10479,6 +11225,103 @@ server {
         proxy_intercept_errors off;
     }
 
+    # --- ЛОКАЦИЯ 1.1: SSO-МОСТ ДЛЯ ВЕБ-ДИАГНОСТИКИ ИЗ ПАНЕЛИ 3X-UI ---
+    location = ${PANEL_PATH}diag {
+        auth_request /__diag_auth;
+        error_page 401 403 = @diag_login;
+        try_files /__nonexistent @diag_sso_ok;
+    }
+    location @diag_login {
+        return 302 ${PANEL_PATH};
+    }
+    location @diag_sso_ok {
+        add_header Set-Cookie "diag_key=${DIAG_TOKEN}; Path=${DIAG_PATH}; Secure; HttpOnly; SameSite=Strict; Max-Age=86400" always;
+        return 302 ${DIAG_PATH};
+    }
+    location = /__diag_auth {
+        internal;
+        proxy_pass http://127.0.0.1:$PANEL_PORT${PANEL_PATH}panel/;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Requested-With XMLHttpRequest;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_intercept_errors on;
+        error_page 300 301 302 303 304 305 307 308 400 401 402 403 404 405 500 501 502 503 504 =401 @diag_denied;
+    }
+    location @diag_denied { return 401; }
+
+    # --- ЛОКАЦИЯ 1.2: ПОРТАЛ ВЕБ-ДИАГНОСТИКИ (СТРОГОЕ СОКРЫТИЕ 404 БЕЗ УТЕЧКИ ПУТИ) ---
+    location ^~ ${DIAG_PATH} {
+        if (\$diag_auth = 0) { return 404; }
+        alias /var/www/diagnostics/;
+        index index.html;
+        try_files \$uri \$uri/ /index.html;
+        add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+    }
+    location = ${DIAG_PATH}api/st/ping {
+        if (\$diag_auth = 0) { return 404; }
+        default_type text/plain;
+        return 200 "OK";
+    }
+    location = ${DIAG_PATH}api/st/getIP {
+        if (\$diag_auth = 0) { return 404; }
+        default_type text/plain;
+        return 200 "\$ak_real_ip";
+    }
+    location = ${DIAG_PATH}api/st/getip {
+        if (\$diag_auth = 0) { return 404; }
+        default_type text/plain;
+        return 200 "\$ak_real_ip";
+    }
+    location = ${DIAG_PATH}api/st/download {
+        if (\$diag_auth = 0) { return 404; }
+        proxy_pass http://unix:/run/vpn-diagnostics/mtr-backend.sock:/download;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Real-IP \$ak_real_ip;
+        proxy_buffering off;
+        proxy_read_timeout 60s;
+    }
+    location = ${DIAG_PATH}api/st/down {
+        if (\$diag_auth = 0) { return 404; }
+        proxy_pass http://unix:/run/vpn-diagnostics/mtr-backend.sock:/down;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Real-IP \$ak_real_ip;
+        proxy_buffering off;
+        proxy_read_timeout 60s;
+    }
+    location = ${DIAG_PATH}api/st/upload {
+        if (\$diag_auth = 0) { return 404; }
+        proxy_pass http://unix:/run/vpn-diagnostics/mtr-backend.sock:/upload;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Real-IP \$ak_real_ip;
+        proxy_request_buffering off;
+        client_max_body_size 128m;
+        proxy_read_timeout 60s;
+    }
+    location = ${DIAG_PATH}api/st/up {
+        if (\$diag_auth = 0) { return 404; }
+        proxy_pass http://unix:/run/vpn-diagnostics/mtr-backend.sock:/up;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Real-IP \$ak_real_ip;
+        proxy_request_buffering off;
+        client_max_body_size 128m;
+        proxy_read_timeout 60s;
+    }
+    location = ${DIAG_PATH}api/mtr {
+        if (\$diag_auth = 0) { return 404; }
+        proxy_pass http://unix:/run/vpn-diagnostics/mtr-backend.sock:/mtr;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Real-IP \$ak_real_ip;
+        proxy_read_timeout 90s;
+    }
+
     # --- ЛОКАЦИЯ 2: ПОДПИСКИ КЛИЕНТОВ ---
     location ^~ /sub/ {
         proxy_hide_header Content-Security-Policy;
@@ -10659,6 +11502,103 @@ server {
         proxy_intercept_errors off;
     }
 
+    # --- ЛОКАЦИЯ 1.1: SSO-МОСТ ДЛЯ ВЕБ-ДИАГНОСТИКИ ИЗ ПАНЕЛИ 3X-UI ---
+    location = ${PANEL_PATH}diag {
+        auth_request /__diag_auth;
+        error_page 401 403 = @diag_login;
+        try_files /__nonexistent @diag_sso_ok;
+    }
+    location @diag_login {
+        return 302 ${PANEL_PATH};
+    }
+    location @diag_sso_ok {
+        add_header Set-Cookie "diag_key=${DIAG_TOKEN}; Path=${DIAG_PATH}; Secure; HttpOnly; SameSite=Strict; Max-Age=86400" always;
+        return 302 ${DIAG_PATH};
+    }
+    location = /__diag_auth {
+        internal;
+        proxy_pass http://127.0.0.1:$PANEL_PORT${PANEL_PATH}panel/;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Requested-With XMLHttpRequest;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_intercept_errors on;
+        error_page 300 301 302 303 304 305 307 308 400 401 402 403 404 405 500 501 502 503 504 =401 @diag_denied;
+    }
+    location @diag_denied { return 401; }
+
+    # --- ЛОКАЦИЯ 1.2: ПОРТАЛ ВЕБ-ДИАГНОСТИКИ (СТРОГОЕ СОКРЫТИЕ 404 БЕЗ УТЕЧКИ ПУТИ) ---
+    location ^~ ${DIAG_PATH} {
+        if (\$diag_auth = 0) { return 404; }
+        alias /var/www/diagnostics/;
+        index index.html;
+        try_files \$uri \$uri/ /index.html;
+        add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+    }
+    location = ${DIAG_PATH}api/st/ping {
+        if (\$diag_auth = 0) { return 404; }
+        default_type text/plain;
+        return 200 "OK";
+    }
+    location = ${DIAG_PATH}api/st/getIP {
+        if (\$diag_auth = 0) { return 404; }
+        default_type text/plain;
+        return 200 "\$ak_real_ip";
+    }
+    location = ${DIAG_PATH}api/st/getip {
+        if (\$diag_auth = 0) { return 404; }
+        default_type text/plain;
+        return 200 "\$ak_real_ip";
+    }
+    location = ${DIAG_PATH}api/st/download {
+        if (\$diag_auth = 0) { return 404; }
+        proxy_pass http://unix:/run/vpn-diagnostics/mtr-backend.sock:/download;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Real-IP \$ak_real_ip;
+        proxy_buffering off;
+        proxy_read_timeout 60s;
+    }
+    location = ${DIAG_PATH}api/st/down {
+        if (\$diag_auth = 0) { return 404; }
+        proxy_pass http://unix:/run/vpn-diagnostics/mtr-backend.sock:/down;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Real-IP \$ak_real_ip;
+        proxy_buffering off;
+        proxy_read_timeout 60s;
+    }
+    location = ${DIAG_PATH}api/st/upload {
+        if (\$diag_auth = 0) { return 404; }
+        proxy_pass http://unix:/run/vpn-diagnostics/mtr-backend.sock:/upload;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Real-IP \$ak_real_ip;
+        proxy_request_buffering off;
+        client_max_body_size 128m;
+        proxy_read_timeout 60s;
+    }
+    location = ${DIAG_PATH}api/st/up {
+        if (\$diag_auth = 0) { return 404; }
+        proxy_pass http://unix:/run/vpn-diagnostics/mtr-backend.sock:/up;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Real-IP \$ak_real_ip;
+        proxy_request_buffering off;
+        client_max_body_size 128m;
+        proxy_read_timeout 60s;
+    }
+    location = ${DIAG_PATH}api/mtr {
+        if (\$diag_auth = 0) { return 404; }
+        proxy_pass http://unix:/run/vpn-diagnostics/mtr-backend.sock:/mtr;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Real-IP \$ak_real_ip;
+        proxy_read_timeout 90s;
+    }
+
     location ^~ /sub/ {
         proxy_hide_header Content-Security-Policy;
         add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'self';" always;
@@ -10821,6 +11761,9 @@ EOF
     else
         rm -f "/etc/nginx/conf.d/03-adguard.conf" 2>/dev/null || true
     fi
+
+    # Развертывание демона веб-диагностики и статических файлов перед запуском Nginx
+    setup_vpn_diagnostics 2>/dev/null || true
 
     run_with_spinner "Тестирование конфигурации и перезапуск Nginx Mainline" nginx_reload_task || {
         restore_nginx_configs
@@ -11051,7 +11994,15 @@ log()  { echo -e "  ${CYAN}[+]${NC} $*"; }
 ok()   { echo -e "  ${GREEN}${CHECK:-✔}${NC} $*"; }
 warn() { echo -e "  ${YELLOW}[!]${NC} $*"; }
 die()  { echo -e "  ${RED}${CROSS:-✖} $*${NC}" >&2; exit 1; }
-# Discover the closest saved configuration without renaming existing user files.
+# ==============================================================================
+# src/common/config.sh - Safe Configuration Loader & SSL Path Resolver (T13)
+# ==============================================================================
+# Treats configuration files strictly as structured data, forbidding eval/source
+# and command substitution $(...) or backticks to prevent arbitrary code execution.
+# ==============================================================================
+
+CONFIG_SCHEMA_VERSION=1
+
 is_true() {
     local val="${1:-0}"
     [[ "$val" == "1" || "${val,,}" == "y" || "${val,,}" == "true" ]]
@@ -11059,7 +12010,15 @@ is_true() {
 
 find_config_file() {
     local script_dir="${1:-.}" directory candidate
-    for directory in . "$script_dir" /etc /root; do
+    local dirs=()
+    if [ "${EUID:-$(id -u)}" -ne 0 ]; then
+        dirs=(. "$script_dir" /etc /root)
+    else
+        # When running as root, do not blindly load from arbitrary current working dir (T13.C09)
+        dirs=("$script_dir" /etc /root)
+    fi
+    for directory in "${dirs[@]}"; do
+        [ -d "$directory" ] || continue
         for candidate in "$directory/server-setup.env" "$directory/setup_mask.env"; do
             if [ -f "$candidate" ]; then
                 printf '%s\n' "$candidate"
@@ -11068,6 +12027,77 @@ find_config_file() {
         done
     done
     return 1
+}
+
+load_config_data_safe() {
+    local env_file="$1"
+    [ -f "$env_file" ] || return 1
+
+    # Security check: if running as root, reject world-writable config files (T13.C09)
+    if [ "${EUID:-$(id -u)}" -eq 0 ] && command -v stat >/dev/null 2>&1; then
+        local perms
+        perms=$(stat -c "%a" "$env_file" 2>/dev/null || stat -f "%Lp" "$env_file" 2>/dev/null || true)
+        if [[ "$perms" =~ [2367]$ ]]; then
+            echo "[ERROR] Security violation: $env_file is world-writable (mode $perms)! Refusing to load." >&2
+            return 1
+        fi
+    fi
+
+    local line_no=0
+    local re_dquote='^"(.*)"$'
+    local re_squote="^'(.*)'\$"
+    while IFS= read -r line || [ -n "$line" ]; do
+        line_no=$((line_no + 1))
+        line="${line%$'\r'}"
+        # Skip comments and empty lines
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "${line// }" ]] && continue
+
+        if [[ "$line" =~ ^[[:space:]]*export[[:space:]]+(.*)$ ]]; then
+            line="${BASH_REMATCH[1]}"
+        fi
+
+        if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+            local key="${BASH_REMATCH[1]}"
+            local val="${BASH_REMATCH[2]}"
+
+            # Handle quotes safely: single quotes preserve raw literal content without expansion (T13.C04)
+            if [[ "$val" =~ $re_squote ]]; then
+                val="${BASH_REMATCH[1]}"
+            elif [[ "$val" =~ $re_dquote ]]; then
+                val="${BASH_REMATCH[1]}"
+                # Reject command substitution $(...) or backticks (T13.C02, T13.C08)
+                if [[ "$val" == *'`'* || "$val" =~ \$\([^\)]*\) || "$val" =~ \$\(\( || "$val" =~ \$\{[^\}]*\} ]]; then
+                    echo "[ERROR] Unsafe executable syntax in $env_file line $line_no: command substitution forbidden!" >&2
+                    return 1
+                fi
+                val="${val//\\\"/\"}"
+                val="${val//\\\\/\\}"
+            else
+                # Unquoted: strip trailing comment if preceded by space
+                if [[ "$val" =~ ^(.*)[[:space:]]+#.*$ ]]; then
+                    val="${BASH_REMATCH[1]}"
+                fi
+                # Trim trailing whitespace
+                val="${val%"${val##*[![:space:]]}"}"
+
+                # Reject command substitution $(...) or backticks in unquoted values
+                if [[ "$val" == *'`'* || "$val" =~ \$\([^\)]*\) || "$val" =~ \$\(\( || "$val" =~ \$\{[^\}]*\} ]]; then
+                    echo "[ERROR] Unsafe executable syntax in $env_file line $line_no: command substitution forbidden!" >&2
+                    return 1
+                fi
+            fi
+
+            declare -g "$key=$val"
+            if declare -p CONFIG_EXPLICIT_KEYS >/dev/null 2>&1; then
+                CONFIG_EXPLICIT_KEYS["$key"]=1
+            fi
+        else
+            echo "[ERROR] Malformed syntax in $env_file line $line_no: '$line'" >&2
+            return 1
+        fi
+    done < "$env_file"
+    return 0
 }
 
 resolve_ssl_cert_paths() {
@@ -11383,6 +12413,690 @@ except Exception:
     rm -f "$dst" 2>/dev/null || true
     return 1
 }
+
+do_restore_rollback() {
+    local rollback_dir="$1"
+    warn "Инициирован аварийный откат к состоянию до восстановления..."
+    local rollback_failed=0
+
+    # Остановка служб перед манипуляциями с файлами во избежание гонок и повреждения БД
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl stop nginx 2>/dev/null || true
+        if ! systemctl stop x-ui 2>/dev/null; then
+            if systemctl is-active --quiet x-ui 2>/dev/null; then
+                die "Критическая ошибка: невозможно остановить службу x-ui перед аварийным откатом (процесс активен). Во избежание повреждения базы данных операция отката прервана, резервные копии сохранены в $rollback_dir."
+            fi
+        fi
+        # Обязательное подтверждение, что x-ui остановлен перед удалением журналов и заменой БД
+        if systemctl is-active --quiet x-ui 2>/dev/null; then
+            die "Критическая ошибка: служба x-ui продолжает работать после команды остановки. Замена базы данных и удаление журналов отменены во избежание повреждения данных. Исходные резервные копии сохранены в $rollback_dir."
+        fi
+    fi
+
+    # Очистка устаревших WAL/SHM журналов перед накатом старой БД
+    rm -f /etc/x-ui/x-ui.db-wal /etc/x-ui/x-ui.db-shm \
+          /usr/local/x-ui/bin/x-ui.db-wal /usr/local/x-ui/bin/x-ui.db-shm 2>/dev/null || true
+
+    if [ -f "$rollback_dir/x-ui.db" ]; then
+        if [ -d /etc/x-ui ] || [ -f /etc/x-ui/x-ui.db ]; then
+            mkdir -p /etc/x-ui 2>/dev/null || true
+            cp -a "$rollback_dir/x-ui.db" /etc/x-ui/x-ui.db || rollback_failed=1
+            chmod 600 /etc/x-ui/x-ui.db 2>/dev/null || true
+        fi
+        if [ -d /usr/local/x-ui/bin ] || [ -f /usr/local/x-ui/bin/x-ui.db ]; then
+            mkdir -p /usr/local/x-ui/bin 2>/dev/null || true
+            cp -a "$rollback_dir/x-ui.db" /usr/local/x-ui/bin/x-ui.db || rollback_failed=1
+            chmod 600 /usr/local/x-ui/bin/x-ui.db 2>/dev/null || true
+        fi
+    fi
+
+    if [ -d "$rollback_dir/nginx" ]; then
+        cp -a "$rollback_dir/nginx/"* /etc/nginx/ 2>/dev/null || rollback_failed=1
+    fi
+    if [ -d "$rollback_dir/amneziawg" ]; then
+        mkdir -p /etc/amnezia/amneziawg 2>/dev/null || true
+        cp -a "$rollback_dir/amneziawg/"* /etc/amnezia/amneziawg/ 2>/dev/null || rollback_failed=1
+    fi
+    if [ -d "$rollback_dir/mita" ]; then
+        mkdir -p /etc/mita 2>/dev/null || true
+        cp -a "$rollback_dir/mita/"* /etc/mita/ 2>/dev/null || rollback_failed=1
+        chown -R mita:mita /etc/mita 2>/dev/null || true
+    fi
+    if [ -f "$rollback_dir/mita_server_config.json" ]; then
+        cp -a "$rollback_dir/mita_server_config.json" /etc/mita_server_config.json 2>/dev/null || rollback_failed=1
+        chown mita:mita /etc/mita_server_config.json 2>/dev/null || true
+    fi
+
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload 2>/dev/null || true
+        if [ -f /etc/x-ui/x-ui.db ] || [ -f /usr/local/x-ui/bin/x-ui.db ]; then
+            systemctl restart x-ui || rollback_failed=1
+            systemctl is-active --quiet x-ui || rollback_failed=1
+        fi
+        if command -v nginx >/dev/null 2>&1 && [ -f /etc/nginx/nginx.conf ]; then
+            nginx -t >/dev/null 2>&1 && systemctl restart nginx || rollback_failed=1
+            systemctl is-active --quiet nginx || rollback_failed=1
+        fi
+    fi
+
+    if [ "$rollback_failed" -ne 0 ]; then
+        die "Восстановление прервано с ошибкой. ВНИМАНИЕ: при аварийном откате к $rollback_dir также возникли сбои (ошибки копирования или перезапуска служб)! Проверьте состояние служб и каталог $rollback_dir."
+    else
+        die "Восстановление прервано с ошибкой. Исходное состояние сервера успешно восстановлено из $rollback_dir."
+    fi
+}
+
+do_backup() {
+    local target_dir="/var/backups/vpn-stack"
+    mkdir -p "$target_dir" 2>/dev/null || true
+    chmod 700 "$target_dir" 2>/dev/null || true
+
+    local ts
+    ts="$(date +%Y%m%d_%H%M%S)"
+    local archive="${target_dir}/vpn-backup-${ts}.tar.gz"
+    local staging
+    staging=$(mktemp -d /tmp/vpn-backup-staging.XXXXXX) || die "Не удалось создать временный каталог для бэкапа."
+
+    log "Создание транзакционного снимка системы..."
+
+    # 1. Загрузка конфигурации окружения
+    local cfg=""
+    if [ -n "${CONFIG_FILE:-}" ] && [ -f "$CONFIG_FILE" ]; then
+        cfg="$CONFIG_FILE"
+    else
+        cfg=$(find_config_file "${SCRIPT_DIR:-.}" 2>/dev/null || true)
+    fi
+    if [ -n "$cfg" ] && [ -f "$cfg" ]; then
+        source "$cfg" 2>/dev/null || true
+        mkdir -p "$staging/env"
+        cp -a "$cfg" "$staging/env/server-setup.env" 2>/dev/null || true
+    fi
+    if [ -f /root/vpn_credentials.txt ]; then
+        mkdir -p "$staging/env"
+        cp -a /root/vpn_credentials.txt "$staging/env/" 2>/dev/null || true
+    fi
+
+    # 2. Атомарный дамп базы 3X-UI через SQLite Online Backup API
+    local db_file="${DB_PATH:-/etc/x-ui/x-ui.db}"
+    if [ ! -f "$db_file" ]; then
+        for alt_db in /usr/local/x-ui/bin/x-ui.db /etc/x-ui/x-ui.db; do
+            if [ -f "$alt_db" ]; then
+                db_file="$alt_db"
+                break
+            fi
+        done
+    fi
+
+    if [ -f "$db_file" ]; then
+        mkdir -p "$staging/db"
+        if ! backup_sqlite_db "$db_file" "$staging/db/x-ui.db"; then
+            rm -rf "$staging"
+            die "Ошибка: Не удалось выполнить атомарный дамп базы данных $db_file."
+        fi
+        ok "База данных 3X-UI сохранена и проверена (WAL-safe)"
+    fi
+
+    # 3. Конфигурации Nginx
+    if [ -d /etc/nginx ]; then
+        mkdir -p "$staging/nginx"
+        [ -f /etc/nginx/nginx.conf ] && cp -a /etc/nginx/nginx.conf "$staging/nginx/" 2>/dev/null || true
+        [ -d /etc/nginx/conf.d ] && cp -a /etc/nginx/conf.d "$staging/nginx/" 2>/dev/null || true
+        [ -d /etc/nginx/stream.d ] && cp -a /etc/nginx/stream.d "$staging/nginx/" 2>/dev/null || true
+        ok "Конфигурации Nginx сохранены"
+    fi
+
+    # 4. AmneziaWG / WireGuard ключи и конфиги
+    if [ -d /etc/amnezia/amneziawg ]; then
+        mkdir -p "$staging/amnezia"
+        cp -a /etc/amnezia/amneziawg "$staging/amnezia/" 2>/dev/null || true
+        ok "Конфигурации Dual AmneziaWG сохранены"
+    fi
+
+    # 5. Службы NextGen (Sing-box, ShadowTLS, Caddy, Wstunnel, DNSTT, Mieru/mita)
+    mkdir -p "$staging/nextgen"
+    for ng_dir in /etc/sing-box /etc/shadowtls /etc/dnstt /etc/caddy /etc/wstunnel /etc/mita; do
+        if [ -d "$ng_dir" ]; then
+            cp -a "$ng_dir" "$staging/nextgen/" 2>/dev/null || true
+        fi
+    done
+    if [ -f /etc/mita_server_config.json ]; then
+        cp -a /etc/mita_server_config.json "$staging/nextgen/" 2>/dev/null || true
+    fi
+    ok "Конфигурации Next-Gen сервисов сохранены (включая Mieru)"
+
+    # 6. Диагностический портал
+    if [ -d /var/www/diagnostics ] || [ -d /usr/local/lib/vpn-diagnostics ]; then
+        mkdir -p "$staging/diagnostics"
+        [ -d /var/www/diagnostics ] && cp -a /var/www/diagnostics "$staging/diagnostics/" 2>/dev/null || true
+        [ -d /usr/local/lib/vpn-diagnostics ] && cp -a /usr/local/lib/vpn-diagnostics "$staging/diagnostics/" 2>/dev/null || true
+        [ -f /etc/systemd/system/vpn-diagnostics.service ] && cp -a /etc/systemd/system/vpn-diagnostics.service "$staging/diagnostics/" 2>/dev/null || true
+        ok "Ресурсы веб-диагностики сохранены"
+    fi
+
+    # 7. AdGuard Home
+    if [ -f /opt/AdGuardHome/AdGuardHome.yaml ]; then
+        mkdir -p "$staging/adguard"
+        cp -a /opt/AdGuardHome/AdGuardHome.yaml "$staging/adguard/" 2>/dev/null || true
+        ok "Конфигурация AdGuard Home сохранена"
+    fi
+
+    # 8. Селективный экспорт SSL-сертификатов (Certbot lineages + acme.sh)
+    mkdir -p "$staging/ssl"
+    if [ -d /etc/letsencrypt/live ]; then
+        local domains=()
+        [ -n "${PRIMARY_DOMAIN:-}" ] && domains+=("$PRIMARY_DOMAIN")
+        [ -n "${AGH_DOMAIN:-}" ] && domains+=("$AGH_DOMAIN")
+
+        mkdir -p "$staging/ssl/letsencrypt/live"
+        mkdir -p "$staging/ssl/letsencrypt/archive"
+        mkdir -p "$staging/ssl/letsencrypt/renewal"
+
+        for d in "${domains[@]}"; do
+            [ -z "$d" ] && continue
+            if [ -d "/etc/letsencrypt/live/$d" ]; then
+                mkdir -p "$staging/ssl/letsencrypt/live/$d"
+                cp -L "/etc/letsencrypt/live/$d/"* "$staging/ssl/letsencrypt/live/$d/" 2>/dev/null || true
+            fi
+            if [ -d "/etc/letsencrypt/archive/$d" ]; then
+                mkdir -p "$staging/ssl/letsencrypt/archive/$d"
+                cp -a "/etc/letsencrypt/archive/$d/"* "$staging/ssl/letsencrypt/archive/$d/" 2>/dev/null || true
+            fi
+            if [ -f "/etc/letsencrypt/renewal/$d.conf" ]; then
+                cp -a "/etc/letsencrypt/renewal/$d.conf" "$staging/ssl/letsencrypt/renewal/" 2>/dev/null || true
+            fi
+        done
+        [ -d /etc/letsencrypt/renewal-hooks ] && cp -a /etc/letsencrypt/renewal-hooks "$staging/ssl/letsencrypt/" 2>/dev/null || true
+        ok "SSL-сертификаты Let's Encrypt сохранены"
+    fi
+
+    if [ -d /etc/ssl/acme ]; then
+        mkdir -p "$staging/ssl/acme"
+        cp -a /etc/ssl/acme/* "$staging/ssl/acme/" 2>/dev/null || true
+        ok "SSL-сертификаты acme.sh сохранены"
+    fi
+
+    # 8.5 Создание manifest.json со списком файлов и SHA256 (T21.C01)
+    local py_cmd
+    py_cmd=$(get_sqlite_backup_python || echo "python3")
+    "$py_cmd" -c "
+import json, os, hashlib, sys
+
+staging = sys.argv[1]
+manifest_path = os.path.join(staging, 'manifest.json')
+files_map = {}
+
+for root, dirs, files in os.walk(staging):
+    for f in sorted(files):
+        if f == 'manifest.json':
+            continue
+        full_p = os.path.join(root, f)
+        rel_p = os.path.relpath(full_p, staging).replace('\\\\', '/')
+        try:
+            with open(full_p, 'rb') as fp:
+                h = hashlib.sha256(fp.read()).hexdigest()
+            files_map[rel_p] = h
+        except Exception:
+            pass
+
+data = {
+    'format_version': '2.0',
+    'project_version': os.environ.get('SCRIPT_VERSION', 'v9.2.0'),
+    'created_at': os.popen('date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null').read().strip(),
+    'db_path': os.environ.get('DB_PATH', '/etc/x-ui/x-ui.db'),
+    'files': files_map
+}
+
+with open(manifest_path, 'w', encoding='utf-8') as out:
+    json.dump(data, out, indent=2)
+" "$staging" 2>/dev/null || true
+
+    # 9. Упаковка архива
+    if ! "$py_cmd" -c "
+import tarfile, sys, os
+archive, staging = sys.argv[1], sys.argv[2]
+with tarfile.open(archive, 'w:gz') as tar:
+    for item in os.listdir(staging):
+        tar.add(os.path.join(staging, item), arcname=item)
+" "$archive" "$staging"; then
+        rm -rf "$staging"
+        die "Ошибка создания tar-архива $archive."
+    fi
+
+    rm -rf "$staging"
+    chmod 600 "$archive"
+
+    local sz
+    sz=$(du -h "$archive" 2>/dev/null | cut -f1 || echo "OK")
+    echo
+    ok "Резервная копия успешно создана: ${BOLD}$archive${NC} ($sz)"
+    echo -e "      ${BOLD}Путь к архиву:${NC}  ${CYAN}$archive${NC}"
+    echo -e "      ${BOLD}Права доступа:${NC}  0600 (root only)"
+    echo -e "      ${BOLD}Команда отката:${NC} ./maintain.sh restore $archive"
+    echo
+}
+
+do_restore() {
+    local archive="${1:-}"
+    [[ -n "$archive" ]] || die "Укажите путь к архиву: ./maintain.sh restore <архив.tar.gz>"
+    [[ -f "$archive" ]] || die "Файл архива не найден: $archive"
+
+    local target_backup_dir="/var/backups/vpn-stack"
+    local rollback_dir="${target_backup_dir}/.rollback-latest"
+    mkdir -p "$target_backup_dir" 2>/dev/null || true
+
+    log "Подготовка к восстановлению из $archive..."
+
+    # Создание снапшота текущего состояния для гарантированного отката
+    rm -rf "$rollback_dir" 2>/dev/null || true
+    mkdir -p "$rollback_dir"
+    chmod 700 "$rollback_dir"
+
+    local current_db="/etc/x-ui/x-ui.db"
+    if [ ! -f "$current_db" ]; then
+        for alt_db in /usr/local/x-ui/bin/x-ui.db /etc/x-ui/x-ui.db; do
+            if [ -f "$alt_db" ]; then
+                current_db="$alt_db"
+                break
+            fi
+        done
+    fi
+    if [ -f "$current_db" ]; then
+        if ! backup_sqlite_db "$current_db" "$rollback_dir/x-ui.db"; then
+            rm -rf "$rollback_dir"
+            die "Ошибка: не удалось создать безопасный снапшот SQLite базы $current_db перед восстановлением."
+        fi
+    fi
+    [ -d /etc/nginx ] && cp -a /etc/nginx "$rollback_dir/" 2>/dev/null || true
+    [ -d /etc/amnezia/amneziawg ] && cp -a /etc/amnezia/amneziawg "$rollback_dir/" 2>/dev/null || true
+    [ -d /etc/mita ] && cp -a /etc/mita "$rollback_dir/" 2>/dev/null || true
+    [ -f /etc/mita_server_config.json ] && cp -a /etc/mita_server_config.json "$rollback_dir/" 2>/dev/null || true
+
+    local staging
+    staging=$(mktemp -d /tmp/vpn-restore-staging.XXXXXX) || die "Не удалось создать временный каталог для распаковки."
+
+    # Распаковываем во временный каталог через безопасный фильтр Python
+    local py_cmd
+    py_cmd=$(get_sqlite_backup_python || echo "python3")
+    if ! "$py_cmd" -c "
+import tarfile, sys, os
+archive, target = sys.argv[1], sys.argv[2]
+os.makedirs(target, exist_ok=True)
+dest = os.path.realpath(target)
+
+with tarfile.open(archive, 'r:gz') as tar:
+    if hasattr(tarfile, 'data_filter'):
+        tar.extractall(target, filter='data')
+    else:
+        for m in tar.getmembers():
+            mp = os.path.realpath(os.path.join(dest, m.name))
+            if not mp.startswith(dest + os.sep) and mp != dest:
+                raise RuntimeError(f'Попытка выхода за границы целевого каталога (Path Traversal): {m.name}')
+            if m.islnk() or m.issym():
+                continue
+            tar.extract(m, dest)
+" "$archive" "$staging"; then
+        rm -rf "$staging"
+        die "Ошибка безопасной распаковки архива $archive."
+    fi
+
+    # 0. Проверка целостности файлов бэкапа по manifest.json (T21.C01, T21.C02)
+    if [ -f "$staging/manifest.json" ]; then
+        if ! "$py_cmd" -c "
+import json, os, hashlib, sys
+staging = sys.argv[1]
+with open(os.path.join(staging, 'manifest.json'), 'r', encoding='utf-8') as fp:
+    manifest = json.load(fp)
+for rel_p, expected_h in manifest.get('files', {}).items():
+    full_p = os.path.join(staging, rel_p)
+    if not os.path.isfile(full_p):
+        sys.exit(f'Missing backed up file: {rel_p}')
+    with open(full_p, 'rb') as f:
+        actual_h = hashlib.sha256(f.read()).hexdigest()
+    if actual_h != expected_h:
+        sys.exit(f'Checksum mismatch for {rel_p}: expected {expected_h}, got {actual_h}')
+" "$staging"; then
+            rm -rf "$staging"
+            die "Ошибка: Нарушена целостность файлов бэкапа по манифесту (T21.C02)!"
+        fi
+        ok "Целостность файлов бэкапа и манифест версии 2.0 подтверждены"
+    fi
+
+    # 0.5 Проверка целостности SQLite перед наложением (T21.C03)
+    if [ -f "$staging/db/x-ui.db" ]; then
+        if ! verify_sqlite_backup "$staging/db/x-ui.db" "$py_cmd"; then
+            rm -rf "$staging"
+            die "Ошибка: База данных в бэкапе x-ui.db повреждена (PRAGMA integrity_check failed)!"
+        fi
+        ok "Целостность базы данных x-ui.db в бэкапе проверена (PRAGMA integrity_check OK)"
+    fi
+
+    # Валидация соответствия сертификатов и ключей, если они присутствуют в архиве (RSA / ECDSA / Ed25519)
+    if [ -d "$staging/ssl/letsencrypt/live" ]; then
+        for cert_dir in "$staging/ssl/letsencrypt/live/"*; do
+            if [ -d "$cert_dir" ] && [ -f "$cert_dir/fullchain.pem" ] && [ -f "$cert_dir/privkey.pem" ]; then
+                local cert_pub key_pub
+                cert_pub=$(openssl x509 -noout -pubkey -in "$cert_dir/fullchain.pem" 2>/dev/null | openssl pkey -pubin -outform DER 2>/dev/null | openssl sha256 2>/dev/null || true)
+                key_pub=$(openssl pkey -pubout -in "$cert_dir/privkey.pem" 2>/dev/null | openssl pkey -pubin -outform DER 2>/dev/null | openssl sha256 2>/dev/null || true)
+                if [ -n "$cert_pub" ] && [ -n "$key_pub" ] && [ "$cert_pub" != "$key_pub" ]; then
+                    rm -rf "$staging"
+                    die "Криптографическая ошибка: сертификат и ключ в $cert_dir не соответствуют друг другу!"
+                fi
+            fi
+        done
+        ok "Криптографическая валидация SSL-сертификатов пройдена (RSA/ECDSA OK)"
+    fi
+
+    # Приостанавливаем сервисы перед заменой файлов с верификацией остановки x-ui (T03.C04, T22.C03)
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl stop nginx 2>/dev/null || true
+        systemctl stop vpn-diagnostics 2>/dev/null || true
+        if ! systemctl stop x-ui 2>/dev/null; then
+            if systemctl is-active --quiet x-ui 2>/dev/null; then
+                rm -rf "$staging"
+                die "Критическая ошибка: невозможно остановить службу x-ui перед восстановлением (процесс активен). Замена базы отменена."
+            fi
+        fi
+        if systemctl is-active --quiet x-ui 2>/dev/null; then
+            rm -rf "$staging"
+            die "Критическая ошибка: служба x-ui продолжает работать после команды остановки. Замена базы отменена."
+        fi
+    fi
+
+    # 1. Восстановление базы данных
+    if [ -f "$staging/db/x-ui.db" ]; then
+        # Очистка устаревших журналов WAL/SHM перед накатом базы данных (T03.C04, T21.C03)
+        rm -f /etc/x-ui/x-ui.db-wal /etc/x-ui/x-ui.db-shm \
+              /usr/local/x-ui/bin/x-ui.db-wal /usr/local/x-ui/bin/x-ui.db-shm 2>/dev/null || true
+        mkdir -p /etc/x-ui
+        cp -a "$staging/db/x-ui.db" /etc/x-ui/x-ui.db
+        chmod 600 /etc/x-ui/x-ui.db
+        if [ -d /usr/local/x-ui/bin ]; then
+            cp -a "$staging/db/x-ui.db" /usr/local/x-ui/bin/x-ui.db 2>/dev/null || true
+            chmod 600 /usr/local/x-ui/bin/x-ui.db 2>/dev/null || true
+        fi
+        ok "База данных 3X-UI восстановлена"
+    fi
+
+    # 2. Восстановление Nginx
+    if [ -d "$staging/nginx" ]; then
+        mkdir -p /etc/nginx/conf.d /etc/nginx/stream.d
+        [ -f "$staging/nginx/nginx.conf" ] && cp -a "$staging/nginx/nginx.conf" /etc/nginx/nginx.conf
+        [ -d "$staging/nginx/conf.d" ] && cp -a "$staging/nginx/conf.d/"* /etc/nginx/conf.d/ 2>/dev/null || true
+        [ -d "$staging/nginx/stream.d" ] && cp -a "$staging/nginx/stream.d/"* /etc/nginx/stream.d/ 2>/dev/null || true
+        ok "Конфигурация Nginx восстановлена"
+    fi
+
+    # 3. Восстановление AmneziaWG
+    if [ -d "$staging/amnezia/amneziawg" ]; then
+        mkdir -p /etc/amnezia/amneziawg
+        cp -a "$staging/amnezia/amneziawg/"* /etc/amnezia/amneziawg/ 2>/dev/null || true
+        chmod 700 /etc/amnezia/amneziawg
+        chmod 600 /etc/amnezia/amneziawg/*.conf 2>/dev/null || true
+        ok "Конфигурация AmneziaWG восстановлена"
+    fi
+
+    # 4. Восстановление AdGuard Home
+    if [ -f "$staging/adguard/AdGuardHome.yaml" ]; then
+        mkdir -p /opt/AdGuardHome
+        cp -a "$staging/adguard/AdGuardHome.yaml" /opt/AdGuardHome/AdGuardHome.yaml
+        ok "Конфигурация AdGuard Home восстановлена"
+    fi
+
+    # 5. Восстановление Next-Gen сервисов (включая Mieru/mita)
+    if [ -d "$staging/nextgen" ]; then
+        for ng_dir in sing-box shadowtls dnstt caddy wstunnel mita; do
+            if [ -d "$staging/nextgen/$ng_dir" ]; then
+                mkdir -p "/etc/$ng_dir"
+                cp -a "$staging/nextgen/$ng_dir/"* "/etc/$ng_dir/" 2>/dev/null || true
+            fi
+        done
+        if [ -f "$staging/nextgen/mita_server_config.json" ]; then
+            cp -a "$staging/nextgen/mita_server_config.json" /etc/mita_server_config.json 2>/dev/null || true
+        fi
+        if id -u mita >/dev/null 2>&1; then
+            chown -R mita:mita /etc/mita /etc/mita_server_config.json 2>/dev/null || true
+            chmod 750 /etc/mita 2>/dev/null || true
+            chmod 600 /etc/mita/config.json /etc/mita_server_config.json 2>/dev/null || true
+        fi
+        ok "Конфигурации Next-Gen сервисов восстановлены"
+    fi
+
+    # 6. Восстановление веб-диагностики
+    if [ -d "$staging/diagnostics" ]; then
+        if [ -d "$staging/diagnostics/diagnostics" ]; then
+            mkdir -p /var/www/diagnostics
+            cp -a "$staging/diagnostics/diagnostics/"* /var/www/diagnostics/ 2>/dev/null || true
+        fi
+        if [ -d "$staging/diagnostics/vpn-diagnostics" ]; then
+            mkdir -p /usr/local/lib/vpn-diagnostics
+            cp -a "$staging/diagnostics/vpn-diagnostics/"* /usr/local/lib/vpn-diagnostics/ 2>/dev/null || true
+        fi
+        if [ -f "$staging/diagnostics/vpn-diagnostics.service" ]; then
+            cp -a "$staging/diagnostics/vpn-diagnostics.service" /etc/systemd/system/ 2>/dev/null || true
+        fi
+        ok "Ресурсы веб-диагностики восстановлены"
+    fi
+
+    # 7. Селективное восстановление SSL
+    if [ -d "$staging/ssl/letsencrypt" ]; then
+        mkdir -p /etc/letsencrypt
+        [ -d "$staging/ssl/letsencrypt/live" ] && cp -a "$staging/ssl/letsencrypt/live" /etc/letsencrypt/ 2>/dev/null || true
+        [ -d "$staging/ssl/letsencrypt/archive" ] && cp -a "$staging/ssl/letsencrypt/archive" /etc/letsencrypt/ 2>/dev/null || true
+        [ -d "$staging/ssl/letsencrypt/renewal" ] && cp -a "$staging/ssl/letsencrypt/renewal" /etc/letsencrypt/ 2>/dev/null || true
+        [ -d "$staging/ssl/letsencrypt/renewal-hooks" ] && cp -a "$staging/ssl/letsencrypt/renewal-hooks" /etc/letsencrypt/ 2>/dev/null || true
+        ok "Селективные сертификаты Certbot восстановлены"
+    fi
+    if [ -d "$staging/ssl/acme" ]; then
+        mkdir -p /etc/ssl/acme
+        cp -a "$staging/ssl/acme/"* /etc/ssl/acme/ 2>/dev/null || true
+        ok "Сертификаты acme.sh восстановлены"
+    fi
+
+    # 8. Восстановление переменных окружения
+    if [ -f "$staging/env/server-setup.env" ]; then
+        local target_env="${CONFIG_FILE:-/root/server-setup.env}"
+        cp -a "$staging/env/server-setup.env" "$target_env" 2>/dev/null || true
+    fi
+    if [ -f "$staging/env/vpn_credentials.txt" ]; then
+        cp -a "$staging/env/vpn_credentials.txt" /root/vpn_credentials.txt 2>/dev/null || true
+    fi
+
+    rm -rf "$staging"
+
+    # 9. Проверка синтаксиса Nginx
+    if command -v nginx >/dev/null 2>&1 && [ -f /etc/nginx/nginx.conf ]; then
+        if ! nginx -t >/dev/null 2>&1; then
+            warn "Ошибка: Восстановленная конфигурация Nginx не прошла синтаксическую проверку (nginx -t)!"
+            do_restore_rollback "$rollback_dir"
+        fi
+    fi
+
+    # 10. Перезапуск и строгая проверка активности критических служб
+    systemctl daemon-reload 2>/dev/null || true
+
+    if systemctl is-enabled x-ui >/dev/null 2>&1 || [ -f /etc/systemd/system/x-ui.service ]; then
+        if ! systemctl restart x-ui; then
+            warn "Ошибка: Не удалось перезапустить службу x-ui после восстановления!"
+            do_restore_rollback "$rollback_dir"
+        fi
+        sleep 1
+        if ! systemctl is-active --quiet x-ui; then
+            warn "Ошибка: Служба x-ui не перешла в активное состояние после восстановления!"
+            do_restore_rollback "$rollback_dir"
+        fi
+    fi
+
+    if systemctl is-enabled nginx >/dev/null 2>&1 || [ -f /lib/systemd/system/nginx.service ] || [ -f /etc/systemd/system/nginx.service ]; then
+        if ! systemctl restart nginx; then
+            warn "Ошибка: Не удалось перезапустить службу nginx после восстановления!"
+            do_restore_rollback "$rollback_dir"
+        fi
+        sleep 1
+        if ! systemctl is-active --quiet nginx; then
+            warn "Ошибка: Служба nginx не перешла в активное состояние после восстановления!"
+            do_restore_rollback "$rollback_dir"
+        fi
+    fi
+
+    # Вспомогательные службы перезапускаются best effort
+    if [ -f /etc/systemd/system/vpn-diagnostics.service ]; then
+        systemctl restart vpn-diagnostics 2>/dev/null || true
+    fi
+    if [ -f /etc/systemd/system/mita.service ]; then
+        systemctl restart mita 2>/dev/null || true
+    fi
+    if [ -f /etc/amnezia/amneziawg/awg0.conf ]; then
+        systemctl restart awg-quick@awg0 2>/dev/null || true
+    fi
+    if [ -f /etc/amnezia/amneziawg/awg1.conf ]; then
+        systemctl restart awg-quick@awg1 2>/dev/null || true
+    fi
+
+    echo
+    ok "Система успешно восстановлена из бэкапа $archive!"
+    echo -e "      ${BOLD}Проверка Nginx:${NC}   ${GREEN}nginx -t OK${NC}"
+    echo -e "      ${BOLD}Службы:${NC}           ${GREEN}x-ui, nginx активны${NC}"
+    echo -e "      ${BOLD}Снимок отката:${NC}    ${CYAN}$rollback_dir${NC}"
+    echo
+    return 0
+}
+
+do_extract() {
+    local archive="${1:-}"
+    local target="${2:-}"
+    [[ -n "$archive" ]] || die "Укажите путь к архиву: ./maintain.sh extract <архив.tar.gz> <каталог_для_распаковки>"
+    [[ -n "$target" ]] || die "Укажите целевой каталог: ./maintain.sh extract <архив.tar.gz> <каталог_для_распаковки>"
+    [[ -f "$archive" ]] || die "Файл архива не найден: $archive"
+
+    mkdir -p "$target" 2>/dev/null || true
+    log "Аварийное безопасное извлечение архива в $target..."
+
+    local py_cmd
+    py_cmd=$(get_sqlite_backup_python || echo "python3")
+    if ! "$py_cmd" -c "
+import tarfile, sys, os
+
+archive, target = sys.argv[1], sys.argv[2]
+os.makedirs(target, exist_ok=True)
+dest = os.path.realpath(target)
+
+with tarfile.open(archive, 'r:gz') as tar:
+    if hasattr(tarfile, 'data_filter'):
+        tar.extractall(target, filter='data')
+    else:
+        for m in tar.getmembers():
+            mp = os.path.realpath(os.path.join(dest, m.name))
+            if not mp.startswith(dest + os.sep) and mp != dest:
+                raise RuntimeError(f'Попытка выхода за границы целевого каталога (Path Traversal): {m.name}')
+            if m.islnk() or m.issym():
+                continue
+            tar.extract(m, dest)
+
+print(f'[OK] Архив {archive} успешно и безопасно извлечён в {target}')
+" "$archive" "$target"; then
+        die "Ошибка извлечения архива $archive."
+    fi
+    return 0
+}
+
+audit_restore_archive() {
+    local archive="${1:-}"
+    [[ -n "$archive" ]] || die "Укажите путь к архиву: ./maintain.sh --dry-run restore <архив.tar.gz>"
+    [[ -f "$archive" ]] || die "Файл архива не найден: $archive"
+
+    local staging
+    staging=$(mktemp -d /tmp/vpn-audit-staging.XXXXXX 2>/dev/null || mktemp -d "${TMPDIR:-/tmp}/vpn-audit-staging.XXXXXX") || die "Не удалось создать временный каталог для аудита."
+
+    local py_cmd
+    py_cmd=$(get_sqlite_backup_python || echo "python3")
+
+    if ! "$py_cmd" -c "
+import tarfile, sys, os
+archive, target = sys.argv[1], sys.argv[2]
+os.makedirs(target, exist_ok=True)
+dest = os.path.realpath(target)
+
+with tarfile.open(archive, 'r:gz') as tar:
+    if hasattr(tarfile, 'data_filter'):
+        tar.extractall(target, filter='data')
+    else:
+        for m in tar.getmembers():
+            mp = os.path.realpath(os.path.join(dest, m.name))
+            if not mp.startswith(dest + os.sep) and mp != dest:
+                raise RuntimeError(f'Попытка выхода за границы целевого каталога (Path Traversal): {m.name}')
+            if m.islnk() or m.issym():
+                continue
+            tar.extract(m, dest)
+" "$archive" "$staging"; then
+        rm -rf "$staging"
+        die "Ошибка распаковки архива $archive при аудите."
+    fi
+
+    # 1. Проверка манифеста (T21.C01, T21.C02)
+    if [ -f "$staging/manifest.json" ]; then
+        if ! "$py_cmd" -c "
+import json, os, hashlib, sys
+staging = sys.argv[1]
+with open(os.path.join(staging, 'manifest.json'), 'r', encoding='utf-8') as fp:
+    manifest = json.load(fp)
+for rel_p, expected_h in manifest.get('files', {}).items():
+    full_p = os.path.join(staging, rel_p)
+    if not os.path.isfile(full_p):
+        sys.exit(f'Missing backed up file: {rel_p}')
+    with open(full_p, 'rb') as f:
+        actual_h = hashlib.sha256(f.read()).hexdigest()
+    if actual_h != expected_h:
+        sys.exit(f'Checksum mismatch for {rel_p}: expected {expected_h}, got {actual_h}')
+" "$staging"; then
+            rm -rf "$staging"
+            die "Ошибка аудита: Нарушена целостность файлов по манифесту архива (T21.C02)!"
+        fi
+        ok "[DRY-RUN] Манифест v2.0 и контрольные суммы SHA-256 проверены и совпадают"
+    else
+        warn "[DRY-RUN] Манифест manifest.json отсутствует (архив устаревшего формата v1.0)"
+    fi
+
+    # 2. Проверка SQLite базы (T21.C03)
+    if [ -f "$staging/db/x-ui.db" ]; then
+        if ! verify_sqlite_backup "$staging/db/x-ui.db" "$py_cmd"; then
+            rm -rf "$staging"
+            die "Ошибка аудита: База данных x-ui.db в архиве повреждена (PRAGMA integrity_check failed)!"
+        fi
+        ok "[DRY-RUN] База данных x-ui.db проверена (PRAGMA integrity_check OK)"
+    fi
+
+    # 3. Проверка SSL-ключей
+    if [ -d "$staging/ssl/letsencrypt/live" ]; then
+        for cert_dir in "$staging/ssl/letsencrypt/live/"*; do
+            if [ -d "$cert_dir" ] && [ -f "$cert_dir/fullchain.pem" ] && [ -f "$cert_dir/privkey.pem" ]; then
+                local cert_pub key_pub
+                cert_pub=$(openssl x509 -noout -pubkey -in "$cert_dir/fullchain.pem" 2>/dev/null | openssl pkey -pubin -outform DER 2>/dev/null | openssl sha256 2>/dev/null || true)
+                key_pub=$(openssl pkey -pubout -in "$cert_dir/privkey.pem" 2>/dev/null | openssl pkey -pubin -outform DER 2>/dev/null | openssl sha256 2>/dev/null || true)
+                if [ -n "$cert_pub" ] && [ -n "$key_pub" ] && [ "$cert_pub" != "$key_pub" ]; then
+                    rm -rf "$staging"
+                    die "Ошибка аудита: сертификат и ключ в $cert_dir не соответствуют друг другу!"
+                fi
+            fi
+        done
+        ok "[DRY-RUN] Криптографические пары сертификат/ключ проверены"
+    fi
+
+    # 4. Проверка конфигурации .env
+    if [ -f "$staging/env/server-setup.env" ]; then
+        if command -v load_config_data_safe >/dev/null 2>&1; then
+            if ! ( load_config_data_safe "$staging/env/server-setup.env" >/dev/null 2>&1 ); then
+                rm -rf "$staging"
+                die "Ошибка аудита: файл конфигурации server-setup.env содержит синтаксические ошибки!"
+            fi
+            ok "[DRY-RUN] Конфигурация server-setup.env проверена"
+        fi
+    fi
+
+    rm -rf "$staging"
+    ok "[DRY-RUN] Архив $archive проверен: целостность и формат валидны для восстановления"
+    return 0
+}
+
 # Execute in a fresh Bash so a caller's `if`/`||` cannot suppress errexit.
 # A private snapshot preserves Bash functions and unexported variables in both modes.
 execute_install_task() (
@@ -11716,6 +13430,11 @@ EOF_HELP
         esac
     done
 
+    # Захват блокировки для изменяющих операций (T07)
+    if [ "$DRY_RUN" -eq 0 ]; then
+        acquire_stack_lock "${VPN_STACK_LOCK_TIMEOUT:-10}" "configure-panel" || exit $?
+    fi
+
     # Поиск конфигурационного файла (.env)
     if [ -n "$CONFIG_FILE" ]; then
         if [ ! -f "$CONFIG_FILE" ]; then
@@ -11732,10 +13451,7 @@ EOF_HELP
 
     if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
         log "Загрузка параметров из $CONFIG_FILE..."
-        set -a
-        # shellcheck disable=SC1090
-        source "$CONFIG_FILE"
-        set +a
+        load_config_data_safe "$CONFIG_FILE" || die "Ошибка загрузки параметров из $CONFIG_FILE"
     fi
 
     # CLI-аргументы имеют наивысший приоритет над файлом конфигурации
@@ -11755,6 +13471,7 @@ EOF_HELP
     ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
     ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
     NODE_TOKEN_NAME="${NODE_TOKEN_NAME:-${SERVER_PREFIX}-Node}"
+    DIAG_TOKEN="${DIAG_TOKEN:-}"
 
     STEAL_PORT="${STEAL_PORT:-45443}"
     STEAL_SNI="${STEAL_SNI:-gateway.icloud.com}"
@@ -11817,7 +13534,8 @@ EOF_HELP
     BLOCK_SMTP="${BLOCK_SMTP:-true}"
     BLOCK_LAN="${BLOCK_LAN:-true}"
     ENABLE_AGH="${ENABLE_AGH:-n}"
-    AGH_XRAY_DNS="${AGH_XRAY_DNS:-127.0.0.1:53}"
+    PORT_AGH_DNS="${PORT_AGH_DNS:-10053}"
+    AGH_XRAY_DNS="${AGH_XRAY_DNS:-127.0.0.1:10053}"
 
     HAS_NGINX=0
     if command -v nginx >/dev/null 2>&1 && [ -d /etc/nginx ]; then
@@ -11993,6 +13711,7 @@ EOF_HELP
     export WEB_LISTEN
     export SUB_LISTEN
     export ENABLE_AGH
+    export PORT_AGH_DNS
     export AGH_XRAY_DNS
     export FORCE_REMARKS
 
@@ -12002,6 +13721,7 @@ EOF_HELP
         if [ "${WAS_ACTIVE:-0}" -eq 1 ]; then
             systemctl start x-ui 2>/dev/null || true
         fi
+        command -v release_stack_lock >/dev/null 2>&1 && release_stack_lock
     }
     trap cleanup_xui EXIT
 
@@ -12855,11 +14575,13 @@ else:
 enable_agh = os.environ.get("ENABLE_AGH", "").lower() in ("1", "y", "true")
 agh_xray_dns = os.environ.get("AGH_XRAY_DNS", "").lower() in ("1", "y", "true")
 if enable_agh and agh_xray_dns:
-    if dns_cfg.get("servers") != ["127.0.0.1"]:
-        dns_cfg["servers"] = ["127.0.0.1"]
-        print("  [ОБНОВЛЕН] DNS servers: зафиксирован '127.0.0.1' (AdGuard Home локальный фильтр).")
+    agh_dns_port = int(os.environ.get("PORT_AGH_DNS") or "10053")
+    target_servers = [{"address": "127.0.0.1", "port": agh_dns_port}]
+    if dns_cfg.get("servers") != target_servers:
+        dns_cfg["servers"] = target_servers
+        print(f"  [ОБНОВЛЕН] DNS servers: зафиксирован '127.0.0.1:{agh_dns_port}' (AdGuard Home локальный фильтр).")
     else:
-        print("  [В ПОРЯДКЕ] DNS servers: '127.0.0.1' (AdGuard Home).")
+        print(f"  [В ПОРЯДКЕ] DNS servers: '127.0.0.1:{agh_dns_port}' (AdGuard Home).")
 tpl["dns"] = dns_cfg
 
 # 2. Логирование (тихий безопасный режим, без записи посещаемых URL)
@@ -14811,7 +16533,9 @@ EOF_CLEAN_JSON
 УЧЕТНЫЕ ДАННЫЕ ПАНЕЛИ И СЕРВИСОВ 3X-UI
 Файл обновлен: $(date '+%Y-%m-%d %H:%M:%S')
 =====================================================================
-Панель управления:     https://${PRIMARY_DOMAIN}/${PANEL_PATH}/
+Панель управления:     https://${PRIMARY_DOMAIN}/${PANEL_PATH#/}/
+$([ -n "${DIAG_TOKEN:-}" ] && echo "Веб-диагностика (SSO): https://${PRIMARY_DOMAIN}/${PANEL_PATH#/}/diag")
+$([ -n "${DIAG_TOKEN:-}" ] && echo "Токен диагностики:     ${DIAG_TOKEN}")
 Логин администратора:   ${ADMIN_USERNAME:-admin}
 Пароль администратора:  ${ADMIN_PASSWORD}
 $([ -n "$INSTALLED_XRAY_VER" ] && echo "Ядро Xray-core:        ${INSTALLED_XRAY_VER}")
@@ -15029,31 +16753,25 @@ EOF_GEOTMR
 install_step_adguard() {
     :
     install_agh_task() {
-        # 1. Отключение systemd-resolved StubListener
-        mkdir -p /etc/systemd/resolved.conf.d
-        cat << 'EOF_RESOLVED' > /etc/systemd/resolved.conf.d/adguard.conf
-[Resolve]
-DNS=1.1.1.1 8.8.8.8
-DNSStubListener=no
-EOF_RESOLVED
-        systemctl restart systemd-resolved 2>/dev/null || true
-        ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf 2>/dev/null || true
+        # 1. Бесконфликтная изоляция DNS: systemd-resolved (DoT на :53) и AdGuard Home (на :10053)
+        rm -f /etc/systemd/resolved.conf.d/adguard.conf 2>/dev/null || true
 
-        # 2. Скачивание и распаковка AdGuard Home (если ещё не установлен)
+        # 2. Скачивание и распаковка AdGuard Home (если ещё не установлен, T04/T05)
         if [ ! -f /opt/AdGuardHome/AdGuardHome ]; then
-            agh_arch="amd64"
             cur_arch=$(uname -m 2>/dev/null || echo "x86_64")
+            local m_arch="x86_64"
             case "$cur_arch" in
-                x86_64) agh_arch="amd64" ;;
-                aarch64|arm64) agh_arch="arm64" ;;
-                armv7l|armhf) agh_arch="armv7" ;;
-                *) agh_arch="amd64" ;;
+                x86_64|amd64) m_arch="x86_64" ;;
+                aarch64|arm64) m_arch="aarch64" ;;
+                *) m_arch="x86_64" ;;
             esac
 
-            curl -fsSL "https://static.adguard.com/adguardhome/release/AdGuardHome_linux_${agh_arch}.tar.gz" -o /tmp/agh.tar.gz 2>/dev/null || \
-                curl -fsSL "https://github.com/AdguardTeam/AdGuardHome/releases/latest/download/AdGuardHome_linux_${agh_arch}.tar.gz" -o /tmp/agh.tar.gz
-            tar -zxf /tmp/agh.tar.gz -C /opt/ >/dev/null 2>&1
-            rm -f /tmp/agh.tar.gz
+            local agh_tmp="/tmp/agh_staging_$$"
+            mkdir -p "$agh_tmp"
+            if download_manifest_component "AdGuardHome" "$agh_tmp/agh.tar.gz" "$m_arch"; then
+                tar -zxf "$agh_tmp/agh.tar.gz" -C /opt/ >/dev/null 2>&1
+            fi
+            rm -rf "$agh_tmp"
         fi
 
         # 3. Генерация bcrypt-хэша пароля через htpasswd
@@ -15086,7 +16804,7 @@ users:
 dns:
   bind_hosts:
     - 127.0.0.1
-  port: 53
+  port: ${PORT_AGH_DNS:-10053}
   trusted_proxies:
     - 127.0.0.1
     - ::1
@@ -15169,7 +16887,8 @@ if row and row[0]:
     try:
         cfg = json.loads(row[0])
         dns = cfg.get('dns', {})
-        dns['servers'] = ['127.0.0.1']
+        agh_port = int(os.environ.get('PORT_AGH_DNS') or '10053')
+        dns['servers'] = [{'address': '127.0.0.1', 'port': agh_port}]
         dns['queryStrategy'] = 'UseIPv4'
         cfg['dns'] = dns
         new_val = json.dumps(cfg, ensure_ascii=False)
@@ -15322,6 +17041,7 @@ echo -e "   ИНФРАСТРУКТУРА УСПЕШНО РАЗВЕРНУТА (${
 echo -e "${GREEN}=====================================================================${NC}"
 echo -e "  Главная страница:            ${CYAN}https://${PRIMARY_DOMAIN}/${NC} (${DECOY_NAME})"
 echo -e "  Вход в панель 3X-UI:         ${GREEN}https://${PRIMARY_DOMAIN}${PANEL_PATH}${NC}"
+echo -e "  Веб-диагностика (SSO):       ${GREEN}https://${PRIMARY_DOMAIN}${PANEL_PATH}diag${NC} ${DIM}(требует авторизации в панели)${NC}"
 echo -e "  Логин администратора:        ${BOLD}${ADMIN_USERNAME:-admin}${NC}"
 if [ -n "${ADMIN_PASSWORD:-}" ]; then
     echo -e "  Пароль администратора:       ${BOLD}${ADMIN_PASSWORD}${NC}"
@@ -15356,6 +17076,8 @@ if [ -n "${ADMIN_PASSWORD:-}" ] || { is_true "${ENABLE_NODE_TOKEN:-n}" && [ -n "
 Файл создан: $(date '+%Y-%m-%d %H:%M:%S')
 =====================================================================
 Панель управления:         https://${PRIMARY_DOMAIN}${PANEL_PATH}
+$([ -n "${DIAG_TOKEN:-}" ] && echo "Веб-диагностика (SSO):     https://${PRIMARY_DOMAIN}${PANEL_PATH}diag")
+$([ -n "${DIAG_TOKEN:-}" ] && echo "Токен диагностики:         ${DIAG_TOKEN}")
 Логин администратора:       ${ADMIN_USERNAME:-admin}
 Пароль администратора:      ${ADMIN_PASSWORD}
 

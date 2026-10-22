@@ -69,6 +69,7 @@ ALLOWED_NETWORKS = [
     ipaddress.ip_network("10.0.0.0/8"),
     ipaddress.ip_network("172.16.0.0/12"),
     ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("169.254.0.0/16"),   # Link-Local (RFC 3927)
     ipaddress.ip_network("192.0.2.0/24"),    # TEST-NET-1 (RFC 5737)
     ipaddress.ip_network("198.51.100.0/24"), # TEST-NET-2 (RFC 5737)
     ipaddress.ip_network("203.0.113.0/24"),  # TEST-NET-3 (RFC 5737)

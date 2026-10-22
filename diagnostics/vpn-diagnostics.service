@@ -1,0 +1,26 @@
+[Unit]
+Description=VPN Diagnostic and MTR Backend
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+RuntimeDirectory=vpn-diagnostics
+RuntimeDirectoryMode=0755
+ExecStart=/usr/bin/python3 /usr/local/lib/vpn-diagnostics/mtr-backend.py --socket /run/vpn-diagnostics/mtr-backend.sock
+Restart=always
+RestartSec=3s
+KillMode=control-group
+LimitNOFILE=65535
+ProtectSystem=strict
+ProtectHome=yes
+NoNewPrivileges=no
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+
+[Install]
+WantedBy=multi-user.target

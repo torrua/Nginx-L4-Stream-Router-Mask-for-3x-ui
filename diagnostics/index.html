@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="robots" content="noindex,nofollow">
+<title>VPN Network Diagnostics</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1320;--panel:#132135;--panel2:#182b45;--border:#223854;--text:#eef4fc;--muted:#91a7c0;--cyan:#00d2c4;--blue:#7aa7ff;--ok:#5cdb95;--warn:#ffb86c;--danger:#ff6b6b;--mono:ui-monospace,SFMono-Regular,Consolas,monospace}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:radial-gradient(ellipse 90% 45% at 50% -20%,#1e385c 0%,transparent 75%),var(--bg);color:var(--text);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+button,input{font:inherit}a{color:var(--blue);text-decoration:none}a:hover{color:var(--cyan);text-decoration:underline}
+.wrap{width:min(1100px,calc(100% - 36px));margin:auto}
+.head{padding:32px 0 24px;display:flex;align-items:center;justify-content:space-between;gap:16px;border-bottom:1px solid var(--border)}
+.brand{display:flex;align-items:center;gap:12px;font-weight:800;letter-spacing:.03em;font-size:18px}
+.mark{width:38px;height:38px;border-radius:10px;background:#183654;display:grid;place-items:center;color:var(--cyan);font:700 20px var(--mono);box-shadow:0 0 16px rgba(0,210,196,.2)}
+.pill{border:1px solid #2d556e;color:var(--cyan);background:#0e2836;border-radius:100px;padding:5px 12px;font-size:12px;font-weight:600}
+.intro{padding:28px 0 24px}
+.eyebrow{font:700 11px/1.5 var(--mono);letter-spacing:.22em;text-transform:uppercase;color:var(--cyan)}
+h1{font-size:clamp(26px,4vw,44px);line-height:1.15;letter-spacing:-.03em;margin:10px 0 12px;font-weight:800}
+.intro p{margin:0;max-width:680px;font-size:15px;color:var(--muted)}
+.meta{margin-top:20px;display:flex;gap:10px;flex-wrap:wrap}
+.meta>span{display:inline-flex;align-items:center;background:#122338;color:#c4d8ed;padding:6px 12px;border:1px solid var(--border);border-radius:8px;font:13px var(--mono)}
+main{padding:10px 0 50px}
+.panel{background:linear-gradient(145deg,rgba(19,33,53,.9),rgba(15,26,42,.95));border:1px solid var(--border);border-radius:16px;padding:26px;margin-bottom:20px;box-shadow:0 8px 30px rgba(0,0,0,.15)}
+.panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:20px}
+.panel h2{margin:0;font-size:19px;font-weight:700;display:flex;align-items:center}
+.panel h2 span{display:inline-grid;place-items:center;margin-right:10px;width:28px;height:28px;border:1px solid #2a4768;border-radius:8px;background:#183452;color:var(--cyan);font:700 13px var(--mono)}
+.hint{font-size:13px;color:var(--muted);margin:5px 0 0}
+.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.metric{background:#0e1a29;border:1px solid #20344d;border-radius:12px;padding:18px 14px;min-width:0}
+.metric-label{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#91a7c0;font-weight:600}
+.metric-value{font-weight:800;font-size:clamp(28px,2.8vw,38px);line-height:1.15;margin:10px 0 2px;font-variant-numeric:tabular-nums;color:#fff}
+.metric-unit{color:var(--muted);font-size:12px}
+.metric-note{color:var(--cyan);font-size:12px;margin-top:6px;min-height:16px}
+.row-actions{margin-top:20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.btn{appearance:none;background:var(--cyan);border:none;color:#041c22;border-radius:9px;padding:12px 22px;font-weight:700;cursor:pointer;min-height:44px;transition:all .15s ease}
+.btn:hover{background:#38f2e5;box-shadow:0 0 14px rgba(0,210,196,.35)}
+.btn:disabled{opacity:.5;cursor:wait;box-shadow:none}
+.btn.secondary{background:transparent;border:1px solid #365373;color:var(--text)}
+.btn.secondary:hover{background:#1b334d}
+.status{color:var(--muted);font-size:13px;min-height:20px}
+.status[data-kind=ok]{color:var(--ok)}
+.status[data-kind=warn]{color:var(--warn)}
+.status[data-kind=error]{color:var(--danger)}
+.fields{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap}
+.field{display:grid;gap:6px;font-size:13px;color:var(--muted)}
+.field input, .field select{width:140px;padding:10px 12px;background:#0d1826;border:1px solid #2e4766;border-radius:9px;color:var(--text);min-height:44px}
+.terminal{margin:18px 0 0;padding:16px;background:#060e19;border:1px solid #243c57;border-radius:10px;color:#d8e8f8;font:12px/1.65 var(--mono);white-space:pre-wrap;overflow:auto;max-height:450px;display:none}
+.terminal.is-visible{display:block}
+.files{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.file{background:#0e1a29;border:1px solid #223752;border-radius:12px;padding:16px 14px;display:flex;flex-direction:column;gap:3px;min-width:0;transition:border-color .15s}
+.file:hover{border-color:var(--cyan);text-decoration:none}
+.file strong{color:var(--text);font-size:18px}
+.file small{font:11px var(--mono);color:var(--muted)}
+.file em{color:var(--cyan);font-size:12px;font-style:normal;margin-top:6px}
+.footer{padding:22px 0 35px;border-top:1px solid var(--border);color:var(--muted);font-size:12px;display:flex;justify-content:space-between;gap:14px}
+@media(max-width:760px){.metrics,.files{grid-template-columns:repeat(2,minmax(0,1fr))}.head{padding-top:20px}.panel{padding:18px}.footer{flex-direction:column}}
+@media(max-width:420px){.metrics,.files{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="head">
+    <div class="brand">
+      <span class="mark" aria-hidden="true">&#x26A1;</span>
+      <span>VPN DIAGNOSTICS</span>
+    </div>
+    <span class="pill">Защищённая сессия</span>
+  </header>
+
+  <section class="intro">
+    <span class="eyebrow">Скорость · Задержка · Маршрутизация ТСПУ</span>
+    <h1>Диагностика сети и качества соединения</h1>
+    <p>Тестирование пропускной способности канала между вашим устройством и VPS, проверка задержки, джиттера и анализ обратного маршрута MTR до вашего провайдера.</p>
+    <div class="meta">
+      <span>Сервер:&nbsp;<strong id="server-meta">localhost</strong></span>
+      <span>Ваш IP:&nbsp;<strong id="client-ip">Определение...</strong></span>
+    </div>
+  </section>
+
+  <main>
+    <!-- Speedtest Section -->
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <h2><span>01</span> Тест скорости канала</h2>
+          <p class="hint">LibreSpeed Core · Генерация трафика на лету (RAM) без износа диска</p>
+        </div>
+        <span class="pill">Без телеметрии</span>
+      </div>
+      <div class="metrics">
+        <div class="metric">
+          <div class="metric-label">&#x2193; Входящая (Download)</div>
+          <div class="metric-value" id="dl-speed">—</div>
+          <div class="metric-unit">Мбит/с</div>
+          <div class="metric-note" id="dl-note"></div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">&#x2191; Исходящая (Upload)</div>
+          <div class="metric-value" id="ul-speed">—</div>
+          <div class="metric-unit">Мбит/с</div>
+          <div class="metric-note" id="ul-note"></div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Пинг (Latency)</div>
+          <div class="metric-value" id="ping-val">—</div>
+          <div class="metric-unit">мс</div>
+          <div class="metric-note"></div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Джиттер (Jitter)</div>
+          <div class="metric-value" id="jitter-val">—</div>
+          <div class="metric-unit">мс</div>
+          <div class="metric-note"></div>
+        </div>
+      </div>
+      <div class="row-actions">
+        <button type="button" class="btn" id="speed-btn">Запустить тест скорости</button>
+        <span class="status" id="speed-status" role="status">Готов к запуску.</span>
+      </div>
+    </section>
+
+    <!-- MTR Section -->
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <h2><span>02</span> Трассировка маршрута (MTR)</h2>
+          <p class="hint">Диагностика сетевого тракта от сервера до вашего IP с замером потерь пакетов на узлах оператора</p>
+        </div>
+      </div>
+      <div class="fields">
+        <label class="field" for="pkt-count">
+          Количество пакетов
+          <select id="pkt-count">
+            <option value="5" selected>5 циклов (~15 сек)</option>
+            <option value="10">10 циклов (~30 сек)</option>
+            <option value="20">20 циклов (~60 сек)</option>
+          </select>
+        </label>
+        <button class="btn" id="mtr-btn" type="button">Запустить MTR</button>
+      </div>
+      <p class="status" id="mtr-status">Опрос узлов начинается после нажатия кнопки.</p>
+      <pre id="mtr-result" class="terminal" tabindex="0" aria-label="Результаты MTR"></pre>
+    </section>
+
+    <!-- On-the-fly Download Stream Files -->
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <h2><span>03</span> Тестовая загрузка потоков (Direct Stream)</h2>
+          <p class="hint">Потоковая генерация байтов на лету в RAM сервера для проверки стабильности длительного скачивания</p>
+        </div>
+      </div>
+      <div class="files">
+        <a class="file" download href="api/st/down?size=15k">
+          <strong>15 КБ</strong>
+          <small>test-15k.bin</small>
+          <em>Скачать поток &#x2197;</em>
+        </a>
+        <a class="file" download href="api/st/down?size=10m">
+          <strong>10 МБ</strong>
+          <small>test-10m.bin</small>
+          <em>Скачать поток &#x2197;</em>
+        </a>
+        <a class="file" download href="api/st/down?size=100m">
+          <strong>100 МБ</strong>
+          <small>test-100m.bin</small>
+          <em>Скачать поток &#x2197;</em>
+        </a>
+        <a class="file" download href="api/st/down?size=1g">
+          <strong>1 ГБ</strong>
+          <small>test-1g.bin</small>
+          <em>Скачать поток &#x2197;</em>
+        </a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>VPN Suite Diagnostics &middot; Автономная утилита</span>
+    <span>Движок: <a href="https://github.com/librespeed/speedtest" target="_blank" rel="noopener noreferrer">LibreSpeed</a> (LGPLv3)</span>
+  </footer>
+</div>
+
+<script src="speedtest.js"></script>
+<script>
+(()=>{
+  'use strict';
+  const byId = id => document.getElementById(id);
+  const speedStatus = byId('speed-status');
+  const speedBtn = byId('speed-btn');
+  let speedtest = null;
+  let speedRunning = false;
+
+  // Set server meta from window.location
+  byId('server-meta').textContent = window.location.hostname || 'VPS';
+
+  // Client IP detection via fast Nginx endpoint
+  async function detectClient(){
+    try {
+      const res = await fetch('api/st/getip', {cache:'no-store'});
+      if (res.ok) {
+        const text = (await res.text()).trim();
+        byId('client-ip').textContent = text || 'Определён';
+      }
+    } catch(e) {
+      byId('client-ip').textContent = 'Доступен';
+    }
+  }
+  detectClient();
+
+  // Speedtest runner
+  speedBtn.addEventListener('click', () => {
+    if (speedRunning) {
+      if (speedtest) speedtest.abort();
+      return;
+    }
+    if (typeof Speedtest !== 'function') {
+      speedStatus.textContent = 'Ошибка загрузки модуля LibreSpeed.';
+      speedStatus.dataset.kind = 'error';
+      return;
+    }
+
+    for (const id of ['dl-speed','ul-speed','ping-val','jitter-val']) byId(id).textContent = '—';
+    for (const id of ['dl-note','ul-note']) byId(id).textContent = '';
+
+    try {
+      speedtest = new Speedtest();
+      speedtest.setParameter('url_dl', 'api/st/down?size=25m');
+      speedtest.setParameter('url_ul', 'api/st/up');
+      speedtest.setParameter('url_ping', 'api/st/ping');
+      speedtest.setParameter('url_getIp', 'api/st/getip');
+      speedtest.setParameter('getIp_ispInfo', false);
+      speedtest.setParameter('telemetry_level', 0);
+
+      speedtest.onupdate = d => {
+        if (d.dlStatus) byId('dl-speed').textContent = d.dlStatus;
+        if (d.ulStatus) byId('ul-speed').textContent = d.ulStatus;
+        if (d.pingStatus) byId('ping-val').textContent = d.pingStatus;
+        if (d.jitterStatus) byId('jitter-val').textContent = d.jitterStatus;
+        byId('dl-note').textContent = d.testState === 1 ? Math.round((Number(d.dlProgress)||0)*100)+'%' : '';
+        byId('ul-note').textContent = d.testState === 3 ? Math.round((Number(d.ulProgress)||0)*100)+'%' : '';
+
+        const phases = {0:'Подготовка...', 1:'Тестирование входящей скорости (Download)...', 2:'Замер задержки (Ping/Jitter)...', 3:'Тестирование исходящей скорости (Upload)...'};
+        if (phases[d.testState]) speedStatus.textContent = phases[d.testState];
+      };
+
+      speedtest.onend = aborted => {
+        speedRunning = false;
+        speedBtn.textContent = 'Запустить тест скорости';
+        byId('dl-note').textContent = '';
+        byId('ul-note').textContent = '';
+        speedStatus.textContent = aborted ? 'Тест остановлен.' : 'Тест успешно завершён!';
+        speedStatus.dataset.kind = aborted ? 'warn' : 'ok';
+        speedtest = null;
+      };
+
+      speedRunning = true;
+      speedBtn.textContent = 'Остановить тест';
+      speedStatus.textContent = 'Инициализация теста...';
+      speedStatus.dataset.kind = '';
+      speedtest.start();
+    } catch(err) {
+      speedRunning = false;
+      speedBtn.textContent = 'Запустить тест скорости';
+      speedtest = null;
+      speedStatus.textContent = 'Ошибка: ' + err.message;
+      speedStatus.dataset.kind = 'error';
+    }
+  });
+
+  // MTR Runner
+  const mtrBtn = byId('mtr-btn');
+  const mtrStatus = byId('mtr-status');
+  const mtrOutput = byId('mtr-result');
+
+  mtrBtn.addEventListener('click', async () => {
+    mtrBtn.disabled = true;
+    mtrStatus.textContent = 'Выполняется трассировка MTR... Пожалуйста, подождите.';
+    mtrStatus.dataset.kind = 'warn';
+    mtrOutput.classList.remove('is-visible');
+    mtrOutput.textContent = '';
+
+    const count = byId('pkt-count').value || '5';
+    try {
+      const res = await fetch('api/mtr', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({count: parseInt(count, 10)})
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        mtrStatus.textContent = `Трассировка MTR завершена (${data.count} циклов до ${data.target}):`;
+        mtrStatus.dataset.kind = 'ok';
+        mtrOutput.textContent = data.output || 'Нет данных трассировки.';
+        mtrOutput.classList.add('is-visible');
+      } else {
+        mtrStatus.textContent = 'Ошибка MTR: ' + (data.error || 'Сбой выполнения.');
+        mtrStatus.dataset.kind = 'error';
+        if (data.output) {
+          mtrOutput.textContent = data.output;
+          mtrOutput.classList.add('is-visible');
+        }
+      }
+    } catch(e) {
+      mtrStatus.textContent = 'Сетевая ошибка при вызове MTR: ' + e.message;
+      mtrStatus.dataset.kind = 'error';
+    } finally {
+      mtrBtn.disabled = false;
+    }
+  });
+})();
+</script>
+</body>
+</html>

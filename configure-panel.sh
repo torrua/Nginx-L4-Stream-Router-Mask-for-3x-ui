@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  CONFIGURE 3X-UI INBOUNDS & SETTINGS (v9.1.0 Universal Companion & Smart Reconcile)
+#  CONFIGURE 3X-UI INBOUNDS & SETTINGS (v9.2.0 Universal Companion & Smart Reconcile)
 # ==============================================================================
 #  Скрипт автоматического конфигурирования и самовосстановления базы 3X-UI.
 #  Безопасен для повторного запуска:
@@ -40,7 +40,15 @@ log()  { echo -e "  ${CYAN}[+]${NC} $*"; }
 ok()   { echo -e "  ${GREEN}${CHECK:-✔}${NC} $*"; }
 warn() { echo -e "  ${YELLOW}[!]${NC} $*"; }
 die()  { echo -e "  ${RED}${CROSS:-✖} $*${NC}" >&2; exit 1; }
-# Discover the closest saved configuration without renaming existing user files.
+# ==============================================================================
+# src/common/config.sh - Safe Configuration Loader & SSL Path Resolver (T13)
+# ==============================================================================
+# Treats configuration files strictly as structured data, forbidding eval/source
+# and command substitution $(...) or backticks to prevent arbitrary code execution.
+# ==============================================================================
+
+CONFIG_SCHEMA_VERSION=1
+
 is_true() {
     local val="${1:-0}"
     [[ "$val" == "1" || "${val,,}" == "y" || "${val,,}" == "true" ]]
@@ -48,7 +56,15 @@ is_true() {
 
 find_config_file() {
     local script_dir="${1:-.}" directory candidate
-    for directory in . "$script_dir" /etc /root; do
+    local dirs=()
+    if [ "${EUID:-$(id -u)}" -ne 0 ]; then
+        dirs=(. "$script_dir" /etc /root)
+    else
+        # When running as root, do not blindly load from arbitrary current working dir (T13.C09)
+        dirs=("$script_dir" /etc /root)
+    fi
+    for directory in "${dirs[@]}"; do
+        [ -d "$directory" ] || continue
         for candidate in "$directory/server-setup.env" "$directory/setup_mask.env"; do
             if [ -f "$candidate" ]; then
                 printf '%s\n' "$candidate"
@@ -57,6 +73,77 @@ find_config_file() {
         done
     done
     return 1
+}
+
+load_config_data_safe() {
+    local env_file="$1"
+    [ -f "$env_file" ] || return 1
+
+    # Security check: if running as root, reject world-writable config files (T13.C09)
+    if [ "${EUID:-$(id -u)}" -eq 0 ] && command -v stat >/dev/null 2>&1; then
+        local perms
+        perms=$(stat -c "%a" "$env_file" 2>/dev/null || stat -f "%Lp" "$env_file" 2>/dev/null || true)
+        if [[ "$perms" =~ [2367]$ ]]; then
+            echo "[ERROR] Security violation: $env_file is world-writable (mode $perms)! Refusing to load." >&2
+            return 1
+        fi
+    fi
+
+    local line_no=0
+    local re_dquote='^"(.*)"$'
+    local re_squote="^'(.*)'\$"
+    while IFS= read -r line || [ -n "$line" ]; do
+        line_no=$((line_no + 1))
+        line="${line%$'\r'}"
+        # Skip comments and empty lines
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "${line// }" ]] && continue
+
+        if [[ "$line" =~ ^[[:space:]]*export[[:space:]]+(.*)$ ]]; then
+            line="${BASH_REMATCH[1]}"
+        fi
+
+        if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+            local key="${BASH_REMATCH[1]}"
+            local val="${BASH_REMATCH[2]}"
+
+            # Handle quotes safely: single quotes preserve raw literal content without expansion (T13.C04)
+            if [[ "$val" =~ $re_squote ]]; then
+                val="${BASH_REMATCH[1]}"
+            elif [[ "$val" =~ $re_dquote ]]; then
+                val="${BASH_REMATCH[1]}"
+                # Reject command substitution $(...) or backticks (T13.C02, T13.C08)
+                if [[ "$val" == *'`'* || "$val" =~ \$\([^\)]*\) || "$val" =~ \$\(\( || "$val" =~ \$\{[^\}]*\} ]]; then
+                    echo "[ERROR] Unsafe executable syntax in $env_file line $line_no: command substitution forbidden!" >&2
+                    return 1
+                fi
+                val="${val//\\\"/\"}"
+                val="${val//\\\\/\\}"
+            else
+                # Unquoted: strip trailing comment if preceded by space
+                if [[ "$val" =~ ^(.*)[[:space:]]+#.*$ ]]; then
+                    val="${BASH_REMATCH[1]}"
+                fi
+                # Trim trailing whitespace
+                val="${val%"${val##*[![:space:]]}"}"
+
+                # Reject command substitution $(...) or backticks in unquoted values
+                if [[ "$val" == *'`'* || "$val" =~ \$\([^\)]*\) || "$val" =~ \$\(\( || "$val" =~ \$\{[^\}]*\} ]]; then
+                    echo "[ERROR] Unsafe executable syntax in $env_file line $line_no: command substitution forbidden!" >&2
+                    return 1
+                fi
+            fi
+
+            declare -g "$key=$val"
+            if declare -p CONFIG_EXPLICIT_KEYS >/dev/null 2>&1; then
+                CONFIG_EXPLICIT_KEYS["$key"]=1
+            fi
+        else
+            echo "[ERROR] Malformed syntax in $env_file line $line_no: '$line'" >&2
+            return 1
+        fi
+    done < "$env_file"
+    return 0
 }
 
 resolve_ssl_cert_paths() {
@@ -100,6 +187,179 @@ resolve_ssl_cert_paths() {
     declare -g "$cert_var=$base_dir/$domain/fullchain.pem" 2>/dev/null || true
     declare -g "$key_var=$base_dir/$domain/privkey.pem" 2>/dev/null || true
     return 0
+}
+#!/usr/bin/env bash
+# ==============================================================================
+# src/common/lock.sh - Inter-Process Mutex for Mutating Operations (T07)
+# ==============================================================================
+# Ensures single-writer mutual exclusion across install, setup, maintain,
+# configure-panel, prepare-server, manage-services, and uninstall.
+# Supports re-entrancy for nested invocations (e.g., install calling setup).
+# ==============================================================================
+
+VPN_STACK_LOCK_FILE="${VPN_STACK_LOCK_FILE:-/run/lock/vpn-stack.lock}"
+VPN_STACK_LOCK_TIMEOUT="${VPN_STACK_LOCK_TIMEOUT:-10}"
+VPN_STACK_LOCK_FD=200
+
+_get_vpn_lock_path() {
+    if [ -n "${VPN_STACK_LOCK_FILE:-}" ] && [ "${VPN_STACK_LOCK_FILE}" != "/run/lock/vpn-stack.lock" ]; then
+        echo "$VPN_STACK_LOCK_FILE"
+        return 0
+    fi
+    if [ "${EUID:-$(id -u)}" -eq 0 ] && [ -d /run/lock ]; then
+        echo "/run/lock/vpn-stack.lock"
+    elif [ -d "${XDG_RUNTIME_DIR:-}" ]; then
+        echo "${XDG_RUNTIME_DIR}/vpn-stack.lock"
+    elif [ -d /var/run ]; then
+        echo "/var/run/vpn-stack.lock"
+    else
+        echo "/tmp/.vpn-stack-${EUID:-0}.lock"
+    fi
+}
+
+_is_lock_ancestor() {
+    local target="$1"
+    [ -n "$target" ] || return 1
+    [ "$target" = "$$" ] && return 0
+    [ "$target" = "${PPID:-}" ] && return 0
+    local cur_p="${PPID:-}"
+    local count=0
+    while [ -n "$cur_p" ] && [ "$cur_p" -gt 1 ] && [ "$count" -lt 10 ]; do
+        [ "$cur_p" = "$target" ] && return 0
+        if [ -f "/proc/$cur_p/stat" ]; then
+            cur_p=$(awk '{print $4}' "/proc/$cur_p/stat" 2>/dev/null || echo "")
+        elif command -v ps >/dev/null 2>&1; then
+            cur_p=$(ps -o ppid= -p "$cur_p" 2>/dev/null | tr -d ' ' || echo "")
+        else
+            break
+        fi
+        count=$((count + 1))
+    done
+    return 1
+}
+
+_on_stack_lock_exit() {
+    local exit_code=$?
+    release_stack_lock
+    if [ -n "${_PREV_LOCK_EXIT_TRAP:-}" ] && [ "${_PREV_LOCK_EXIT_TRAP}" != "release_stack_lock" ] && [ "${_PREV_LOCK_EXIT_TRAP}" != "_on_stack_lock_exit" ]; then
+        eval "$_PREV_LOCK_EXIT_TRAP"
+    fi
+    exit "$exit_code"
+}
+
+_setup_lock_traps() {
+    _PREV_LOCK_EXIT_TRAP=$(trap -p EXIT 2>/dev/null | sed -E "s/^trap -- ['\"]?(.*)['\"]? EXIT\$/\\1/" || true)
+    trap '_on_stack_lock_exit' EXIT INT TERM
+}
+
+acquire_stack_lock() {
+    local timeout="${1:-$VPN_STACK_LOCK_TIMEOUT}"
+    local op_name="${2:-${0##*/}}"
+
+    # 1. Re-entrancy check: if lock is already held by current process or ancestor in this session
+    if [ -n "${VPN_STACK_LOCK_HELD_BY:-}" ]; then
+        if [ "$VPN_STACK_LOCK_HELD_BY" = "$$" ] || _is_lock_ancestor "$VPN_STACK_LOCK_HELD_BY"; then
+            # Nested call within same operation hierarchy
+            return 0
+        fi
+    fi
+
+    local lock_path
+    lock_path="$(_get_vpn_lock_path)"
+    local lock_dir="${lock_path%/*}"
+    [ -d "$lock_dir" ] || mkdir -p "$lock_dir" 2>/dev/null || true
+
+    # Security check: lock file must NOT be a symlink (T07.C07)
+    if [ -L "$lock_path" ]; then
+        echo "[ERROR] Lock file $lock_path is a symbolic link! Aborting to prevent symlink attacks." >&2
+        return 75
+    fi
+
+    local start_time
+    start_time=$(date +%s 2>/dev/null || echo 0)
+
+    while true; do
+        if command -v flock >/dev/null 2>&1; then
+            # flock-based locking
+            eval "exec ${VPN_STACK_LOCK_FD}>\"\$lock_path\"" 2>/dev/null || {
+                echo "[ERROR] Unable to open lock file $lock_path" >&2
+                return 75
+            }
+            if flock -n "$VPN_STACK_LOCK_FD" 2>/dev/null; then
+                echo "$$" > "$lock_path" 2>/dev/null || true
+                export VPN_STACK_LOCK_HELD_BY="$$"
+                export VPN_STACK_LOCK_ACTIVE_PATH="$lock_path"
+                _setup_lock_traps
+                return 0
+            fi
+        else
+            # Directory-based atomic mutex fallback for platforms without flock
+            local lock_d="${lock_path}.d"
+            if mkdir "$lock_d" 2>/dev/null; then
+                echo "$$" > "$lock_path" 2>/dev/null || true
+                export VPN_STACK_LOCK_HELD_BY="$$"
+                export VPN_STACK_LOCK_ACTIVE_PATH="$lock_path"
+                _setup_lock_traps
+                return 0
+            fi
+        fi
+
+        # Check existing holder PID
+        local holder_pid=""
+        if [ -s "$lock_path" ]; then
+            holder_pid=$(head -n 1 "$lock_path" 2>/dev/null | tr -cd '0-9')
+        fi
+
+        # Check if holder PID is dead (stale lock recovery)
+        if [ -n "$holder_pid" ] && ! kill -0 "$holder_pid" 2>/dev/null; then
+            if command -v flock >/dev/null 2>&1; then
+                echo "$$" > "$lock_path" 2>/dev/null || true
+                if flock -n "$VPN_STACK_LOCK_FD" 2>/dev/null; then
+                    export VPN_STACK_LOCK_HELD_BY="$$"
+                    export VPN_STACK_LOCK_ACTIVE_PATH="$lock_path"
+                    _setup_lock_traps
+                    return 0
+                fi
+            else
+                rm -rf "${lock_path}.d" 2>/dev/null || true
+                if mkdir "${lock_path}.d" 2>/dev/null; then
+                    echo "$$" > "$lock_path" 2>/dev/null || true
+                    export VPN_STACK_LOCK_HELD_BY="$$"
+                    export VPN_STACK_LOCK_ACTIVE_PATH="$lock_path"
+                    _setup_lock_traps
+                    return 0
+                fi
+            fi
+        fi
+
+        local now
+        now=$(date +%s 2>/dev/null || echo 0)
+        local elapsed=$((now - start_time))
+        if [ "$elapsed" -ge "$timeout" ]; then
+            echo "[ERROR] Operation '$op_name' blocked by active operation (PID: ${holder_pid:-unknown})." >&2
+            echo "[ERROR] Timed out after ${timeout}s waiting for lock: $lock_path" >&2
+            return 75
+        fi
+
+        sleep 0.5 2>/dev/null || sleep 1
+    done
+}
+
+release_stack_lock() {
+    if [ -n "${VPN_STACK_LOCK_HELD_BY:-}" ] && [ "$VPN_STACK_LOCK_HELD_BY" = "$$" ]; then
+        local lock_path="${VPN_STACK_LOCK_ACTIVE_PATH:-$(_get_vpn_lock_path)}"
+        if [ -f "$lock_path" ]; then
+            rm -f "$lock_path" 2>/dev/null || true
+        fi
+        if [ -d "${lock_path}.d" ]; then
+            rmdir "${lock_path}.d" 2>/dev/null || rm -rf "${lock_path}.d" 2>/dev/null || true
+        fi
+        if command -v flock >/dev/null 2>&1; then
+            eval "exec ${VPN_STACK_LOCK_FD}>&-" 2>/dev/null || true
+        fi
+        unset VPN_STACK_LOCK_HELD_BY
+        unset VPN_STACK_LOCK_ACTIVE_PATH
+    fi
 }
 normalize_node_token_config() {
     local enabled="${CLI_ENABLE_NODE_TOKEN:-${ENABLE_NODE_TOKEN:-y}}"
@@ -372,6 +632,690 @@ except Exception:
     rm -f "$dst" 2>/dev/null || true
     return 1
 }
+
+do_restore_rollback() {
+    local rollback_dir="$1"
+    warn "Инициирован аварийный откат к состоянию до восстановления..."
+    local rollback_failed=0
+
+    # Остановка служб перед манипуляциями с файлами во избежание гонок и повреждения БД
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl stop nginx 2>/dev/null || true
+        if ! systemctl stop x-ui 2>/dev/null; then
+            if systemctl is-active --quiet x-ui 2>/dev/null; then
+                die "Критическая ошибка: невозможно остановить службу x-ui перед аварийным откатом (процесс активен). Во избежание повреждения базы данных операция отката прервана, резервные копии сохранены в $rollback_dir."
+            fi
+        fi
+        # Обязательное подтверждение, что x-ui остановлен перед удалением журналов и заменой БД
+        if systemctl is-active --quiet x-ui 2>/dev/null; then
+            die "Критическая ошибка: служба x-ui продолжает работать после команды остановки. Замена базы данных и удаление журналов отменены во избежание повреждения данных. Исходные резервные копии сохранены в $rollback_dir."
+        fi
+    fi
+
+    # Очистка устаревших WAL/SHM журналов перед накатом старой БД
+    rm -f /etc/x-ui/x-ui.db-wal /etc/x-ui/x-ui.db-shm \
+          /usr/local/x-ui/bin/x-ui.db-wal /usr/local/x-ui/bin/x-ui.db-shm 2>/dev/null || true
+
+    if [ -f "$rollback_dir/x-ui.db" ]; then
+        if [ -d /etc/x-ui ] || [ -f /etc/x-ui/x-ui.db ]; then
+            mkdir -p /etc/x-ui 2>/dev/null || true
+            cp -a "$rollback_dir/x-ui.db" /etc/x-ui/x-ui.db || rollback_failed=1
+            chmod 600 /etc/x-ui/x-ui.db 2>/dev/null || true
+        fi
+        if [ -d /usr/local/x-ui/bin ] || [ -f /usr/local/x-ui/bin/x-ui.db ]; then
+            mkdir -p /usr/local/x-ui/bin 2>/dev/null || true
+            cp -a "$rollback_dir/x-ui.db" /usr/local/x-ui/bin/x-ui.db || rollback_failed=1
+            chmod 600 /usr/local/x-ui/bin/x-ui.db 2>/dev/null || true
+        fi
+    fi
+
+    if [ -d "$rollback_dir/nginx" ]; then
+        cp -a "$rollback_dir/nginx/"* /etc/nginx/ 2>/dev/null || rollback_failed=1
+    fi
+    if [ -d "$rollback_dir/amneziawg" ]; then
+        mkdir -p /etc/amnezia/amneziawg 2>/dev/null || true
+        cp -a "$rollback_dir/amneziawg/"* /etc/amnezia/amneziawg/ 2>/dev/null || rollback_failed=1
+    fi
+    if [ -d "$rollback_dir/mita" ]; then
+        mkdir -p /etc/mita 2>/dev/null || true
+        cp -a "$rollback_dir/mita/"* /etc/mita/ 2>/dev/null || rollback_failed=1
+        chown -R mita:mita /etc/mita 2>/dev/null || true
+    fi
+    if [ -f "$rollback_dir/mita_server_config.json" ]; then
+        cp -a "$rollback_dir/mita_server_config.json" /etc/mita_server_config.json 2>/dev/null || rollback_failed=1
+        chown mita:mita /etc/mita_server_config.json 2>/dev/null || true
+    fi
+
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload 2>/dev/null || true
+        if [ -f /etc/x-ui/x-ui.db ] || [ -f /usr/local/x-ui/bin/x-ui.db ]; then
+            systemctl restart x-ui || rollback_failed=1
+            systemctl is-active --quiet x-ui || rollback_failed=1
+        fi
+        if command -v nginx >/dev/null 2>&1 && [ -f /etc/nginx/nginx.conf ]; then
+            nginx -t >/dev/null 2>&1 && systemctl restart nginx || rollback_failed=1
+            systemctl is-active --quiet nginx || rollback_failed=1
+        fi
+    fi
+
+    if [ "$rollback_failed" -ne 0 ]; then
+        die "Восстановление прервано с ошибкой. ВНИМАНИЕ: при аварийном откате к $rollback_dir также возникли сбои (ошибки копирования или перезапуска служб)! Проверьте состояние служб и каталог $rollback_dir."
+    else
+        die "Восстановление прервано с ошибкой. Исходное состояние сервера успешно восстановлено из $rollback_dir."
+    fi
+}
+
+do_backup() {
+    local target_dir="/var/backups/vpn-stack"
+    mkdir -p "$target_dir" 2>/dev/null || true
+    chmod 700 "$target_dir" 2>/dev/null || true
+
+    local ts
+    ts="$(date +%Y%m%d_%H%M%S)"
+    local archive="${target_dir}/vpn-backup-${ts}.tar.gz"
+    local staging
+    staging=$(mktemp -d /tmp/vpn-backup-staging.XXXXXX) || die "Не удалось создать временный каталог для бэкапа."
+
+    log "Создание транзакционного снимка системы..."
+
+    # 1. Загрузка конфигурации окружения
+    local cfg=""
+    if [ -n "${CONFIG_FILE:-}" ] && [ -f "$CONFIG_FILE" ]; then
+        cfg="$CONFIG_FILE"
+    else
+        cfg=$(find_config_file "${SCRIPT_DIR:-.}" 2>/dev/null || true)
+    fi
+    if [ -n "$cfg" ] && [ -f "$cfg" ]; then
+        source "$cfg" 2>/dev/null || true
+        mkdir -p "$staging/env"
+        cp -a "$cfg" "$staging/env/server-setup.env" 2>/dev/null || true
+    fi
+    if [ -f /root/vpn_credentials.txt ]; then
+        mkdir -p "$staging/env"
+        cp -a /root/vpn_credentials.txt "$staging/env/" 2>/dev/null || true
+    fi
+
+    # 2. Атомарный дамп базы 3X-UI через SQLite Online Backup API
+    local db_file="${DB_PATH:-/etc/x-ui/x-ui.db}"
+    if [ ! -f "$db_file" ]; then
+        for alt_db in /usr/local/x-ui/bin/x-ui.db /etc/x-ui/x-ui.db; do
+            if [ -f "$alt_db" ]; then
+                db_file="$alt_db"
+                break
+            fi
+        done
+    fi
+
+    if [ -f "$db_file" ]; then
+        mkdir -p "$staging/db"
+        if ! backup_sqlite_db "$db_file" "$staging/db/x-ui.db"; then
+            rm -rf "$staging"
+            die "Ошибка: Не удалось выполнить атомарный дамп базы данных $db_file."
+        fi
+        ok "База данных 3X-UI сохранена и проверена (WAL-safe)"
+    fi
+
+    # 3. Конфигурации Nginx
+    if [ -d /etc/nginx ]; then
+        mkdir -p "$staging/nginx"
+        [ -f /etc/nginx/nginx.conf ] && cp -a /etc/nginx/nginx.conf "$staging/nginx/" 2>/dev/null || true
+        [ -d /etc/nginx/conf.d ] && cp -a /etc/nginx/conf.d "$staging/nginx/" 2>/dev/null || true
+        [ -d /etc/nginx/stream.d ] && cp -a /etc/nginx/stream.d "$staging/nginx/" 2>/dev/null || true
+        ok "Конфигурации Nginx сохранены"
+    fi
+
+    # 4. AmneziaWG / WireGuard ключи и конфиги
+    if [ -d /etc/amnezia/amneziawg ]; then
+        mkdir -p "$staging/amnezia"
+        cp -a /etc/amnezia/amneziawg "$staging/amnezia/" 2>/dev/null || true
+        ok "Конфигурации Dual AmneziaWG сохранены"
+    fi
+
+    # 5. Службы NextGen (Sing-box, ShadowTLS, Caddy, Wstunnel, DNSTT, Mieru/mita)
+    mkdir -p "$staging/nextgen"
+    for ng_dir in /etc/sing-box /etc/shadowtls /etc/dnstt /etc/caddy /etc/wstunnel /etc/mita; do
+        if [ -d "$ng_dir" ]; then
+            cp -a "$ng_dir" "$staging/nextgen/" 2>/dev/null || true
+        fi
+    done
+    if [ -f /etc/mita_server_config.json ]; then
+        cp -a /etc/mita_server_config.json "$staging/nextgen/" 2>/dev/null || true
+    fi
+    ok "Конфигурации Next-Gen сервисов сохранены (включая Mieru)"
+
+    # 6. Диагностический портал
+    if [ -d /var/www/diagnostics ] || [ -d /usr/local/lib/vpn-diagnostics ]; then
+        mkdir -p "$staging/diagnostics"
+        [ -d /var/www/diagnostics ] && cp -a /var/www/diagnostics "$staging/diagnostics/" 2>/dev/null || true
+        [ -d /usr/local/lib/vpn-diagnostics ] && cp -a /usr/local/lib/vpn-diagnostics "$staging/diagnostics/" 2>/dev/null || true
+        [ -f /etc/systemd/system/vpn-diagnostics.service ] && cp -a /etc/systemd/system/vpn-diagnostics.service "$staging/diagnostics/" 2>/dev/null || true
+        ok "Ресурсы веб-диагностики сохранены"
+    fi
+
+    # 7. AdGuard Home
+    if [ -f /opt/AdGuardHome/AdGuardHome.yaml ]; then
+        mkdir -p "$staging/adguard"
+        cp -a /opt/AdGuardHome/AdGuardHome.yaml "$staging/adguard/" 2>/dev/null || true
+        ok "Конфигурация AdGuard Home сохранена"
+    fi
+
+    # 8. Селективный экспорт SSL-сертификатов (Certbot lineages + acme.sh)
+    mkdir -p "$staging/ssl"
+    if [ -d /etc/letsencrypt/live ]; then
+        local domains=()
+        [ -n "${PRIMARY_DOMAIN:-}" ] && domains+=("$PRIMARY_DOMAIN")
+        [ -n "${AGH_DOMAIN:-}" ] && domains+=("$AGH_DOMAIN")
+
+        mkdir -p "$staging/ssl/letsencrypt/live"
+        mkdir -p "$staging/ssl/letsencrypt/archive"
+        mkdir -p "$staging/ssl/letsencrypt/renewal"
+
+        for d in "${domains[@]}"; do
+            [ -z "$d" ] && continue
+            if [ -d "/etc/letsencrypt/live/$d" ]; then
+                mkdir -p "$staging/ssl/letsencrypt/live/$d"
+                cp -L "/etc/letsencrypt/live/$d/"* "$staging/ssl/letsencrypt/live/$d/" 2>/dev/null || true
+            fi
+            if [ -d "/etc/letsencrypt/archive/$d" ]; then
+                mkdir -p "$staging/ssl/letsencrypt/archive/$d"
+                cp -a "/etc/letsencrypt/archive/$d/"* "$staging/ssl/letsencrypt/archive/$d/" 2>/dev/null || true
+            fi
+            if [ -f "/etc/letsencrypt/renewal/$d.conf" ]; then
+                cp -a "/etc/letsencrypt/renewal/$d.conf" "$staging/ssl/letsencrypt/renewal/" 2>/dev/null || true
+            fi
+        done
+        [ -d /etc/letsencrypt/renewal-hooks ] && cp -a /etc/letsencrypt/renewal-hooks "$staging/ssl/letsencrypt/" 2>/dev/null || true
+        ok "SSL-сертификаты Let's Encrypt сохранены"
+    fi
+
+    if [ -d /etc/ssl/acme ]; then
+        mkdir -p "$staging/ssl/acme"
+        cp -a /etc/ssl/acme/* "$staging/ssl/acme/" 2>/dev/null || true
+        ok "SSL-сертификаты acme.sh сохранены"
+    fi
+
+    # 8.5 Создание manifest.json со списком файлов и SHA256 (T21.C01)
+    local py_cmd
+    py_cmd=$(get_sqlite_backup_python || echo "python3")
+    "$py_cmd" -c "
+import json, os, hashlib, sys
+
+staging = sys.argv[1]
+manifest_path = os.path.join(staging, 'manifest.json')
+files_map = {}
+
+for root, dirs, files in os.walk(staging):
+    for f in sorted(files):
+        if f == 'manifest.json':
+            continue
+        full_p = os.path.join(root, f)
+        rel_p = os.path.relpath(full_p, staging).replace('\\\\', '/')
+        try:
+            with open(full_p, 'rb') as fp:
+                h = hashlib.sha256(fp.read()).hexdigest()
+            files_map[rel_p] = h
+        except Exception:
+            pass
+
+data = {
+    'format_version': '2.0',
+    'project_version': os.environ.get('SCRIPT_VERSION', 'v9.2.0'),
+    'created_at': os.popen('date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null').read().strip(),
+    'db_path': os.environ.get('DB_PATH', '/etc/x-ui/x-ui.db'),
+    'files': files_map
+}
+
+with open(manifest_path, 'w', encoding='utf-8') as out:
+    json.dump(data, out, indent=2)
+" "$staging" 2>/dev/null || true
+
+    # 9. Упаковка архива
+    if ! "$py_cmd" -c "
+import tarfile, sys, os
+archive, staging = sys.argv[1], sys.argv[2]
+with tarfile.open(archive, 'w:gz') as tar:
+    for item in os.listdir(staging):
+        tar.add(os.path.join(staging, item), arcname=item)
+" "$archive" "$staging"; then
+        rm -rf "$staging"
+        die "Ошибка создания tar-архива $archive."
+    fi
+
+    rm -rf "$staging"
+    chmod 600 "$archive"
+
+    local sz
+    sz=$(du -h "$archive" 2>/dev/null | cut -f1 || echo "OK")
+    echo
+    ok "Резервная копия успешно создана: ${BOLD}$archive${NC} ($sz)"
+    echo -e "      ${BOLD}Путь к архиву:${NC}  ${CYAN}$archive${NC}"
+    echo -e "      ${BOLD}Права доступа:${NC}  0600 (root only)"
+    echo -e "      ${BOLD}Команда отката:${NC} ./maintain.sh restore $archive"
+    echo
+}
+
+do_restore() {
+    local archive="${1:-}"
+    [[ -n "$archive" ]] || die "Укажите путь к архиву: ./maintain.sh restore <архив.tar.gz>"
+    [[ -f "$archive" ]] || die "Файл архива не найден: $archive"
+
+    local target_backup_dir="/var/backups/vpn-stack"
+    local rollback_dir="${target_backup_dir}/.rollback-latest"
+    mkdir -p "$target_backup_dir" 2>/dev/null || true
+
+    log "Подготовка к восстановлению из $archive..."
+
+    # Создание снапшота текущего состояния для гарантированного отката
+    rm -rf "$rollback_dir" 2>/dev/null || true
+    mkdir -p "$rollback_dir"
+    chmod 700 "$rollback_dir"
+
+    local current_db="/etc/x-ui/x-ui.db"
+    if [ ! -f "$current_db" ]; then
+        for alt_db in /usr/local/x-ui/bin/x-ui.db /etc/x-ui/x-ui.db; do
+            if [ -f "$alt_db" ]; then
+                current_db="$alt_db"
+                break
+            fi
+        done
+    fi
+    if [ -f "$current_db" ]; then
+        if ! backup_sqlite_db "$current_db" "$rollback_dir/x-ui.db"; then
+            rm -rf "$rollback_dir"
+            die "Ошибка: не удалось создать безопасный снапшот SQLite базы $current_db перед восстановлением."
+        fi
+    fi
+    [ -d /etc/nginx ] && cp -a /etc/nginx "$rollback_dir/" 2>/dev/null || true
+    [ -d /etc/amnezia/amneziawg ] && cp -a /etc/amnezia/amneziawg "$rollback_dir/" 2>/dev/null || true
+    [ -d /etc/mita ] && cp -a /etc/mita "$rollback_dir/" 2>/dev/null || true
+    [ -f /etc/mita_server_config.json ] && cp -a /etc/mita_server_config.json "$rollback_dir/" 2>/dev/null || true
+
+    local staging
+    staging=$(mktemp -d /tmp/vpn-restore-staging.XXXXXX) || die "Не удалось создать временный каталог для распаковки."
+
+    # Распаковываем во временный каталог через безопасный фильтр Python
+    local py_cmd
+    py_cmd=$(get_sqlite_backup_python || echo "python3")
+    if ! "$py_cmd" -c "
+import tarfile, sys, os
+archive, target = sys.argv[1], sys.argv[2]
+os.makedirs(target, exist_ok=True)
+dest = os.path.realpath(target)
+
+with tarfile.open(archive, 'r:gz') as tar:
+    if hasattr(tarfile, 'data_filter'):
+        tar.extractall(target, filter='data')
+    else:
+        for m in tar.getmembers():
+            mp = os.path.realpath(os.path.join(dest, m.name))
+            if not mp.startswith(dest + os.sep) and mp != dest:
+                raise RuntimeError(f'Попытка выхода за границы целевого каталога (Path Traversal): {m.name}')
+            if m.islnk() or m.issym():
+                continue
+            tar.extract(m, dest)
+" "$archive" "$staging"; then
+        rm -rf "$staging"
+        die "Ошибка безопасной распаковки архива $archive."
+    fi
+
+    # 0. Проверка целостности файлов бэкапа по manifest.json (T21.C01, T21.C02)
+    if [ -f "$staging/manifest.json" ]; then
+        if ! "$py_cmd" -c "
+import json, os, hashlib, sys
+staging = sys.argv[1]
+with open(os.path.join(staging, 'manifest.json'), 'r', encoding='utf-8') as fp:
+    manifest = json.load(fp)
+for rel_p, expected_h in manifest.get('files', {}).items():
+    full_p = os.path.join(staging, rel_p)
+    if not os.path.isfile(full_p):
+        sys.exit(f'Missing backed up file: {rel_p}')
+    with open(full_p, 'rb') as f:
+        actual_h = hashlib.sha256(f.read()).hexdigest()
+    if actual_h != expected_h:
+        sys.exit(f'Checksum mismatch for {rel_p}: expected {expected_h}, got {actual_h}')
+" "$staging"; then
+            rm -rf "$staging"
+            die "Ошибка: Нарушена целостность файлов бэкапа по манифесту (T21.C02)!"
+        fi
+        ok "Целостность файлов бэкапа и манифест версии 2.0 подтверждены"
+    fi
+
+    # 0.5 Проверка целостности SQLite перед наложением (T21.C03)
+    if [ -f "$staging/db/x-ui.db" ]; then
+        if ! verify_sqlite_backup "$staging/db/x-ui.db" "$py_cmd"; then
+            rm -rf "$staging"
+            die "Ошибка: База данных в бэкапе x-ui.db повреждена (PRAGMA integrity_check failed)!"
+        fi
+        ok "Целостность базы данных x-ui.db в бэкапе проверена (PRAGMA integrity_check OK)"
+    fi
+
+    # Валидация соответствия сертификатов и ключей, если они присутствуют в архиве (RSA / ECDSA / Ed25519)
+    if [ -d "$staging/ssl/letsencrypt/live" ]; then
+        for cert_dir in "$staging/ssl/letsencrypt/live/"*; do
+            if [ -d "$cert_dir" ] && [ -f "$cert_dir/fullchain.pem" ] && [ -f "$cert_dir/privkey.pem" ]; then
+                local cert_pub key_pub
+                cert_pub=$(openssl x509 -noout -pubkey -in "$cert_dir/fullchain.pem" 2>/dev/null | openssl pkey -pubin -outform DER 2>/dev/null | openssl sha256 2>/dev/null || true)
+                key_pub=$(openssl pkey -pubout -in "$cert_dir/privkey.pem" 2>/dev/null | openssl pkey -pubin -outform DER 2>/dev/null | openssl sha256 2>/dev/null || true)
+                if [ -n "$cert_pub" ] && [ -n "$key_pub" ] && [ "$cert_pub" != "$key_pub" ]; then
+                    rm -rf "$staging"
+                    die "Криптографическая ошибка: сертификат и ключ в $cert_dir не соответствуют друг другу!"
+                fi
+            fi
+        done
+        ok "Криптографическая валидация SSL-сертификатов пройдена (RSA/ECDSA OK)"
+    fi
+
+    # Приостанавливаем сервисы перед заменой файлов с верификацией остановки x-ui (T03.C04, T22.C03)
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl stop nginx 2>/dev/null || true
+        systemctl stop vpn-diagnostics 2>/dev/null || true
+        if ! systemctl stop x-ui 2>/dev/null; then
+            if systemctl is-active --quiet x-ui 2>/dev/null; then
+                rm -rf "$staging"
+                die "Критическая ошибка: невозможно остановить службу x-ui перед восстановлением (процесс активен). Замена базы отменена."
+            fi
+        fi
+        if systemctl is-active --quiet x-ui 2>/dev/null; then
+            rm -rf "$staging"
+            die "Критическая ошибка: служба x-ui продолжает работать после команды остановки. Замена базы отменена."
+        fi
+    fi
+
+    # 1. Восстановление базы данных
+    if [ -f "$staging/db/x-ui.db" ]; then
+        # Очистка устаревших журналов WAL/SHM перед накатом базы данных (T03.C04, T21.C03)
+        rm -f /etc/x-ui/x-ui.db-wal /etc/x-ui/x-ui.db-shm \
+              /usr/local/x-ui/bin/x-ui.db-wal /usr/local/x-ui/bin/x-ui.db-shm 2>/dev/null || true
+        mkdir -p /etc/x-ui
+        cp -a "$staging/db/x-ui.db" /etc/x-ui/x-ui.db
+        chmod 600 /etc/x-ui/x-ui.db
+        if [ -d /usr/local/x-ui/bin ]; then
+            cp -a "$staging/db/x-ui.db" /usr/local/x-ui/bin/x-ui.db 2>/dev/null || true
+            chmod 600 /usr/local/x-ui/bin/x-ui.db 2>/dev/null || true
+        fi
+        ok "База данных 3X-UI восстановлена"
+    fi
+
+    # 2. Восстановление Nginx
+    if [ -d "$staging/nginx" ]; then
+        mkdir -p /etc/nginx/conf.d /etc/nginx/stream.d
+        [ -f "$staging/nginx/nginx.conf" ] && cp -a "$staging/nginx/nginx.conf" /etc/nginx/nginx.conf
+        [ -d "$staging/nginx/conf.d" ] && cp -a "$staging/nginx/conf.d/"* /etc/nginx/conf.d/ 2>/dev/null || true
+        [ -d "$staging/nginx/stream.d" ] && cp -a "$staging/nginx/stream.d/"* /etc/nginx/stream.d/ 2>/dev/null || true
+        ok "Конфигурация Nginx восстановлена"
+    fi
+
+    # 3. Восстановление AmneziaWG
+    if [ -d "$staging/amnezia/amneziawg" ]; then
+        mkdir -p /etc/amnezia/amneziawg
+        cp -a "$staging/amnezia/amneziawg/"* /etc/amnezia/amneziawg/ 2>/dev/null || true
+        chmod 700 /etc/amnezia/amneziawg
+        chmod 600 /etc/amnezia/amneziawg/*.conf 2>/dev/null || true
+        ok "Конфигурация AmneziaWG восстановлена"
+    fi
+
+    # 4. Восстановление AdGuard Home
+    if [ -f "$staging/adguard/AdGuardHome.yaml" ]; then
+        mkdir -p /opt/AdGuardHome
+        cp -a "$staging/adguard/AdGuardHome.yaml" /opt/AdGuardHome/AdGuardHome.yaml
+        ok "Конфигурация AdGuard Home восстановлена"
+    fi
+
+    # 5. Восстановление Next-Gen сервисов (включая Mieru/mita)
+    if [ -d "$staging/nextgen" ]; then
+        for ng_dir in sing-box shadowtls dnstt caddy wstunnel mita; do
+            if [ -d "$staging/nextgen/$ng_dir" ]; then
+                mkdir -p "/etc/$ng_dir"
+                cp -a "$staging/nextgen/$ng_dir/"* "/etc/$ng_dir/" 2>/dev/null || true
+            fi
+        done
+        if [ -f "$staging/nextgen/mita_server_config.json" ]; then
+            cp -a "$staging/nextgen/mita_server_config.json" /etc/mita_server_config.json 2>/dev/null || true
+        fi
+        if id -u mita >/dev/null 2>&1; then
+            chown -R mita:mita /etc/mita /etc/mita_server_config.json 2>/dev/null || true
+            chmod 750 /etc/mita 2>/dev/null || true
+            chmod 600 /etc/mita/config.json /etc/mita_server_config.json 2>/dev/null || true
+        fi
+        ok "Конфигурации Next-Gen сервисов восстановлены"
+    fi
+
+    # 6. Восстановление веб-диагностики
+    if [ -d "$staging/diagnostics" ]; then
+        if [ -d "$staging/diagnostics/diagnostics" ]; then
+            mkdir -p /var/www/diagnostics
+            cp -a "$staging/diagnostics/diagnostics/"* /var/www/diagnostics/ 2>/dev/null || true
+        fi
+        if [ -d "$staging/diagnostics/vpn-diagnostics" ]; then
+            mkdir -p /usr/local/lib/vpn-diagnostics
+            cp -a "$staging/diagnostics/vpn-diagnostics/"* /usr/local/lib/vpn-diagnostics/ 2>/dev/null || true
+        fi
+        if [ -f "$staging/diagnostics/vpn-diagnostics.service" ]; then
+            cp -a "$staging/diagnostics/vpn-diagnostics.service" /etc/systemd/system/ 2>/dev/null || true
+        fi
+        ok "Ресурсы веб-диагностики восстановлены"
+    fi
+
+    # 7. Селективное восстановление SSL
+    if [ -d "$staging/ssl/letsencrypt" ]; then
+        mkdir -p /etc/letsencrypt
+        [ -d "$staging/ssl/letsencrypt/live" ] && cp -a "$staging/ssl/letsencrypt/live" /etc/letsencrypt/ 2>/dev/null || true
+        [ -d "$staging/ssl/letsencrypt/archive" ] && cp -a "$staging/ssl/letsencrypt/archive" /etc/letsencrypt/ 2>/dev/null || true
+        [ -d "$staging/ssl/letsencrypt/renewal" ] && cp -a "$staging/ssl/letsencrypt/renewal" /etc/letsencrypt/ 2>/dev/null || true
+        [ -d "$staging/ssl/letsencrypt/renewal-hooks" ] && cp -a "$staging/ssl/letsencrypt/renewal-hooks" /etc/letsencrypt/ 2>/dev/null || true
+        ok "Селективные сертификаты Certbot восстановлены"
+    fi
+    if [ -d "$staging/ssl/acme" ]; then
+        mkdir -p /etc/ssl/acme
+        cp -a "$staging/ssl/acme/"* /etc/ssl/acme/ 2>/dev/null || true
+        ok "Сертификаты acme.sh восстановлены"
+    fi
+
+    # 8. Восстановление переменных окружения
+    if [ -f "$staging/env/server-setup.env" ]; then
+        local target_env="${CONFIG_FILE:-/root/server-setup.env}"
+        cp -a "$staging/env/server-setup.env" "$target_env" 2>/dev/null || true
+    fi
+    if [ -f "$staging/env/vpn_credentials.txt" ]; then
+        cp -a "$staging/env/vpn_credentials.txt" /root/vpn_credentials.txt 2>/dev/null || true
+    fi
+
+    rm -rf "$staging"
+
+    # 9. Проверка синтаксиса Nginx
+    if command -v nginx >/dev/null 2>&1 && [ -f /etc/nginx/nginx.conf ]; then
+        if ! nginx -t >/dev/null 2>&1; then
+            warn "Ошибка: Восстановленная конфигурация Nginx не прошла синтаксическую проверку (nginx -t)!"
+            do_restore_rollback "$rollback_dir"
+        fi
+    fi
+
+    # 10. Перезапуск и строгая проверка активности критических служб
+    systemctl daemon-reload 2>/dev/null || true
+
+    if systemctl is-enabled x-ui >/dev/null 2>&1 || [ -f /etc/systemd/system/x-ui.service ]; then
+        if ! systemctl restart x-ui; then
+            warn "Ошибка: Не удалось перезапустить службу x-ui после восстановления!"
+            do_restore_rollback "$rollback_dir"
+        fi
+        sleep 1
+        if ! systemctl is-active --quiet x-ui; then
+            warn "Ошибка: Служба x-ui не перешла в активное состояние после восстановления!"
+            do_restore_rollback "$rollback_dir"
+        fi
+    fi
+
+    if systemctl is-enabled nginx >/dev/null 2>&1 || [ -f /lib/systemd/system/nginx.service ] || [ -f /etc/systemd/system/nginx.service ]; then
+        if ! systemctl restart nginx; then
+            warn "Ошибка: Не удалось перезапустить службу nginx после восстановления!"
+            do_restore_rollback "$rollback_dir"
+        fi
+        sleep 1
+        if ! systemctl is-active --quiet nginx; then
+            warn "Ошибка: Служба nginx не перешла в активное состояние после восстановления!"
+            do_restore_rollback "$rollback_dir"
+        fi
+    fi
+
+    # Вспомогательные службы перезапускаются best effort
+    if [ -f /etc/systemd/system/vpn-diagnostics.service ]; then
+        systemctl restart vpn-diagnostics 2>/dev/null || true
+    fi
+    if [ -f /etc/systemd/system/mita.service ]; then
+        systemctl restart mita 2>/dev/null || true
+    fi
+    if [ -f /etc/amnezia/amneziawg/awg0.conf ]; then
+        systemctl restart awg-quick@awg0 2>/dev/null || true
+    fi
+    if [ -f /etc/amnezia/amneziawg/awg1.conf ]; then
+        systemctl restart awg-quick@awg1 2>/dev/null || true
+    fi
+
+    echo
+    ok "Система успешно восстановлена из бэкапа $archive!"
+    echo -e "      ${BOLD}Проверка Nginx:${NC}   ${GREEN}nginx -t OK${NC}"
+    echo -e "      ${BOLD}Службы:${NC}           ${GREEN}x-ui, nginx активны${NC}"
+    echo -e "      ${BOLD}Снимок отката:${NC}    ${CYAN}$rollback_dir${NC}"
+    echo
+    return 0
+}
+
+do_extract() {
+    local archive="${1:-}"
+    local target="${2:-}"
+    [[ -n "$archive" ]] || die "Укажите путь к архиву: ./maintain.sh extract <архив.tar.gz> <каталог_для_распаковки>"
+    [[ -n "$target" ]] || die "Укажите целевой каталог: ./maintain.sh extract <архив.tar.gz> <каталог_для_распаковки>"
+    [[ -f "$archive" ]] || die "Файл архива не найден: $archive"
+
+    mkdir -p "$target" 2>/dev/null || true
+    log "Аварийное безопасное извлечение архива в $target..."
+
+    local py_cmd
+    py_cmd=$(get_sqlite_backup_python || echo "python3")
+    if ! "$py_cmd" -c "
+import tarfile, sys, os
+
+archive, target = sys.argv[1], sys.argv[2]
+os.makedirs(target, exist_ok=True)
+dest = os.path.realpath(target)
+
+with tarfile.open(archive, 'r:gz') as tar:
+    if hasattr(tarfile, 'data_filter'):
+        tar.extractall(target, filter='data')
+    else:
+        for m in tar.getmembers():
+            mp = os.path.realpath(os.path.join(dest, m.name))
+            if not mp.startswith(dest + os.sep) and mp != dest:
+                raise RuntimeError(f'Попытка выхода за границы целевого каталога (Path Traversal): {m.name}')
+            if m.islnk() or m.issym():
+                continue
+            tar.extract(m, dest)
+
+print(f'[OK] Архив {archive} успешно и безопасно извлечён в {target}')
+" "$archive" "$target"; then
+        die "Ошибка извлечения архива $archive."
+    fi
+    return 0
+}
+
+audit_restore_archive() {
+    local archive="${1:-}"
+    [[ -n "$archive" ]] || die "Укажите путь к архиву: ./maintain.sh --dry-run restore <архив.tar.gz>"
+    [[ -f "$archive" ]] || die "Файл архива не найден: $archive"
+
+    local staging
+    staging=$(mktemp -d /tmp/vpn-audit-staging.XXXXXX 2>/dev/null || mktemp -d "${TMPDIR:-/tmp}/vpn-audit-staging.XXXXXX") || die "Не удалось создать временный каталог для аудита."
+
+    local py_cmd
+    py_cmd=$(get_sqlite_backup_python || echo "python3")
+
+    if ! "$py_cmd" -c "
+import tarfile, sys, os
+archive, target = sys.argv[1], sys.argv[2]
+os.makedirs(target, exist_ok=True)
+dest = os.path.realpath(target)
+
+with tarfile.open(archive, 'r:gz') as tar:
+    if hasattr(tarfile, 'data_filter'):
+        tar.extractall(target, filter='data')
+    else:
+        for m in tar.getmembers():
+            mp = os.path.realpath(os.path.join(dest, m.name))
+            if not mp.startswith(dest + os.sep) and mp != dest:
+                raise RuntimeError(f'Попытка выхода за границы целевого каталога (Path Traversal): {m.name}')
+            if m.islnk() or m.issym():
+                continue
+            tar.extract(m, dest)
+" "$archive" "$staging"; then
+        rm -rf "$staging"
+        die "Ошибка распаковки архива $archive при аудите."
+    fi
+
+    # 1. Проверка манифеста (T21.C01, T21.C02)
+    if [ -f "$staging/manifest.json" ]; then
+        if ! "$py_cmd" -c "
+import json, os, hashlib, sys
+staging = sys.argv[1]
+with open(os.path.join(staging, 'manifest.json'), 'r', encoding='utf-8') as fp:
+    manifest = json.load(fp)
+for rel_p, expected_h in manifest.get('files', {}).items():
+    full_p = os.path.join(staging, rel_p)
+    if not os.path.isfile(full_p):
+        sys.exit(f'Missing backed up file: {rel_p}')
+    with open(full_p, 'rb') as f:
+        actual_h = hashlib.sha256(f.read()).hexdigest()
+    if actual_h != expected_h:
+        sys.exit(f'Checksum mismatch for {rel_p}: expected {expected_h}, got {actual_h}')
+" "$staging"; then
+            rm -rf "$staging"
+            die "Ошибка аудита: Нарушена целостность файлов по манифесту архива (T21.C02)!"
+        fi
+        ok "[DRY-RUN] Манифест v2.0 и контрольные суммы SHA-256 проверены и совпадают"
+    else
+        warn "[DRY-RUN] Манифест manifest.json отсутствует (архив устаревшего формата v1.0)"
+    fi
+
+    # 2. Проверка SQLite базы (T21.C03)
+    if [ -f "$staging/db/x-ui.db" ]; then
+        if ! verify_sqlite_backup "$staging/db/x-ui.db" "$py_cmd"; then
+            rm -rf "$staging"
+            die "Ошибка аудита: База данных x-ui.db в архиве повреждена (PRAGMA integrity_check failed)!"
+        fi
+        ok "[DRY-RUN] База данных x-ui.db проверена (PRAGMA integrity_check OK)"
+    fi
+
+    # 3. Проверка SSL-ключей
+    if [ -d "$staging/ssl/letsencrypt/live" ]; then
+        for cert_dir in "$staging/ssl/letsencrypt/live/"*; do
+            if [ -d "$cert_dir" ] && [ -f "$cert_dir/fullchain.pem" ] && [ -f "$cert_dir/privkey.pem" ]; then
+                local cert_pub key_pub
+                cert_pub=$(openssl x509 -noout -pubkey -in "$cert_dir/fullchain.pem" 2>/dev/null | openssl pkey -pubin -outform DER 2>/dev/null | openssl sha256 2>/dev/null || true)
+                key_pub=$(openssl pkey -pubout -in "$cert_dir/privkey.pem" 2>/dev/null | openssl pkey -pubin -outform DER 2>/dev/null | openssl sha256 2>/dev/null || true)
+                if [ -n "$cert_pub" ] && [ -n "$key_pub" ] && [ "$cert_pub" != "$key_pub" ]; then
+                    rm -rf "$staging"
+                    die "Ошибка аудита: сертификат и ключ в $cert_dir не соответствуют друг другу!"
+                fi
+            fi
+        done
+        ok "[DRY-RUN] Криптографические пары сертификат/ключ проверены"
+    fi
+
+    # 4. Проверка конфигурации .env
+    if [ -f "$staging/env/server-setup.env" ]; then
+        if command -v load_config_data_safe >/dev/null 2>&1; then
+            if ! ( load_config_data_safe "$staging/env/server-setup.env" >/dev/null 2>&1 ); then
+                rm -rf "$staging"
+                die "Ошибка аудита: файл конфигурации server-setup.env содержит синтаксические ошибки!"
+            fi
+            ok "[DRY-RUN] Конфигурация server-setup.env проверена"
+        fi
+    fi
+
+    rm -rf "$staging"
+    ok "[DRY-RUN] Архив $archive проверен: целостность и формат валидны для восстановления"
+    return 0
+}
+
 # Execute in a fresh Bash so a caller's `if`/`||` cannot suppress errexit.
 # A private snapshot preserves Bash functions and unexported variables in both modes.
 execute_install_task() (
@@ -624,7 +1568,15 @@ log()  { echo -e "  ${CYAN}[+]${NC} $*"; }
 ok()   { echo -e "  ${GREEN}${CHECK:-✔}${NC} $*"; }
 warn() { echo -e "  ${YELLOW}[!]${NC} $*"; }
 die()  { echo -e "  ${RED}${CROSS:-✖} $*${NC}" >&2; exit 1; }
-# Discover the closest saved configuration without renaming existing user files.
+# ==============================================================================
+# src/common/config.sh - Safe Configuration Loader & SSL Path Resolver (T13)
+# ==============================================================================
+# Treats configuration files strictly as structured data, forbidding eval/source
+# and command substitution $(...) or backticks to prevent arbitrary code execution.
+# ==============================================================================
+
+CONFIG_SCHEMA_VERSION=1
+
 is_true() {
     local val="${1:-0}"
     [[ "$val" == "1" || "${val,,}" == "y" || "${val,,}" == "true" ]]
@@ -632,7 +1584,15 @@ is_true() {
 
 find_config_file() {
     local script_dir="${1:-.}" directory candidate
-    for directory in . "$script_dir" /etc /root; do
+    local dirs=()
+    if [ "${EUID:-$(id -u)}" -ne 0 ]; then
+        dirs=(. "$script_dir" /etc /root)
+    else
+        # When running as root, do not blindly load from arbitrary current working dir (T13.C09)
+        dirs=("$script_dir" /etc /root)
+    fi
+    for directory in "${dirs[@]}"; do
+        [ -d "$directory" ] || continue
         for candidate in "$directory/server-setup.env" "$directory/setup_mask.env"; do
             if [ -f "$candidate" ]; then
                 printf '%s\n' "$candidate"
@@ -641,6 +1601,77 @@ find_config_file() {
         done
     done
     return 1
+}
+
+load_config_data_safe() {
+    local env_file="$1"
+    [ -f "$env_file" ] || return 1
+
+    # Security check: if running as root, reject world-writable config files (T13.C09)
+    if [ "${EUID:-$(id -u)}" -eq 0 ] && command -v stat >/dev/null 2>&1; then
+        local perms
+        perms=$(stat -c "%a" "$env_file" 2>/dev/null || stat -f "%Lp" "$env_file" 2>/dev/null || true)
+        if [[ "$perms" =~ [2367]$ ]]; then
+            echo "[ERROR] Security violation: $env_file is world-writable (mode $perms)! Refusing to load." >&2
+            return 1
+        fi
+    fi
+
+    local line_no=0
+    local re_dquote='^"(.*)"$'
+    local re_squote="^'(.*)'\$"
+    while IFS= read -r line || [ -n "$line" ]; do
+        line_no=$((line_no + 1))
+        line="${line%$'\r'}"
+        # Skip comments and empty lines
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "${line// }" ]] && continue
+
+        if [[ "$line" =~ ^[[:space:]]*export[[:space:]]+(.*)$ ]]; then
+            line="${BASH_REMATCH[1]}"
+        fi
+
+        if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+            local key="${BASH_REMATCH[1]}"
+            local val="${BASH_REMATCH[2]}"
+
+            # Handle quotes safely: single quotes preserve raw literal content without expansion (T13.C04)
+            if [[ "$val" =~ $re_squote ]]; then
+                val="${BASH_REMATCH[1]}"
+            elif [[ "$val" =~ $re_dquote ]]; then
+                val="${BASH_REMATCH[1]}"
+                # Reject command substitution $(...) or backticks (T13.C02, T13.C08)
+                if [[ "$val" == *'`'* || "$val" =~ \$\([^\)]*\) || "$val" =~ \$\(\( || "$val" =~ \$\{[^\}]*\} ]]; then
+                    echo "[ERROR] Unsafe executable syntax in $env_file line $line_no: command substitution forbidden!" >&2
+                    return 1
+                fi
+                val="${val//\\\"/\"}"
+                val="${val//\\\\/\\}"
+            else
+                # Unquoted: strip trailing comment if preceded by space
+                if [[ "$val" =~ ^(.*)[[:space:]]+#.*$ ]]; then
+                    val="${BASH_REMATCH[1]}"
+                fi
+                # Trim trailing whitespace
+                val="${val%"${val##*[![:space:]]}"}"
+
+                # Reject command substitution $(...) or backticks in unquoted values
+                if [[ "$val" == *'`'* || "$val" =~ \$\([^\)]*\) || "$val" =~ \$\(\( || "$val" =~ \$\{[^\}]*\} ]]; then
+                    echo "[ERROR] Unsafe executable syntax in $env_file line $line_no: command substitution forbidden!" >&2
+                    return 1
+                fi
+            fi
+
+            declare -g "$key=$val"
+            if declare -p CONFIG_EXPLICIT_KEYS >/dev/null 2>&1; then
+                CONFIG_EXPLICIT_KEYS["$key"]=1
+            fi
+        else
+            echo "[ERROR] Malformed syntax in $env_file line $line_no: '$line'" >&2
+            return 1
+        fi
+    done < "$env_file"
+    return 0
 }
 
 resolve_ssl_cert_paths() {
@@ -956,6 +1987,690 @@ except Exception:
     rm -f "$dst" 2>/dev/null || true
     return 1
 }
+
+do_restore_rollback() {
+    local rollback_dir="$1"
+    warn "Инициирован аварийный откат к состоянию до восстановления..."
+    local rollback_failed=0
+
+    # Остановка служб перед манипуляциями с файлами во избежание гонок и повреждения БД
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl stop nginx 2>/dev/null || true
+        if ! systemctl stop x-ui 2>/dev/null; then
+            if systemctl is-active --quiet x-ui 2>/dev/null; then
+                die "Критическая ошибка: невозможно остановить службу x-ui перед аварийным откатом (процесс активен). Во избежание повреждения базы данных операция отката прервана, резервные копии сохранены в $rollback_dir."
+            fi
+        fi
+        # Обязательное подтверждение, что x-ui остановлен перед удалением журналов и заменой БД
+        if systemctl is-active --quiet x-ui 2>/dev/null; then
+            die "Критическая ошибка: служба x-ui продолжает работать после команды остановки. Замена базы данных и удаление журналов отменены во избежание повреждения данных. Исходные резервные копии сохранены в $rollback_dir."
+        fi
+    fi
+
+    # Очистка устаревших WAL/SHM журналов перед накатом старой БД
+    rm -f /etc/x-ui/x-ui.db-wal /etc/x-ui/x-ui.db-shm \
+          /usr/local/x-ui/bin/x-ui.db-wal /usr/local/x-ui/bin/x-ui.db-shm 2>/dev/null || true
+
+    if [ -f "$rollback_dir/x-ui.db" ]; then
+        if [ -d /etc/x-ui ] || [ -f /etc/x-ui/x-ui.db ]; then
+            mkdir -p /etc/x-ui 2>/dev/null || true
+            cp -a "$rollback_dir/x-ui.db" /etc/x-ui/x-ui.db || rollback_failed=1
+            chmod 600 /etc/x-ui/x-ui.db 2>/dev/null || true
+        fi
+        if [ -d /usr/local/x-ui/bin ] || [ -f /usr/local/x-ui/bin/x-ui.db ]; then
+            mkdir -p /usr/local/x-ui/bin 2>/dev/null || true
+            cp -a "$rollback_dir/x-ui.db" /usr/local/x-ui/bin/x-ui.db || rollback_failed=1
+            chmod 600 /usr/local/x-ui/bin/x-ui.db 2>/dev/null || true
+        fi
+    fi
+
+    if [ -d "$rollback_dir/nginx" ]; then
+        cp -a "$rollback_dir/nginx/"* /etc/nginx/ 2>/dev/null || rollback_failed=1
+    fi
+    if [ -d "$rollback_dir/amneziawg" ]; then
+        mkdir -p /etc/amnezia/amneziawg 2>/dev/null || true
+        cp -a "$rollback_dir/amneziawg/"* /etc/amnezia/amneziawg/ 2>/dev/null || rollback_failed=1
+    fi
+    if [ -d "$rollback_dir/mita" ]; then
+        mkdir -p /etc/mita 2>/dev/null || true
+        cp -a "$rollback_dir/mita/"* /etc/mita/ 2>/dev/null || rollback_failed=1
+        chown -R mita:mita /etc/mita 2>/dev/null || true
+    fi
+    if [ -f "$rollback_dir/mita_server_config.json" ]; then
+        cp -a "$rollback_dir/mita_server_config.json" /etc/mita_server_config.json 2>/dev/null || rollback_failed=1
+        chown mita:mita /etc/mita_server_config.json 2>/dev/null || true
+    fi
+
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload 2>/dev/null || true
+        if [ -f /etc/x-ui/x-ui.db ] || [ -f /usr/local/x-ui/bin/x-ui.db ]; then
+            systemctl restart x-ui || rollback_failed=1
+            systemctl is-active --quiet x-ui || rollback_failed=1
+        fi
+        if command -v nginx >/dev/null 2>&1 && [ -f /etc/nginx/nginx.conf ]; then
+            nginx -t >/dev/null 2>&1 && systemctl restart nginx || rollback_failed=1
+            systemctl is-active --quiet nginx || rollback_failed=1
+        fi
+    fi
+
+    if [ "$rollback_failed" -ne 0 ]; then
+        die "Восстановление прервано с ошибкой. ВНИМАНИЕ: при аварийном откате к $rollback_dir также возникли сбои (ошибки копирования или перезапуска служб)! Проверьте состояние служб и каталог $rollback_dir."
+    else
+        die "Восстановление прервано с ошибкой. Исходное состояние сервера успешно восстановлено из $rollback_dir."
+    fi
+}
+
+do_backup() {
+    local target_dir="/var/backups/vpn-stack"
+    mkdir -p "$target_dir" 2>/dev/null || true
+    chmod 700 "$target_dir" 2>/dev/null || true
+
+    local ts
+    ts="$(date +%Y%m%d_%H%M%S)"
+    local archive="${target_dir}/vpn-backup-${ts}.tar.gz"
+    local staging
+    staging=$(mktemp -d /tmp/vpn-backup-staging.XXXXXX) || die "Не удалось создать временный каталог для бэкапа."
+
+    log "Создание транзакционного снимка системы..."
+
+    # 1. Загрузка конфигурации окружения
+    local cfg=""
+    if [ -n "${CONFIG_FILE:-}" ] && [ -f "$CONFIG_FILE" ]; then
+        cfg="$CONFIG_FILE"
+    else
+        cfg=$(find_config_file "${SCRIPT_DIR:-.}" 2>/dev/null || true)
+    fi
+    if [ -n "$cfg" ] && [ -f "$cfg" ]; then
+        source "$cfg" 2>/dev/null || true
+        mkdir -p "$staging/env"
+        cp -a "$cfg" "$staging/env/server-setup.env" 2>/dev/null || true
+    fi
+    if [ -f /root/vpn_credentials.txt ]; then
+        mkdir -p "$staging/env"
+        cp -a /root/vpn_credentials.txt "$staging/env/" 2>/dev/null || true
+    fi
+
+    # 2. Атомарный дамп базы 3X-UI через SQLite Online Backup API
+    local db_file="${DB_PATH:-/etc/x-ui/x-ui.db}"
+    if [ ! -f "$db_file" ]; then
+        for alt_db in /usr/local/x-ui/bin/x-ui.db /etc/x-ui/x-ui.db; do
+            if [ -f "$alt_db" ]; then
+                db_file="$alt_db"
+                break
+            fi
+        done
+    fi
+
+    if [ -f "$db_file" ]; then
+        mkdir -p "$staging/db"
+        if ! backup_sqlite_db "$db_file" "$staging/db/x-ui.db"; then
+            rm -rf "$staging"
+            die "Ошибка: Не удалось выполнить атомарный дамп базы данных $db_file."
+        fi
+        ok "База данных 3X-UI сохранена и проверена (WAL-safe)"
+    fi
+
+    # 3. Конфигурации Nginx
+    if [ -d /etc/nginx ]; then
+        mkdir -p "$staging/nginx"
+        [ -f /etc/nginx/nginx.conf ] && cp -a /etc/nginx/nginx.conf "$staging/nginx/" 2>/dev/null || true
+        [ -d /etc/nginx/conf.d ] && cp -a /etc/nginx/conf.d "$staging/nginx/" 2>/dev/null || true
+        [ -d /etc/nginx/stream.d ] && cp -a /etc/nginx/stream.d "$staging/nginx/" 2>/dev/null || true
+        ok "Конфигурации Nginx сохранены"
+    fi
+
+    # 4. AmneziaWG / WireGuard ключи и конфиги
+    if [ -d /etc/amnezia/amneziawg ]; then
+        mkdir -p "$staging/amnezia"
+        cp -a /etc/amnezia/amneziawg "$staging/amnezia/" 2>/dev/null || true
+        ok "Конфигурации Dual AmneziaWG сохранены"
+    fi
+
+    # 5. Службы NextGen (Sing-box, ShadowTLS, Caddy, Wstunnel, DNSTT, Mieru/mita)
+    mkdir -p "$staging/nextgen"
+    for ng_dir in /etc/sing-box /etc/shadowtls /etc/dnstt /etc/caddy /etc/wstunnel /etc/mita; do
+        if [ -d "$ng_dir" ]; then
+            cp -a "$ng_dir" "$staging/nextgen/" 2>/dev/null || true
+        fi
+    done
+    if [ -f /etc/mita_server_config.json ]; then
+        cp -a /etc/mita_server_config.json "$staging/nextgen/" 2>/dev/null || true
+    fi
+    ok "Конфигурации Next-Gen сервисов сохранены (включая Mieru)"
+
+    # 6. Диагностический портал
+    if [ -d /var/www/diagnostics ] || [ -d /usr/local/lib/vpn-diagnostics ]; then
+        mkdir -p "$staging/diagnostics"
+        [ -d /var/www/diagnostics ] && cp -a /var/www/diagnostics "$staging/diagnostics/" 2>/dev/null || true
+        [ -d /usr/local/lib/vpn-diagnostics ] && cp -a /usr/local/lib/vpn-diagnostics "$staging/diagnostics/" 2>/dev/null || true
+        [ -f /etc/systemd/system/vpn-diagnostics.service ] && cp -a /etc/systemd/system/vpn-diagnostics.service "$staging/diagnostics/" 2>/dev/null || true
+        ok "Ресурсы веб-диагностики сохранены"
+    fi
+
+    # 7. AdGuard Home
+    if [ -f /opt/AdGuardHome/AdGuardHome.yaml ]; then
+        mkdir -p "$staging/adguard"
+        cp -a /opt/AdGuardHome/AdGuardHome.yaml "$staging/adguard/" 2>/dev/null || true
+        ok "Конфигурация AdGuard Home сохранена"
+    fi
+
+    # 8. Селективный экспорт SSL-сертификатов (Certbot lineages + acme.sh)
+    mkdir -p "$staging/ssl"
+    if [ -d /etc/letsencrypt/live ]; then
+        local domains=()
+        [ -n "${PRIMARY_DOMAIN:-}" ] && domains+=("$PRIMARY_DOMAIN")
+        [ -n "${AGH_DOMAIN:-}" ] && domains+=("$AGH_DOMAIN")
+
+        mkdir -p "$staging/ssl/letsencrypt/live"
+        mkdir -p "$staging/ssl/letsencrypt/archive"
+        mkdir -p "$staging/ssl/letsencrypt/renewal"
+
+        for d in "${domains[@]}"; do
+            [ -z "$d" ] && continue
+            if [ -d "/etc/letsencrypt/live/$d" ]; then
+                mkdir -p "$staging/ssl/letsencrypt/live/$d"
+                cp -L "/etc/letsencrypt/live/$d/"* "$staging/ssl/letsencrypt/live/$d/" 2>/dev/null || true
+            fi
+            if [ -d "/etc/letsencrypt/archive/$d" ]; then
+                mkdir -p "$staging/ssl/letsencrypt/archive/$d"
+                cp -a "/etc/letsencrypt/archive/$d/"* "$staging/ssl/letsencrypt/archive/$d/" 2>/dev/null || true
+            fi
+            if [ -f "/etc/letsencrypt/renewal/$d.conf" ]; then
+                cp -a "/etc/letsencrypt/renewal/$d.conf" "$staging/ssl/letsencrypt/renewal/" 2>/dev/null || true
+            fi
+        done
+        [ -d /etc/letsencrypt/renewal-hooks ] && cp -a /etc/letsencrypt/renewal-hooks "$staging/ssl/letsencrypt/" 2>/dev/null || true
+        ok "SSL-сертификаты Let's Encrypt сохранены"
+    fi
+
+    if [ -d /etc/ssl/acme ]; then
+        mkdir -p "$staging/ssl/acme"
+        cp -a /etc/ssl/acme/* "$staging/ssl/acme/" 2>/dev/null || true
+        ok "SSL-сертификаты acme.sh сохранены"
+    fi
+
+    # 8.5 Создание manifest.json со списком файлов и SHA256 (T21.C01)
+    local py_cmd
+    py_cmd=$(get_sqlite_backup_python || echo "python3")
+    "$py_cmd" -c "
+import json, os, hashlib, sys
+
+staging = sys.argv[1]
+manifest_path = os.path.join(staging, 'manifest.json')
+files_map = {}
+
+for root, dirs, files in os.walk(staging):
+    for f in sorted(files):
+        if f == 'manifest.json':
+            continue
+        full_p = os.path.join(root, f)
+        rel_p = os.path.relpath(full_p, staging).replace('\\\\', '/')
+        try:
+            with open(full_p, 'rb') as fp:
+                h = hashlib.sha256(fp.read()).hexdigest()
+            files_map[rel_p] = h
+        except Exception:
+            pass
+
+data = {
+    'format_version': '2.0',
+    'project_version': os.environ.get('SCRIPT_VERSION', 'v9.2.0'),
+    'created_at': os.popen('date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null').read().strip(),
+    'db_path': os.environ.get('DB_PATH', '/etc/x-ui/x-ui.db'),
+    'files': files_map
+}
+
+with open(manifest_path, 'w', encoding='utf-8') as out:
+    json.dump(data, out, indent=2)
+" "$staging" 2>/dev/null || true
+
+    # 9. Упаковка архива
+    if ! "$py_cmd" -c "
+import tarfile, sys, os
+archive, staging = sys.argv[1], sys.argv[2]
+with tarfile.open(archive, 'w:gz') as tar:
+    for item in os.listdir(staging):
+        tar.add(os.path.join(staging, item), arcname=item)
+" "$archive" "$staging"; then
+        rm -rf "$staging"
+        die "Ошибка создания tar-архива $archive."
+    fi
+
+    rm -rf "$staging"
+    chmod 600 "$archive"
+
+    local sz
+    sz=$(du -h "$archive" 2>/dev/null | cut -f1 || echo "OK")
+    echo
+    ok "Резервная копия успешно создана: ${BOLD}$archive${NC} ($sz)"
+    echo -e "      ${BOLD}Путь к архиву:${NC}  ${CYAN}$archive${NC}"
+    echo -e "      ${BOLD}Права доступа:${NC}  0600 (root only)"
+    echo -e "      ${BOLD}Команда отката:${NC} ./maintain.sh restore $archive"
+    echo
+}
+
+do_restore() {
+    local archive="${1:-}"
+    [[ -n "$archive" ]] || die "Укажите путь к архиву: ./maintain.sh restore <архив.tar.gz>"
+    [[ -f "$archive" ]] || die "Файл архива не найден: $archive"
+
+    local target_backup_dir="/var/backups/vpn-stack"
+    local rollback_dir="${target_backup_dir}/.rollback-latest"
+    mkdir -p "$target_backup_dir" 2>/dev/null || true
+
+    log "Подготовка к восстановлению из $archive..."
+
+    # Создание снапшота текущего состояния для гарантированного отката
+    rm -rf "$rollback_dir" 2>/dev/null || true
+    mkdir -p "$rollback_dir"
+    chmod 700 "$rollback_dir"
+
+    local current_db="/etc/x-ui/x-ui.db"
+    if [ ! -f "$current_db" ]; then
+        for alt_db in /usr/local/x-ui/bin/x-ui.db /etc/x-ui/x-ui.db; do
+            if [ -f "$alt_db" ]; then
+                current_db="$alt_db"
+                break
+            fi
+        done
+    fi
+    if [ -f "$current_db" ]; then
+        if ! backup_sqlite_db "$current_db" "$rollback_dir/x-ui.db"; then
+            rm -rf "$rollback_dir"
+            die "Ошибка: не удалось создать безопасный снапшот SQLite базы $current_db перед восстановлением."
+        fi
+    fi
+    [ -d /etc/nginx ] && cp -a /etc/nginx "$rollback_dir/" 2>/dev/null || true
+    [ -d /etc/amnezia/amneziawg ] && cp -a /etc/amnezia/amneziawg "$rollback_dir/" 2>/dev/null || true
+    [ -d /etc/mita ] && cp -a /etc/mita "$rollback_dir/" 2>/dev/null || true
+    [ -f /etc/mita_server_config.json ] && cp -a /etc/mita_server_config.json "$rollback_dir/" 2>/dev/null || true
+
+    local staging
+    staging=$(mktemp -d /tmp/vpn-restore-staging.XXXXXX) || die "Не удалось создать временный каталог для распаковки."
+
+    # Распаковываем во временный каталог через безопасный фильтр Python
+    local py_cmd
+    py_cmd=$(get_sqlite_backup_python || echo "python3")
+    if ! "$py_cmd" -c "
+import tarfile, sys, os
+archive, target = sys.argv[1], sys.argv[2]
+os.makedirs(target, exist_ok=True)
+dest = os.path.realpath(target)
+
+with tarfile.open(archive, 'r:gz') as tar:
+    if hasattr(tarfile, 'data_filter'):
+        tar.extractall(target, filter='data')
+    else:
+        for m in tar.getmembers():
+            mp = os.path.realpath(os.path.join(dest, m.name))
+            if not mp.startswith(dest + os.sep) and mp != dest:
+                raise RuntimeError(f'Попытка выхода за границы целевого каталога (Path Traversal): {m.name}')
+            if m.islnk() or m.issym():
+                continue
+            tar.extract(m, dest)
+" "$archive" "$staging"; then
+        rm -rf "$staging"
+        die "Ошибка безопасной распаковки архива $archive."
+    fi
+
+    # 0. Проверка целостности файлов бэкапа по manifest.json (T21.C01, T21.C02)
+    if [ -f "$staging/manifest.json" ]; then
+        if ! "$py_cmd" -c "
+import json, os, hashlib, sys
+staging = sys.argv[1]
+with open(os.path.join(staging, 'manifest.json'), 'r', encoding='utf-8') as fp:
+    manifest = json.load(fp)
+for rel_p, expected_h in manifest.get('files', {}).items():
+    full_p = os.path.join(staging, rel_p)
+    if not os.path.isfile(full_p):
+        sys.exit(f'Missing backed up file: {rel_p}')
+    with open(full_p, 'rb') as f:
+        actual_h = hashlib.sha256(f.read()).hexdigest()
+    if actual_h != expected_h:
+        sys.exit(f'Checksum mismatch for {rel_p}: expected {expected_h}, got {actual_h}')
+" "$staging"; then
+            rm -rf "$staging"
+            die "Ошибка: Нарушена целостность файлов бэкапа по манифесту (T21.C02)!"
+        fi
+        ok "Целостность файлов бэкапа и манифест версии 2.0 подтверждены"
+    fi
+
+    # 0.5 Проверка целостности SQLite перед наложением (T21.C03)
+    if [ -f "$staging/db/x-ui.db" ]; then
+        if ! verify_sqlite_backup "$staging/db/x-ui.db" "$py_cmd"; then
+            rm -rf "$staging"
+            die "Ошибка: База данных в бэкапе x-ui.db повреждена (PRAGMA integrity_check failed)!"
+        fi
+        ok "Целостность базы данных x-ui.db в бэкапе проверена (PRAGMA integrity_check OK)"
+    fi
+
+    # Валидация соответствия сертификатов и ключей, если они присутствуют в архиве (RSA / ECDSA / Ed25519)
+    if [ -d "$staging/ssl/letsencrypt/live" ]; then
+        for cert_dir in "$staging/ssl/letsencrypt/live/"*; do
+            if [ -d "$cert_dir" ] && [ -f "$cert_dir/fullchain.pem" ] && [ -f "$cert_dir/privkey.pem" ]; then
+                local cert_pub key_pub
+                cert_pub=$(openssl x509 -noout -pubkey -in "$cert_dir/fullchain.pem" 2>/dev/null | openssl pkey -pubin -outform DER 2>/dev/null | openssl sha256 2>/dev/null || true)
+                key_pub=$(openssl pkey -pubout -in "$cert_dir/privkey.pem" 2>/dev/null | openssl pkey -pubin -outform DER 2>/dev/null | openssl sha256 2>/dev/null || true)
+                if [ -n "$cert_pub" ] && [ -n "$key_pub" ] && [ "$cert_pub" != "$key_pub" ]; then
+                    rm -rf "$staging"
+                    die "Криптографическая ошибка: сертификат и ключ в $cert_dir не соответствуют друг другу!"
+                fi
+            fi
+        done
+        ok "Криптографическая валидация SSL-сертификатов пройдена (RSA/ECDSA OK)"
+    fi
+
+    # Приостанавливаем сервисы перед заменой файлов с верификацией остановки x-ui (T03.C04, T22.C03)
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl stop nginx 2>/dev/null || true
+        systemctl stop vpn-diagnostics 2>/dev/null || true
+        if ! systemctl stop x-ui 2>/dev/null; then
+            if systemctl is-active --quiet x-ui 2>/dev/null; then
+                rm -rf "$staging"
+                die "Критическая ошибка: невозможно остановить службу x-ui перед восстановлением (процесс активен). Замена базы отменена."
+            fi
+        fi
+        if systemctl is-active --quiet x-ui 2>/dev/null; then
+            rm -rf "$staging"
+            die "Критическая ошибка: служба x-ui продолжает работать после команды остановки. Замена базы отменена."
+        fi
+    fi
+
+    # 1. Восстановление базы данных
+    if [ -f "$staging/db/x-ui.db" ]; then
+        # Очистка устаревших журналов WAL/SHM перед накатом базы данных (T03.C04, T21.C03)
+        rm -f /etc/x-ui/x-ui.db-wal /etc/x-ui/x-ui.db-shm \
+              /usr/local/x-ui/bin/x-ui.db-wal /usr/local/x-ui/bin/x-ui.db-shm 2>/dev/null || true
+        mkdir -p /etc/x-ui
+        cp -a "$staging/db/x-ui.db" /etc/x-ui/x-ui.db
+        chmod 600 /etc/x-ui/x-ui.db
+        if [ -d /usr/local/x-ui/bin ]; then
+            cp -a "$staging/db/x-ui.db" /usr/local/x-ui/bin/x-ui.db 2>/dev/null || true
+            chmod 600 /usr/local/x-ui/bin/x-ui.db 2>/dev/null || true
+        fi
+        ok "База данных 3X-UI восстановлена"
+    fi
+
+    # 2. Восстановление Nginx
+    if [ -d "$staging/nginx" ]; then
+        mkdir -p /etc/nginx/conf.d /etc/nginx/stream.d
+        [ -f "$staging/nginx/nginx.conf" ] && cp -a "$staging/nginx/nginx.conf" /etc/nginx/nginx.conf
+        [ -d "$staging/nginx/conf.d" ] && cp -a "$staging/nginx/conf.d/"* /etc/nginx/conf.d/ 2>/dev/null || true
+        [ -d "$staging/nginx/stream.d" ] && cp -a "$staging/nginx/stream.d/"* /etc/nginx/stream.d/ 2>/dev/null || true
+        ok "Конфигурация Nginx восстановлена"
+    fi
+
+    # 3. Восстановление AmneziaWG
+    if [ -d "$staging/amnezia/amneziawg" ]; then
+        mkdir -p /etc/amnezia/amneziawg
+        cp -a "$staging/amnezia/amneziawg/"* /etc/amnezia/amneziawg/ 2>/dev/null || true
+        chmod 700 /etc/amnezia/amneziawg
+        chmod 600 /etc/amnezia/amneziawg/*.conf 2>/dev/null || true
+        ok "Конфигурация AmneziaWG восстановлена"
+    fi
+
+    # 4. Восстановление AdGuard Home
+    if [ -f "$staging/adguard/AdGuardHome.yaml" ]; then
+        mkdir -p /opt/AdGuardHome
+        cp -a "$staging/adguard/AdGuardHome.yaml" /opt/AdGuardHome/AdGuardHome.yaml
+        ok "Конфигурация AdGuard Home восстановлена"
+    fi
+
+    # 5. Восстановление Next-Gen сервисов (включая Mieru/mita)
+    if [ -d "$staging/nextgen" ]; then
+        for ng_dir in sing-box shadowtls dnstt caddy wstunnel mita; do
+            if [ -d "$staging/nextgen/$ng_dir" ]; then
+                mkdir -p "/etc/$ng_dir"
+                cp -a "$staging/nextgen/$ng_dir/"* "/etc/$ng_dir/" 2>/dev/null || true
+            fi
+        done
+        if [ -f "$staging/nextgen/mita_server_config.json" ]; then
+            cp -a "$staging/nextgen/mita_server_config.json" /etc/mita_server_config.json 2>/dev/null || true
+        fi
+        if id -u mita >/dev/null 2>&1; then
+            chown -R mita:mita /etc/mita /etc/mita_server_config.json 2>/dev/null || true
+            chmod 750 /etc/mita 2>/dev/null || true
+            chmod 600 /etc/mita/config.json /etc/mita_server_config.json 2>/dev/null || true
+        fi
+        ok "Конфигурации Next-Gen сервисов восстановлены"
+    fi
+
+    # 6. Восстановление веб-диагностики
+    if [ -d "$staging/diagnostics" ]; then
+        if [ -d "$staging/diagnostics/diagnostics" ]; then
+            mkdir -p /var/www/diagnostics
+            cp -a "$staging/diagnostics/diagnostics/"* /var/www/diagnostics/ 2>/dev/null || true
+        fi
+        if [ -d "$staging/diagnostics/vpn-diagnostics" ]; then
+            mkdir -p /usr/local/lib/vpn-diagnostics
+            cp -a "$staging/diagnostics/vpn-diagnostics/"* /usr/local/lib/vpn-diagnostics/ 2>/dev/null || true
+        fi
+        if [ -f "$staging/diagnostics/vpn-diagnostics.service" ]; then
+            cp -a "$staging/diagnostics/vpn-diagnostics.service" /etc/systemd/system/ 2>/dev/null || true
+        fi
+        ok "Ресурсы веб-диагностики восстановлены"
+    fi
+
+    # 7. Селективное восстановление SSL
+    if [ -d "$staging/ssl/letsencrypt" ]; then
+        mkdir -p /etc/letsencrypt
+        [ -d "$staging/ssl/letsencrypt/live" ] && cp -a "$staging/ssl/letsencrypt/live" /etc/letsencrypt/ 2>/dev/null || true
+        [ -d "$staging/ssl/letsencrypt/archive" ] && cp -a "$staging/ssl/letsencrypt/archive" /etc/letsencrypt/ 2>/dev/null || true
+        [ -d "$staging/ssl/letsencrypt/renewal" ] && cp -a "$staging/ssl/letsencrypt/renewal" /etc/letsencrypt/ 2>/dev/null || true
+        [ -d "$staging/ssl/letsencrypt/renewal-hooks" ] && cp -a "$staging/ssl/letsencrypt/renewal-hooks" /etc/letsencrypt/ 2>/dev/null || true
+        ok "Селективные сертификаты Certbot восстановлены"
+    fi
+    if [ -d "$staging/ssl/acme" ]; then
+        mkdir -p /etc/ssl/acme
+        cp -a "$staging/ssl/acme/"* /etc/ssl/acme/ 2>/dev/null || true
+        ok "Сертификаты acme.sh восстановлены"
+    fi
+
+    # 8. Восстановление переменных окружения
+    if [ -f "$staging/env/server-setup.env" ]; then
+        local target_env="${CONFIG_FILE:-/root/server-setup.env}"
+        cp -a "$staging/env/server-setup.env" "$target_env" 2>/dev/null || true
+    fi
+    if [ -f "$staging/env/vpn_credentials.txt" ]; then
+        cp -a "$staging/env/vpn_credentials.txt" /root/vpn_credentials.txt 2>/dev/null || true
+    fi
+
+    rm -rf "$staging"
+
+    # 9. Проверка синтаксиса Nginx
+    if command -v nginx >/dev/null 2>&1 && [ -f /etc/nginx/nginx.conf ]; then
+        if ! nginx -t >/dev/null 2>&1; then
+            warn "Ошибка: Восстановленная конфигурация Nginx не прошла синтаксическую проверку (nginx -t)!"
+            do_restore_rollback "$rollback_dir"
+        fi
+    fi
+
+    # 10. Перезапуск и строгая проверка активности критических служб
+    systemctl daemon-reload 2>/dev/null || true
+
+    if systemctl is-enabled x-ui >/dev/null 2>&1 || [ -f /etc/systemd/system/x-ui.service ]; then
+        if ! systemctl restart x-ui; then
+            warn "Ошибка: Не удалось перезапустить службу x-ui после восстановления!"
+            do_restore_rollback "$rollback_dir"
+        fi
+        sleep 1
+        if ! systemctl is-active --quiet x-ui; then
+            warn "Ошибка: Служба x-ui не перешла в активное состояние после восстановления!"
+            do_restore_rollback "$rollback_dir"
+        fi
+    fi
+
+    if systemctl is-enabled nginx >/dev/null 2>&1 || [ -f /lib/systemd/system/nginx.service ] || [ -f /etc/systemd/system/nginx.service ]; then
+        if ! systemctl restart nginx; then
+            warn "Ошибка: Не удалось перезапустить службу nginx после восстановления!"
+            do_restore_rollback "$rollback_dir"
+        fi
+        sleep 1
+        if ! systemctl is-active --quiet nginx; then
+            warn "Ошибка: Служба nginx не перешла в активное состояние после восстановления!"
+            do_restore_rollback "$rollback_dir"
+        fi
+    fi
+
+    # Вспомогательные службы перезапускаются best effort
+    if [ -f /etc/systemd/system/vpn-diagnostics.service ]; then
+        systemctl restart vpn-diagnostics 2>/dev/null || true
+    fi
+    if [ -f /etc/systemd/system/mita.service ]; then
+        systemctl restart mita 2>/dev/null || true
+    fi
+    if [ -f /etc/amnezia/amneziawg/awg0.conf ]; then
+        systemctl restart awg-quick@awg0 2>/dev/null || true
+    fi
+    if [ -f /etc/amnezia/amneziawg/awg1.conf ]; then
+        systemctl restart awg-quick@awg1 2>/dev/null || true
+    fi
+
+    echo
+    ok "Система успешно восстановлена из бэкапа $archive!"
+    echo -e "      ${BOLD}Проверка Nginx:${NC}   ${GREEN}nginx -t OK${NC}"
+    echo -e "      ${BOLD}Службы:${NC}           ${GREEN}x-ui, nginx активны${NC}"
+    echo -e "      ${BOLD}Снимок отката:${NC}    ${CYAN}$rollback_dir${NC}"
+    echo
+    return 0
+}
+
+do_extract() {
+    local archive="${1:-}"
+    local target="${2:-}"
+    [[ -n "$archive" ]] || die "Укажите путь к архиву: ./maintain.sh extract <архив.tar.gz> <каталог_для_распаковки>"
+    [[ -n "$target" ]] || die "Укажите целевой каталог: ./maintain.sh extract <архив.tar.gz> <каталог_для_распаковки>"
+    [[ -f "$archive" ]] || die "Файл архива не найден: $archive"
+
+    mkdir -p "$target" 2>/dev/null || true
+    log "Аварийное безопасное извлечение архива в $target..."
+
+    local py_cmd
+    py_cmd=$(get_sqlite_backup_python || echo "python3")
+    if ! "$py_cmd" -c "
+import tarfile, sys, os
+
+archive, target = sys.argv[1], sys.argv[2]
+os.makedirs(target, exist_ok=True)
+dest = os.path.realpath(target)
+
+with tarfile.open(archive, 'r:gz') as tar:
+    if hasattr(tarfile, 'data_filter'):
+        tar.extractall(target, filter='data')
+    else:
+        for m in tar.getmembers():
+            mp = os.path.realpath(os.path.join(dest, m.name))
+            if not mp.startswith(dest + os.sep) and mp != dest:
+                raise RuntimeError(f'Попытка выхода за границы целевого каталога (Path Traversal): {m.name}')
+            if m.islnk() or m.issym():
+                continue
+            tar.extract(m, dest)
+
+print(f'[OK] Архив {archive} успешно и безопасно извлечён в {target}')
+" "$archive" "$target"; then
+        die "Ошибка извлечения архива $archive."
+    fi
+    return 0
+}
+
+audit_restore_archive() {
+    local archive="${1:-}"
+    [[ -n "$archive" ]] || die "Укажите путь к архиву: ./maintain.sh --dry-run restore <архив.tar.gz>"
+    [[ -f "$archive" ]] || die "Файл архива не найден: $archive"
+
+    local staging
+    staging=$(mktemp -d /tmp/vpn-audit-staging.XXXXXX 2>/dev/null || mktemp -d "${TMPDIR:-/tmp}/vpn-audit-staging.XXXXXX") || die "Не удалось создать временный каталог для аудита."
+
+    local py_cmd
+    py_cmd=$(get_sqlite_backup_python || echo "python3")
+
+    if ! "$py_cmd" -c "
+import tarfile, sys, os
+archive, target = sys.argv[1], sys.argv[2]
+os.makedirs(target, exist_ok=True)
+dest = os.path.realpath(target)
+
+with tarfile.open(archive, 'r:gz') as tar:
+    if hasattr(tarfile, 'data_filter'):
+        tar.extractall(target, filter='data')
+    else:
+        for m in tar.getmembers():
+            mp = os.path.realpath(os.path.join(dest, m.name))
+            if not mp.startswith(dest + os.sep) and mp != dest:
+                raise RuntimeError(f'Попытка выхода за границы целевого каталога (Path Traversal): {m.name}')
+            if m.islnk() or m.issym():
+                continue
+            tar.extract(m, dest)
+" "$archive" "$staging"; then
+        rm -rf "$staging"
+        die "Ошибка распаковки архива $archive при аудите."
+    fi
+
+    # 1. Проверка манифеста (T21.C01, T21.C02)
+    if [ -f "$staging/manifest.json" ]; then
+        if ! "$py_cmd" -c "
+import json, os, hashlib, sys
+staging = sys.argv[1]
+with open(os.path.join(staging, 'manifest.json'), 'r', encoding='utf-8') as fp:
+    manifest = json.load(fp)
+for rel_p, expected_h in manifest.get('files', {}).items():
+    full_p = os.path.join(staging, rel_p)
+    if not os.path.isfile(full_p):
+        sys.exit(f'Missing backed up file: {rel_p}')
+    with open(full_p, 'rb') as f:
+        actual_h = hashlib.sha256(f.read()).hexdigest()
+    if actual_h != expected_h:
+        sys.exit(f'Checksum mismatch for {rel_p}: expected {expected_h}, got {actual_h}')
+" "$staging"; then
+            rm -rf "$staging"
+            die "Ошибка аудита: Нарушена целостность файлов по манифесту архива (T21.C02)!"
+        fi
+        ok "[DRY-RUN] Манифест v2.0 и контрольные суммы SHA-256 проверены и совпадают"
+    else
+        warn "[DRY-RUN] Манифест manifest.json отсутствует (архив устаревшего формата v1.0)"
+    fi
+
+    # 2. Проверка SQLite базы (T21.C03)
+    if [ -f "$staging/db/x-ui.db" ]; then
+        if ! verify_sqlite_backup "$staging/db/x-ui.db" "$py_cmd"; then
+            rm -rf "$staging"
+            die "Ошибка аудита: База данных x-ui.db в архиве повреждена (PRAGMA integrity_check failed)!"
+        fi
+        ok "[DRY-RUN] База данных x-ui.db проверена (PRAGMA integrity_check OK)"
+    fi
+
+    # 3. Проверка SSL-ключей
+    if [ -d "$staging/ssl/letsencrypt/live" ]; then
+        for cert_dir in "$staging/ssl/letsencrypt/live/"*; do
+            if [ -d "$cert_dir" ] && [ -f "$cert_dir/fullchain.pem" ] && [ -f "$cert_dir/privkey.pem" ]; then
+                local cert_pub key_pub
+                cert_pub=$(openssl x509 -noout -pubkey -in "$cert_dir/fullchain.pem" 2>/dev/null | openssl pkey -pubin -outform DER 2>/dev/null | openssl sha256 2>/dev/null || true)
+                key_pub=$(openssl pkey -pubout -in "$cert_dir/privkey.pem" 2>/dev/null | openssl pkey -pubin -outform DER 2>/dev/null | openssl sha256 2>/dev/null || true)
+                if [ -n "$cert_pub" ] && [ -n "$key_pub" ] && [ "$cert_pub" != "$key_pub" ]; then
+                    rm -rf "$staging"
+                    die "Ошибка аудита: сертификат и ключ в $cert_dir не соответствуют друг другу!"
+                fi
+            fi
+        done
+        ok "[DRY-RUN] Криптографические пары сертификат/ключ проверены"
+    fi
+
+    # 4. Проверка конфигурации .env
+    if [ -f "$staging/env/server-setup.env" ]; then
+        if command -v load_config_data_safe >/dev/null 2>&1; then
+            if ! ( load_config_data_safe "$staging/env/server-setup.env" >/dev/null 2>&1 ); then
+                rm -rf "$staging"
+                die "Ошибка аудита: файл конфигурации server-setup.env содержит синтаксические ошибки!"
+            fi
+            ok "[DRY-RUN] Конфигурация server-setup.env проверена"
+        fi
+    fi
+
+    rm -rf "$staging"
+    ok "[DRY-RUN] Архив $archive проверен: целостность и формат валидны для восстановления"
+    return 0
+}
+
 # Execute in a fresh Bash so a caller's `if`/`||` cannot suppress errexit.
 # A private snapshot preserves Bash functions and unexported variables in both modes.
 execute_install_task() (
@@ -1289,6 +3004,11 @@ EOF_HELP
         esac
     done
 
+    # Захват блокировки для изменяющих операций (T07)
+    if [ "$DRY_RUN" -eq 0 ]; then
+        acquire_stack_lock "${VPN_STACK_LOCK_TIMEOUT:-10}" "configure-panel" || exit $?
+    fi
+
     # Поиск конфигурационного файла (.env)
     if [ -n "$CONFIG_FILE" ]; then
         if [ ! -f "$CONFIG_FILE" ]; then
@@ -1305,10 +3025,7 @@ EOF_HELP
 
     if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
         log "Загрузка параметров из $CONFIG_FILE..."
-        set -a
-        # shellcheck disable=SC1090
-        source "$CONFIG_FILE"
-        set +a
+        load_config_data_safe "$CONFIG_FILE" || die "Ошибка загрузки параметров из $CONFIG_FILE"
     fi
 
     # CLI-аргументы имеют наивысший приоритет над файлом конфигурации
@@ -1328,6 +3045,7 @@ EOF_HELP
     ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
     ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
     NODE_TOKEN_NAME="${NODE_TOKEN_NAME:-${SERVER_PREFIX}-Node}"
+    DIAG_TOKEN="${DIAG_TOKEN:-}"
 
     STEAL_PORT="${STEAL_PORT:-45443}"
     STEAL_SNI="${STEAL_SNI:-gateway.icloud.com}"
@@ -1390,7 +3108,8 @@ EOF_HELP
     BLOCK_SMTP="${BLOCK_SMTP:-true}"
     BLOCK_LAN="${BLOCK_LAN:-true}"
     ENABLE_AGH="${ENABLE_AGH:-n}"
-    AGH_XRAY_DNS="${AGH_XRAY_DNS:-127.0.0.1:53}"
+    PORT_AGH_DNS="${PORT_AGH_DNS:-10053}"
+    AGH_XRAY_DNS="${AGH_XRAY_DNS:-127.0.0.1:10053}"
 
     HAS_NGINX=0
     if command -v nginx >/dev/null 2>&1 && [ -d /etc/nginx ]; then
@@ -1566,6 +3285,7 @@ EOF_HELP
     export WEB_LISTEN
     export SUB_LISTEN
     export ENABLE_AGH
+    export PORT_AGH_DNS
     export AGH_XRAY_DNS
     export FORCE_REMARKS
 
@@ -1575,6 +3295,7 @@ EOF_HELP
         if [ "${WAS_ACTIVE:-0}" -eq 1 ]; then
             systemctl start x-ui 2>/dev/null || true
         fi
+        command -v release_stack_lock >/dev/null 2>&1 && release_stack_lock
     }
     trap cleanup_xui EXIT
 
@@ -2428,11 +4149,13 @@ else:
 enable_agh = os.environ.get("ENABLE_AGH", "").lower() in ("1", "y", "true")
 agh_xray_dns = os.environ.get("AGH_XRAY_DNS", "").lower() in ("1", "y", "true")
 if enable_agh and agh_xray_dns:
-    if dns_cfg.get("servers") != ["127.0.0.1"]:
-        dns_cfg["servers"] = ["127.0.0.1"]
-        print("  [ОБНОВЛЕН] DNS servers: зафиксирован '127.0.0.1' (AdGuard Home локальный фильтр).")
+    agh_dns_port = int(os.environ.get("PORT_AGH_DNS") or "10053")
+    target_servers = [{"address": "127.0.0.1", "port": agh_dns_port}]
+    if dns_cfg.get("servers") != target_servers:
+        dns_cfg["servers"] = target_servers
+        print(f"  [ОБНОВЛЕН] DNS servers: зафиксирован '127.0.0.1:{agh_dns_port}' (AdGuard Home локальный фильтр).")
     else:
-        print("  [В ПОРЯДКЕ] DNS servers: '127.0.0.1' (AdGuard Home).")
+        print(f"  [В ПОРЯДКЕ] DNS servers: '127.0.0.1:{agh_dns_port}' (AdGuard Home).")
 tpl["dns"] = dns_cfg
 
 # 2. Логирование (тихий безопасный режим, без записи посещаемых URL)
@@ -4384,7 +6107,9 @@ EOF_CLEAN_JSON
 УЧЕТНЫЕ ДАННЫЕ ПАНЕЛИ И СЕРВИСОВ 3X-UI
 Файл обновлен: $(date '+%Y-%m-%d %H:%M:%S')
 =====================================================================
-Панель управления:     https://${PRIMARY_DOMAIN}/${PANEL_PATH}/
+Панель управления:     https://${PRIMARY_DOMAIN}/${PANEL_PATH#/}/
+$([ -n "${DIAG_TOKEN:-}" ] && echo "Веб-диагностика (SSO): https://${PRIMARY_DOMAIN}/${PANEL_PATH#/}/diag")
+$([ -n "${DIAG_TOKEN:-}" ] && echo "Токен диагностики:     ${DIAG_TOKEN}")
 Логин администратора:   ${ADMIN_USERNAME:-admin}
 Пароль администратора:  ${ADMIN_PASSWORD}
 $([ -n "$INSTALLED_XRAY_VER" ] && echo "Ядро Xray-core:        ${INSTALLED_XRAY_VER}")

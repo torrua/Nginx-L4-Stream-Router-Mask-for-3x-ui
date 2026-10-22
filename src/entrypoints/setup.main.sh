@@ -31,6 +31,8 @@ SCRIPT_VERSION="__VERSION__"
 
 
 # @include "common/checkpoint.sh"
+# @include "common/lock.sh"
+# @include "common/download.sh"
 
 # @include "tui/base.sh"
 

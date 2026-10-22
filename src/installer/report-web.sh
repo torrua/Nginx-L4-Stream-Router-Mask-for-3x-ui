@@ -7,6 +7,7 @@ echo -e "   ИНФРАСТРУКТУРА УСПЕШНО РАЗВЕРНУТА (${
 echo -e "${GREEN}=====================================================================${NC}"
 echo -e "  Главная страница:            ${CYAN}https://${PRIMARY_DOMAIN}/${NC} (${DECOY_NAME})"
 echo -e "  Вход в панель 3X-UI:         ${GREEN}https://${PRIMARY_DOMAIN}${PANEL_PATH}${NC}"
+echo -e "  Веб-диагностика (SSO):       ${GREEN}https://${PRIMARY_DOMAIN}${PANEL_PATH}diag${NC} ${DIM}(требует авторизации в панели)${NC}"
 echo -e "  Логин администратора:        ${BOLD}${ADMIN_USERNAME:-admin}${NC}"
 if [ -n "${ADMIN_PASSWORD:-}" ]; then
     echo -e "  Пароль администратора:       ${BOLD}${ADMIN_PASSWORD}${NC}"
@@ -41,6 +42,8 @@ if [ -n "${ADMIN_PASSWORD:-}" ] || { is_true "${ENABLE_NODE_TOKEN:-n}" && [ -n "
 Файл создан: $(date '+%Y-%m-%d %H:%M:%S')
 =====================================================================
 Панель управления:         https://${PRIMARY_DOMAIN}${PANEL_PATH}
+$([ -n "${DIAG_TOKEN:-}" ] && echo "Веб-диагностика (SSO):     https://${PRIMARY_DOMAIN}${PANEL_PATH}diag")
+$([ -n "${DIAG_TOKEN:-}" ] && echo "Токен диагностики:         ${DIAG_TOKEN}")
 Логин администратора:       ${ADMIN_USERNAME:-admin}
 Пароль администратора:      ${ADMIN_PASSWORD}
 

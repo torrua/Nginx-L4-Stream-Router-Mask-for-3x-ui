@@ -1,4 +1,12 @@
-# Discover the closest saved configuration without renaming existing user files.
+# ==============================================================================
+# src/common/config.sh - Safe Configuration Loader & SSL Path Resolver (T13)
+# ==============================================================================
+# Treats configuration files strictly as structured data, forbidding eval/source
+# and command substitution $(...) or backticks to prevent arbitrary code execution.
+# ==============================================================================
+
+CONFIG_SCHEMA_VERSION=1
+
 is_true() {
     local val="${1:-0}"
     [[ "$val" == "1" || "${val,,}" == "y" || "${val,,}" == "true" ]]
@@ -6,7 +14,15 @@ is_true() {
 
 find_config_file() {
     local script_dir="${1:-.}" directory candidate
-    for directory in . "$script_dir" /etc /root; do
+    local dirs=()
+    if [ "${EUID:-$(id -u)}" -ne 0 ]; then
+        dirs=(. "$script_dir" /etc /root)
+    else
+        # When running as root, do not blindly load from arbitrary current working dir (T13.C09)
+        dirs=("$script_dir" /etc /root)
+    fi
+    for directory in "${dirs[@]}"; do
+        [ -d "$directory" ] || continue
         for candidate in "$directory/server-setup.env" "$directory/setup_mask.env"; do
             if [ -f "$candidate" ]; then
                 printf '%s\n' "$candidate"
@@ -15,6 +31,77 @@ find_config_file() {
         done
     done
     return 1
+}
+
+load_config_data_safe() {
+    local env_file="$1"
+    [ -f "$env_file" ] || return 1
+
+    # Security check: if running as root, reject world-writable config files (T13.C09)
+    if [ "${EUID:-$(id -u)}" -eq 0 ] && command -v stat >/dev/null 2>&1; then
+        local perms
+        perms=$(stat -c "%a" "$env_file" 2>/dev/null || stat -f "%Lp" "$env_file" 2>/dev/null || true)
+        if [[ "$perms" =~ [2367]$ ]]; then
+            echo "[ERROR] Security violation: $env_file is world-writable (mode $perms)! Refusing to load." >&2
+            return 1
+        fi
+    fi
+
+    local line_no=0
+    local re_dquote='^"(.*)"$'
+    local re_squote="^'(.*)'\$"
+    while IFS= read -r line || [ -n "$line" ]; do
+        line_no=$((line_no + 1))
+        line="${line%$'\r'}"
+        # Skip comments and empty lines
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "${line// }" ]] && continue
+
+        if [[ "$line" =~ ^[[:space:]]*export[[:space:]]+(.*)$ ]]; then
+            line="${BASH_REMATCH[1]}"
+        fi
+
+        if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+            local key="${BASH_REMATCH[1]}"
+            local val="${BASH_REMATCH[2]}"
+
+            # Handle quotes safely: single quotes preserve raw literal content without expansion (T13.C04)
+            if [[ "$val" =~ $re_squote ]]; then
+                val="${BASH_REMATCH[1]}"
+            elif [[ "$val" =~ $re_dquote ]]; then
+                val="${BASH_REMATCH[1]}"
+                # Reject command substitution $(...) or backticks (T13.C02, T13.C08)
+                if [[ "$val" == *'`'* || "$val" =~ \$\([^\)]*\) || "$val" =~ \$\(\( || "$val" =~ \$\{[^\}]*\} ]]; then
+                    echo "[ERROR] Unsafe executable syntax in $env_file line $line_no: command substitution forbidden!" >&2
+                    return 1
+                fi
+                val="${val//\\\"/\"}"
+                val="${val//\\\\/\\}"
+            else
+                # Unquoted: strip trailing comment if preceded by space
+                if [[ "$val" =~ ^(.*)[[:space:]]+#.*$ ]]; then
+                    val="${BASH_REMATCH[1]}"
+                fi
+                # Trim trailing whitespace
+                val="${val%"${val##*[![:space:]]}"}"
+
+                # Reject command substitution $(...) or backticks in unquoted values
+                if [[ "$val" == *'`'* || "$val" =~ \$\([^\)]*\) || "$val" =~ \$\(\( || "$val" =~ \$\{[^\}]*\} ]]; then
+                    echo "[ERROR] Unsafe executable syntax in $env_file line $line_no: command substitution forbidden!" >&2
+                    return 1
+                fi
+            fi
+
+            declare -g "$key=$val"
+            if declare -p CONFIG_EXPLICIT_KEYS >/dev/null 2>&1; then
+                CONFIG_EXPLICIT_KEYS["$key"]=1
+            fi
+        else
+            echo "[ERROR] Malformed syntax in $env_file line $line_no: '$line'" >&2
+            return 1
+        fi
+    done < "$env_file"
+    return 0
 }
 
 resolve_ssl_cert_paths() {

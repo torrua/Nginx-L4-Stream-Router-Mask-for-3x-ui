@@ -17,6 +17,7 @@ set -euo pipefail
 # @include "common/colors.sh"
 # @include "common/logger.sh"
 # @include "common/config.sh"
+# @include "common/lock.sh"
 # @include "panel/node-token.sh"
 # @include "common/backup.sh"
 # @include "common/spinner.sh"

@@ -120,6 +120,11 @@ run_installation() {
     inspect_port_conflicts
     build_installation_plan
     confirm_installation_plan
+    if [ "${CHECK_MODE:-0}" -ne 1 ] && [ "${DRY_RUN:-0}" -ne 1 ]; then
+        if command -v acquire_stack_lock >/dev/null 2>&1; then
+            acquire_stack_lock "${VPN_STACK_LOCK_TIMEOUT:-10}" "install" || exit $?
+        fi
+    fi
     save_session_state "${SAVED_CONFIG_FILE:-server-setup.env}"
     if command -v create_initial_state_snapshot >/dev/null 2>&1; then
         create_initial_state_snapshot || true

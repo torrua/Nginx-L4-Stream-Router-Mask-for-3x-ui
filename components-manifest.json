@@ -1,0 +1,107 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "manifest_version": "1.0.0",
+  "project": "Nginx-L4-Stream-Router-Mask-for-3x-ui",
+  "description": "Pinned, verified external component manifest for reproducible installation (T04, T05)",
+  "components": {
+    "shadow-tls": {
+      "version": "0.2.25",
+      "status": "stable",
+      "license": "MIT",
+      "upstream": "https://github.com/ihciah/shadow-tls",
+      "max_size_bytes": 15728640,
+      "artifacts": {
+        "x86_64": {
+          "url": "https://github.com/ihciah/shadow-tls/releases/download/v0.2.25/shadow-tls-x86_64-unknown-linux-musl",
+          "sha256": "4bdfa57db9e8bf69f10cb9fa3268846c4f3ce2d4a2a1ea9174112e432c25ea7a"
+        },
+        "aarch64": {
+          "url": "https://github.com/ihciah/shadow-tls/releases/download/v0.2.25/shadow-tls-aarch64-unknown-linux-musl",
+          "sha256": "81f211925b6a55543cbe24bc99015c90ec1ae62c3328e67ff8df82bb7da255ef"
+        }
+      }
+    },
+    "wstunnel": {
+      "version": "10.1.7",
+      "status": "stable",
+      "license": "BSD-3-Clause",
+      "upstream": "https://github.com/erebe/wstunnel",
+      "max_size_bytes": 26214400,
+      "artifacts": {
+        "x86_64": {
+          "url": "https://github.com/erebe/wstunnel/releases/download/v10.1.7/wstunnel_10.1.7_linux_amd64.tar.gz",
+          "sha256": "ca6d77e4cfcf6ce4b06f528a47ea37cb9a941fcddff4a9df315f6068e5ff4e6b"
+        },
+        "aarch64": {
+          "url": "https://github.com/erebe/wstunnel/releases/download/v10.1.7/wstunnel_10.1.7_linux_arm64.tar.gz",
+          "sha256": "7a353d2bf2cb4d3d81b24d7759ad4ba7eb04cf4c5478491d904ba6b44588df8e"
+        }
+      }
+    },
+    "sing-box": {
+      "version": "1.11.4",
+      "status": "stable",
+      "license": "GPL-3.0-or-later",
+      "upstream": "https://github.com/SagerNet/sing-box",
+      "max_size_bytes": 52428800,
+      "artifacts": {
+        "x86_64": {
+          "url": "https://github.com/SagerNet/sing-box/releases/download/v1.11.4/sing-box-1.11.4-linux-amd64.tar.gz",
+          "sha256": "6b2cbb4ee2cb36a32cb5e2f7b8d4bb9f8e434f3c7e497ecb822d4f20bf8a0db8"
+        },
+        "aarch64": {
+          "url": "https://github.com/SagerNet/sing-box/releases/download/v1.11.4/sing-box-1.11.4-linux-arm64.tar.gz",
+          "sha256": "9a01f68742b6c7314ec41be1aa7ee965ec3c457bc6a42247dc2bc89600a747ea"
+        }
+      },
+      "experimental": {
+        "version": "1.15.0-alpha.12",
+        "status": "alpha",
+        "description": "Next-gen MASQUE QUIC protocol support"
+      }
+    },
+    "zapret": {
+      "version": "70",
+      "status": "stable",
+      "license": "MIT",
+      "upstream": "https://github.com/bol-van/zapret",
+      "max_size_bytes": 20971520,
+      "artifacts": {
+        "all": {
+          "url": "https://github.com/bol-van/zapret/releases/download/v70/zapret-v70.tar.gz",
+          "sha256": "1517409c6ae9fa4513ec8b4bcf51e18b849cb19a57fb6bc12001358e5d3264c1"
+        }
+      }
+    },
+    "AdGuardHome": {
+      "version": "0.107.56",
+      "status": "stable",
+      "license": "GPL-3.0",
+      "upstream": "https://github.com/AdguardTeam/AdGuardHome",
+      "max_size_bytes": 41943040,
+      "artifacts": {
+        "x86_64": {
+          "url": "https://static.adguard.com/adguardhome/release/AdGuardHome_linux_amd64.tar.gz",
+          "sha256": "439265eb634ce5a87e02598380cf7bc51b0337d1d2b7c4a169fe5a1c3132e0c9"
+        },
+        "aarch64": {
+          "url": "https://static.adguard.com/adguardhome/release/AdGuardHome_linux_arm64.tar.gz",
+          "sha256": "c88f17a94ef933aa5a11dfbbf099ec16f28beae5c0bf323c21a19614457ee458"
+        }
+      }
+    },
+    "acme.sh": {
+      "version": "3.0.8",
+      "status": "stable",
+      "license": "GPL-3.0",
+      "upstream": "https://github.com/acmesh-official/acme.sh",
+      "max_size_bytes": 2097152,
+      "artifacts": {
+        "all": {
+          "url": "https://github.com/acmesh-official/acme.sh/archive/refs/tags/3.0.8.tar.gz",
+          "sha256": "bf4405d43899f8d16972e2762b9f67355030e20fb3ae7068565a0cbb02e53ef7"
+        }
+      }
+    }
+  }
+}

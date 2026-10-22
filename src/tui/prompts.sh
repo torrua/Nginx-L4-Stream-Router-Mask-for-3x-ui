@@ -1006,6 +1006,14 @@ while [[ $# -gt 0 ]]; do
             DEBUG_MODE=1
             shift
             ;;
+        --dry-run)
+            echo -e "\n  ${YELLOW}${BOLD}[INFO] Режим --dry-run не поддерживается установщиком setup.sh.${NC}"
+            echo -e "  Развертывание ОС и сетевого стека требует реальных изменений системы.\n"
+            echo -e "  ${CYAN}Для безопасного аудита без внесения изменений используйте:${NC}"
+            echo -e "    • ${WHITE}./setup.sh --check${NC}         (быстрая диагностика сервисов, портов, SSL)"
+            echo -e "    • ${WHITE}./maintain.sh --dry-run${NC}    (холостой аудит базы 3X-UI и конфигов Nginx)\n"
+            exit 0
+            ;;
         --uninstall)
             if command -v run_uninstall >/dev/null 2>&1; then
                 run_uninstall

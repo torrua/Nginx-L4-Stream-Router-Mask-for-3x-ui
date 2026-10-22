@@ -12,9 +12,9 @@
 | **TASK-01** | [Полноценная интеграция ссылок `vpn://` (Amnezia URI)](#task-01-полноценная-интеграция-ссылок-vpn-amnezia-uri) | **P1 (Критический)** | 🚀 **Внедрено** | `src/awg/`, `manage_clients.py`, `src/installer/` |
 | **TASK-02** | [Серверный Split-Routing для РФ (Банки, Госуслуги, VK мимо VPN)](#task-02-серверный-split-routing-для-рф-банки-госуслуги-vk-мимо-vpn) | **P1 (Критический)** | ⏳ Запланировано | `src/xray/routing.py`, `src/adguard/setup.sh` |
 | **TASK-03** | [Архитектура «Каскад» (RuVPS ➔ Зарубежный VPS)](#task-03-архитектура-каскад-ruvps--зарубежный-vps) | **P1 (Критический)** | ⏳ Запланировано | `compose/`, `manage-services.sh`, `src/installer/` |
-| **TASK-04** | [Селективный Cloudflare WARP Outbound (ChatGPT, Claude, анти-капча)](#task-04-селективный-cloudflare-warp-outbound-chatgpt-claude-анти-капча) | **P2 (Высокий)** | ⏳ Запланировано | `src/system/`, `src/xray/routing.py` |
+| **TASK-04** | [Селективный Cloudflare WARP Outbound (ChatGPT, Claude, анти-капча)](#task-04-селективный-cloudflare-warp-outbound-chatgpt-claude-анти-капча) | **P2 (Высокий)** | 🚀 **Внедрено** | `src/system/`, `src/xray/routing.py` |
 | **TASK-05** | [Экспорт и оптимизация для роутеров (KeeneticOS, OpenWrt / Podkop)](#task-05-экспорт-и-оптимизация-для-роутеров-keeneticos-openwrt--podkop) | **P2 (Высокий)** | ⏳ Запланировано | `src/awg/manage_clients.py` |
-| **TASK-06** | [ACME DNS-01 через Cloudflare API (SSL без порта 80 и Wildcard)](#task-06-acme-dns-01-через-cloudflare-api-ssl-без-порта-80-и-wildcard) | **P2 (Высокий)** | ⏳ Запланировано | `src/ssl/certs.sh` |
+| **TASK-06** | [ACME DNS-01 через Cloudflare API (SSL без порта 80 и Wildcard)](#task-06-acme-dns-01-через-cloudflare-api-ssl-без-порта-80-и-wildcard) | **P2 (Высокий)** | 🚀 **Внедрено** | `src/ssl/certs.sh` |
 | **TASK-07** | [Аварийный туннель Cloudflare Argo / CDN (Спасение при ковровом бане подсетей)](#task-07-аварийный-туннель-cloudflare-argo--cdn-спасение-при-ковровом-бане-подсетей) | **P3 (Средний)** | ⏳ Запланировано | `compose/`, `src/nginx/config.sh` |
 | **TASK-08** | [Легковесный Telegram-бот мониторинга и выдачи ключей](#task-08-легковесный-telegram-бот-мониторинга-и-выдачи-ключей) | **P3 (Средний)** | ⏳ Запланировано | `scripts/bot/`, `src/system/` |
 
@@ -76,6 +76,7 @@
 
 ### TASK-04: Селективный Cloudflare WARP Outbound (ChatGPT, Claude, анти-капча)
 * **Приоритет:** P2 (Высокий)
+* **Статус:** 🚀 **Внедрено** (`ENABLE_WARP=y`, автоматический роутинг AI-доменов через Cloudflare WARP)
 * **Контекст проблемы:**  
   Подсети популярных зарубежных хостингов (Hetzner, OVH, Scaleway, DigitalOcean) внесены в черные списки OpenAI (ChatGPT), Anthropic (Claude) и триггерят бесконечные капчи Cloudflare Turnstile.
 * **Техническое решение:**
@@ -106,6 +107,7 @@
 
 ### TASK-06: ACME DNS-01 через Cloudflare API (SSL без порта 80 и Wildcard)
 * **Приоритет:** P2 (Высокий)
+* **Статус:** 🚀 **Внедрено** (`SSL_ENGINE_CHOICE=2`, acme.sh + Cloudflare DNS-01 API)
 * **Контекст проблемы:**  
   Порт 80 часто блокируется хостинг-провайдерами, а при включенном проксировании Cloudflare (оранжевое облако) проверка HTTP-01 не проходит.
 * **Техническое решение:**

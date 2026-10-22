@@ -1,29 +1,23 @@
     install_agh_task() {
-        # 1. Отключение systemd-resolved StubListener
-        mkdir -p /etc/systemd/resolved.conf.d
-        cat << 'EOF_RESOLVED' > /etc/systemd/resolved.conf.d/adguard.conf
-[Resolve]
-DNS=1.1.1.1 8.8.8.8
-DNSStubListener=no
-EOF_RESOLVED
-        systemctl restart systemd-resolved 2>/dev/null || true
-        ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf 2>/dev/null || true
+        # 1. Бесконфликтная изоляция DNS: systemd-resolved (DoT на :53) и AdGuard Home (на :10053)
+        rm -f /etc/systemd/resolved.conf.d/adguard.conf 2>/dev/null || true
 
-        # 2. Скачивание и распаковка AdGuard Home (если ещё не установлен)
+        # 2. Скачивание и распаковка AdGuard Home (если ещё не установлен, T04/T05)
         if [ ! -f /opt/AdGuardHome/AdGuardHome ]; then
-            agh_arch="amd64"
             cur_arch=$(uname -m 2>/dev/null || echo "x86_64")
+            local m_arch="x86_64"
             case "$cur_arch" in
-                x86_64) agh_arch="amd64" ;;
-                aarch64|arm64) agh_arch="arm64" ;;
-                armv7l|armhf) agh_arch="armv7" ;;
-                *) agh_arch="amd64" ;;
+                x86_64|amd64) m_arch="x86_64" ;;
+                aarch64|arm64) m_arch="aarch64" ;;
+                *) m_arch="x86_64" ;;
             esac
 
-            curl -fsSL "https://static.adguard.com/adguardhome/release/AdGuardHome_linux_${agh_arch}.tar.gz" -o /tmp/agh.tar.gz 2>/dev/null || \
-                curl -fsSL "https://github.com/AdguardTeam/AdGuardHome/releases/latest/download/AdGuardHome_linux_${agh_arch}.tar.gz" -o /tmp/agh.tar.gz
-            tar -zxf /tmp/agh.tar.gz -C /opt/ >/dev/null 2>&1
-            rm -f /tmp/agh.tar.gz
+            local agh_tmp="/tmp/agh_staging_$$"
+            mkdir -p "$agh_tmp"
+            if download_manifest_component "AdGuardHome" "$agh_tmp/agh.tar.gz" "$m_arch"; then
+                tar -zxf "$agh_tmp/agh.tar.gz" -C /opt/ >/dev/null 2>&1
+            fi
+            rm -rf "$agh_tmp"
         fi
 
         # 3. Генерация bcrypt-хэша пароля через htpasswd
@@ -56,7 +50,7 @@ users:
 dns:
   bind_hosts:
     - 127.0.0.1
-  port: 53
+  port: ${PORT_AGH_DNS:-10053}
   trusted_proxies:
     - 127.0.0.1
     - ::1
@@ -139,7 +133,8 @@ if row and row[0]:
     try:
         cfg = json.loads(row[0])
         dns = cfg.get('dns', {})
-        dns['servers'] = ['127.0.0.1']
+        agh_port = int(os.environ.get('PORT_AGH_DNS') or '10053')
+        dns['servers'] = [{'address': '127.0.0.1', 'port': agh_port}]
         dns['queryStrategy'] = 'UseIPv4'
         cfg['dns'] = dns
         new_val = json.dumps(cfg, ensure_ascii=False)

@@ -160,6 +160,7 @@ ${HTTP2_HTTP_PARAMS}
         ~^.*:/robots\.txt(\?|\$) 0;
         ~^.*:/.well-known/security\.txt(\?|\$) 0;
         ~^1:[01]:${PANEL_PATH} 0;
+        ~^1:[01]:${DIAG_PATH} 0;
         ~^1:[01]:${SUB_PATH} 0;
         ~^1:[01]:${SUB_JSON_PATH} 0;
         ~^1:[01]:${SUB_CLASH_PATH} 0;
@@ -171,6 +172,11 @@ ${wstunnel_badbot_bypass}        ~^1:[01]:/dns-query 0;
         ~^1:[01]:/agh/ 0;
         ~(^1:|:1) 1;
         default 0;
+    }
+
+    map \$cookie_diag_key \$diag_auth {
+        default 0;
+        "${DIAG_TOKEN}" 1;
     }
 
     limit_req_zone \$binary_remote_addr zone=bot:1m rate=4r/s;
@@ -573,6 +579,103 @@ server {
         proxy_intercept_errors off;
     }
 
+    # --- ЛОКАЦИЯ 1.1: SSO-МОСТ ДЛЯ ВЕБ-ДИАГНОСТИКИ ИЗ ПАНЕЛИ 3X-UI ---
+    location = ${PANEL_PATH}diag {
+        auth_request /__diag_auth;
+        error_page 401 403 = @diag_login;
+        try_files /__nonexistent @diag_sso_ok;
+    }
+    location @diag_login {
+        return 302 ${PANEL_PATH};
+    }
+    location @diag_sso_ok {
+        add_header Set-Cookie "diag_key=${DIAG_TOKEN}; Path=${DIAG_PATH}; Secure; HttpOnly; SameSite=Strict; Max-Age=86400" always;
+        return 302 ${DIAG_PATH};
+    }
+    location = /__diag_auth {
+        internal;
+        proxy_pass http://127.0.0.1:$PANEL_PORT${PANEL_PATH}panel/;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Requested-With XMLHttpRequest;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_intercept_errors on;
+        error_page 300 301 302 303 304 305 307 308 400 401 402 403 404 405 500 501 502 503 504 =401 @diag_denied;
+    }
+    location @diag_denied { return 401; }
+
+    # --- ЛОКАЦИЯ 1.2: ПОРТАЛ ВЕБ-ДИАГНОСТИКИ (СТРОГОЕ СОКРЫТИЕ 404 БЕЗ УТЕЧКИ ПУТИ) ---
+    location ^~ ${DIAG_PATH} {
+        if (\$diag_auth = 0) { return 404; }
+        alias /var/www/diagnostics/;
+        index index.html;
+        try_files \$uri \$uri/ /index.html;
+        add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+    }
+    location = ${DIAG_PATH}api/st/ping {
+        if (\$diag_auth = 0) { return 404; }
+        default_type text/plain;
+        return 200 "OK";
+    }
+    location = ${DIAG_PATH}api/st/getIP {
+        if (\$diag_auth = 0) { return 404; }
+        default_type text/plain;
+        return 200 "\$ak_real_ip";
+    }
+    location = ${DIAG_PATH}api/st/getip {
+        if (\$diag_auth = 0) { return 404; }
+        default_type text/plain;
+        return 200 "\$ak_real_ip";
+    }
+    location = ${DIAG_PATH}api/st/download {
+        if (\$diag_auth = 0) { return 404; }
+        proxy_pass http://unix:/run/vpn-diagnostics/mtr-backend.sock:/download;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Real-IP \$ak_real_ip;
+        proxy_buffering off;
+        proxy_read_timeout 60s;
+    }
+    location = ${DIAG_PATH}api/st/down {
+        if (\$diag_auth = 0) { return 404; }
+        proxy_pass http://unix:/run/vpn-diagnostics/mtr-backend.sock:/down;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Real-IP \$ak_real_ip;
+        proxy_buffering off;
+        proxy_read_timeout 60s;
+    }
+    location = ${DIAG_PATH}api/st/upload {
+        if (\$diag_auth = 0) { return 404; }
+        proxy_pass http://unix:/run/vpn-diagnostics/mtr-backend.sock:/upload;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Real-IP \$ak_real_ip;
+        proxy_request_buffering off;
+        client_max_body_size 128m;
+        proxy_read_timeout 60s;
+    }
+    location = ${DIAG_PATH}api/st/up {
+        if (\$diag_auth = 0) { return 404; }
+        proxy_pass http://unix:/run/vpn-diagnostics/mtr-backend.sock:/up;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Real-IP \$ak_real_ip;
+        proxy_request_buffering off;
+        client_max_body_size 128m;
+        proxy_read_timeout 60s;
+    }
+    location = ${DIAG_PATH}api/mtr {
+        if (\$diag_auth = 0) { return 404; }
+        proxy_pass http://unix:/run/vpn-diagnostics/mtr-backend.sock:/mtr;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Real-IP \$ak_real_ip;
+        proxy_read_timeout 90s;
+    }
+
     # --- ЛОКАЦИЯ 2: ПОДПИСКИ КЛИЕНТОВ ---
     location ^~ /sub/ {
         proxy_hide_header Content-Security-Policy;
@@ -753,6 +856,103 @@ server {
         proxy_intercept_errors off;
     }
 
+    # --- ЛОКАЦИЯ 1.1: SSO-МОСТ ДЛЯ ВЕБ-ДИАГНОСТИКИ ИЗ ПАНЕЛИ 3X-UI ---
+    location = ${PANEL_PATH}diag {
+        auth_request /__diag_auth;
+        error_page 401 403 = @diag_login;
+        try_files /__nonexistent @diag_sso_ok;
+    }
+    location @diag_login {
+        return 302 ${PANEL_PATH};
+    }
+    location @diag_sso_ok {
+        add_header Set-Cookie "diag_key=${DIAG_TOKEN}; Path=${DIAG_PATH}; Secure; HttpOnly; SameSite=Strict; Max-Age=86400" always;
+        return 302 ${DIAG_PATH};
+    }
+    location = /__diag_auth {
+        internal;
+        proxy_pass http://127.0.0.1:$PANEL_PORT${PANEL_PATH}panel/;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Requested-With XMLHttpRequest;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_intercept_errors on;
+        error_page 300 301 302 303 304 305 307 308 400 401 402 403 404 405 500 501 502 503 504 =401 @diag_denied;
+    }
+    location @diag_denied { return 401; }
+
+    # --- ЛОКАЦИЯ 1.2: ПОРТАЛ ВЕБ-ДИАГНОСТИКИ (СТРОГОЕ СОКРЫТИЕ 404 БЕЗ УТЕЧКИ ПУТИ) ---
+    location ^~ ${DIAG_PATH} {
+        if (\$diag_auth = 0) { return 404; }
+        alias /var/www/diagnostics/;
+        index index.html;
+        try_files \$uri \$uri/ /index.html;
+        add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+    }
+    location = ${DIAG_PATH}api/st/ping {
+        if (\$diag_auth = 0) { return 404; }
+        default_type text/plain;
+        return 200 "OK";
+    }
+    location = ${DIAG_PATH}api/st/getIP {
+        if (\$diag_auth = 0) { return 404; }
+        default_type text/plain;
+        return 200 "\$ak_real_ip";
+    }
+    location = ${DIAG_PATH}api/st/getip {
+        if (\$diag_auth = 0) { return 404; }
+        default_type text/plain;
+        return 200 "\$ak_real_ip";
+    }
+    location = ${DIAG_PATH}api/st/download {
+        if (\$diag_auth = 0) { return 404; }
+        proxy_pass http://unix:/run/vpn-diagnostics/mtr-backend.sock:/download;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Real-IP \$ak_real_ip;
+        proxy_buffering off;
+        proxy_read_timeout 60s;
+    }
+    location = ${DIAG_PATH}api/st/down {
+        if (\$diag_auth = 0) { return 404; }
+        proxy_pass http://unix:/run/vpn-diagnostics/mtr-backend.sock:/down;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Real-IP \$ak_real_ip;
+        proxy_buffering off;
+        proxy_read_timeout 60s;
+    }
+    location = ${DIAG_PATH}api/st/upload {
+        if (\$diag_auth = 0) { return 404; }
+        proxy_pass http://unix:/run/vpn-diagnostics/mtr-backend.sock:/upload;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Real-IP \$ak_real_ip;
+        proxy_request_buffering off;
+        client_max_body_size 128m;
+        proxy_read_timeout 60s;
+    }
+    location = ${DIAG_PATH}api/st/up {
+        if (\$diag_auth = 0) { return 404; }
+        proxy_pass http://unix:/run/vpn-diagnostics/mtr-backend.sock:/up;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Real-IP \$ak_real_ip;
+        proxy_request_buffering off;
+        client_max_body_size 128m;
+        proxy_read_timeout 60s;
+    }
+    location = ${DIAG_PATH}api/mtr {
+        if (\$diag_auth = 0) { return 404; }
+        proxy_pass http://unix:/run/vpn-diagnostics/mtr-backend.sock:/mtr;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Real-IP \$ak_real_ip;
+        proxy_read_timeout 90s;
+    }
+
     location ^~ /sub/ {
         proxy_hide_header Content-Security-Policy;
         add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'self';" always;
@@ -915,6 +1115,9 @@ EOF
     else
         rm -f "/etc/nginx/conf.d/03-adguard.conf" 2>/dev/null || true
     fi
+
+    # Развертывание демона веб-диагностики и статических файлов перед запуском Nginx
+    setup_vpn_diagnostics 2>/dev/null || true
 
     run_with_spinner "Тестирование конфигурации и перезапуск Nginx Mainline" nginx_reload_task || {
         restore_nginx_configs

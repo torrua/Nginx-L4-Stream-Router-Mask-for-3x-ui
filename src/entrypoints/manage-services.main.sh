@@ -36,6 +36,7 @@ get_compose_cmd() {
 }
 
 # @include "common/secrets.sh"
+# @include "common/lock.sh"
 
 ensure_env() {
     if [ ! -f "$ENV_FILE" ]; then
@@ -363,12 +364,15 @@ case "${1:-status}" in
         cmd_status
         ;;
     up)
+        acquire_stack_lock "${VPN_STACK_LOCK_TIMEOUT:-10}" "manage-services-up" || exit $?
         cmd_up "${2:-}"
         ;;
     down)
+        acquire_stack_lock "${VPN_STACK_LOCK_TIMEOUT:-10}" "manage-services-down" || exit $?
         cmd_down "${2:-}"
         ;;
     restart)
+        acquire_stack_lock "${VPN_STACK_LOCK_TIMEOUT:-10}" "manage-services-restart" || exit $?
         cmd_restart "${2:-}"
         ;;
     logs)

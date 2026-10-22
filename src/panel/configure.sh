@@ -127,6 +127,11 @@ EOF_HELP
         esac
     done
 
+    # Захват блокировки для изменяющих операций (T07)
+    if [ "$DRY_RUN" -eq 0 ]; then
+        acquire_stack_lock "${VPN_STACK_LOCK_TIMEOUT:-10}" "configure-panel" || exit $?
+    fi
+
     # Поиск конфигурационного файла (.env)
     if [ -n "$CONFIG_FILE" ]; then
         if [ ! -f "$CONFIG_FILE" ]; then
@@ -143,10 +148,7 @@ EOF_HELP
 
     if [ -n "$CONFIG_FILE" ] && [ -f "$CONFIG_FILE" ]; then
         log "Загрузка параметров из $CONFIG_FILE..."
-        set -a
-        # shellcheck disable=SC1090
-        source "$CONFIG_FILE"
-        set +a
+        load_config_data_safe "$CONFIG_FILE" || die "Ошибка загрузки параметров из $CONFIG_FILE"
     fi
 
     # CLI-аргументы имеют наивысший приоритет над файлом конфигурации
@@ -166,6 +168,7 @@ EOF_HELP
     ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
     ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
     NODE_TOKEN_NAME="${NODE_TOKEN_NAME:-${SERVER_PREFIX}-Node}"
+    DIAG_TOKEN="${DIAG_TOKEN:-}"
 
     STEAL_PORT="${STEAL_PORT:-45443}"
     STEAL_SNI="${STEAL_SNI:-gateway.icloud.com}"
@@ -228,7 +231,8 @@ EOF_HELP
     BLOCK_SMTP="${BLOCK_SMTP:-true}"
     BLOCK_LAN="${BLOCK_LAN:-true}"
     ENABLE_AGH="${ENABLE_AGH:-n}"
-    AGH_XRAY_DNS="${AGH_XRAY_DNS:-127.0.0.1:53}"
+    PORT_AGH_DNS="${PORT_AGH_DNS:-10053}"
+    AGH_XRAY_DNS="${AGH_XRAY_DNS:-127.0.0.1:10053}"
 
     HAS_NGINX=0
     if command -v nginx >/dev/null 2>&1 && [ -d /etc/nginx ]; then
@@ -404,6 +408,7 @@ EOF_HELP
     export WEB_LISTEN
     export SUB_LISTEN
     export ENABLE_AGH
+    export PORT_AGH_DNS
     export AGH_XRAY_DNS
     export FORCE_REMARKS
 
@@ -413,6 +418,7 @@ EOF_HELP
         if [ "${WAS_ACTIVE:-0}" -eq 1 ]; then
             systemctl start x-ui 2>/dev/null || true
         fi
+        command -v release_stack_lock >/dev/null 2>&1 && release_stack_lock
     }
     trap cleanup_xui EXIT
 
@@ -698,7 +704,9 @@ EOF_CLEAN_JSON
 УЧЕТНЫЕ ДАННЫЕ ПАНЕЛИ И СЕРВИСОВ 3X-UI
 Файл обновлен: $(date '+%Y-%m-%d %H:%M:%S')
 =====================================================================
-Панель управления:     https://${PRIMARY_DOMAIN}/${PANEL_PATH}/
+Панель управления:     https://${PRIMARY_DOMAIN}/${PANEL_PATH#/}/
+$([ -n "${DIAG_TOKEN:-}" ] && echo "Веб-диагностика (SSO): https://${PRIMARY_DOMAIN}/${PANEL_PATH#/}/diag")
+$([ -n "${DIAG_TOKEN:-}" ] && echo "Токен диагностики:     ${DIAG_TOKEN}")
 Логин администратора:   ${ADMIN_USERNAME:-admin}
 Пароль администратора:  ${ADMIN_PASSWORD}
 $([ -n "$INSTALLED_XRAY_VER" ] && echo "Ядро Xray-core:        ${INSTALLED_XRAY_VER}")

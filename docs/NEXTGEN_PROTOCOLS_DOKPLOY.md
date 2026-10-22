@@ -35,6 +35,8 @@
 | **NaïveProxy (Caddy)** | TCP/UDP `8446` | Сетевой стек Chromium (Google Chrome) | **Абсолютная**: `probe_resistance` отдает статический сайт без заголовков прокси | Высокая (HTTP/2 / HTTP/3 fallback) | 100% (DNS-01 ACME без портов 80/443) |
 | **Server-Side Zapret** | L3/L4 NFQUEUE | Десинхронизация DPI в первые 6 пакетов (`split2`, `md5sig`) | Прозрачная подмена TCP-сегментов для ТСПУ | Высокая для TCP-потоков | 100% (работает на уровне iptables mangle) |
 | **Wstunnel over Dokploy** | TCP `443` (WebSocket HTTPS) | Легитимный веб-трафик Dokploy Traefik | **Абсолютная**: трафик неотличим от обычных WebSockets | **100%**: туннелирует WireGuard/AWG внутри TCP/443 | **Нативная** (управляется Traefik) |
+| **Mieru Proxy** | TCP/UDP `8450` (или `8450-8455`) | Симметричный шифр XChaCha20-Poly1305 без TLS | **Абсолютная**: аутентификация пакетов до рукопожатия, защита от replay-атак | **100%**: полноценная поддержка TCP и UDP | 100% (независимые порты) |
+| **DNSTT (DoH DNS Tunnel)** | UDP/DoH `53053` | Инкапсуляция TCP/UDP в DNS-запросы | Защита криптографией Noise Protocol | **100%**: пробивает жесткие белые списки | 100% (независимый порт) |
 
 ---
 

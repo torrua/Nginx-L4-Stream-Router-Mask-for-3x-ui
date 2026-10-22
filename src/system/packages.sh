@@ -39,6 +39,7 @@ install_prerequisites() {
         [cron]="cron"
         [ufw]="ufw"
         [python3]="python3"
+        [mtr]="mtr-tiny"
     )
     for cmd in "${!pkg_map[@]}"; do
         if ! command -v "$cmd" >/dev/null 2>&1; then

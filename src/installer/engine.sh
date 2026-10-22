@@ -24,6 +24,12 @@ install_step_security() {
             run_with_spinner "Установка и настройка службы Fail2ban" apply_fail2ban_configuration "$local_target_ssh" "$local_active_ssh" || die "Не удалось настроить Fail2ban."
         fi
     fi
+
+    # Настройка Strict DNS-over-TLS для системного резолвера ОС
+    run_with_spinner "Настройка Strict DNS-over-TLS (systemd-resolved)" setup_strict_dot_dns || warn "Не удалось настроить systemd-resolved DoT."
+
+    # Настройка автоматических ночных обновлений безопасности (ребут в 04:38)
+    run_with_spinner "Настройка автоматических обновлений (unattended-upgrades)" setup_unattended_upgrades || warn "Не удалось настроить unattended-upgrades."
 }
 
 # @include "installer/web.sh"

@@ -13,11 +13,9 @@ setup_zapret_service() {
     [ -d "$bin_dir" ] || mkdir -p "$bin_dir" 2>/dev/null || true
 
     if [ ! -x "${bin_dir}/nfqws" ]; then
-        local z_ver="${ZAPRET_VERSION:-v69.2}"
-        local z_tmp="/tmp/zapret_${z_ver}"
+        local z_tmp="/tmp/zapret_staging_$$"
         mkdir -p "$z_tmp"
-        if curl -fsSL --connect-timeout 15 "https://github.com/bol-van/zapret/releases/download/${z_ver}/zapret-${z_ver}.tar.gz" -o "$z_tmp/zapret.tar.gz" 2>/dev/null || \
-           curl -fsSL --connect-timeout 15 "https://ghfast.top/https://github.com/bol-van/zapret/releases/download/${z_ver}/zapret-${z_ver}.tar.gz" -o "$z_tmp/zapret.tar.gz" 2>/dev/null; then
+        if download_manifest_component "zapret" "$z_tmp/zapret.tar.gz" "all"; then
             tar -zxf "$z_tmp/zapret.tar.gz" -C "$z_tmp" --strip-components=1 2>/dev/null || true
             if [ -f "$z_tmp/binaries/${z_arch}/nfqws" ]; then
                 cp "$z_tmp/binaries/${z_arch}/nfqws" "${bin_dir}/nfqws"
@@ -227,8 +225,7 @@ setup_shadowtls_service() {
     [ -d "$bin_dir" ] || mkdir -p "$bin_dir" 2>/dev/null || true
 
     if [ ! -x "${bin_dir}/shadow-tls" ]; then
-        if curl -fsSL --connect-timeout 15 "https://github.com/ihciah/shadow-tls/releases/latest/download/shadow-tls-${st_arch}-unknown-linux-musl" -o "${bin_dir}/shadow-tls" 2>/dev/null || \
-           curl -fsSL --connect-timeout 15 "https://ghfast.top/https://github.com/ihciah/shadow-tls/releases/latest/download/shadow-tls-${st_arch}-unknown-linux-musl" -o "${bin_dir}/shadow-tls" 2>/dev/null; then
+        if download_manifest_component "shadow-tls" "${bin_dir}/shadow-tls" "$st_arch"; then
             chmod +x "${bin_dir}/shadow-tls"
         fi
     fi
@@ -282,12 +279,10 @@ setup_wstunnel_service() {
     [ -d "$bin_dir" ] || mkdir -p "$bin_dir" 2>/dev/null || true
 
     if [ ! -x "${bin_dir}/wstunnel" ]; then
-        local ws_ver="11.0.0"
-        local ws_tmp="/tmp/wstunnel_${ws_ver}"
+        local ws_tmp="/tmp/wstunnel_staging_$$"
         mkdir -p "$ws_tmp"
-        if curl -fsSL --connect-timeout 15 "https://github.com/erebe/wstunnel/releases/download/v${ws_ver}/wstunnel_${ws_ver}_linux_${ws_arch}.tar.gz" -o "$ws_tmp/ws.tar.gz" 2>/dev/null || \
-           curl -fsSL --connect-timeout 15 "https://ghfast.top/https://github.com/erebe/wstunnel/releases/download/v${ws_ver}/wstunnel_${ws_ver}_linux_${ws_arch}.tar.gz" -o "$ws_tmp/ws.tar.gz" 2>/dev/null; then
-            tar -zxf "$ws_tmp/ws.tar.gz" -C "$ws_tmp" 2>/dev/null || true
+        if download_manifest_component "wstunnel" "$ws_tmp/wstunnel.tar.gz" "$ws_arch"; then
+            tar -zxf "$ws_tmp/wstunnel.tar.gz" -C "$ws_tmp" 2>/dev/null || true
             if [ -f "$ws_tmp/wstunnel" ]; then
                 cp "$ws_tmp/wstunnel" "${bin_dir}/wstunnel"
                 chmod +x "${bin_dir}/wstunnel"

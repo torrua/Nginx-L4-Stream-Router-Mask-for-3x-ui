@@ -489,11 +489,13 @@ else:
 enable_agh = os.environ.get("ENABLE_AGH", "").lower() in ("1", "y", "true")
 agh_xray_dns = os.environ.get("AGH_XRAY_DNS", "").lower() in ("1", "y", "true")
 if enable_agh and agh_xray_dns:
-    if dns_cfg.get("servers") != ["127.0.0.1"]:
-        dns_cfg["servers"] = ["127.0.0.1"]
-        print("  [ОБНОВЛЕН] DNS servers: зафиксирован '127.0.0.1' (AdGuard Home локальный фильтр).")
+    agh_dns_port = int(os.environ.get("PORT_AGH_DNS") or "10053")
+    target_servers = [{"address": "127.0.0.1", "port": agh_dns_port}]
+    if dns_cfg.get("servers") != target_servers:
+        dns_cfg["servers"] = target_servers
+        print(f"  [ОБНОВЛЕН] DNS servers: зафиксирован '127.0.0.1:{agh_dns_port}' (AdGuard Home локальный фильтр).")
     else:
-        print("  [В ПОРЯДКЕ] DNS servers: '127.0.0.1' (AdGuard Home).")
+        print(f"  [В ПОРЯДКЕ] DNS servers: '127.0.0.1:{agh_dns_port}' (AdGuard Home).")
 tpl["dns"] = dns_cfg
 
 # 2. Логирование (тихий безопасный режим, без записи посещаемых URL)

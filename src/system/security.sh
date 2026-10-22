@@ -277,10 +277,22 @@ while true; do
         exit 0
     fi
 
-    # Ищем установленное внешнее соединение на целевой порт
-    EST=$(ss -tn sport = ":${TARGET_PORT}" state established 2>/dev/null | grep -vE '127\.0\.0\.1|::1|Local Address' | wc -l)
-    if [ "$EST" -gt 0 ]; then
-        logger -t ssh-watcher "Обнаружено успешное подключение на порт $TARGET_PORT! Финализация перехода и закрытие порта $ACTIVE_PORT..."
+    # Проверяем подтвержденную аутентифицированную сессию на целевом порту (T17.C06)
+    # TCP ESTABLISHED, проверка локального listener и попытка входа без авторизации НЕ считаются успешным входом.
+    AUTH_OK=0
+    if command -v journalctl >/dev/null 2>&1; then
+        if journalctl -u ssh -u sshd --since "@${START_TIME}" 2>/dev/null | grep -qE "Accepted (publickey|password|keyboard-interactive) for .* port ${TARGET_PORT}"; then
+            AUTH_OK=1
+        fi
+    fi
+    if [ "$AUTH_OK" -eq 0 ] && [ -f /var/log/auth.log ]; then
+        if grep -qE "Accepted (publickey|password|keyboard-interactive) for .* port ${TARGET_PORT}" /var/log/auth.log 2>/dev/null; then
+            AUTH_OK=1
+        fi
+    fi
+
+    if [ "$AUTH_OK" -eq 1 ]; then
+        logger -t ssh-watcher "Обнаружена подтвержденная аутентифицированная сессия на порт $TARGET_PORT! Финализация перехода и закрытие порта $ACTIVE_PORT..."
 
         # 1. Удаляем старый порт из drop-in sshd
         if [ -f /etc/ssh/sshd_config.d/99-hardening.conf ]; then
@@ -475,25 +487,38 @@ apply_fail2ban_configuration() {
         return 1
     fi
 
-    # 2. Формируем список защищаемых портов (и активный, и целевой)
-    local port_str="${active_port}"
-    if [ "$target_port" -ne "$active_port" ]; then
-        port_str="${active_port},${target_port}"
+    # 2. Формируем список защищаемых портов (и активный, и целевой, и сокет)
+    local ports_set=()
+    [ -n "$active_port" ] && ports_set+=("$active_port")
+    [ -n "$target_port" ] && [ "$target_port" != "$active_port" ] && ports_set+=("$target_port")
+
+    # Проверка фактических слушающих портов SSH
+    if command -v sshd >/dev/null 2>&1; then
+        local detected_p
+        detected_p=$(sshd -T 2>/dev/null | awk '/^port / {print $2}' || true)
+        if [ -n "$detected_p" ] && [[ ! " ${ports_set[*]} " =~ " ${detected_p} " ]]; then
+            ports_set+=("$detected_p")
+        fi
     fi
 
-    mkdir -p /etc/fail2ban
-    cat << EOF > /etc/fail2ban/jail.local
+    local port_str
+    port_str=$(IFS=,; echo "${ports_set[*]}")
+    [ -z "$port_str" ] && port_str="22"
+
+    mkdir -p /etc/fail2ban/jail.d 2>/dev/null || true
+    cat << EOF > /etc/fail2ban/jail.d/90-ssh-shield.local
 [DEFAULT]
 bantime = 1h
 findtime = 10m
 maxretry = 5
 backend = systemd
+banaction = ufw
 
 [sshd]
 enabled = true
 port = ${port_str}
 EOF
-    chmod 644 /etc/fail2ban/jail.local 2>/dev/null || true
+    chmod 644 /etc/fail2ban/jail.d/90-ssh-shield.local 2>/dev/null || true
 
     # 3. Активация и запуск службы
     systemctl enable fail2ban >/dev/null 2>&1 || true
@@ -506,4 +531,122 @@ EOF
         return 1
     fi
     return 0
+}
+
+setup_strict_dot_dns() {
+    log "Настройка защищенного системного резолвера Strict DNS-over-TLS (systemd-resolved)..."
+    if ! command -v systemctl >/dev/null 2>&1; then
+        return 0
+    fi
+
+    mkdir -p /etc/systemd/resolved.conf.d 2>/dev/null || true
+    cat << 'EOF_RESOLVED' > /etc/systemd/resolved.conf.d/00-strict-dot.conf
+[Resolve]
+DNS=1.1.1.1#cloudflare-dns.com 1.0.0.1#cloudflare-dns.com 8.8.8.8#dns.google 8.8.4.4#dns.google 9.9.9.9#dns.quad9.net
+FallbackDNS=1.1.1.1 8.8.8.8
+DNSOverTLS=yes
+DNSSEC=allow-downgrade
+Cache=yes
+DNSStubListener=yes
+MulticastDNS=no
+LLMNR=no
+EOF_RESOLVED
+    chmod 644 /etc/systemd/resolved.conf.d/00-strict-dot.conf 2>/dev/null || true
+
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable systemd-resolved >/dev/null 2>&1 || true
+    systemctl restart systemd-resolved 2>/dev/null || true
+
+    if [ -L /etc/resolv.conf ] || [ -f /etc/resolv.conf ]; then
+        ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf 2>/dev/null || true
+    fi
+    ok "Strict DNS-over-TLS (systemd-resolved, порт 853 TLS) активирован."
+}
+
+setup_unattended_upgrades() {
+    log "Настройка автоматических обновлений безопасности (unattended-upgrades)..."
+    if ! command -v apt-get >/dev/null 2>&1; then
+        return 0
+    fi
+
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -y >/dev/null 2>&1 || true
+    apt-get install -y -q unattended-upgrades update-notifier-common >/dev/null 2>&1 || true
+
+    mkdir -p /etc/apt/apt.conf.d 2>/dev/null || true
+    cat << 'EOF_UPG' > /etc/apt/apt.conf.d/50unattended-upgrades
+Unattended-Upgrade::Allowed-Origins {
+    "${distro_id}:${distro_codename}-security";
+    "${distro_id}ESMApps:${distro_codename}-apps-security";
+    "${distro_id}ESM:${distro_codename}-infra-security";
+};
+Unattended-Upgrade::Package-Blacklist {
+};
+Unattended-Upgrade::AutoFixInterruptedDpkg "true";
+Unattended-Upgrade::MinimalSteps "true";
+Unattended-Upgrade::InstallOnShutdown "false";
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+Unattended-Upgrade::Automatic-Reboot "true";
+Unattended-Upgrade::Automatic-Reboot-WithUsers "true";
+Unattended-Upgrade::Automatic-Reboot-Time "04:38";
+EOF_UPG
+
+    cat << 'EOF_AUTOS' > /etc/apt/apt.conf.d/20auto-upgrades
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";
+EOF_AUTOS
+
+    systemctl restart unattended-upgrades 2>/dev/null || true
+    ok "Автоматические ночные обновления безопасности настроены (ребут при необходимости в 04:38)."
+}
+
+setup_vpn_diagnostics() {
+    log "Развертывание веб-портала диагностики и демона MTR..."
+    local diag_dir="/var/www/diagnostics"
+    local bin_dir="/usr/local/lib/vpn-diagnostics"
+    local svc_file="/etc/systemd/system/vpn-diagnostics.service"
+
+    mkdir -p "$diag_dir" "$bin_dir" 2>/dev/null || true
+
+    local src_diag="${SCRIPT_DIR:-.}/diagnostics"
+    if [ ! -d "$src_diag" ]; then
+        for cand in ./diagnostics /root/diagnostics; do
+            if [ -d "$cand" ]; then
+                src_diag="$cand"
+                break
+            fi
+        done
+    fi
+
+    if [ -d "$src_diag" ]; then
+        cp -a "$src_diag/index.html" "$diag_dir/" 2>/dev/null || true
+        cp -a "$src_diag/speedtest.js" "$diag_dir/" 2>/dev/null || true
+        cp -a "$src_diag/speedtest_worker.js" "$diag_dir/" 2>/dev/null || true
+        cp -a "$src_diag/mtr-backend.py" "$bin_dir/" 2>/dev/null || true
+        cp -a "$src_diag/vpn-diagnostics.service" "$svc_file" 2>/dev/null || true
+    fi
+
+    # Гарантируем наличие утилиты mtr для бэкенда диагностики
+    if ! command -v mtr >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+        apt-get install -y -qq mtr-tiny >/dev/null 2>&1 || true
+    fi
+
+    # Назначение прав
+    chown -R www-data:www-data "$diag_dir" 2>/dev/null || chown -R nginx:nginx "$diag_dir" 2>/dev/null || true
+    chmod -R 755 "$diag_dir" 2>/dev/null || true
+    chmod 755 "$bin_dir/mtr-backend.py" 2>/dev/null || true
+
+    if command -v systemctl >/dev/null 2>&1 && [ -f "$svc_file" ]; then
+        systemctl daemon-reload 2>/dev/null || true
+        systemctl enable vpn-diagnostics >/dev/null 2>&1 || true
+        systemctl restart vpn-diagnostics 2>/dev/null || true
+        if systemctl is-active --quiet vpn-diagnostics; then
+            ok "Служба vpn-diagnostics запущена на сокете /run/vpn-diagnostics/mtr-backend.sock."
+        else
+            warn "Служба vpn-diagnostics не смогла запуститься."
+        fi
+    fi
 }

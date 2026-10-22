@@ -122,6 +122,56 @@ printf '\\n'
     def test_utf8_menu_is_not_cut_between_bytes_under_c_locale(self):
         self.assert_selection(self.menu("\n", enabled=1, columns=44, locale="C"), set())
 
+    def single_menu(self, keys, *, default="firefox", capable=True, initial="firefox"):
+        with tempfile.TemporaryDirectory() as temp:
+            work = Path(temp)
+            source = (ROOT / "src/tui/prompts.sh").read_text(encoding="utf-8")
+            source = source.split("# ----------------- Обработка аргументов командной строки", 1)[0]
+            source = source.replace("/dev/tty", (work / "no-controlling-terminal").as_posix())
+            script = work / "single_menu.sh"
+            prelude = """export PATH=/usr/bin:/bin:$PATH
+set -euo pipefail
+source src/common/colors.sh
+ok() { :; }
+log() { :; }
+warn() { printf '%s\n' "$*" >&2; }
+NON_INTERACTIVE=0
+WIZARD_ALLOW_BACK=0
+COLUMNS=80
+"""
+            setup = "\ncan_use_interactive_tui() { return " + ("0" if capable else "1") + "; }\n"
+            setup += "fp_keys=(firefox chrome safari ios android edge randomized)\n"
+            setup += "fp_labels=(Firefox Chrome Safari iOS Android Edge Random)\n"
+            setup += f'REALITY_FINGERPRINT="{initial}"\n'
+            setup += f'status=0\nprompt_select "Select Fingerprint" REALITY_FINGERPRINT "{default}" fp_keys fp_labels || status=$?\n'
+            setup += 'printf "\nRESULT=%s:%s\n" "$status" "$REALITY_FINGERPRINT"\n'
+            script.write_text(prelude + source + setup, encoding="utf-8", newline="\n")
+            env = os.environ.copy()
+            env["TERM"] = "xterm-256color"
+            result = subprocess.run([str(BASH), script.as_posix()], input=keys.encode("utf-8"), cwd=ROOT, env=env,
+                                    capture_output=True, timeout=15)
+            try:
+                result.stdout = result.stdout.decode("utf-8")
+            except UnicodeDecodeError:
+                result.stdout = result.stdout.decode("utf-8", "replace")
+            return result
+
+    def test_single_select_tui_enter_default(self):
+        res = self.single_menu("\n", default="firefox", capable=True)
+        self.assertIn("RESULT=0:firefox", res.stdout)
+
+    def test_single_select_tui_arrow_down(self):
+        res = self.single_menu("\x1b[B\n", default="firefox", capable=True)
+        self.assertIn("RESULT=0:chrome", res.stdout)
+
+    def test_single_select_numeric_fallback(self):
+        res = self.single_menu("?3\n", default="firefox", capable=True)
+        self.assertIn("RESULT=0:safari", res.stdout)
+
+    def test_single_select_non_tui_numeric(self):
+        res = self.single_menu("2\n", default="firefox", capable=False)
+        self.assertIn("RESULT=0:chrome", res.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

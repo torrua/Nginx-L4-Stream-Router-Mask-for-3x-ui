@@ -18,7 +18,7 @@
   - Синхронизация записей таблицы `hosts` в SQLite БД 3X-UI с флагом `shuffle_host = 1` для рандомизации и клиентской балансировки через подписку (поддержка схем `snake_case` и `camelCase`).
 - **Настраиваемый профиль uTLS Fingerprint (`REALITY_FINGERPRINT`):**
   - Возможность выбора профиля маскировки TLS (`chrome`, `firefox`, `safari`, `ios`, `android`, `edge`, `360`, `qq`, `random`, `randomized`; по умолчанию `firefox`).
-  - Интерактивный запрос uTLS Fingerprint в TUI-визарде (`wizard.sh`) в экспертном режиме.
+  - Интерактивный TUI-выбор в визарде (`wizard.sh`) через новый универсальный компонент `prompt_select` (стрелки `↑`/`↓`, `Enter`, цифры `1`..`N` и автоматический фоллбек).
   - Подстановка в `realitySettings.settings.fingerprint`, `externalProxy` и колонку `fingerprint` таблицы `hosts`.
 - **Автоматическая реконсиляция пула и fingerprint (`src/xray/inbounds.py`):**
   - `smart_reconcile_inbound` обнаруживает изменения пула доменов и fingerprint, автоматически обновляя конфигурацию Xray и узлы `externalProxy` в базе данных.

@@ -3496,6 +3496,251 @@ prompt_multiselect() {
     fi
 }
 
+prompt_select_numeric() {
+    local prompt_text="$1"
+    local var_name="$2"
+    local default_val="$3"
+    local -n _s_keys="$4"
+    local -n _s_labels="$5"
+    local count="${#_s_keys[@]}"
+
+    local cur_val="${!var_name:-$default_val}"
+    local def_idx=1
+    for ((i=0; i<count; i++)); do
+        if [ "${_s_keys[$i]}" = "$cur_val" ]; then
+            def_idx=$((i+1))
+            break
+        fi
+    done
+
+    echo ""
+    echo -e "  ${WHITE}${BOLD}${prompt_text}:${NC}"
+    echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}"
+
+    local num_width="${#count}"
+    for ((i=0; i<count; i++)); do
+        local num=$((i+1))
+        local mark=" "
+        [ "$num" -eq "$def_idx" ] && mark="${GREEN}✔${NC}"
+        printf "  [%*s] [%b] %-14s ${DIM}%s${NC}\n" "$num_width" "$num" "$mark" "${_s_keys[$i]}" "${_s_labels[$i]}"
+    done
+
+    local prompt_hint=" [${GREEN}${def_idx}${NC}]"
+    if [ "${WIZARD_ALLOW_BACK:-0}" -eq 1 ]; then
+        prompt_hint="${prompt_hint} ${DIM}(b - назад)${NC}"
+    fi
+
+    while true; do
+        local input=""
+        echo -ne "  ${WHITE}${ARROW} Выберите номер (1-${count})${prompt_hint}: ${NC}"
+        read -r input </dev/tty || read -r input || true
+
+        if [ "${WIZARD_ALLOW_BACK:-0}" -eq 1 ]; then
+            if [[ "${input,,}" == "b" || "${input,,}" == "back" || "${input,,}" == "назад" ]]; then
+                return 10
+            fi
+        fi
+
+        [ -z "$input" ] && input="$def_idx"
+
+        if [[ "$input" =~ ^[0-9]+$ ]] && [ "$input" -ge 1 ] && [ "$input" -le "$count" ]; then
+            local chosen_idx=$((input - 1))
+            local chosen_val="${_s_keys[$chosen_idx]}"
+            printf -v "$var_name" '%s' "$chosen_val"
+            declare -g "$var_name=$chosen_val" 2>/dev/null || true
+            ok "Выбрано: ${GREEN}${chosen_val}${NC} (${_s_labels[$chosen_idx]})"
+            echo ""
+            return 0
+        fi
+
+        local raw_input="${input,,}"
+        for ((i=0; i<count; i++)); do
+            if [ "${_s_keys[$i],,}" = "$raw_input" ]; then
+                local chosen_val="${_s_keys[$i]}"
+                printf -v "$var_name" '%s' "$chosen_val"
+                declare -g "$var_name=$chosen_val" 2>/dev/null || true
+                ok "Выбрано: ${GREEN}${chosen_val}${NC} (${_s_labels[$i]})"
+                echo ""
+                return 0
+            fi
+        done
+
+        warn "Некорректный выбор: '$input'. Введите число от 1 до $count."
+    done
+}
+
+prompt_select_tui() {
+    local LC_ALL=C.UTF-8
+    local prompt_text="$1"
+    local var_name="$2"
+    local default_val="$3"
+    local -n _tui_s_keys="$4"
+    local -n _tui_s_labels="$5"
+    local count="${#_tui_s_keys[@]}"
+
+    local cur_val="${!var_name:-$default_val}"
+    local cursor=0
+    for ((i=0; i<count; i++)); do
+        if [ "${_tui_s_keys[$i]}" = "$cur_val" ]; then
+            cursor=$i
+            break
+        fi
+    done
+
+    echo ""
+    echo -e "  ${WHITE}${BOLD}${prompt_text}:${NC}"
+    echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}"
+
+    local total_lines=$((count + 1))
+
+    local input_fd tty_settings=""
+    if { exec {input_fd}</dev/tty; } 2>/dev/null; then
+        :
+    else
+        exec {input_fd}<&0
+    fi
+    if [ -t "$input_fd" ]; then
+        tty_settings=$(stty -g <&"$input_fd" 2>/dev/null) || tty_settings=""
+        if [ -n "$tty_settings" ]; then
+            stty -echo -icanon min 1 time 0 <&"$input_fd" 2>/dev/null || true
+        fi
+    fi
+    local saved_int_trap saved_term_trap
+    saved_int_trap=$(trap -p INT)
+    saved_term_trap=$(trap -p TERM)
+    tput civis 2>/dev/null || printf '\033[?25l'
+    trap '[ -z "${tty_settings:-}" ] || stty "$tty_settings" <&"$input_fd" 2>/dev/null; tput cnorm 2>/dev/null || printf "\033[?25h"; exit 130' INT
+    trap '[ -z "${tty_settings:-}" ] || stty "$tty_settings" <&"$input_fd" 2>/dev/null; tput cnorm 2>/dev/null || printf "\033[?25h"; exit 143' TERM
+
+    render_select_menu() {
+        local cols="${COLUMNS:-}"
+        if [[ ! "$cols" =~ ^[0-9]+$ ]]; then
+            cols=$(tput cols 2>/dev/null || echo 80)
+        fi
+        [[ "$cols" =~ ^[0-9]+$ ]] && [ "$cols" -ge 20 ] || cols=80
+        local num_width="${#count}"
+        local i
+        for ((i=0; i<count; i++)); do
+            local mark=" "
+            local prefix="  "
+            local color="${WHITE}"
+            if [ "$i" -eq "$cursor" ]; then
+                prefix="${CYAN}${ARROW}${NC} "
+                color="${CYAN}${BOLD}"
+                mark="${GREEN}✔${NC}"
+            fi
+            local num=$((i+1))
+            local key_display="${_tui_s_keys[$i]}"
+            local label_display="${_tui_s_labels[$i]}"
+            printf "\033[2K  %b[${color}%*s${NC}] [%b] %-14s ${DIM}%s${NC}\n" "$prefix" "$num_width" "$num" "$mark" "$key_display" "$label_display"
+        done
+        local hint="↑/↓: курсор | Enter/Пробел: выбрать | ?: номера"
+        printf "\033[2K  ${DIM}%s${NC}\n" "${hint:0:cols-3}"
+    }
+
+    render_select_menu
+
+    local result=0 numeric_fallback=0 escape=""
+    while true; do
+        local key=""
+        if ! IFS= read -rsn1 -u "$input_fd" key; then
+            result=1
+            break
+        fi
+
+        if [ "$key" = $'\033' ]; then
+            local rest=""
+            read -rsn2 -t 0.1 -u "$input_fd" rest || true
+            key="${key}${rest}"
+            case "$key" in
+                $'\033[A'|$'\033OA')
+                    cursor=$(( (cursor - 1 + count) % count ))
+                    ;;
+                $'\033[B'|$'\033OB')
+                    cursor=$(( (cursor + 1) % count ))
+                    ;;
+                $'\033[H'|$'\033[1~')
+                    cursor=0
+                    ;;
+                $'\033[F'|$'\033[4~')
+                    cursor=$((count - 1))
+                    ;;
+            esac
+        elif [[ "$key" == "k" || "$key" == "K" ]]; then
+            cursor=$(( (cursor - 1 + count) % count ))
+        elif [[ "$key" == "j" || "$key" == "J" ]]; then
+            cursor=$(( (cursor + 1) % count ))
+        elif [[ "$key" =~ ^[1-9]$ ]]; then
+            local num_val=$((key))
+            if [ "$num_val" -le "$count" ]; then
+                cursor=$((num_val - 1))
+                break
+            fi
+        elif [ -z "$key" ] || [ "$key" = $'\r' ] || [ "$key" = " " ]; then
+            break
+        elif [[ "$key" == "b" || "$key" == "B" ]]; then
+            if [ "${WIZARD_ALLOW_BACK:-0}" -eq 1 ]; then
+                result=10
+                break
+            fi
+        elif [ "$key" = "?" ]; then
+            numeric_fallback=1
+            break
+        fi
+
+        printf "\033[%dA\r" "$total_lines"
+        render_select_menu
+    done
+
+    [ -z "$tty_settings" ] || stty "$tty_settings" <&"$input_fd" 2>/dev/null || true
+    exec {input_fd}<&-
+    tput cnorm 2>/dev/null || printf '\033[?25h'
+    trap - INT TERM
+    [ -z "$saved_int_trap" ] || eval "$saved_int_trap"
+    [ -z "$saved_term_trap" ] || eval "$saved_term_trap"
+
+    printf "\033[%dA\r" "$total_lines"
+    for ((i=0; i<total_lines; i++)); do
+        printf "\033[2K\n"
+    done
+    printf "\033[%dA\r" "$total_lines"
+
+    [ "$result" -eq 0 ] || return "$result"
+    if [ "$numeric_fallback" -eq 1 ]; then
+        prompt_select_numeric "$prompt_text" "$var_name" "$default_val" "$4" "$5"
+        return $?
+    fi
+
+    local chosen_val="${_tui_s_keys[$cursor]}"
+    printf -v "$var_name" '%s' "$chosen_val"
+    declare -g "$var_name=$chosen_val" 2>/dev/null || true
+    ok "Выбрано: ${GREEN}${chosen_val}${NC} (${_tui_s_labels[$cursor]})"
+    echo ""
+    return 0
+}
+
+prompt_select() {
+    local prompt_text="$1"
+    local var_name="$2"
+    local default_val="$3"
+    local -n _ps_keys="$4"
+    local -n _ps_labels="$5"
+
+    if [ "${NON_INTERACTIVE:-0}" -eq 1 ]; then
+        local effective_default="${!var_name:-$default_val}"
+        printf -v "$var_name" '%s' "$effective_default"
+        declare -g "$var_name=$effective_default" 2>/dev/null || true
+        log "Параметр $var_name: ${GREEN}$effective_default${NC} (авто)"
+        return 0
+    fi
+
+    if [ "${ENABLE_TUI_MULTISELECT:-1}" != "0" ] && can_use_interactive_tui; then
+        prompt_select_tui "$prompt_text" "$var_name" "$default_val" "$4" "$5" || return $?
+    else
+        prompt_select_numeric "$prompt_text" "$var_name" "$default_val" "$4" "$5" || return $?
+    fi
+}
+
 # ----------------- Обработка аргументов командной строки -----------------
 CONFIG_FILE=""
 NON_INTERACTIVE=${NON_INTERACTIVE:-0}
@@ -19215,9 +19460,17 @@ for item in res:
             fi
             CLASSIC_PORTS_LIST+=("$CLASSIC_PORT")
 
-            local fp_input=""
-            prompt_default "  uTLS TLS Fingerprint для REALITY (chrome/firefox/safari/ios/android/edge/randomized)" "${REALITY_FINGERPRINT:-firefox}" fp_input || return $?
-            REALITY_FINGERPRINT="${fp_input,,}"
+            local fp_keys=("firefox" "chrome" "safari" "ios" "android" "edge" "randomized")
+            local fp_labels=(
+                "Mozilla Firefox (по умолчанию)"
+                "Google Chrome / Chromium"
+                "Apple Safari / WebKit (macOS / iOS)"
+                "Apple iOS Network Stack"
+                "Android OkHttp / Google Pixel"
+                "Microsoft Edge"
+                "Случайный браузерный профиль при старте"
+            )
+            prompt_select "  Выберите uTLS TLS Fingerprint для REALITY" REALITY_FINGERPRINT "${REALITY_FINGERPRINT:-firefox}" fp_keys fp_labels || return $?
         else
             CLASSIC_PORT="${CLASSIC_PORT:-46443}"
             CLASSIC_PORTS_LIST+=("$CLASSIC_PORT")

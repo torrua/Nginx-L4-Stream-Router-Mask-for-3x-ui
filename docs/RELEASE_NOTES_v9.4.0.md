@@ -37,8 +37,8 @@
   Добавлена переменная окружения `REALITY_FINGERPRINT` (по умолчанию `firefox`).
 * **Поддерживаемые профили uTLS:**
   `chrome`, `firefox`, `safari`, `ios`, `android`, `edge`, `360`, `qq`, `random`, `randomized`.
-* **Интеграция в интерактивный TUI-визард:**
-  В [src/tui/wizard.sh](file:///c:/Users/User/Dropbox/Python/PRIZI/gemini-discussions/how-to-setup-awg-on-dokploy/src/tui/wizard.sh) в экспертном режиме выбора портов добавлен интерактивный опрос uTLS Fingerprint.
+* **Интеграция в интерактивный TUI-визард (`prompt_select`):**
+  Внедрен новый универсальный TUI-компонент одиночного выбора `prompt_select`: интерактивная навигация стрелками `↑` / `↓` (`j` / `k`), подтверждение выбора по `Enter` или `Пробелу`, мгновенный выбор цифровыми клавишами `1`..`7`, а также автоматический фоллбек на нумерованный ввод при отсутствии интерактивного TTY или по нажатию `?`. В [src/tui/wizard.sh](file:///c:/Users/User/Dropbox/Python/PRIZI/gemini-discussions/how-to-setup-awg-on-dokploy/src/tui/wizard.sh) в экспертном режиме выбора портов выбор профиля Fingerprint переведен на `prompt_select`.
 * **Автоматическое применение и реконсиляция:**
   Fingerprint прокидывается в `realitySettings.settings.fingerprint`, во все узлы `externalProxy` инбаундов REALITY и xHTTP, а также в колонку `fingerprint` таблицы `hosts`. Модуль `smart_reconcile_inbound` автоматически обнаруживает изменение fingerprint в конфигурации и обновляет существующую базу данных без ручных правок.
 

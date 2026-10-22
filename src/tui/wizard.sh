@@ -737,9 +737,17 @@ for item in res:
             fi
             CLASSIC_PORTS_LIST+=("$CLASSIC_PORT")
 
-            local fp_input=""
-            prompt_default "  uTLS TLS Fingerprint для REALITY (chrome/firefox/safari/ios/android/edge/randomized)" "${REALITY_FINGERPRINT:-firefox}" fp_input || return $?
-            REALITY_FINGERPRINT="${fp_input,,}"
+            local fp_keys=("firefox" "chrome" "safari" "ios" "android" "edge" "randomized")
+            local fp_labels=(
+                "Mozilla Firefox (по умолчанию)"
+                "Google Chrome / Chromium"
+                "Apple Safari / WebKit (macOS / iOS)"
+                "Apple iOS Network Stack"
+                "Android OkHttp / Google Pixel"
+                "Microsoft Edge"
+                "Случайный браузерный профиль при старте"
+            )
+            prompt_select "  Выберите uTLS TLS Fingerprint для REALITY" REALITY_FINGERPRINT "${REALITY_FINGERPRINT:-firefox}" fp_keys fp_labels || return $?
         else
             CLASSIC_PORT="${CLASSIC_PORT:-46443}"
             CLASSIC_PORTS_LIST+=("$CLASSIC_PORT")

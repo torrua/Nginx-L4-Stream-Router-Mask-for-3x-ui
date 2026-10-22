@@ -164,6 +164,14 @@ COLUMNS=80
         res = self.single_menu("\x1b[B\n", default="firefox", capable=True)
         self.assertIn("RESULT=0:chrome", res.stdout)
 
+    def test_single_select_tui_space_and_enter(self):
+        res = self.single_menu("\x1b[B \n", default="firefox", capable=True)
+        self.assertIn("RESULT=0:chrome", res.stdout)
+
+    def test_single_select_tui_digit_select(self):
+        res = self.single_menu("3\n", default="firefox", capable=True)
+        self.assertIn("RESULT=0:safari", res.stdout)
+
     def test_single_select_numeric_fallback(self):
         res = self.single_menu("?3\n", default="firefox", capable=True)
         self.assertIn("RESULT=0:safari", res.stdout)

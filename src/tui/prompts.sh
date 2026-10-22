@@ -489,9 +489,9 @@ prompt_select_numeric() {
     local num_width="${#count}"
     for ((i=0; i<count; i++)); do
         local num=$((i+1))
-        local mark=" "
-        [ "$num" -eq "$def_idx" ] && mark="${GREEN}✔${NC}"
-        printf "  [%*s] [%b] %-14s ${DIM}%s${NC}\n" "$num_width" "$num" "$mark" "${_s_keys[$i]}" "${_s_labels[$i]}"
+        local mark="${DIM}(○)${NC}"
+        [ "$num" -eq "$def_idx" ] && mark="${CYAN}(●)${NC}"
+        printf "  [%*s] %b %-14s ${DIM}%s${NC}\n" "$num_width" "$num" "$mark" "${_s_keys[$i]}" "${_s_labels[$i]}"
     done
 
     local prompt_hint=" [${GREEN}${def_idx}${NC}]"
@@ -548,13 +548,14 @@ prompt_select_tui() {
     local count="${#_tui_s_keys[@]}"
 
     local cur_val="${!var_name:-$default_val}"
-    local cursor=0
+    local selected=0
     for ((i=0; i<count; i++)); do
         if [ "${_tui_s_keys[$i]}" = "$cur_val" ]; then
-            cursor=$i
+            selected=$i
             break
         fi
     done
+    local cursor=$selected
 
     echo ""
     echo -e "  ${WHITE}${BOLD}${prompt_text}:${NC}"
@@ -594,13 +595,15 @@ prompt_select_tui() {
         [ "$max_label_width" -ge 8 ] || max_label_width=8
         local i
         for ((i=0; i<count; i++)); do
-            local mark=" "
+            local mark="${DIM}(○)${NC}"
             local prefix="  "
             local color="${WHITE}"
+            if [ "$i" -eq "$selected" ]; then
+                mark="${CYAN}(●)${NC}"
+            fi
             if [ "$i" -eq "$cursor" ]; then
                 prefix="${CYAN}${ARROW}${NC} "
                 color="${CYAN}${BOLD}"
-                mark="${GREEN}✔${NC}"
             fi
             local num=$((i+1))
             local key_display="${_tui_s_keys[$i]}"
@@ -611,9 +614,9 @@ prompt_select_tui() {
             if [ "${#label_display}" -gt "$max_label_width" ]; then
                 label_display="${label_display:0:max_label_width-1}…"
             fi
-            printf "\033[2K  %b[${color}%*s${NC}] [%b] %-14s ${DIM}%s${NC}\n" "$prefix" "$num_width" "$num" "$mark" "$key_display" "$label_display"
+            printf "\033[2K  %b[${color}%*s${NC}] %b %-14s ${DIM}%s${NC}\n" "$prefix" "$num_width" "$num" "$mark" "$key_display" "$label_display"
         done
-        local hint="↑/↓: курсор | Enter/Пробел: выбрать | ?: номера"
+        local hint="↑/↓: курсор | Пробел: выбрать (●) | Enter: подтвердить | ?: номера"
         printf "\033[2K  ${DIM}%s${NC}\n" "${hint:0:cols-3}"
     }
 
@@ -653,9 +656,12 @@ prompt_select_tui() {
             local num_val=$((key))
             if [ "$num_val" -le "$count" ]; then
                 cursor=$((num_val - 1))
-                break
+                selected=$cursor
             fi
-        elif [ -z "$key" ] || [ "$key" = $'\r' ] || [ "$key" = " " ]; then
+        elif [ "$key" = " " ]; then
+            selected=$cursor
+        elif [ -z "$key" ] || [ "$key" = $'\r' ]; then
+            selected=$cursor
             break
         elif [[ "$key" == "b" || "$key" == "B" ]]; then
             if [ "${WIZARD_ALLOW_BACK:-0}" -eq 1 ]; then
@@ -690,10 +696,10 @@ prompt_select_tui() {
         return $?
     fi
 
-    local chosen_val="${_tui_s_keys[$cursor]}"
+    local chosen_val="${_tui_s_keys[$selected]}"
     printf -v "$var_name" '%s' "$chosen_val"
     declare -g "$var_name=$chosen_val" 2>/dev/null || true
-    ok "Выбрано: ${GREEN}${chosen_val}${NC} (${_tui_s_labels[$cursor]})"
+    ok "Выбрано: ${GREEN}${chosen_val}${NC} (${_tui_s_labels[$selected]})"
     echo ""
     return 0
 }

@@ -7,6 +7,24 @@
 
 ---
 
+## [9.4.0] - 2026-10-22
+
+### Добавлено
+- **Пул SNI и нативная авторотация для VLESS Classic REALITY (`CLASSIC_SNI`):**
+  - Поддержка задания нескольких доменов через пробел или запятую (например, поддоменов Microsoft или Google).
+  - Сквозная нормализация, валидация и дедупликация доменов в Bash (`env.sh`, `wizard.sh`) и Python (`reconcile.py`).
+  - Генерация маршрутов Nginx Stream L4 для всех доменов пула на порт `46443`.
+  - Заполнение `realitySettings.serverNames` и генерация индивидуальных узлов `externalProxy` для каждого SNI.
+  - Синхронизация записей таблицы `hosts` в SQLite БД 3X-UI с флагом `shuffle_host = 1` для рандомизации и клиентской балансировки через подписку (поддержка схем `snake_case` и `camelCase`).
+- **Настраиваемый профиль uTLS Fingerprint (`REALITY_FINGERPRINT`):**
+  - Возможность выбора профиля маскировки TLS (`chrome`, `firefox`, `safari`, `ios`, `android`, `edge`, `360`, `qq`, `random`, `randomized`; по умолчанию `firefox`).
+  - Интерактивный запрос uTLS Fingerprint в TUI-визарде (`wizard.sh`) в экспертном режиме.
+  - Подстановка в `realitySettings.settings.fingerprint`, `externalProxy` и колонку `fingerprint` таблицы `hosts`.
+- **Автоматическая реконсиляция пула и fingerprint (`src/xray/inbounds.py`):**
+  - `smart_reconcile_inbound` обнаруживает изменения пула доменов и fingerprint, автоматически обновляя конфигурацию Xray и узлы `externalProxy` в базе данных.
+- **Модульные и интеграционные тесты:**
+  - Тесты парсинга пула в Bash, синхронизации таблицы `hosts` с флагом `shuffle_host` и реконсиляции fingerprint в `tests/test_audit_regressions.py`.
+
 ## [9.3.0] - 2026-10-22
 
 ### Добавлено

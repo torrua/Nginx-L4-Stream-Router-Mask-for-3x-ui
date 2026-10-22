@@ -276,7 +276,7 @@ is_true(){ [[ "${1:-0}" == "1" || "${1,,}" == "y" || "${1,,}" == "true" ]]; }
 
 MOCK_ROOT=$(mktemp -d)
 mkdir -p "$MOCK_ROOT/etc/systemd/system" "$MOCK_ROOT/usr/local/bin"
-touch "$MOCK_ROOT/usr/local/bin/nfqws"
+printf '#!/bin/sh\nexit 0\n' > "$MOCK_ROOT/usr/local/bin/nfqws"
 chmod +x "$MOCK_ROOT/usr/local/bin/nfqws"
 export LOCAL_BIN_DIR="$MOCK_ROOT/usr/local/bin"
 
@@ -315,7 +315,7 @@ is_true(){ [[ "${1:-0}" == "1" || "${1,,}" == "y" || "${1,,}" == "true" ]]; }
 
 MOCK_ROOT=$(mktemp -d)
 mkdir -p "$MOCK_ROOT/etc/sing-box" "$MOCK_ROOT/etc/systemd/system" "$MOCK_ROOT/usr/local/bin"
-touch "$MOCK_ROOT/usr/local/bin/sing-box"
+printf '#!/bin/sh\necho "sing-box version 1.15.0-alpha.12"\n' > "$MOCK_ROOT/usr/local/bin/sing-box"
 chmod +x "$MOCK_ROOT/usr/local/bin/sing-box"
 export LOCAL_BIN_DIR="$MOCK_ROOT/usr/local/bin"
 
@@ -355,7 +355,7 @@ is_true(){ [[ "${1:-0}" == "1" || "${1,,}" == "y" || "${1,,}" == "true" ]]; }
 
 MOCK_ROOT=$(mktemp -d)
 mkdir -p "$MOCK_ROOT/etc/systemd/system" "$MOCK_ROOT/usr/local/bin"
-touch "$MOCK_ROOT/usr/local/bin/wstunnel"
+printf '#!/bin/sh\nexit 0\n' > "$MOCK_ROOT/usr/local/bin/wstunnel"
 chmod +x "$MOCK_ROOT/usr/local/bin/wstunnel"
 export LOCAL_BIN_DIR="$MOCK_ROOT/usr/local/bin"
 
@@ -386,7 +386,7 @@ is_true(){ [[ "${1:-0}" == "1" || "${1,,}" == "y" || "${1,,}" == "true" ]]; }
 
 MOCK_ROOT=$(mktemp -d)
 mkdir -p "$MOCK_ROOT/etc/systemd/system" "$MOCK_ROOT/usr/local/bin"
-touch "$MOCK_ROOT/usr/local/bin/shadow-tls"
+printf '#!/bin/sh\nexit 0\n' > "$MOCK_ROOT/usr/local/bin/shadow-tls"
 chmod +x "$MOCK_ROOT/usr/local/bin/shadow-tls"
 export LOCAL_BIN_DIR="$MOCK_ROOT/usr/local/bin"
 
@@ -422,7 +422,7 @@ is_true(){ [[ "${1:-0}" == "1" || "${1,,}" == "y" || "${1,,}" == "true" ]]; }
 
 MOCK_ROOT=$(mktemp -d)
 mkdir -p "$MOCK_ROOT/etc/caddy" "$MOCK_ROOT/etc/systemd/system" "$MOCK_ROOT/usr/local/bin" "$MOCK_ROOT/var/www/html"
-touch "$MOCK_ROOT/usr/local/bin/caddy-naive"
+printf '#!/bin/sh\necho forward_proxy\nexit 0\n' > "$MOCK_ROOT/usr/local/bin/caddy-naive"
 chmod +x "$MOCK_ROOT/usr/local/bin/caddy-naive"
 export LOCAL_BIN_DIR="$MOCK_ROOT/usr/local/bin"
 
@@ -466,7 +466,7 @@ is_true(){ [[ "${1:-0}" == "1" || "${1,,}" == "y" || "${1,,}" == "true" ]]; }
 
 MOCK_ROOT=$(mktemp -d)
 mkdir -p "$MOCK_ROOT/etc/dnstt" "$MOCK_ROOT/etc/systemd/system" "$MOCK_ROOT/usr/local/bin"
-touch "$MOCK_ROOT/usr/local/bin/dnstt-server"
+printf '#!/bin/sh\nexit 0\n' > "$MOCK_ROOT/usr/local/bin/dnstt-server"
 chmod +x "$MOCK_ROOT/usr/local/bin/dnstt-server"
 export LOCAL_BIN_DIR="$MOCK_ROOT/usr/local/bin"
 
@@ -684,7 +684,7 @@ mkdir -p "$MOCK_ROOT/etc/letsencrypt/live/example.com"
 touch "$MOCK_ROOT/etc/letsencrypt/live/naive.example.com/fullchain.pem" "$MOCK_ROOT/etc/letsencrypt/live/naive.example.com/privkey.pem"
 touch "$MOCK_ROOT/etc/letsencrypt/live/example.com/fullchain.pem" "$MOCK_ROOT/etc/letsencrypt/live/example.com/privkey.pem"
 mkdir -p "$MOCK_ROOT/etc/caddy" "$MOCK_ROOT/etc/systemd/system" "$MOCK_ROOT/var/www/html" "$MOCK_ROOT/usr/local/bin"
-touch "$MOCK_ROOT/usr/local/bin/caddy-naive"
+printf '#!/bin/sh\necho forward_proxy\nexit 0\n' > "$MOCK_ROOT/usr/local/bin/caddy-naive"
 chmod +x "$MOCK_ROOT/usr/local/bin/caddy-naive"
 export LOCAL_BIN_DIR="$MOCK_ROOT/usr/local/bin"
 systemctl(){ :; }

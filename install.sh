@@ -3,7 +3,7 @@
 #!/usr/bin/env bash
 #
 # ==============================================================================
-# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v9.3.0 Universal
+# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v9.4.0 Universal
 # Nginx L4 Stream + 3X-UI + Unix Sockets + Native proxy_http_version 2 + 3 Decoys
 # ==============================================================================
 # Архитектура:
@@ -29,7 +29,7 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="v9.3.0"
+SCRIPT_VERSION="v9.4.0"
 
 
 # Checkpoints use stable step IDs and input signatures, independent of UI numbering.
@@ -80,7 +80,7 @@ checkpoint_signature() {
         certificates) keys="PRIMARY_DOMAIN ALL_DOMAINS SSL_ENGINE_CHOICE CF_AUTH_METHOD CF_Token CF_Account_ID CF_Email CF_Key" ;;
         decoy) keys="PRIMARY_DOMAIN DECOY_MODE" ;;
         security) keys="SSH_PORT SSH_PUBLIC_KEY ENABLE_HOST_SECURITY ENABLE_FAIL2BAN DISABLE_PASSWORD_AUTH" ;;
-        *) keys="PRIMARY_DOMAIN ALL_DOMAINS STEAL_PORTS_LIST CLASSIC_PORTS_LIST EXT_SNI_LIST ALL_EXT_SNIS ADD_WWW ENABLE_WEB_STACK ENABLE_STEAL STEAL_DOMAINS STEAL_PORT ENABLE_CLASSIC CLASSIC_SNI CLASSIC_PORT PANEL_PORT PANEL_PATH ADMIN_USERNAME ADMIN_PASSWORD SUB_PORT SUB_PATH SUB_CLASH_PATH SUB_TITLE XHTTP_STREAM_PORT XHTTP_STREAM_PATH ENABLE_HY2 HY2_PORT HY2_DOMAIN HY2_PORT_HOPPING HY2_PORT_HOPPING_RANGE ENABLE_AWG_V3 AWG_V3_PORT ENABLE_AWG_V2 AWG_V2_PORT ENABLE_AWG_STANDALONE AWG_STANDALONE_PORT AWG_SERVER_HOST AWG_PRIMARY_DNS AWG_SECONDARY_DNS ENABLE_AGH AGH_MODE AGH_DOMAIN AGH_USER AGH_PASS AGH_CLIENT_ID AGH_XRAY_DNS PORT_AGH_WEB PORT_AGH_DNS DIAG_PATH DIAG_TOKEN ENABLE_WARP WARP_LICENSE_KEY ENABLE_SS2022 SS2022_PORT SS2022_METHOD SS2022_PASSWORD ENABLE_TUIC TUIC_PORT TUIC_UUID TUIC_PASSWORD ENABLE_MTPROTO MTPROTO_PORT MTPROTO_SECRET ENABLE_MASQUE MASQUE_PORT MASQUE_PASSWORD ENABLE_SHADOWTLS SHADOWTLS_PORT SHADOWTLS_DOMAIN SHADOWTLS_PASSWORD ENABLE_NAIVE NAIVE_PORT NAIVE_DOMAIN NAIVE_USER NAIVE_PASS ENABLE_WSTUNNEL WSTUNNEL_PORT WSTUNNEL_PREFIX WSTUNNEL_SECRET ENABLE_DNSTT DNSTT_PORT DNSTT_DOMAIN DNSTT_PUBKEY ENABLE_ZAPRET ZAPRET_QNUM ZAPRET_DESYNC ZAPRET_FOOLING ENABLE_MIERU MIERU_PORT_MODE MIERU_PORT MIERU_TRANSPORT MIERU_USER MIERU_PASS MIERU_MTU AUTO_SETUP_3XUI ENABLE_NODE_TOKEN NODE_TOKEN NODE_TOKEN_NAME TIME_LOCATION BLOCK_SMTP BLOCK_LAN WEB_LISTEN SUB_LISTEN AWG_HEADER_PROTECTION_KEY AWG_RANDOM_TRAILERS AWG_SUBNET_IP AWG_SUBNET_CIDR MTPROTO_FAKETLS_DOMAIN MTPROTO_ADTAG SHADOWTLS_SNI WSTUNNEL_DOMAIN" ;;
+        *) keys="PRIMARY_DOMAIN ALL_DOMAINS STEAL_PORTS_LIST CLASSIC_PORTS_LIST EXT_SNI_LIST ALL_EXT_SNIS ADD_WWW ENABLE_WEB_STACK ENABLE_STEAL STEAL_DOMAINS STEAL_PORT ENABLE_CLASSIC CLASSIC_SNI CLASSIC_PORT REALITY_FINGERPRINT PANEL_PORT PANEL_PATH ADMIN_USERNAME ADMIN_PASSWORD SUB_PORT SUB_PATH SUB_CLASH_PATH SUB_TITLE XHTTP_STREAM_PORT XHTTP_STREAM_PATH ENABLE_HY2 HY2_PORT HY2_DOMAIN HY2_PORT_HOPPING HY2_PORT_HOPPING_RANGE ENABLE_AWG_V3 AWG_V3_PORT ENABLE_AWG_V2 AWG_V2_PORT ENABLE_AWG_STANDALONE AWG_STANDALONE_PORT AWG_SERVER_HOST AWG_PRIMARY_DNS AWG_SECONDARY_DNS ENABLE_AGH AGH_MODE AGH_DOMAIN AGH_USER AGH_PASS AGH_CLIENT_ID AGH_XRAY_DNS PORT_AGH_WEB PORT_AGH_DNS DIAG_PATH DIAG_TOKEN ENABLE_WARP WARP_LICENSE_KEY ENABLE_SS2022 SS2022_PORT SS2022_METHOD SS2022_PASSWORD ENABLE_TUIC TUIC_PORT TUIC_UUID TUIC_PASSWORD ENABLE_MTPROTO MTPROTO_PORT MTPROTO_SECRET ENABLE_MASQUE MASQUE_PORT MASQUE_PASSWORD ENABLE_SHADOWTLS SHADOWTLS_PORT SHADOWTLS_DOMAIN SHADOWTLS_PASSWORD ENABLE_NAIVE NAIVE_PORT NAIVE_DOMAIN NAIVE_USER NAIVE_PASS ENABLE_WSTUNNEL WSTUNNEL_PORT WSTUNNEL_PREFIX WSTUNNEL_SECRET ENABLE_DNSTT DNSTT_PORT DNSTT_DOMAIN DNSTT_PUBKEY ENABLE_ZAPRET ZAPRET_QNUM ZAPRET_DESYNC ZAPRET_FOOLING ENABLE_MIERU MIERU_PORT_MODE MIERU_PORT MIERU_TRANSPORT MIERU_USER MIERU_PASS MIERU_MTU AUTO_SETUP_3XUI ENABLE_NODE_TOKEN NODE_TOKEN NODE_TOKEN_NAME TIME_LOCATION BLOCK_SMTP BLOCK_LAN WEB_LISTEN SUB_LISTEN AWG_HEADER_PROTECTION_KEY AWG_RANDOM_TRAILERS AWG_SUBNET_IP AWG_SUBNET_CIDR MTPROTO_FAKETLS_DOMAIN MTPROTO_ADTAG SHADOWTLS_SNI WSTUNNEL_DOMAIN" ;;
     esac
     {
         printf '%s\0' "${SCRIPT_VERSION:-unknown}" "$id"
@@ -541,31 +541,33 @@ import json, sys, os
 
 FALLBACK = {
     'shadow-tls': {
-        'x86_64': ('https://github.com/ihciah/shadow-tls/releases/download/v0.2.25/shadow-tls-x86_64-unknown-linux-musl', '4bdfa57db9e8bf69f10cb9fa3268846c4f3ce2d4a2a1ea9174112e432c25ea7a', 15728640, '0.2.25'),
-        'aarch64': ('https://github.com/ihciah/shadow-tls/releases/download/v0.2.25/shadow-tls-aarch64-unknown-linux-musl', '81f211925b6a55543cbe24bc99015c90ec1ae62c3328e67ff8df82bb7da255ef', 15728640, '0.2.25')
+        'x86_64': ('https://github.com/ihciah/shadow-tls/releases/download/v0.2.25/shadow-tls-x86_64-unknown-linux-musl', 'a173f5f2d57f45211b68e10ceeddc15b1791077b914fa89747bc705fddc71532', 15728640, '0.2.25'),
+        'aarch64': ('https://github.com/ihciah/shadow-tls/releases/download/v0.2.25/shadow-tls-aarch64-unknown-linux-musl', '3295476b37f549a68906519d3eaecb74bf3b6eaf9094cebb16ee84f0151373c6', 15728640, '0.2.25')
     },
     'wstunnel': {
-        'x86_64': ('https://github.com/erebe/wstunnel/releases/download/v10.1.7/wstunnel_10.1.7_linux_amd64.tar.gz', 'ca6d77e4cfcf6ce4b06f528a47ea37cb9a941fcddff4a9df315f6068e5ff4e6b', 26214400, '10.1.7'),
-        'aarch64': ('https://github.com/erebe/wstunnel/releases/download/v10.1.7/wstunnel_10.1.7_linux_arm64.tar.gz', '7a353d2bf2cb4d3d81b24d7759ad4ba7eb04cf4c5478491d904ba6b44588df8e', 26214400, '10.1.7')
+        'x86_64': ('https://github.com/erebe/wstunnel/releases/download/v10.1.7/wstunnel_10.1.7_linux_amd64.tar.gz', '79c5beda18655d8ededd507995d9aebd524c35ddc7abfd0aa733b98b3fb895a4', 26214400, '10.1.7'),
+        'aarch64': ('https://github.com/erebe/wstunnel/releases/download/v10.1.7/wstunnel_10.1.7_linux_arm64.tar.gz', '0839c8ba6c812b60d8b3f57176a3c52268f1438daa814f985d492db6c5b41c8a', 26214400, '10.1.7')
     },
     'sing-box': {
-        'x86_64': ('https://github.com/SagerNet/sing-box/releases/download/v1.11.4/sing-box-1.11.4-linux-amd64.tar.gz', '6b2cbb4ee2cb36a32cb5e2f7b8d4bb9f8e434f3c7e497ecb822d4f20bf8a0db8', 52428800, '1.11.4'),
-        'aarch64': ('https://github.com/SagerNet/sing-box/releases/download/v1.11.4/sing-box-1.11.4-linux-arm64.tar.gz', '9a01f68742b6c7314ec41be1aa7ee965ec3c457bc6a42247dc2bc89600a747ea', 52428800, '1.11.4')
+        'x86_64': ('https://github.com/SagerNet/sing-box/releases/download/v1.11.4/sing-box-1.11.4-linux-amd64.tar.gz', '0bb762ef286b36c2016d9107fc1f089be7a75f6d579b33f067d31e696c05927e', 52428800, '1.11.4'),
+        'aarch64': ('https://github.com/SagerNet/sing-box/releases/download/v1.11.4/sing-box-1.11.4-linux-arm64.tar.gz', '4e687359db42b6a28ef93f9cd2cb9549c4b0079cc7e49bc5f6ecbf98257a2507', 52428800, '1.11.4')
     },
     'zapret': {
-        'all': ('https://github.com/bol-van/zapret/releases/download/v70/zapret-v70.tar.gz', '1517409c6ae9fa4513ec8b4bcf51e18b849cb19a57fb6bc12001358e5d3264c1', 20971520, '70')
+        'all': ('https://github.com/bol-van/zapret/releases/download/v70/zapret-v70.tar.gz', '142c38a0aa17839fa33c675a740d80aff9302817a71f11212274fbedf9f03015', 20971520, '70')
     },
     'AdGuardHome': {
-        'x86_64': ('https://static.adguard.com/adguardhome/release/AdGuardHome_linux_amd64.tar.gz', '439265eb634ce5a87e02598380cf7bc51b0337d1d2b7c4a169fe5a1c3132e0c9', 41943040, '0.107.56'),
-        'aarch64': ('https://static.adguard.com/adguardhome/release/AdGuardHome_linux_arm64.tar.gz', 'c88f17a94ef933aa5a11dfbbf099ec16f28beae5c0bf323c21a19614457ee458', 41943040, '0.107.56')
+        'x86_64': ('https://github.com/AdguardTeam/AdGuardHome/releases/download/v0.107.56/AdGuardHome_linux_amd64.tar.gz', '044a8fa378de2ee90c9f290efba18d67dddba650c239c577dc138795e40b5832', 41943040, '0.107.56'),
+        'aarch64': ('https://github.com/AdguardTeam/AdGuardHome/releases/download/v0.107.56/AdGuardHome_linux_arm64.tar.gz', '2718ad45db96769e2e24272847b140dbaa6b0c873af02cec14ebe27a1c434712', 41943040, '0.107.56')
     },
     'acme.sh': {
-        'all': ('https://github.com/acmesh-official/acme.sh/archive/refs/tags/3.0.8.tar.gz', 'bf4405d43899f8d16972e2762b9f67355030e20fb3ae7068565a0cbb02e53ef7', 2097152, '3.0.8')
+        'all': ('https://github.com/acmesh-official/acme.sh/archive/refs/tags/3.0.8.tar.gz', '51f4f9580e91b038a7dd0207631bf9b1be0aab6a0094d0a3cbb4b21cd86f71df', 2097152, '3.0.8')
     }
 }
 
 comp_name = sys.argv[1]
 arch = sys.argv[2]
+arch_aliases = {'amd64': 'x86_64', 'arm64': 'aarch64'}
+arch = arch_aliases.get(arch, arch)
 manifest_p = os.environ.get('MANIFEST_FILE', '')
 
 if not manifest_p or not os.path.isfile(manifest_p):
@@ -617,14 +619,14 @@ download_manifest_component() {
     local cur_arch="${3:-}"
 
     if [ -z "$cur_arch" ]; then
-        local raw_arch
-        raw_arch=$(uname -m 2>/dev/null || echo "x86_64")
-        case "$raw_arch" in
-            x86_64|amd64) cur_arch="x86_64" ;;
-            aarch64|arm64) cur_arch="aarch64" ;;
-            *) cur_arch="x86_64" ;;
-        esac
+        cur_arch=$(uname -m 2>/dev/null || echo "x86_64")
     fi
+    case "$cur_arch" in
+        x86_64|amd64) cur_arch="x86_64" ;;
+        aarch64|arm64) cur_arch="aarch64" ;;
+        all) cur_arch="all" ;;
+        *) cur_arch="x86_64" ;;
+    esac
 
     local comp_meta
     comp_meta=$(get_manifest_component_data "$comp_name" "$cur_arch")
@@ -1016,7 +1018,7 @@ generate_config_template() {
     local target_file="${1:-server-setup.env.example}"
     cat << 'EOF_CONF' > "$target_file"
 # ==============================================================================
-# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v9.3.0 Universal)
+# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v9.4.0 Universal)
 # ==============================================================================
 # Данный файл позволяет выполнять полностью автоматическую установку:
 # ./setup.sh --config server-setup.env --non-interactive --force
@@ -1065,8 +1067,8 @@ STEAL_DOMAINS="cdn.yourdomain.online"
 # Сценарий 2: Classic External REALITY (Внешний камуфляж) [y/n]
 ENABLE_CLASSIC="y"
 CLASSIC_PORT="46443"
-# Внешние доверенные SNI (через пробел, например: "avito.ru")
-CLASSIC_SNI="avito.ru"
+# Внешние доверенные SNI (через пробел, например: "dl.google.com")
+CLASSIC_SNI="dl.google.com"
 
 # --- 3. ВНУТРЕННИЕ ПОРТЫ И ПУТИ 3X-UI И xHTTP ---
 PANEL_PORT="10443"
@@ -1734,6 +1736,20 @@ ensure_wstunnel_prefix() {
     WSTUNNEL_PREFIX="/${prefix}/"
 }
 
+ensure_diag_path() {
+    local path="${DIAG_PATH:-}"
+    path="${path#/}"; path="${path%/}"
+    if [ -z "$path" ]; then
+        local diag_tok
+        diag_tok=$(generate_secret_token) || return 1
+        path="diag-${diag_tok}"
+    fi
+    DIAG_PATH="/${path}/"
+    if [ -z "${DIAG_TOKEN:-}" ]; then
+        DIAG_TOKEN="$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 16 || echo "tok${RANDOM}")"
+    fi
+}
+
 rotate_secret_paths() {
     # Only the full installer may rotate paths; companion scripts preserve them.
     local panel_token ws_token client_token diag_token
@@ -1801,18 +1817,19 @@ reconstruct_arrays_from_vars() {
     if [[ "${v_cls,,}" == "y" || "$v_cls" == "1" ]]; then
         CLASSIC_ENABLED=1
         CLASSIC_PORTS_LIST=(${CLASSIC_PORT:-46443})
-        local classic_raw="${CLASSIC_SNI:-avito.ru}"
+        local classic_raw="${CLASSIC_SNI:-dl.google.com}"
         EXT_SNI_LIST=()
         for cs in ${classic_raw//,/ }; do
-            cs=$(echo "$cs" | tr -d '[:space:]')
+            cs=$(echo "$cs" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
             if [ -n "$cs" ]; then
+                [[ " ${EXT_SNI_LIST[*]:-} " =~ " ${cs} " ]] && continue
                 EXT_SNI_LIST+=("$cs")
                 EXT_SNI_TO_PORT["$cs"]="${CLASSIC_PORTS_LIST[0]}"
             fi
         done
         [ ${#EXT_SNI_TO_PORT[@]} -gt 0 ] || {
-            EXT_SNI_LIST=("avito.ru")
-            EXT_SNI_TO_PORT["avito.ru"]="${CLASSIC_PORTS_LIST[0]}"
+            EXT_SNI_LIST=("dl.google.com")
+            EXT_SNI_TO_PORT["dl.google.com"]="${CLASSIC_PORTS_LIST[0]}"
         }
     else
         CLASSIC_ENABLED=0
@@ -1823,6 +1840,7 @@ reconstruct_arrays_from_vars() {
     ALL_REALITY_PORTS=()
     for p in "${STEAL_PORTS_LIST[@]:-}"; do [ -n "$p" ] && ALL_REALITY_PORTS+=("$p"); done
     for p in "${CLASSIC_PORTS_LIST[@]:-}"; do [ -n "$p" ] && ALL_REALITY_PORTS+=("$p"); done
+    REALITY_FINGERPRINT="${REALITY_FINGERPRINT:-${FINGERPRINT:-firefox}}"
 
     PANEL_PORT="${PANEL_PORT:-10443}"
     ensure_panel_path || return 1
@@ -1913,16 +1931,7 @@ reconstruct_arrays_from_vars() {
     PORT_AGH_DNS="${PORT_AGH_DNS:-10053}"
     ensure_agh_client_id || return 1
 
-    if [ -z "${DIAG_PATH:-}" ]; then
-        local diag_tok
-        diag_tok=$(generate_secret_token) || return 1
-        DIAG_PATH="/diag-${diag_tok}/"
-    fi
-    DIAG_PATH="/${DIAG_PATH#/}"
-    DIAG_PATH="${DIAG_PATH%/}/"
-    if [ -z "${DIAG_TOKEN:-}" ]; then
-        DIAG_TOKEN="$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 16 || echo "tok${RANDOM}")"
-    fi
+    ensure_diag_path || return 1
 
     # Сосуществование с Dokploy и протоколы следующего поколения
     _v="${DOKPLOY_COEXISTENCE:-n}"; if is_true "$_v"; then DOKPLOY_COEXISTENCE="y"; else DOKPLOY_COEXISTENCE="n"; fi
@@ -2031,6 +2040,7 @@ finalize_installation_config() {
         REALITY_FALLBACK_PORT="${REALITY_FALLBACK_PORT:-9443}"
         normalize_node_token_config
         ensure_panel_path || return 1
+        ensure_diag_path || return 1
         ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
         ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
         if is_true "${AUTO_SETUP_3XUI:-y}" && [ -z "$ADMIN_PASSWORD" ] &&
@@ -2051,6 +2061,7 @@ save_session_state() {
     local save_path="${1:-server-setup.env}"
     # Resolve once in the caller's state before serializing it.
     ensure_panel_path || return 1
+    ensure_diag_path || return 1
     ensure_agh_client_id || return 1
     if is_true "${ENABLE_WSTUNNEL:-n}"; then
         ensure_wstunnel_prefix || return 1
@@ -2167,6 +2178,7 @@ STEAL_DOMAINS="${STEAL_DOMAINS[*]:-}"
 ENABLE_CLASSIC="$classic_save"
 CLASSIC_PORT="${CLASSIC_PORTS_LIST[0]:-46443}"
 CLASSIC_SNI="${EXT_SNI_LIST[*]:-}"
+REALITY_FINGERPRINT="${REALITY_FINGERPRINT:-${FINGERPRINT:-firefox}}"
 
 PORTS_SETUP_MODE="${PORTS_SETUP_MODE:-0}"
 PATHS_SETUP_MODE="${PATHS_SETUP_MODE:-0}"
@@ -3506,6 +3518,8 @@ CLI_PANEL_PATH=""
 CLI_SUB_PATH=""
 CLI_SUB_TITLE=""
 CLI_XHTTP_STREAM_PATH=""
+CLI_DIAG_PATH=""
+CLI_DIAG_TOKEN=""
 CLI_ADMIN_USERNAME=""
 CLI_ADMIN_PASSWORD=""
 CLI_ENABLE_NODE_TOKEN=""
@@ -3974,6 +3988,18 @@ while [[ $# -gt 0 ]]; do
             CLI_XHTTP_STREAM_PATH="$2"
             shift 2
             ;;
+        --diag-path)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: путь к веб-диагностике."
+            DIAG_PATH="$2"
+            CLI_DIAG_PATH="$2"
+            shift 2
+            ;;
+        --diag-token)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: токен веб-диагностики."
+            DIAG_TOKEN="$2"
+            CLI_DIAG_TOKEN="$2"
+            shift 2
+            ;;
         -u|--user|--admin-user)
             [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: логин администратора 3X-UI."
             ADMIN_USERNAME="$2"
@@ -3993,6 +4019,7 @@ while [[ $# -gt 0 ]]; do
         --step)
             [[ -n "${2:-}" ]] || die "Параметр $1 требует номер шага (1-$TOTAL_STEPS)."
             RESUME_STEP="$2"
+            STEP_EXPLICIT=1
             shift 2
             ;;
         --check|--doctor)
@@ -4081,6 +4108,8 @@ fi
 [ -n "${CLI_SUB_PATH:-}" ]       && SUB_PATH="$CLI_SUB_PATH"
 [ -n "${CLI_SUB_TITLE:-}" ]      && SUB_TITLE="$CLI_SUB_TITLE"
 [ -n "${CLI_XHTTP_STREAM_PATH:-}" ] && XHTTP_STREAM_PATH="$CLI_XHTTP_STREAM_PATH"
+[ -n "${CLI_DIAG_PATH:-}" ]      && DIAG_PATH="$CLI_DIAG_PATH"
+[ -n "${CLI_DIAG_TOKEN:-}" ]     && DIAG_TOKEN="$CLI_DIAG_TOKEN"
 [ -n "${CLI_ADMIN_USERNAME:-}" ] && ADMIN_USERNAME="$CLI_ADMIN_USERNAME"
 [ -n "${CLI_ADMIN_PASSWORD:-}" ] && ADMIN_PASSWORD="$CLI_ADMIN_PASSWORD"
 [ -n "${CLI_ENABLE_NODE_TOKEN:-}" ] && ENABLE_NODE_TOKEN="$CLI_ENABLE_NODE_TOKEN"
@@ -8771,11 +8800,11 @@ setup_wstunnel_service() {
     log "Настройка службы Wstunnel L7..."
     local cur_arch
     cur_arch=$(uname -m 2>/dev/null || echo "x86_64")
-    local ws_arch="amd64"
+    local ws_arch="x86_64"
     case "$cur_arch" in
-        x86_64|amd64) ws_arch="amd64" ;;
-        aarch64|arm64) ws_arch="arm64" ;;
-        *) ws_arch="amd64" ;;
+        x86_64|amd64) ws_arch="x86_64" ;;
+        aarch64|arm64) ws_arch="aarch64" ;;
+        *) ws_arch="x86_64" ;;
     esac
 
     local bin_dir="${LOCAL_BIN_DIR:-/usr/local/bin}"
@@ -8870,7 +8899,7 @@ setup_naive_service() {
         local caddy_tmp="/tmp/caddy_naive_$$"
         mkdir -p "$caddy_tmp"
         local rel_ver="${SCRIPT_VERSION:-v9.1.0}"
-        [[ "$rel_ver" == "v9.3.0" ]] && rel_ver="v9.1.0"
+        [[ "$rel_ver" == "v9.4.0" ]] && rel_ver="v9.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/caddy-naive-linux-${caddy_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
@@ -9016,7 +9045,7 @@ setup_dnstt_service() {
         local dnstt_tmp="/tmp/dnstt_$$"
         mkdir -p "$dnstt_tmp"
         local rel_ver="${SCRIPT_VERSION:-v9.1.0}"
-        [[ "$rel_ver" == "v9.3.0" ]] && rel_ver="v9.1.0"
+        [[ "$rel_ver" == "v9.4.0" ]] && rel_ver="v9.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/dnstt-server-linux-${dnstt_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
@@ -10063,7 +10092,7 @@ apply_express_defaults() {
     express_default STEAL_DOMAINS_STR "cdn.$PRIMARY_DOMAIN"
     express_default ENABLE_CLASSIC y
     express_default CLASSIC_PORT 46443
-    express_default CLASSIC_SNI avito.ru
+    express_default CLASSIC_SNI dl.google.com
     express_default ENABLE_HY2 y
     express_default HY2_PORT 443
     express_default HY2_DOMAIN "$PRIMARY_DOMAIN"
@@ -11261,6 +11290,43 @@ install_step_nginx_config() {
 # =============================================================
 #  ШАГ 6: ПОЛНАЯ КОНФИГУРАЦИЯ NGINX И ПЕРЕЗАПУСК СЛУЖБ
 # =============================================================
+    if [ -z "${PANEL_PATH:-}" ]; then
+        if command -v ensure_panel_path >/dev/null 2>&1; then
+            ensure_panel_path || true
+        fi
+        [ -n "${PANEL_PATH:-}" ] || PANEL_PATH="/panel-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "p${RANDOM}")/"
+    fi
+    if [ -z "${DIAG_PATH:-}" ]; then
+        if command -v ensure_diag_path >/dev/null 2>&1; then
+            ensure_diag_path || true
+        fi
+        [ -n "${DIAG_PATH:-}" ] || DIAG_PATH="/diag-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "d${RANDOM}")/"
+    fi
+    if [ -z "${DIAG_TOKEN:-}" ]; then
+        DIAG_TOKEN="$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 16 || echo "tok${RANDOM}")"
+    fi
+    if [ -z "${SUB_PATH:-}" ]; then
+        SUB_PATH="/sub-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "sub${RANDOM}")/"
+    fi
+    if [ -z "${SUB_JSON_PATH:-}" ]; then
+        SUB_JSON_PATH="${SUB_PATH}json/"
+    fi
+    if [ -z "${SUB_CLASH_PATH:-}" ]; then
+        SUB_CLASH_PATH="${SUB_PATH}clash/"
+    fi
+    if [ -z "${XHTTP_STREAM_PATH:-}" ]; then
+        XHTTP_STREAM_PATH="/$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "xh${RANDOM}")/"
+    fi
+    DECOY_MODE="${DECOY_MODE:-1}"
+    DEFAULT_FALLBACK="${DEFAULT_FALLBACK:-panel_3xui}"
+    PANEL_PORT="${PANEL_PORT:-10443}"
+    DEFAULT_PORT="${DEFAULT_PORT:-$PANEL_PORT}"
+    SUB_PORT="${SUB_PORT:-55443}"
+    XHTTP_STREAM_PORT="${XHTTP_STREAM_PORT:-50443}"
+    REALITY_FALLBACK_PORT="${REALITY_FALLBACK_PORT:-9443}"
+    SSL_BASE_DIR="${SSL_BASE_DIR:-/etc/letsencrypt/live}"
+    WEBROOT="${WEBROOT:-/var/www/html}"
+    NGINX_USER="${NGINX_USER:-nginx}"
     log "Сборка конфигурации Nginx Mainline (Stream L4 + HTTP/2 Upstream Engine)..."
 
     # Резервное копирование существующих конфигураций Nginx перед перезаписью
@@ -11300,8 +11366,9 @@ install_step_nginx_config() {
 
     wstunnel_badbot_bypass=""
     if is_true "${ENABLE_WSTUNNEL:-0}" && [ -n "${WSTUNNEL_PREFIX:-}" ]; then
-        wstunnel_clean_prefix="${WSTUNNEL_PREFIX%/}"
-        wstunnel_badbot_bypass="        ~^1:[01]:${wstunnel_clean_prefix}/ 0;"$'\n'
+        wstunnel_clean_prefix="${WSTUNNEL_PREFIX#/}"
+        wstunnel_clean_prefix="${wstunnel_clean_prefix%/}"
+        wstunnel_badbot_bypass="        ~^1:[01]:/${wstunnel_clean_prefix}/ 0;"$'\n'
     fi
 
     # 1. Глобальный файл конфигурации /etc/nginx/nginx.conf
@@ -11601,7 +11668,7 @@ EOF
 
 # 2.5 Конфигурация локаций AdGuard Home (Режим 1: на основном домене)
 AGH_MAIN_LOCATION_BLOCKS=""
-if [[ "${ENABLE_AGH:-0}" == "1" || "${ENABLE_AGH,,}" == "y" ]] && [ "${AGH_MODE:-1}" = "1" ]; then
+if is_true "${ENABLE_AGH:-0}" && [ "${AGH_MODE:-1}" = "1" ]; then
     AGH_MAIN_LOCATION_BLOCKS="
     # --- ЛОКАЦИЯ: ADGUARD HOME DOH (ENDPOINT С CLIENTID) ---
     location = /dns-query {
@@ -11725,10 +11792,11 @@ fi
 
 WSTUNNEL_LOCATION_BLOCK=""
 if is_true "${ENABLE_WSTUNNEL:-0}" && [ -n "${WSTUNNEL_PREFIX:-}" ]; then
-    wstunnel_clean_prefix="${WSTUNNEL_PREFIX%/}"
+    wstunnel_clean_prefix="${WSTUNNEL_PREFIX#/}"
+    wstunnel_clean_prefix="${wstunnel_clean_prefix%/}"
     WSTUNNEL_LOCATION_BLOCK="
     # --- ЛОКАЦИЯ: WSTUNNEL (L7 WebSocket Tunnel) ---
-    location ^~ ${wstunnel_clean_prefix}/ {
+    location ^~ /${wstunnel_clean_prefix}/ {
         proxy_pass http://127.0.0.1:${WSTUNNEL_PORT:-8080};
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
@@ -12288,6 +12356,22 @@ server {
         proxy_set_header Connection \$connection_upgrade;
     }
 
+    # --- ЛОКАЦИЯ: VLESS xHTTP (Native gRPC / H2 Stream-One) ---
+    location ^~ ${XHTTP_STREAM_PATH} {
+        client_max_body_size 0;
+        client_body_timeout 1h;
+        grpc_read_timeout 1h;
+        grpc_send_timeout 1h;
+        grpc_socket_keepalive on;
+
+        grpc_set_header Host \$http_host;
+        grpc_set_header X-Real-IP \$ak_real_ip;
+        grpc_set_header X-Forwarded-For \$ak_real_ip;
+        grpc_set_header X-Forwarded-Proto \$scheme;
+
+        grpc_pass grpc://xray_xhttp_stream;
+    }
+
     location = /robots.txt {
         root $WEBROOT;
         access_log off;
@@ -12316,7 +12400,7 @@ EOF
 done
 
     # 6. Виртуальный хост для AdGuard Home (Режим 2: отдельный поддомен)
-    if [[ "${ENABLE_AGH:-0}" == "1" || "${ENABLE_AGH,,}" == "y" ]] && [ "${AGH_MODE:-1}" = "2" ] && [ -n "${AGH_DOMAIN:-}" ] && [ -f "${SSL_BASE_DIR}/$AGH_DOMAIN/fullchain.pem" ]; then
+    if is_true "${ENABLE_AGH:-0}" && [ "${AGH_MODE:-1}" = "2" ] && [ -n "${AGH_DOMAIN:-}" ] && [ -f "${SSL_BASE_DIR:-/etc/letsencrypt/live}/$AGH_DOMAIN/fullchain.pem" ]; then
         cat << EOF > "/etc/nginx/conf.d/03-adguard.conf"
 upstream adguard_backend { server 127.0.0.1:${PORT_AGH_WEB:-3000}; keepalive 32; }
 
@@ -13101,7 +13185,7 @@ def create_manifest(staging_dir: Union[str, Path], output_path: Optional[Union[s
     created_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     data = {
         "format_version": "2.0",
-        "project_version": os.environ.get("SCRIPT_VERSION", "v9.3.0"),
+        "project_version": os.environ.get("SCRIPT_VERSION", "v9.4.0"),
         "created_at": created_iso,
         "db_path": os.environ.get("DB_PATH", "/etc/x-ui/x-ui.db"),
         "files": files_map,
@@ -14243,11 +14327,14 @@ EOF_HELP
 
     STEAL_PORT="${STEAL_PORT:-45443}"
     STEAL_SNI="${STEAL_SNI:-gateway.icloud.com}"
-    XHTTP_PORT="${XHTTP_PORT:-47443}"
-    XHTTP_PATH="${XHTTP_PATH:-xhttp}"
+    XHTTP_STREAM_PORT="${XHTTP_STREAM_PORT:-${XHTTP_PORT:-50443}}"
+    XHTTP_STREAM_PATH="${XHTTP_STREAM_PATH:-${XHTTP_PATH:-xhttp}}"
+    XHTTP_PORT="$XHTTP_STREAM_PORT"
+    XHTTP_PATH="$XHTTP_STREAM_PATH"
     XHTTP_SNI="${XHTTP_SNI:-gateway.icloud.com}"
     CLASSIC_PORT="${CLASSIC_PORT:-46443}"
-    CLASSIC_SNI="${CLASSIC_SNI:-avito.ru}"
+    CLASSIC_SNI="${CLASSIC_SNI:-dl.google.com}"
+    REALITY_FINGERPRINT="${REALITY_FINGERPRINT:-${FINGERPRINT:-firefox}}"
     HY2_PORT="${HY2_PORT:-443}"
     HY2_DOMAIN="${HY2_DOMAIN:-$PRIMARY_DOMAIN}"
     AWG_V3_PORT="${AWG_V3_PORT:-8443}"
@@ -14258,26 +14345,36 @@ EOF_HELP
     AWG_SUBNET_CIDR="${AWG_SUBNET_CIDR:-22}"
     AWG_HEADER_PROTECTION_KEY="${AWG_HEADER_PROTECTION_KEY:-}"
     AWG_RANDOM_TRAILERS="${AWG_RANDOM_TRAILERS:-false}"
+    AWG_I1="${AWG_I1:-}"
     SS2022_PORT="${SS2022_PORT:-8388}"
     SHADOWTLS_PORT="${SHADOWTLS_PORT:-8543}"
     SHADOWTLS_SNI="${SHADOWTLS_SNI:-gateway.icloud.com}"
     SHADOWTLS_PASSWORD="${SHADOWTLS_PASSWORD:-}"
     WSTUNNEL_PORT="${WSTUNNEL_PORT:-8080}"
     WSTUNNEL_PREFIX="${WSTUNNEL_PREFIX:-}"
-    ZAPRET_QNUM="${ZAPRET_QNUM:-1}"
-    ZAPRET_DESYNC="${ZAPRET_DESYNC:-fake,split2}"
-    ZAPRET_FOOLING="${ZAPRET_FOOLING:-badsum}"
-    NAIVE_PORT="${NAIVE_PORT:-9443}"
+    ZAPRET_QNUM="${ZAPRET_QNUM:-200}"
+    ZAPRET_DESYNC="${ZAPRET_DESYNC:-split2}"
+    ZAPRET_FOOLING="${ZAPRET_FOOLING:-md5sig,badseq}"
+    NAIVE_PORT="${NAIVE_PORT:-8446}"
     NAIVE_DOMAIN="${NAIVE_DOMAIN:-$PRIMARY_DOMAIN}"
-    NAIVE_USER="${NAIVE_USER:-admin}"
+    NAIVE_USER="${NAIVE_USER:-user}"
     NAIVE_PASS="${NAIVE_PASS:-}"
-    DNSTT_PORT="${DNSTT_PORT:-5300}"
+    DNSTT_PORT="${DNSTT_PORT:-53053}"
     DNSTT_DOMAIN="${DNSTT_DOMAIN:-}"
     DNSTT_PUBKEY="${DNSTT_PUBKEY:-}"
-    TUIC_PORT="${TUIC_PORT:-8445}"
-    MTPROTO_PORT="${MTPROTO_PORT:-8446}"
+    TUIC_PORT="${TUIC_PORT:-8448}"
+    MTPROTO_PORT="${MTPROTO_PORT:-8444}"
     MTPROTO_FAKETLS_DOMAIN="${MTPROTO_FAKETLS_DOMAIN:-gateway.icloud.com}"
     MTPROTO_ADTAG="${MTPROTO_ADTAG:-}"
+    ENABLE_MASQUE="${ENABLE_MASQUE:-n}"
+    MASQUE_PORT="${MASQUE_PORT:-8449}"
+    MASQUE_USER="${MASQUE_USER:-client}"
+    MASQUE_PASSWORD="${MASQUE_PASSWORD:-}"
+    REALITY_FALLBACK_PORT="${REALITY_FALLBACK_PORT:-9443}"
+    STEAL_DOMAINS="${STEAL_DOMAINS[*]:-${STEAL_DOMAINS:-cdn.$PRIMARY_DOMAIN}}"
+    SUB_TITLE="${SUB_TITLE:-${SERVER_PREFIX:-Server}}"
+    CLIENT_EMAIL="${CLIENT_EMAIL:-${CLIENT_NAME:-}}"
+    CLIENT_NAME="${CLIENT_NAME:-${CLIENT_EMAIL:-}}"
 
     ENABLE_STEAL="${ENABLE_STEAL:-y}"
     ENABLE_XHTTP="${ENABLE_XHTTP:-y}"
@@ -14297,7 +14394,7 @@ EOF_HELP
     ENABLE_WARP="${ENABLE_WARP:-n}"
     WARP_LICENSE_KEY="${WARP_LICENSE_KEY:-}"
     TIME_LOCATION="${TIME_LOCATION:-Europe/Moscow}"
-    SUB_UPDATES="${SUB_UPDATES:-12}"
+    SUB_UPDATES="${SUB_UPDATES:-1}"
     SUB_ENCRYPT="${SUB_ENCRYPT:-true}"
     BLOCK_SMTP="${BLOCK_SMTP:-true}"
     BLOCK_LAN="${BLOCK_LAN:-true}"
@@ -14328,6 +14425,7 @@ EOF_HELP
 
     resolve_ssl_cert_paths "$PRIMARY_DOMAIN" "SSL"
     resolve_ssl_cert_paths "${HY2_DOMAIN:-$PRIMARY_DOMAIN}" "HY2"
+    resolve_ssl_cert_paths "${TUIC_DOMAIN:-$PRIMARY_DOMAIN}" "TUIC"
 
     # Определение работоспособной команды Python
     PYTHON_CMD=""
@@ -14415,10 +14513,13 @@ EOF_HELP
     export ENABLE_XHTTP
     export XHTTP_PORT
     export XHTTP_PATH
+    export XHTTP_STREAM_PORT
+    export XHTTP_STREAM_PATH
     export XHTTP_SNI
     export ENABLE_CLASSIC
     export CLASSIC_PORT
     export CLASSIC_SNI
+    export REALITY_FINGERPRINT
     export ENABLE_HY2
     export HY2_PORT
     export HY2_DOMAIN
@@ -14451,6 +14552,8 @@ EOF_HELP
     export DNSTT_PUBKEY
     export ENABLE_TUIC
     export TUIC_PORT
+    export TUIC_CERT_PATH
+    export TUIC_KEY_PATH
     export ENABLE_MTPROTO
     export MTPROTO_PORT
     export MTPROTO_FAKETLS_DOMAIN
@@ -14460,6 +14563,20 @@ EOF_HELP
     export ADMIN_USERNAME
     export ADMIN_PASSWORD
     export SERVER_PREFIX
+    export SUB_TITLE
+    export REALITY_FALLBACK_PORT
+    export STEAL_DOMAINS
+    export ENABLE_MASQUE
+    export MASQUE_PORT
+    export MASQUE_USER
+    export MASQUE_PASSWORD
+    export ENABLE_ZAPRET
+    export ZAPRET_QNUM
+    export ZAPRET_DESYNC
+    export ZAPRET_FOOLING
+    export AWG_I1
+    export CLIENT_EMAIL
+    export CLIENT_NAME
     export ENABLE_WARP
     export WARP_LICENSE_KEY
     export TIME_LOCATION
@@ -14611,8 +14728,8 @@ else:
     else:
         sub_clash_path = f"{sub_path}/clash"
 
-xhttp_port = int(os.environ.get("XHTTP_STREAM_PORT") or "50443")
-xhttp_raw_path = (os.environ.get("XHTTP_STREAM_PATH") or "").strip("/")
+xhttp_port = int(os.environ.get("XHTTP_STREAM_PORT") or os.environ.get("XHTTP_PORT") or "50443")
+xhttp_raw_path = (os.environ.get("XHTTP_STREAM_PATH") or os.environ.get("XHTTP_PATH") or "").strip("/")
 if not xhttp_raw_path or xhttp_raw_path == "Stream-One-Path" or xhttp_raw_path.startswith("vless-"):
     cur.execute("SELECT stream_settings FROM inbounds WHERE port = ?", (xhttp_port,))
     row_xh = cur.fetchone()
@@ -14637,8 +14754,20 @@ reality_fallback_port = int(os.environ.get("REALITY_FALLBACK_PORT") or "9443")
 
 enable_classic = os.environ.get("ENABLE_CLASSIC", "y").lower() in ("1", "y", "true")
 classic_port = int(os.environ.get("CLASSIC_PORT") or "46443")
-classic_sni = os.environ.get("CLASSIC_SNI") or "avito.ru"
-classic_sni = classic_sni.split()[0] if classic_sni.strip() else "avito.ru"
+classic_raw = os.environ.get("CLASSIC_SNI") or "dl.google.com"
+_parsed_snis = []
+_seen_snis = set()
+for _s in classic_raw.replace(",", " ").split():
+    _clean_s = _s.strip().strip(".").lower()
+    if _clean_s and _clean_s not in _seen_snis:
+        _seen_snis.add(_clean_s)
+        _parsed_snis.append(_clean_s)
+classic_snis = _parsed_snis if _parsed_snis else ["dl.google.com"]
+classic_sni = classic_snis[0]
+
+VALID_FINGERPRINTS = {"chrome", "firefox", "safari", "ios", "android", "edge", "360", "qq", "random", "randomized"}
+_raw_fp = (os.environ.get("REALITY_FINGERPRINT") or "firefox").strip().lower()
+reality_fingerprint = _raw_fp if (_raw_fp in VALID_FINGERPRINTS or _raw_fp) else "firefox"
 
 def resolve_cert_key_paths(target_dom: str, env_cert: str = "", env_key: str = "") -> tuple:
     """
@@ -15417,6 +15546,8 @@ print("\n[+] Синхронизация шаблона конфигурации 
 enable_warp = os.environ.get("ENABLE_WARP", "n").lower() in ("1", "y", "true")
 warp_license_key = os.environ.get("WARP_LICENSE_KEY", "").strip()
 
+# ----------------- Шаблон ядра Xray и правила маршрутизации -----------------
+
 DEFAULT_XRAY_TEMPLATE = {
     "api": {
         "services": ["HandlerService", "LoggerService", "StatsService", "RoutingService"],
@@ -15445,6 +15576,61 @@ DEFAULT_XRAY_TEMPLATE = {
     },
     "stats": {}
 }
+
+BAD_GEOSITES = {
+    "geosite:ru", "geosite:yandex", "geosite:vk", "geosite:youtube",
+    "geosite:openai", "geosite:google-gemini", "geosite:anthropic", "geosite:cloudflare"
+}
+
+YT_DOMAINS = [
+    "domain:youtube.com",
+    "domain:googlevideo.com",
+    "domain:ytimg.com",
+    "domain:youtu.be",
+    "domain:youtubei.googleapis.com",
+    "domain:yt.be"
+]
+
+RU_DOMAINS = [
+    "domain:ru",
+    "domain:su",
+    "domain:рф",
+    "domain:xn--p1ai",
+    "domain:yandex.ru",
+    "domain:yandex.net",
+    "domain:ya.ru",
+    "domain:vk.com",
+    "domain:vk.ru",
+    "domain:vkvideo.ru",
+    "domain:gosuslugi.ru",
+    "domain:sberbank.ru",
+    "domain:tbank.ru",
+    "domain:tinkoff.ru",
+    "domain:dzen.ru",
+    "domain:mail.ru",
+    "domain:rutube.ru",
+    "domain:ozon.ru",
+    "domain:wildberries.ru",
+    "domain:avito.ru"
+]
+
+WARP_DOMAINS = [
+    "domain:openai.com",
+    "domain:chatgpt.com",
+    "domain:oaistatic.com",
+    "domain:oaiusercontent.com",
+    "domain:anthropic.com",
+    "domain:claude.ai",
+    "domain:gemini.google.com",
+    "domain:aistudio.google.com",
+    "domain:deepmind.google",
+    "domain:makersuite.google.com",
+    "domain:generativelanguage.googleapis.com",
+    "domain:ai.google.dev",
+    "domain:google.com",
+    "domain:cloudflare.com",
+    "domain:challenges.cloudflare.com"
+]
 
 # Чтение и инициализация шаблона Xray
 raw_tpl = existing_settings.get("xrayTemplateConfig")
@@ -15701,63 +15887,16 @@ if enable_warp:
     routing = tpl.get("routing", {})
     rules = routing.get("rules", [])
 
-    bad_geosites = {
-        "geosite:ru", "geosite:yandex", "geosite:vk", "geosite:youtube",
-        "geosite:openai", "geosite:google-gemini", "geosite:anthropic", "geosite:cloudflare"
-    }
+    bad_geosites = BAD_GEOSITES
 
     # Очистка всех существующих правил от отсутствующих/невалидных geosite меток
     for r in rules:
         if isinstance(r, dict) and "domain" in r and isinstance(r["domain"], list):
             r["domain"] = [d for d in r["domain"] if d not in bad_geosites]
 
-    yt_domains = [
-        "domain:youtube.com",
-        "domain:googlevideo.com",
-        "domain:ytimg.com",
-        "domain:youtu.be",
-        "domain:youtubei.googleapis.com",
-        "domain:yt.be"
-    ]
-    ru_domains = [
-        "domain:ru",
-        "domain:su",
-        "domain:рф",
-        "domain:xn--p1ai",
-        "domain:yandex.ru",
-        "domain:yandex.net",
-        "domain:ya.ru",
-        "domain:vk.com",
-        "domain:vk.ru",
-        "domain:vkvideo.ru",
-        "domain:gosuslugi.ru",
-        "domain:sberbank.ru",
-        "domain:tbank.ru",
-        "domain:tinkoff.ru",
-        "domain:dzen.ru",
-        "domain:mail.ru",
-        "domain:rutube.ru",
-        "domain:ozon.ru",
-        "domain:wildberries.ru",
-        "domain:avito.ru"
-    ]
-    warp_domains = [
-        "domain:openai.com",
-        "domain:chatgpt.com",
-        "domain:oaistatic.com",
-        "domain:oaiusercontent.com",
-        "domain:anthropic.com",
-        "domain:claude.ai",
-        "domain:gemini.google.com",
-        "domain:aistudio.google.com",
-        "domain:deepmind.google",
-        "domain:makersuite.google.com",
-        "domain:generativelanguage.googleapis.com",
-        "domain:ai.google.dev",
-        "domain:google.com",
-        "domain:cloudflare.com",
-        "domain:challenges.cloudflare.com"
-    ]
+    yt_domains = YT_DOMAINS
+    ru_domains = RU_DOMAINS
+    warp_domains = WARP_DOMAINS
 
     # 1. Из правил WARP исключаем любые YouTube домены
     for r in rules:
@@ -16107,12 +16246,13 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
         if protocol == "mtproto" and "preferIp" not in target_settings:
             target_settings["preferIp"] = "prefer-ipv4"
         if "externalProxy" in target_stream and isinstance(target_stream["externalProxy"], list) and len(target_stream["externalProxy"]) > 0:
-            if protocol in ("shadowsocks", "mtproto", "amneziawg"):
-                target_stream["externalProxy"][0]["forceTls"] = "none"
-            elif protocol == "vless" and "realitySettings" in target_stream:
-                target_stream["externalProxy"][0]["forceTls"] = "same"
-            elif "forceTls" not in target_stream["externalProxy"][0]:
-                target_stream["externalProxy"][0]["forceTls"] = "tls"
+            for ep in target_stream["externalProxy"]:
+                if protocol in ("shadowsocks", "mtproto", "amneziawg"):
+                    ep["forceTls"] = "none"
+                elif protocol == "vless" and "realitySettings" in target_stream:
+                    ep["forceTls"] = "same"
+                elif "forceTls" not in ep:
+                    ep["forceTls"] = "tls"
 
         settings_json = json.dumps(target_settings, ensure_ascii=False)
         stream_json = json.dumps(target_stream, ensure_ascii=False)
@@ -16148,6 +16288,8 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
     target_stream = json.loads(json.dumps(default_stream))
     repairs = []
     preserved = []
+    target_snis = []
+    old_snis = []
 
     # Сохранение пользовательского названия инбаунда (remark), если оно было изменено
     final_remark = remark
@@ -16247,18 +16389,43 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
                 target_stream["realitySettings"]["settings"]["publicKey"] = derived_pub
                 repairs.append("восстановлен settings.publicKey по x25519")
 
-        # Ремонт мертвого swdist.microsoft.com SNI или пустых значений
+        # settings.fingerprint
+        tgt_fp = target_stream.get("realitySettings", {}).get("settings", {}).get("fingerprint")
+        cur_fp = cur_reality.get("settings", {}).get("fingerprint")
+        if tgt_fp and cur_fp and tgt_fp != cur_fp:
+            target_stream["realitySettings"]["settings"]["fingerprint"] = tgt_fp
+            repairs.append(f"обновлен fingerprint Reality ({cur_fp} -> {tgt_fp})")
+        elif cur_fp and not tgt_fp:
+            if "settings" in target_stream["realitySettings"] and isinstance(target_stream["realitySettings"]["settings"], dict):
+                target_stream["realitySettings"]["settings"]["fingerprint"] = cur_fp
+
+        # Ремонт мертвого swdist.microsoft.com SNI или пустых значений, либо обновление пула SNI
         old_snis = cur_reality.get("serverNames", [])
         old_dest = str(cur_reality.get("dest", "")).strip()
+        target_snis = target_stream["realitySettings"].get("serverNames", [])
+        c_sni_fallback = globals().get("classic_sni", "dl.google.com")
+        c_port = globals().get("classic_port", 46443)
+
         if any("swdist.microsoft.com" in s for s in old_snis) or "swdist.microsoft.com" in old_dest:
-            repairs.append(f"заменен мертвый SNI swdist.microsoft.com -> {classic_sni}")
-            target_stream["realitySettings"]["serverNames"] = [classic_sni]
-            target_stream["realitySettings"]["dest"] = f"{classic_sni}:443"
+            chosen_snis = target_snis if (target_snis and not any("swdist.microsoft.com" in s for s in target_snis)) else [c_sni_fallback]
+            target_stream["realitySettings"]["serverNames"] = chosen_snis
+            target_stream["realitySettings"]["dest"] = f"{chosen_snis[0]}:443"
             target_stream["realitySettings"]["xver"] = 0
+            repairs.append(f"заменен мертвый SNI swdist.microsoft.com -> {','.join(chosen_snis)}")
+        elif target_snis and target_snis != old_snis:
+            target_stream["realitySettings"]["serverNames"] = target_snis
+            if port == c_port or tag == "in-classic-reality" or cur_tag == "in-classic-reality":
+                target_stream["realitySettings"]["dest"] = f"{target_snis[0]}:443"
+                target_stream["realitySettings"]["target"] = f"{target_snis[0]}:443"
+                if "settings" in target_stream["realitySettings"] and isinstance(target_stream["realitySettings"]["settings"], dict):
+                    target_stream["realitySettings"]["settings"]["serverName"] = target_snis[0]
+            repairs.append(f"обновлен пул SNI Reality ({','.join(target_snis)})")
         elif old_snis:
             target_stream["realitySettings"]["serverNames"] = old_snis
             target_stream["realitySettings"]["dest"] = old_dest or target_stream["realitySettings"]["dest"]
             preserved.append(f"SNI ({','.join(old_snis)})")
+        elif target_snis:
+            target_stream["realitySettings"]["serverNames"] = target_snis
 
         # Строгая гарантия параметров VLESS REALITY (маскировка под свой сайт: Nginx Fallback + Xver=1 + target)
         s_port = globals().get("steal_port", 45443)
@@ -16277,7 +16444,7 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
 
         # Строгая гарантия параметров VLESS REALITY (маскировка под внешние сервисы: xver=0, dest: 443, target: 443)
         c_port = globals().get("classic_port", 46443)
-        c_sni = globals().get("classic_sni", "avito.ru")
+        c_sni = globals().get("classic_sni", "dl.google.com")
         if port == c_port or tag == "in-classic-reality" or cur_tag == "in-classic-reality":
             if not target_stream["realitySettings"].get("dest"):
                 target_stream["realitySettings"]["dest"] = f"{c_sni}:443"
@@ -16288,9 +16455,15 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
     # В. Проверка и ремонт xHTTP
     if protocol == "vless" and "xhttpSettings" in target_stream:
         cur_xh = cur_stream.get("xhttpSettings", {})
-        if cur_xh.get("path"):
-            target_stream["xhttpSettings"]["path"] = cur_xh["path"]
-            preserved.append(f"path ({cur_xh['path']})")
+        tgt_p = (target_stream["xhttpSettings"].get("path") or "").strip("/")
+        cur_p = (cur_xh.get("path") or "").strip("/")
+        if (not tgt_p or tgt_p == "Stream-One-Path" or tgt_p.startswith("vless-")) and cur_p:
+            target_stream["xhttpSettings"]["path"] = f"/{cur_p}/"
+            preserved.append(f"path (/{cur_p}/)")
+        elif cur_p and tgt_p == cur_p:
+            preserved.append(f"path (/{cur_p}/)")
+        elif cur_p and tgt_p != cur_p:
+            repairs.append(f"синхронизирован path xHTTP: /{cur_p}/ -> /{tgt_p}/")
         target_stream["xhttpSettings"]["mode"] = "stream-one"
         if cur_settings.get("decryption") and cur_settings["decryption"] != "none":
             target_settings["decryption"] = cur_settings["decryption"]
@@ -16539,10 +16712,12 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
 
     # И. Проверка и сохранение externalProxy (:443, SNI и кастомных хостов узлов)
     cur_ext = cur_stream.get("externalProxy", [])
-    expected_ext_port = 443 if protocol in ("vless", "hysteria") and port != hy2_port else (hy2_port if protocol == "hysteria" else port)
+    h_port = globals().get("hy2_port", 443)
+    expected_ext_port = 443 if protocol in ("vless", "hysteria") and port != h_port else (h_port if protocol == "hysteria" else port)
 
+    cur_domain = globals().get("domain", "")
     def_ext = default_stream.get("externalProxy", [])
-    def_dest = def_ext[0].get("dest") if (def_ext and isinstance(def_ext, list) and def_ext[0].get("dest")) else domain
+    def_dest = def_ext[0].get("dest") if (def_ext and isinstance(def_ext, list) and def_ext[0].get("dest")) else cur_domain
     def_sni = def_ext[0].get("sni", "") if (def_ext and isinstance(def_ext, list) and def_ext[0].get("sni")) else ""
 
     # Сохраняем кастомный хост узла (dest), если он был настроен и не равен localhost
@@ -16551,17 +16726,8 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
         ext_dest = str(cur_ext[0]["dest"]).strip()
         if ext_dest and ext_dest not in ("127.0.0.1", "localhost", "0.0.0.0"):
             target_dest = ext_dest
-            if ext_dest != domain and ext_dest != def_dest:
+            if ext_dest != cur_domain and ext_dest != def_dest:
                 preserved.append(f"кастомный хост узла ({ext_dest})")
-
-    # Сохраняем SNI для externalProxy (критично для VLESS REALITY и маршрутизации Nginx Stream L4)
-    target_sni = def_sni
-    if cur_ext and len(cur_ext) > 0 and cur_ext[0].get("sni"):
-        ext_sni = str(cur_ext[0]["sni"]).strip()
-        if ext_sni:
-            target_sni = ext_sni
-            if target_sni != def_sni:
-                preserved.append(f"кастомный externalProxy SNI ({ext_sni})")
 
     if protocol in ("shadowsocks", "mtproto", "amneziawg"):
         force_tls_val = "none"
@@ -16570,36 +16736,67 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
     else:
         force_tls_val = "tls"
 
-    ext_entry = {
-        "dest": target_dest,
-        "port": expected_ext_port,
-        "forceTls": force_tls_val,
-        "remark": final_remark
-    }
-    if target_sni:
-        ext_entry["sni"] = target_sni
-    if def_ext and isinstance(def_ext, list):
-        if def_ext[0].get("fingerprint"):
-            ext_entry["fingerprint"] = def_ext[0]["fingerprint"]
-        if def_ext[0].get("alpn"):
-            ext_entry["alpn"] = def_ext[0]["alpn"]
-
-    needs_ext_repair = (
-        not cur_ext
-        or cur_ext[0].get("port") != expected_ext_port
-        or cur_ext[0].get("dest") != target_dest
-        or cur_ext[0].get("remark") != final_remark
-        or cur_ext[0].get("forceTls") != force_tls_val
-        or (target_sni and cur_ext[0].get("sni") != target_sni)
-    )
-
-    if needs_ext_repair:
-        target_stream["externalProxy"] = [ext_entry]
-        sni_desc = f", sni: {target_sni}" if target_sni else ""
-        repairs.append(f"исправлен externalProxy -> {target_dest}:{expected_ext_port}{sni_desc}")
+    cur_fps = [ce.get("fingerprint") for ce in cur_ext] if (cur_ext and isinstance(cur_ext, list)) else []
+    def_fps = [de.get("fingerprint") for de in def_ext] if (def_ext and isinstance(def_ext, list)) else []
+    fp_changed = bool(def_fps and cur_fps != def_fps)
+    sni_pool_changed = bool(target_snis and target_snis != old_snis)
+    if len(def_ext) > 1 or sni_pool_changed or fp_changed:
+        updated_ext = []
+        for de in def_ext:
+            entry = dict(de)
+            if target_dest:
+                entry["dest"] = target_dest
+            entry["port"] = expected_ext_port
+            entry["forceTls"] = force_tls_val
+            updated_ext.append(entry)
+        target_stream["externalProxy"] = updated_ext
+        if cur_ext != updated_ext:
+            repairs.append(f"обновлен externalProxy ({len(updated_ext)} узлов)")
+        else:
+            preserved.append(f"externalProxy ({len(updated_ext)} узлов)")
     else:
-        target_stream["externalProxy"] = cur_ext
-        preserved.append(f"externalProxy :{expected_ext_port}")
+        # Сохраняем SNI для externalProxy (критично для VLESS REALITY и маршрутизации Nginx Stream L4)
+        target_sni = def_sni
+        if cur_ext and len(cur_ext) > 0 and cur_ext[0].get("sni"):
+            ext_sni = str(cur_ext[0]["sni"]).strip()
+            if ext_sni:
+                target_sni = ext_sni
+                if target_sni != def_sni:
+                    preserved.append(f"кастомный externalProxy SNI ({ext_sni})")
+
+        ext_entry = {
+            "dest": target_dest,
+            "port": expected_ext_port,
+            "forceTls": force_tls_val,
+            "remark": final_remark
+        }
+        if target_sni:
+            ext_entry["sni"] = target_sni
+        if def_ext and isinstance(def_ext, list):
+            if def_ext[0].get("fingerprint"):
+                ext_entry["fingerprint"] = def_ext[0]["fingerprint"]
+            if def_ext[0].get("alpn"):
+                ext_entry["alpn"] = def_ext[0]["alpn"]
+
+        def_fp = def_ext[0].get("fingerprint") if (def_ext and isinstance(def_ext, list) and len(def_ext) > 0) else None
+        cur_fp_single = cur_ext[0].get("fingerprint") if (cur_ext and isinstance(cur_ext, list) and len(cur_ext) > 0) else None
+        needs_ext_repair = (
+            not cur_ext
+            or cur_ext[0].get("port") != expected_ext_port
+            or cur_ext[0].get("dest") != target_dest
+            or cur_ext[0].get("remark") != final_remark
+            or cur_ext[0].get("forceTls") != force_tls_val
+            or (target_sni and cur_ext[0].get("sni") != target_sni)
+            or (def_fp and cur_fp_single != def_fp)
+        )
+
+        if needs_ext_repair:
+            target_stream["externalProxy"] = [ext_entry]
+            sni_desc = f", sni: {target_sni}" if target_sni else ""
+            repairs.append(f"исправлен externalProxy -> {target_dest}:{expected_ext_port}{sni_desc}")
+        else:
+            target_stream["externalProxy"] = cur_ext
+            preserved.append(f"externalProxy :{expected_ext_port}")
 
     # Синхронизация клиентов в реестре (client_traffics, clients, client_inbounds)
     if "sync_inbound_clients" in globals():
@@ -16639,9 +16836,9 @@ if enable_steal:
             "show": False, "xver": 1, "dest": f"127.0.0.1:{reality_fallback_port}", "target": f"127.0.0.1:{reality_fallback_port}",
             "serverNames": [steal_dom], "privateKey": def_reality_priv, "minClientVer": "1.0.0",
             "shortIds": def_reality_sids,
-            "settings": {"publicKey": def_reality_pub, "fingerprint": "firefox", "serverName": steal_dom, "spiderX": "/"}
+            "settings": {"publicKey": def_reality_pub, "fingerprint": reality_fingerprint, "serverName": steal_dom, "spiderX": "/"}
         },
-        "externalProxy": [{"dest": domain, "port": 443, "forceTls": "same", "sni": steal_dom, "fingerprint": "firefox", "remark": make_remark("VLESS Steal")}]
+        "externalProxy": [{"dest": domain, "port": 443, "forceTls": "same", "sni": steal_dom, "fingerprint": reality_fingerprint, "remark": make_remark("VLESS Steal")}]
     }
     steal_remark = make_remark("VLESS Steal")
     steal_ib_id = smart_reconcile_inbound(steal_port, "vless", "in-steal-reality", steal_remark, s_set, s_str, listen="127.0.0.1")
@@ -16655,11 +16852,21 @@ if enable_classic:
         "security": "reality",
         "realitySettings": {
             "show": False, "xver": 0, "dest": f"{classic_sni}:443", "target": f"{classic_sni}:443",
-            "serverNames": [classic_sni], "privateKey": def_reality_priv, "minClientVer": "1.0.0",
+            "serverNames": classic_snis, "privateKey": def_reality_priv, "minClientVer": "1.0.0",
             "shortIds": def_reality_sids,
-            "settings": {"publicKey": def_reality_pub, "fingerprint": "firefox", "serverName": classic_sni, "spiderX": "/"}
+            "settings": {"publicKey": def_reality_pub, "fingerprint": reality_fingerprint, "serverName": classic_sni, "spiderX": "/"}
         },
-        "externalProxy": [{"dest": domain, "port": 443, "forceTls": "same", "sni": classic_sni, "fingerprint": "firefox", "remark": make_remark("VLESS Classic")}]
+        "externalProxy": [
+            {
+                "dest": domain,
+                "port": 443,
+                "forceTls": "same",
+                "sni": csni,
+                "fingerprint": reality_fingerprint,
+                "remark": make_remark(f"VLESS Classic ({csni})" if len(classic_snis) > 1 else "VLESS Classic")
+            }
+            for csni in classic_snis
+        ]
     }
     classic_remark = make_remark("VLESS Classic")
     classic_ib_id = smart_reconcile_inbound(classic_port, "vless", "in-classic-reality", classic_remark, c_set, c_str, listen="127.0.0.1")
@@ -16692,7 +16899,7 @@ x_str = {
         }
     },
     "security": "none",
-    "externalProxy": [{"dest": domain, "port": 443, "forceTls": "tls", "sni": domain, "fingerprint": "firefox", "alpn": "h2", "remark": make_remark("VLESS xHTTP")}]
+    "externalProxy": [{"dest": domain, "port": 443, "forceTls": "tls", "sni": domain, "fingerprint": reality_fingerprint, "alpn": "h2", "remark": make_remark("VLESS xHTTP")}]
 }
 xhttp_remark = make_remark("VLESS xHTTP")
 xhttp_ib_id = smart_reconcile_inbound(xhttp_port, "vless", "in-xhttp-stream", xhttp_remark, x_set, x_str, listen="127.0.0.1")
@@ -16887,58 +17094,80 @@ cur.execute("""
         mux_params TEXT DEFAULT '',
         sockopt_params TEXT DEFAULT '',
         final_mask TEXT DEFAULT '',
-        exclude_from_sub_types TEXT DEFAULT ''
+        exclude_from_sub_types TEXT DEFAULT '',
+        shuffle_host INTEGER DEFAULT 0
     )
 """)
 cur.execute("PRAGMA table_info(hosts)")
 active_host_cols = {r[1] for r in cur.fetchall()}
+if "shuffle_host" not in active_host_cols and "shuffleHost" not in active_host_cols:
+    try:
+        cur.execute("ALTER TABLE hosts ADD COLUMN shuffle_host INTEGER DEFAULT 0")
+        active_host_cols.add("shuffle_host")
+    except Exception:
+        pass
 
-def sync_host_entry(ib_id, host_remark, addr, host_port, sec, host_sni="", host_path="", host_alpn="", host_fp="firefox", sort_order=0):
+inbound_col = "inboundId" if "inboundId" in active_host_cols else "inbound_id"
+sort_col = "sortOrder" if "sortOrder" in active_host_cols else "sort_order"
+shuffle_col = "shuffleHost" if "shuffleHost" in active_host_cols else "shuffle_host"
+
+def insert_host_entry(ib_id, host_remark, addr, host_port, sec, host_sni="", host_path="", host_alpn="", host_fp="firefox", sort_order=0, shuffle_host=0):
+    if ib_id is None or dry_run:
+        return
+    gid = str(uuid.uuid4())
+    col_candidates = {
+        "group_id": gid, "groupId": gid,
+        "inbound_id": ib_id, "inboundId": ib_id,
+        "sort_order": sort_order, "sortOrder": sort_order,
+        "remark": host_remark, "address": addr, "port": host_port, "security": sec,
+        "sni": host_sni, "host_header": "", "hostHeader": "", "path": host_path,
+        "alpn": host_alpn, "fingerprint": host_fp, "allow_insecure": 0, "allowInsecure": 0,
+        "is_disabled": 0, "isDisabled": 0, "is_hidden": 0, "isHidden": 0,
+        "tags": "", "ech_config_list": "", "mux_params": "", "sockopt_params": "",
+        "final_mask": "", "exclude_from_sub_types": "",
+        "shuffle_host": shuffle_host, "shuffleHost": shuffle_host
+    }
+    insert_data = {k: v for k, v in col_candidates.items() if k in active_host_cols}
+    keys = list(insert_data.keys())
+    vals = [insert_data[k] for k in keys]
+    placeholders = ",".join(["?"] * len(keys))
+    cur.execute(f"INSERT INTO hosts ({','.join(keys)}) VALUES ({placeholders})", vals)
+
+def sync_host_entry(ib_id, host_remark, addr, host_port, sec, host_sni="", host_path="", host_alpn="", host_fp="firefox", sort_order=0, shuffle_host=0):
     if ib_id is None:
         return
-    cur.execute("SELECT id, remark FROM hosts WHERE inbound_id = ?", (ib_id,))
+    cur.execute(f"SELECT id, remark FROM hosts WHERE {inbound_col} = ?", (ib_id,))
     h_row = cur.fetchone()
     if h_row:
         h_id, existing_rem = h_row
         final_h_remark = existing_rem if (existing_rem and existing_rem.strip()) else host_remark
         if not dry_run:
-            cur.execute("""
-                UPDATE hosts
-                SET address = ?, port = ?, security = ?, sni = ?, path = ?, alpn = ?, fingerprint = ?, sort_order = ?, remark = ?
-                WHERE id = ?
-            """, (addr, host_port, sec, host_sni, host_path, host_alpn, host_fp, sort_order, final_h_remark, h_id))
+            update_fields = [
+                "address = ?", "port = ?", "security = ?", "sni = ?",
+                "path = ?", "alpn = ?", "fingerprint = ?", f"{sort_col} = ?", "remark = ?"
+            ]
+            update_vals = [addr, host_port, sec, host_sni, host_path, host_alpn, host_fp, sort_order, final_h_remark]
+            if shuffle_col in active_host_cols:
+                update_fields.append(f"{shuffle_col} = ?")
+                update_vals.append(shuffle_host)
+            update_vals.append(h_id)
+            cur.execute(f"UPDATE hosts SET {', '.join(update_fields)} WHERE id = ?", tuple(update_vals))
     else:
-        gid = str(uuid.uuid4())
-        col_candidates = {
-            "group_id": gid, "groupId": gid,
-            "inbound_id": ib_id, "inboundId": ib_id,
-            "sort_order": sort_order, "sortOrder": sort_order,
-            "remark": host_remark, "address": addr, "port": host_port, "security": sec,
-            "sni": host_sni, "host_header": "", "hostHeader": "", "path": host_path,
-            "alpn": host_alpn, "fingerprint": host_fp, "allow_insecure": 0, "allowInsecure": 0,
-            "is_disabled": 0, "isDisabled": 0, "is_hidden": 0, "isHidden": 0,
-            "tags": "", "ech_config_list": "", "mux_params": "", "sockopt_params": "",
-            "final_mask": "", "exclude_from_sub_types": ""
-        }
-        insert_data = {k: v for k, v in col_candidates.items() if k in active_host_cols}
-        keys = list(insert_data.keys())
-        vals = [insert_data[k] for k in keys]
-        placeholders = ",".join(["?"] * len(keys))
-        if not dry_run:
-            cur.execute(f"INSERT INTO hosts ({','.join(keys)}) VALUES ({placeholders})", vals)
+        insert_host_entry(ib_id, host_remark, addr, host_port, sec, host_sni=host_sni, host_path=host_path, host_alpn=host_alpn, host_fp=host_fp, sort_order=sort_order, shuffle_host=shuffle_host)
 
 def lookup_inbound_id(tag_val, port_val):
     cur.execute("SELECT id FROM inbounds WHERE tag = ? OR port = ?", (tag_val, port_val))
     r = cur.fetchone()
     return r[0] if r else None
 
+reality_fp = globals().get("reality_fingerprint", "firefox")
 if enable_steal:
     s_iid = steal_ib_id if ('steal_ib_id' in locals() and steal_ib_id) else lookup_inbound_id("in-steal-reality", steal_port)
     if s_iid:
         cur.execute("SELECT remark FROM inbounds WHERE id = ?", (s_iid,))
         r_rem = cur.fetchone()
         s_rem = r_rem[0] if r_rem and r_rem[0] else steal_remark
-        sync_host_entry(s_iid, s_rem, domain, 443, "same", host_sni=steal_dom, host_fp="firefox", sort_order=1)
+        sync_host_entry(s_iid, s_rem, domain, 443, "same", host_sni=steal_dom, host_fp=reality_fp, sort_order=1)
 
 if enable_classic:
     c_iid = classic_ib_id if ('classic_ib_id' in locals() and classic_ib_id) else lookup_inbound_id("in-classic-reality", classic_port)
@@ -16946,14 +17175,18 @@ if enable_classic:
         cur.execute("SELECT remark FROM inbounds WHERE id = ?", (c_iid,))
         r_rem = cur.fetchone()
         c_rem = r_rem[0] if r_rem and r_rem[0] else classic_remark
-        sync_host_entry(c_iid, c_rem, domain, 443, "same", host_sni=classic_sni, host_fp="firefox", sort_order=1)
+        if not dry_run:
+            cur.execute(f"DELETE FROM hosts WHERE {inbound_col} = ?", (c_iid,))
+        for idx, csni in enumerate(classic_snis, start=1):
+            h_remark = f"{c_rem} ({csni})" if len(classic_snis) > 1 else c_rem
+            insert_host_entry(c_iid, h_remark, domain, 443, "same", host_sni=csni, host_fp=reality_fp, sort_order=idx, shuffle_host=1)
 
 x_iid = xhttp_ib_id if ('xhttp_ib_id' in locals() and xhttp_ib_id) else lookup_inbound_id("in-xhttp-stream", xhttp_port)
 if x_iid:
     cur.execute("SELECT remark FROM inbounds WHERE id = ?", (x_iid,))
     r_rem = cur.fetchone()
     x_rem = r_rem[0] if r_rem and r_rem[0] else xhttp_remark
-    sync_host_entry(x_iid, x_rem, domain, 443, "tls", host_sni=domain, host_path=f"/{xhttp_path.strip('/')}/", host_alpn=json.dumps(["h2"]), host_fp="firefox", sort_order=2)
+    sync_host_entry(x_iid, x_rem, domain, 443, "tls", host_sni=domain, host_path=f"/{xhttp_path.strip('/')}/", host_alpn=json.dumps(["h2"]), host_fp=reality_fp, sort_order=2)
 
 
 # Формирование клиентских ссылок для новых протоколов
@@ -17745,6 +17978,9 @@ schema_version: 28
 EOF_AGH
 
         # 5. Установка и запуск службы systemd
+        if [ ! -x /opt/AdGuardHome/AdGuardHome ]; then
+            die "Не удалось загрузить или распаковать бинарник AdGuard Home в /opt/AdGuardHome/AdGuardHome"
+        fi
         /opt/AdGuardHome/AdGuardHome -s install >/dev/null 2>&1 || true
 
         # 6. Ограничение памяти Go для экономии RAM на VPS
@@ -17887,7 +18123,7 @@ if is_true "${STEAL_ENABLED:-0}"; then
         REALITY_INBOUNDS_REPORT+="    - Инбаунд для порта ${GREEN}${port}${NC} (Домены: ${CYAN}${p_doms[*]}${NC}):
       * ${YELLOW}Вкладка «Основное»:${NC} Протокол: ${GREEN}vless${NC} | Адрес: ${GREEN}127.0.0.1${NC} | Порт: ${GREEN}${port}${NC}
       * ${YELLOW}Вкладка «Поток»:${NC} Транспорт: ${GREEN}RAW (tcp)${NC} | Accept Proxy Protocol: ${GREEN}Включить (xver: 1)${NC}
-      * ${YELLOW}Вкладка «Безопасность»:${NC} ${GREEN}Reality${NC} | uTLS: ${GREEN}chrome / firefox${NC}
+      * ${YELLOW}Вкладка «Безопасность»:${NC} ${GREEN}Reality${NC} | uTLS: ${GREEN}${REALITY_FINGERPRINT:-firefox}${NC}
         - Dest (Anti-Loop Fallback): ${GREEN}127.0.0.1:${REALITY_FALLBACK_PORT}${NC}
         - Proxy Protocol для Dest: ${GREEN}Включить (xver: 1)${NC}
         - Server Names (SNI): ${CYAN}${p_doms[*]}${NC}
@@ -17910,7 +18146,7 @@ if is_true "${CLASSIC_ENABLED:-0}"; then
         REALITY_INBOUNDS_REPORT+="    - Инбаунд для порта ${GREEN}${port}${NC} (SNI: ${CYAN}${p_snis[*]}${NC}):
       * ${YELLOW}Вкладка «Основное»:${NC} Протокол: ${GREEN}vless${NC} | Адрес: ${GREEN}127.0.0.1${NC} | Порт: ${GREEN}${port}${NC}
       * ${YELLOW}Вкладка «Поток»:${NC} Транспорт: ${GREEN}RAW (tcp)${NC} | Accept Proxy Protocol: ${GREEN}Включить (xver: 1)${NC}
-      * ${YELLOW}Вкладка «Безопасность»:${NC} ${GREEN}Reality${NC} | uTLS: ${GREEN}chrome / firefox${NC}
+      * ${YELLOW}Вкладка «Безопасность»:${NC} ${GREEN}Reality${NC} | uTLS: ${GREEN}${REALITY_FINGERPRINT:-firefox}${NC}
         - Dest (Target): ${CYAN}${primary_ext}:443${NC}
         - Proxy Protocol для Dest: ${RED}Выключить (xver: 0)${NC}
         - Server Names (SNI): ${CYAN}${p_snis[*]}${NC}
@@ -18250,50 +18486,57 @@ EXPERT_MODE=${EXPERT_MODE:-0}
 SKIP_INTERVIEW=0
 if [ "$NON_INTERACTIVE" -eq 0 ]; then
     print_mask_banner
-    has_interrupted_run=0
-    TARGET_RESUME_STEP=0
-    FAILED_STEP_TITLE=""
-    if [ -n "${CHECKPOINT_FAILED:-}" ] && [ "${FAILED_STEP_NUM:-0}" -gt 0 ]; then
-        has_interrupted_run=1
-        TARGET_RESUME_STEP="$FAILED_STEP_NUM"
-        FAILED_STEP_TITLE="${INSTALLATION_TITLES[$CHECKPOINT_FAILED]:-${STEP_NAMES[$FAILED_STEP_NUM]:-Шаг $FAILED_STEP_NUM}}"
-    elif [ "$LAST_COMPLETED_STEP" -gt 0 ] && [ "$LAST_COMPLETED_STEP" -lt "$TOTAL_STEPS" ]; then
-        has_interrupted_run=1
-        TARGET_RESUME_STEP=$(( LAST_COMPLETED_STEP + 1 ))
-        FAILED_STEP_TITLE="${STEP_NAMES[$TARGET_RESUME_STEP]:-Шаг $TARGET_RESUME_STEP}"
-    fi
-
-    if [ "$has_interrupted_run" -eq 1 ]; then
-        echo -e "  ${YELLOW}${BOLD}Обнаружена незавершенная установка!${NC}"
+    if [ "${STEP_EXPLICIT:-0}" -eq 1 ]; then
+        SKIP_INTERVIEW=1
+        ok "Запуск с указанного шага $RESUME_STEP (${STEP_NAMES[$RESUME_STEP]:-Шаг $RESUME_STEP})..."
+    else
+        has_interrupted_run=0
+        TARGET_RESUME_STEP=0
+        FAILED_STEP_TITLE=""
         if [ -n "${CHECKPOINT_FAILED:-}" ] && [ "${FAILED_STEP_NUM:-0}" -gt 0 ]; then
-            echo -e "  ${RED}Предыдущая установка была прервана на шаге:${NC} ${WHITE}Шаг $TARGET_RESUME_STEP из $TOTAL_STEPS ($FAILED_STEP_TITLE)${NC}"
-            if [ "$LAST_COMPLETED_STEP" -gt 0 ]; then
+            has_interrupted_run=1
+            TARGET_RESUME_STEP="$FAILED_STEP_NUM"
+            FAILED_STEP_TITLE="${INSTALLATION_TITLES[$CHECKPOINT_FAILED]:-${STEP_NAMES[$FAILED_STEP_NUM]:-Шаг $FAILED_STEP_NUM}}"
+        elif [ "$LAST_COMPLETED_STEP" -gt 0 ] && [ "$LAST_COMPLETED_STEP" -lt "$TOTAL_STEPS" ]; then
+            has_interrupted_run=1
+            TARGET_RESUME_STEP=$(( LAST_COMPLETED_STEP + 1 ))
+            FAILED_STEP_TITLE="${STEP_NAMES[$TARGET_RESUME_STEP]:-Шаг $TARGET_RESUME_STEP}"
+        fi
+
+        if [ "$has_interrupted_run" -eq 1 ]; then
+            echo -e "  ${YELLOW}${BOLD}Обнаружена незавершенная установка!${NC}"
+            if [ -n "${CHECKPOINT_FAILED:-}" ] && [ "${FAILED_STEP_NUM:-0}" -gt 0 ]; then
+                echo -e "  ${RED}Предыдущая установка была прервана на шаге:${NC} ${WHITE}Шаг $TARGET_RESUME_STEP из $TOTAL_STEPS ($FAILED_STEP_TITLE)${NC}"
+                if [ "$LAST_COMPLETED_STEP" -gt 0 ]; then
+                    echo -e "  ${DIM}Последний успешно завершенный шаг: ${WHITE}Шаг $LAST_COMPLETED_STEP из $TOTAL_STEPS (${STEP_NAMES[$LAST_COMPLETED_STEP]:-})${NC}"
+                fi
+            else
                 echo -e "  ${DIM}Последний успешно завершенный шаг: ${WHITE}Шаг $LAST_COMPLETED_STEP из $TOTAL_STEPS (${STEP_NAMES[$LAST_COMPLETED_STEP]:-})${NC}"
             fi
-        else
-            echo -e "  ${DIM}Последний успешно завершенный шаг: ${WHITE}Шаг $LAST_COMPLETED_STEP из $TOTAL_STEPS (${STEP_NAMES[$LAST_COMPLETED_STEP]:-})${NC}"
+            echo -e "    ${CYAN}${BOLD}[1] Повторить/продолжить с шага $TARGET_RESUME_STEP ($FAILED_STEP_TITLE)${NC} (Рекомендуется)"
+            echo -e "    ${YELLOW}[2] Начать установку заново (с шага 1)${NC}\n"
+            read -rp "  Ваш выбор [1/2] (по умолчанию: 1): " RESUME_CHOICE </dev/tty || read -r RESUME_CHOICE || RESUME_CHOICE="1"
+            RESUME_CHOICE=$(echo "${RESUME_CHOICE:-1}" | tr -d '[:space:]')
+            if [ "$RESUME_CHOICE" != "2" ]; then
+                RESUME_STEP="$TARGET_RESUME_STEP"
+                SKIP_INTERVIEW=1
+                ok "Возобновление установки с шага $RESUME_STEP..."
+            else
+                LAST_COMPLETED_STEP=0
+                RESUME_STEP=1
+                CHECKPOINT_FAILED=""
+                record_step_completed 0
+                ok "Сброс контрольной точки. Установка будет начата с первого шага."
+            fi
+            echo ""
         fi
-        echo -e "    ${CYAN}${BOLD}[1] Повторить/продолжить с шага $TARGET_RESUME_STEP ($FAILED_STEP_TITLE)${NC} (Рекомендуется)"
-        echo -e "    ${YELLOW}[2] Начать установку заново (с шага 1)${NC}\n"
-        read -rp "  Ваш выбор [1/2] (по умолчанию: 1): " RESUME_CHOICE </dev/tty || read -r RESUME_CHOICE || RESUME_CHOICE="1"
-        RESUME_CHOICE=$(echo "${RESUME_CHOICE:-1}" | tr -d '[:space:]')
-        if [ "$RESUME_CHOICE" != "2" ]; then
-            RESUME_STEP="$TARGET_RESUME_STEP"
-            SKIP_INTERVIEW=1
-            ok "Возобновление установки с шага $RESUME_STEP..."
-        else
-            LAST_COMPLETED_STEP=0
-            RESUME_STEP=1
-            CHECKPOINT_FAILED=""
-            record_step_completed 0
-            ok "Сброс контрольной точки. Установка будет начата с первого шага."
-        fi
-        echo ""
     fi
 else
     # В неинтерактивном режиме с переданным конфигом пропускаем интервью и возобновляем
     SKIP_INTERVIEW=1
-    if [ -n "${CHECKPOINT_FAILED:-}" ] && [ "${FAILED_STEP_NUM:-0}" -gt 0 ]; then
+    if [ "${STEP_EXPLICIT:-0}" -eq 1 ]; then
+        ok "Неинтерактивный режим: запуск с указанного шага $RESUME_STEP (${STEP_NAMES[$RESUME_STEP]:-Шаг $RESUME_STEP})..."
+    elif [ -n "${CHECKPOINT_FAILED:-}" ] && [ "${FAILED_STEP_NUM:-0}" -gt 0 ]; then
         RESUME_STEP="$FAILED_STEP_NUM"
         ok "Неинтерактивный режим: возобновление с шага $RESUME_STEP (${INSTALLATION_TITLES[$CHECKPOINT_FAILED]:-})..."
     elif [ "$LAST_COMPLETED_STEP" -gt 0 ] && [ "$LAST_COMPLETED_STEP" -lt "$TOTAL_STEPS" ]; then
@@ -18576,8 +18819,6 @@ else
 import ssl, socket, time, concurrent.futures
 
 CANDIDATES = [
-    'avito.ru',
-    'www.avito.ru',
     'dl.google.com',
     'www.apple.com',
     'itunes.apple.com',
@@ -18587,7 +18828,6 @@ CANDIDATES = [
     'www.amazon.com',
     'www.amd.com',
     'www.sony.com',
-    'cdn.discordapp.com',
 ]
 
 def probe(host):
@@ -18654,15 +18894,24 @@ for item in res:
             CLASSIC_ENABLED=1
             local c_port="${CLASSIC_PORT:-46443}"
             CLASSIC_PORTS_LIST+=("$c_port")
-            local classic_sni_list="${CLASSIC_SNI:-avito.ru}"
+            local classic_sni_list="${CLASSIC_SNI:-dl.google.com}"
             EXT_SNI_LIST=()
-            for ext_sni in $classic_sni_list; do
+            for ext_sni in ${classic_sni_list//,/ }; do
+                ext_sni=$(echo "$ext_sni" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+                [ -n "$ext_sni" ] || continue
                 [[ "$ext_sni" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]] || continue
+                [[ " ${EXT_SNI_LIST[*]:-} " =~ " ${ext_sni} " ]] && continue
                 EXT_SNI_TO_PORT["$ext_sni"]="$c_port"
                 EXT_SNI_LIST+=("$ext_sni")
                 ALL_EXT_SNIS+=("$ext_sni")
                 ok "    Внешний SNI $ext_sni привязан к инбаунд-порту $c_port"
             done
+            if [ ${#EXT_SNI_LIST[@]} -eq 0 ]; then
+                EXT_SNI_LIST=("dl.google.com")
+                EXT_SNI_TO_PORT["dl.google.com"]="$c_port"
+                ALL_EXT_SNIS+=("dl.google.com")
+                ok "    Внешний SNI dl.google.com привязан к инбаунд-порту $c_port"
+            fi
         else
             CLASSIC_ENABLED=0
         fi
@@ -18687,6 +18936,8 @@ for item in res:
         RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH#/}"; RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH%/}"
         validate_path_segment "$RAW_XHTTP_STREAM_PATH" "URI xHTTP"
         XHTTP_STREAM_PATH="/${RAW_XHTTP_STREAM_PATH#/}"; XHTTP_STREAM_PATH="${XHTTP_STREAM_PATH%/}/"
+
+        ensure_diag_path || return 1
 
         # UDP Протоколы
         if [[ "${ENABLE_HY2,,}" == "y" || "${ENABLE_HY2:-}" == "1" ]]; then
@@ -18939,48 +19190,14 @@ for item in res:
             STEAL_PORTS_LIST+=("$STEAL_PORT")
         fi
 
-        local s_dom_in=""
-        if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
-            prompt_default "  Домен/поддомен для маскировки REALITY (свой сайт)" "$old_steal_dom" s_dom_in || return $?
-            s_dom_in=$(echo "${s_dom_in:-$old_steal_dom}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
-        else
-            s_dom_in="$old_steal_dom"
-        fi
-
-        if [[ ! "$s_dom_in" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; then
-            warn "  Некорректный синтаксис домена '$s_dom_in'. Использован $old_steal_dom."
-            s_dom_in="$old_steal_dom"
-        fi
-
+        local s_dom_in="$old_steal_dom"
         if [ "$s_dom_in" = "$PRIMARY_DOMAIN" ]; then
-            warn "  Коллизия: '$s_dom_in' совпадает с главным доменом (PRIMARY_DOMAIN)!"
-            warn "  Главный домен зарезервирован за Nginx L7 (панель, веб-маска, подписки, xHTTP)."
-            warn "  Для REALITY со своим сайтом укажите поддомен (например, cdn.$PRIMARY_DOMAIN)."
-            s_dom_in="$old_steal_dom"
+            s_dom_in="cdn.$PRIMARY_DOMAIN"
         fi
 
         STEAL_DOMAINS=("$s_dom_in")
         DOMAIN_TO_PORT["$s_dom_in"]="$STEAL_PORT"
         ok "  Домен $s_dom_in привязан к инбаунд-порту $STEAL_PORT"
-
-        if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
-            echo ""
-            [ "${SHOW_TIPS:-y}" = "y" ] && echo -e "  ${CYAN}[i]${NC} ${DIM}Одного подключения REALITY (свой сайт) достаточно для всех ваших устройств.${NC}"
-            local add_more=""
-            prompt_yes_no "  Создать еще одно изолированное подключение (на другом порту)?" "n" add_more || return $?
-            if [[ "${add_more,,}" == "y" ]]; then
-                local extra_port="" extra_dom=""
-                prompt_default "    Второй порт REALITY (свой сайт)" "45444" extra_port || return $?
-                prompt_default "    Второй поддомен (напр. xr.$PRIMARY_DOMAIN)" "xr.$PRIMARY_DOMAIN" extra_dom || return $?
-                extra_dom=$(echo "${extra_dom:-}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
-                if [[ "$extra_dom" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; then
-                    STEAL_PORTS_LIST+=("$extra_port")
-                    STEAL_DOMAINS+=("$extra_dom")
-                    DOMAIN_TO_PORT["$extra_dom"]="$extra_port"
-                    ok "    Второй домен $extra_dom привязан к порту $extra_port"
-                fi
-            fi
-        fi
         return 0
     }
 
@@ -18998,80 +19215,33 @@ for item in res:
             fi
             CLASSIC_PORTS_LIST+=("$CLASSIC_PORT")
 
-            local scanned_snis=()
-            local scanned_lats=()
-            if command -v python3 >/dev/null 2>&1; then
-                echo -e "  ${CYAN}[*] Сканирование лучших REALITY-доменов по задержке (TLS 1.3 + h2)...${NC}"
-                while read -r s_host s_lat; do
-                    [ -n "$s_host" ] || continue
-                    scanned_snis+=("$s_host")
-                    scanned_lats+=("$s_lat")
-                done < <(scan_reality_candidates)
-            fi
-
-            if [ "${#scanned_snis[@]}" -eq 0 ]; then
-                scanned_snis=("avito.ru" "www.avito.ru" "dl.google.com" "www.apple.com" "www.samsung.com" "www.nvidia.com" "www.microsoft.com")
-                scanned_lats=("fast" "fast" "fast" "fast" "fast" "fast" "fast")
-            fi
-
-            local default_classic_sni="${CLASSIC_SNI:-${scanned_snis[0]}}"
-
-            echo ""
-            echo -e "  ${BOLD}Доступные проверенные кандидаты маскировки (REALITY Targets):${NC}"
-            for idx in "${!scanned_snis[@]}"; do
-                local num=$((idx + 1))
-                local h="${scanned_snis[$idx]}"
-                local lat="${scanned_lats[$idx]}"
-                local marker="  "
-                [ "$h" = "$default_classic_sni" ] && marker="${GREEN}★ ${NC}"
-                local lat_str="${DIM}(${lat} ms)${NC}"
-                [ "$lat" = "fast" ] && lat_str=""
-                echo -e "    ${CYAN}[$num]${NC} $marker${WHITE}$h${NC} $lat_str"
-            done
-            echo -e "    ${CYAN}[C]${NC}   ${DIM}Ввести свой собственный домен вручную${NC}"
-            echo ""
-
-            while true; do
-                echo -ne "  ${WHITE}${ARROW} Выберите номер [1-${#scanned_snis[@]}], домен или Enter для [${GREEN}${default_classic_sni}${WHITE}] ${DIM}(b - назад)${NC}: "
-                local ext_input=""
-                read -r ext_input </dev/tty || read -r ext_input || true
-                ext_input=$(echo "${ext_input:-}" | tr -d '[:space:]')
-                if [[ "${ext_input,,}" == "b" || "${ext_input,,}" == "back" || "${ext_input,,}" == "назад" ]]; then
-                    return 10
-                fi
-
-                local ext_sni=""
-                if [ -z "$ext_input" ]; then
-                    ext_sni="$default_classic_sni"
-                elif [[ "$ext_input" =~ ^[0-9]+$ ]] && [ "$ext_input" -ge 1 ] && [ "$ext_input" -le "${#scanned_snis[@]}" ]; then
-                    ext_sni="${scanned_snis[$((ext_input - 1))]}"
-                elif [[ "${ext_input,,}" == "c" ]]; then
-                    prompt_default "    Введите свой домен SNI (например, dl.google.com)" "dl.google.com" ext_sni || return $?
-                    ext_sni=$(echo "${ext_sni:-}" | tr -d '[:space:]')
-                else
-                    ext_sni="$ext_input"
-                fi
-
-                if [[ ! "$ext_sni" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; then
-                    warn "    Некорректный формат SNI: '$ext_sni'. Попробуйте снова."
-                    continue
-                fi
-
-                CLASSIC_SNI="$ext_sni"
-                EXT_SNI_LIST=("$ext_sni")
-                EXT_SNI_TO_PORT["$ext_sni"]="$CLASSIC_PORT"
-                ALL_EXT_SNIS=("$ext_sni")
-                ok "  Внешний SNI $ext_sni привязан к порту $CLASSIC_PORT"
-                break
-            done
+            local fp_input=""
+            prompt_default "  uTLS TLS Fingerprint для REALITY (chrome/firefox/safari/ios/android/edge/randomized)" "${REALITY_FINGERPRINT:-firefox}" fp_input || return $?
+            REALITY_FINGERPRINT="${fp_input,,}"
         else
             CLASSIC_PORT="${CLASSIC_PORT:-46443}"
             CLASSIC_PORTS_LIST+=("$CLASSIC_PORT")
-            local ext_sni="${CLASSIC_SNI:-avito.ru}"
-            EXT_SNI_LIST=("$ext_sni")
+            REALITY_FINGERPRINT="${REALITY_FINGERPRINT:-firefox}"
+        fi
+
+        local classic_raw="${CLASSIC_SNI:-dl.google.com}"
+        EXT_SNI_LIST=()
+        ALL_EXT_SNIS=()
+        for ext_sni in ${classic_raw//,/ }; do
+            ext_sni=$(echo "$ext_sni" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+            [ -n "$ext_sni" ] || continue
+            [[ "$ext_sni" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]] || continue
+            [[ " ${EXT_SNI_LIST[*]:-} " =~ " ${ext_sni} " ]] && continue
+            EXT_SNI_LIST+=("$ext_sni")
             EXT_SNI_TO_PORT["$ext_sni"]="$CLASSIC_PORT"
-            ALL_EXT_SNIS=("$ext_sni")
+            ALL_EXT_SNIS+=("$ext_sni")
             ok "  Внешний SNI $ext_sni привязан к порту $CLASSIC_PORT"
+        done
+        if [ ${#EXT_SNI_LIST[@]} -eq 0 ]; then
+            EXT_SNI_LIST=("dl.google.com")
+            EXT_SNI_TO_PORT["dl.google.com"]="$CLASSIC_PORT"
+            ALL_EXT_SNIS=("dl.google.com")
+            ok "  Внешний SNI dl.google.com привязан к порту $CLASSIC_PORT"
         fi
         return 0
     }
@@ -19221,7 +19391,6 @@ for item in res:
             HY2_PORT_HOPPING_RANGE="${HY2_PORT_HOPPING_RANGE:-20000:50000}"
             if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
                 prompt_default "  UDP-порт для Hysteria 2" "$HY2_PORT" HY2_PORT || return $?
-                prompt_default "  Домен/поддомен для Hysteria 2" "$HY2_DOMAIN" HY2_DOMAIN || return $?
                 prompt_yes_no "  Включить Port Hopping для Hysteria 2 (UDP 20000:50000)?" "$HY2_PORT_HOPPING" HY2_PORT_HOPPING || return $?
                 if is_true "$HY2_PORT_HOPPING"; then
                     prompt_default "  Диапазон портов Port Hopping" "$HY2_PORT_HOPPING_RANGE" HY2_PORT_HOPPING_RANGE || return $?
@@ -19256,7 +19425,6 @@ for item in res:
             [ -n "${AWG_SERVER_HOST:-}" ] || AWG_SERVER_HOST="${PRIMARY_DOMAIN:-$WAN_IP}"
             if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
                 prompt_default "  UDP-порт для автономного AmneziaWG" "$AWG_STANDALONE_PORT" AWG_STANDALONE_PORT || return $?
-                prompt_default "  Хост/IP для подключения клиентов AmneziaWG" "$AWG_SERVER_HOST" AWG_SERVER_HOST || return $?
             fi
         else
             AWG_STANDALONE_PORT=""
@@ -19286,8 +19454,6 @@ for item in res:
             MTPROTO_ADTAG="${MTPROTO_ADTAG:-}"
             if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
                 prompt_default "  TCP-порт для Telegram MTProxy" "$MTPROTO_PORT" MTPROTO_PORT || return $?
-                prompt_default "  FakeTLS домен маскировки для MTProxy" "$MTPROTO_FAKETLS_DOMAIN" MTPROTO_FAKETLS_DOMAIN || return $?
-                prompt_default "  Спонсорский promo-тег adTag (опционально, 32 hex)" "$MTPROTO_ADTAG" MTPROTO_ADTAG || return $?
             fi
         else
             MTPROTO_PORT=""
@@ -19301,7 +19467,6 @@ for item in res:
             [ -n "${MASQUE_PASSWORD:-}" ] || MASQUE_PASSWORD="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "masque${RANDOM}")"
             if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
                 prompt_default "  UDP-порт для MASQUE (HTTP/3)" "$MASQUE_PORT" MASQUE_PORT || return $?
-                prompt_default "  Имя пользователя для MASQUE" "$MASQUE_USER" MASQUE_USER || return $?
             fi
         else
             MASQUE_PORT=""
@@ -19315,7 +19480,6 @@ for item in res:
             [ -n "${SS2022_PORT:-}" ] || SS2022_PORT="8388"
             if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
                 prompt_default "  Локальный порт для ShadowTLS" "$SHADOWTLS_PORT" SHADOWTLS_PORT || return $?
-                prompt_default "  FakeTLS SNI для ShadowTLS" "$SHADOWTLS_SNI" SHADOWTLS_SNI || return $?
             fi
         else
             SHADOWTLS_PORT=""
@@ -19328,7 +19492,6 @@ for item in res:
             [ -n "${WSTUNNEL_SECRET:-}" ] || WSTUNNEL_SECRET="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "wst${RANDOM}")"
             if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
                 prompt_default "  Локальный порт для Wstunnel daemon" "$WSTUNNEL_PORT" WSTUNNEL_PORT || return $?
-                prompt_default "  HTTP-путь location для Wstunnel" "$WSTUNNEL_PREFIX" WSTUNNEL_PREFIX || return $?
             fi
         else
             WSTUNNEL_PORT=""
@@ -19341,8 +19504,6 @@ for item in res:
             [ -n "${ZAPRET_FOOLING:-}" ] || ZAPRET_FOOLING="md5sig,badseq"
             if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
                 prompt_default "  Очередь NFQUEUE для Zapret" "$ZAPRET_QNUM" ZAPRET_QNUM || return $?
-                prompt_default "  Режим desync для nfqws" "$ZAPRET_DESYNC" ZAPRET_DESYNC || return $?
-                prompt_default "  Режим fooling для nfqws" "$ZAPRET_FOOLING" ZAPRET_FOOLING || return $?
             fi
         else
             ZAPRET_QNUM=""
@@ -19355,8 +19516,6 @@ for item in res:
             [ -n "${NAIVE_PASS:-}" ] || NAIVE_PASS="$(generate_urlsafe_token 16)"
             if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
                 prompt_default "  Локальный порт для NaïveProxy (Caddy)" "$NAIVE_PORT" NAIVE_PORT || return $?
-                prompt_default "  SNI-домен для NaïveProxy" "$NAIVE_DOMAIN" NAIVE_DOMAIN || return $?
-                prompt_default "  Пользователь для NaïveProxy" "$NAIVE_USER" NAIVE_USER || return $?
             fi
         else
             NAIVE_PORT=""
@@ -19372,7 +19531,6 @@ for item in res:
             [ -n "${SS2022_PORT:-}" ] || SS2022_PORT="8388"
             if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
                 prompt_default "  UDP-порт для DNSTT-сервера" "$DNSTT_PORT" DNSTT_PORT || return $?
-                prompt_default "  NS/DNS-домен зоны для DNSTT" "$DNSTT_DOMAIN" DNSTT_DOMAIN || return $?
             fi
         else
             DNSTT_PORT=""
@@ -19395,8 +19553,6 @@ for item in res:
                     MIERU_PORT_MODE="single"
                     prompt_default "  Порт для Mieru (TCP и UDP)" "${MIERU_PORT:-8450}" MIERU_PORT || return $?
                 fi
-                prompt_default "  Имя пользователя Mieru" "${MIERU_USER:-user-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "m$(date +%s | cut -c7-10)")}" MIERU_USER || return $?
-                prompt_default "  Пароль Mieru" "${MIERU_PASS:-$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "pass$(date +%s)")}" MIERU_PASS || return $?
             else
                 case "${MIERU_PORT_MODE,,}" in
                     range|pool)
@@ -19407,9 +19563,9 @@ for item in res:
                         MIERU_PORT="${MIERU_PORT:-8450}"
                         ;;
                 esac
-                [ -n "${MIERU_USER:-}" ] || MIERU_USER="user-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "mieru${RANDOM}")"
-                [ -n "${MIERU_PASS:-}" ] || MIERU_PASS="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "mieru${RANDOM}")"
             fi
+            [ -n "${MIERU_USER:-}" ] || MIERU_USER="user-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "mieru${RANDOM}")"
+            [ -n "${MIERU_PASS:-}" ] || MIERU_PASS="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "mieru${RANDOM}")"
         else
             MIERU_PORT=""
             MIERU_USER=""
@@ -19527,6 +19683,8 @@ for item in res:
             RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH#/}"; RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH%/}"
             XHTTP_STREAM_PATH="/${RAW_XHTTP_STREAM_PATH#/}"; XHTTP_STREAM_PATH="${XHTTP_STREAM_PATH%/}/"
         fi
+
+        ensure_diag_path || return 1
 
         echo
         echo -e "  ${GREEN}${CHECK} Конфигурация портов и путей 3X-UI:${NC}"
@@ -19763,7 +19921,7 @@ for item in res:
                 if [[ -z "$SERVER_PREFIX" || "${SERVER_PREFIX,,}" =~ ^(-|none|off|no)$ ]]; then
                     def_token_name="Master-Node-Cluster"
                 fi
-                if [[ "${PORTS_SETUP_MODE:-0}" == "1" ]] && declare -F prompt_default >/dev/null; then
+                if [[ "${EXPERT_MODE:-0}" == "1" ]] && declare -F prompt_default >/dev/null; then
                     prompt_default "  Имя API-токена ноды" "${NODE_TOKEN_NAME:-$def_token_name}" NODE_TOKEN_NAME || return $?
                 else
                     NODE_TOKEN_NAME="${NODE_TOKEN_NAME:-$def_token_name}"

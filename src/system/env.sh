@@ -72,6 +72,20 @@ ensure_wstunnel_prefix() {
     WSTUNNEL_PREFIX="/${prefix}/"
 }
 
+ensure_diag_path() {
+    local path="${DIAG_PATH:-}"
+    path="${path#/}"; path="${path%/}"
+    if [ -z "$path" ]; then
+        local diag_tok
+        diag_tok=$(generate_secret_token) || return 1
+        path="diag-${diag_tok}"
+    fi
+    DIAG_PATH="/${path}/"
+    if [ -z "${DIAG_TOKEN:-}" ]; then
+        DIAG_TOKEN="$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 16 || echo "tok${RANDOM}")"
+    fi
+}
+
 rotate_secret_paths() {
     # Only the full installer may rotate paths; companion scripts preserve them.
     local panel_token ws_token client_token diag_token
@@ -139,18 +153,19 @@ reconstruct_arrays_from_vars() {
     if [[ "${v_cls,,}" == "y" || "$v_cls" == "1" ]]; then
         CLASSIC_ENABLED=1
         CLASSIC_PORTS_LIST=(${CLASSIC_PORT:-46443})
-        local classic_raw="${CLASSIC_SNI:-avito.ru}"
+        local classic_raw="${CLASSIC_SNI:-dl.google.com}"
         EXT_SNI_LIST=()
         for cs in ${classic_raw//,/ }; do
-            cs=$(echo "$cs" | tr -d '[:space:]')
+            cs=$(echo "$cs" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
             if [ -n "$cs" ]; then
+                [[ " ${EXT_SNI_LIST[*]:-} " =~ " ${cs} " ]] && continue
                 EXT_SNI_LIST+=("$cs")
                 EXT_SNI_TO_PORT["$cs"]="${CLASSIC_PORTS_LIST[0]}"
             fi
         done
         [ ${#EXT_SNI_TO_PORT[@]} -gt 0 ] || {
-            EXT_SNI_LIST=("avito.ru")
-            EXT_SNI_TO_PORT["avito.ru"]="${CLASSIC_PORTS_LIST[0]}"
+            EXT_SNI_LIST=("dl.google.com")
+            EXT_SNI_TO_PORT["dl.google.com"]="${CLASSIC_PORTS_LIST[0]}"
         }
     else
         CLASSIC_ENABLED=0
@@ -161,6 +176,7 @@ reconstruct_arrays_from_vars() {
     ALL_REALITY_PORTS=()
     for p in "${STEAL_PORTS_LIST[@]:-}"; do [ -n "$p" ] && ALL_REALITY_PORTS+=("$p"); done
     for p in "${CLASSIC_PORTS_LIST[@]:-}"; do [ -n "$p" ] && ALL_REALITY_PORTS+=("$p"); done
+    REALITY_FINGERPRINT="${REALITY_FINGERPRINT:-${FINGERPRINT:-firefox}}"
 
     PANEL_PORT="${PANEL_PORT:-10443}"
     ensure_panel_path || return 1
@@ -251,16 +267,7 @@ reconstruct_arrays_from_vars() {
     PORT_AGH_DNS="${PORT_AGH_DNS:-10053}"
     ensure_agh_client_id || return 1
 
-    if [ -z "${DIAG_PATH:-}" ]; then
-        local diag_tok
-        diag_tok=$(generate_secret_token) || return 1
-        DIAG_PATH="/diag-${diag_tok}/"
-    fi
-    DIAG_PATH="/${DIAG_PATH#/}"
-    DIAG_PATH="${DIAG_PATH%/}/"
-    if [ -z "${DIAG_TOKEN:-}" ]; then
-        DIAG_TOKEN="$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 16 || echo "tok${RANDOM}")"
-    fi
+    ensure_diag_path || return 1
 
     # Сосуществование с Dokploy и протоколы следующего поколения
     _v="${DOKPLOY_COEXISTENCE:-n}"; if is_true "$_v"; then DOKPLOY_COEXISTENCE="y"; else DOKPLOY_COEXISTENCE="n"; fi
@@ -369,6 +376,7 @@ finalize_installation_config() {
         REALITY_FALLBACK_PORT="${REALITY_FALLBACK_PORT:-9443}"
         normalize_node_token_config
         ensure_panel_path || return 1
+        ensure_diag_path || return 1
         ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
         ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
         if is_true "${AUTO_SETUP_3XUI:-y}" && [ -z "$ADMIN_PASSWORD" ] &&
@@ -389,6 +397,7 @@ save_session_state() {
     local save_path="${1:-server-setup.env}"
     # Resolve once in the caller's state before serializing it.
     ensure_panel_path || return 1
+    ensure_diag_path || return 1
     ensure_agh_client_id || return 1
     if is_true "${ENABLE_WSTUNNEL:-n}"; then
         ensure_wstunnel_prefix || return 1
@@ -505,6 +514,7 @@ STEAL_DOMAINS="${STEAL_DOMAINS[*]:-}"
 ENABLE_CLASSIC="$classic_save"
 CLASSIC_PORT="${CLASSIC_PORTS_LIST[0]:-46443}"
 CLASSIC_SNI="${EXT_SNI_LIST[*]:-}"
+REALITY_FINGERPRINT="${REALITY_FINGERPRINT:-${FINGERPRINT:-firefox}}"
 
 PORTS_SETUP_MODE="${PORTS_SETUP_MODE:-0}"
 PATHS_SETUP_MODE="${PATHS_SETUP_MODE:-0}"

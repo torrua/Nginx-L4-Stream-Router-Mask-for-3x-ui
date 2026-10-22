@@ -487,6 +487,8 @@ CLI_PANEL_PATH=""
 CLI_SUB_PATH=""
 CLI_SUB_TITLE=""
 CLI_XHTTP_STREAM_PATH=""
+CLI_DIAG_PATH=""
+CLI_DIAG_TOKEN=""
 CLI_ADMIN_USERNAME=""
 CLI_ADMIN_PASSWORD=""
 CLI_ENABLE_NODE_TOKEN=""
@@ -955,6 +957,18 @@ while [[ $# -gt 0 ]]; do
             CLI_XHTTP_STREAM_PATH="$2"
             shift 2
             ;;
+        --diag-path)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: путь к веб-диагностике."
+            DIAG_PATH="$2"
+            CLI_DIAG_PATH="$2"
+            shift 2
+            ;;
+        --diag-token)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: токен веб-диагностики."
+            DIAG_TOKEN="$2"
+            CLI_DIAG_TOKEN="$2"
+            shift 2
+            ;;
         -u|--user|--admin-user)
             [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: логин администратора 3X-UI."
             ADMIN_USERNAME="$2"
@@ -974,6 +988,7 @@ while [[ $# -gt 0 ]]; do
         --step)
             [[ -n "${2:-}" ]] || die "Параметр $1 требует номер шага (1-$TOTAL_STEPS)."
             RESUME_STEP="$2"
+            STEP_EXPLICIT=1
             shift 2
             ;;
         --check|--doctor)
@@ -1062,6 +1077,8 @@ fi
 [ -n "${CLI_SUB_PATH:-}" ]       && SUB_PATH="$CLI_SUB_PATH"
 [ -n "${CLI_SUB_TITLE:-}" ]      && SUB_TITLE="$CLI_SUB_TITLE"
 [ -n "${CLI_XHTTP_STREAM_PATH:-}" ] && XHTTP_STREAM_PATH="$CLI_XHTTP_STREAM_PATH"
+[ -n "${CLI_DIAG_PATH:-}" ]      && DIAG_PATH="$CLI_DIAG_PATH"
+[ -n "${CLI_DIAG_TOKEN:-}" ]     && DIAG_TOKEN="$CLI_DIAG_TOKEN"
 [ -n "${CLI_ADMIN_USERNAME:-}" ] && ADMIN_USERNAME="$CLI_ADMIN_USERNAME"
 [ -n "${CLI_ADMIN_PASSWORD:-}" ] && ADMIN_PASSWORD="$CLI_ADMIN_PASSWORD"
 [ -n "${CLI_ENABLE_NODE_TOKEN:-}" ] && ENABLE_NODE_TOKEN="$CLI_ENABLE_NODE_TOKEN"

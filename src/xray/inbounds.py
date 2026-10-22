@@ -9,12 +9,13 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
         if protocol == "mtproto" and "preferIp" not in target_settings:
             target_settings["preferIp"] = "prefer-ipv4"
         if "externalProxy" in target_stream and isinstance(target_stream["externalProxy"], list) and len(target_stream["externalProxy"]) > 0:
-            if protocol in ("shadowsocks", "mtproto", "amneziawg"):
-                target_stream["externalProxy"][0]["forceTls"] = "none"
-            elif protocol == "vless" and "realitySettings" in target_stream:
-                target_stream["externalProxy"][0]["forceTls"] = "same"
-            elif "forceTls" not in target_stream["externalProxy"][0]:
-                target_stream["externalProxy"][0]["forceTls"] = "tls"
+            for ep in target_stream["externalProxy"]:
+                if protocol in ("shadowsocks", "mtproto", "amneziawg"):
+                    ep["forceTls"] = "none"
+                elif protocol == "vless" and "realitySettings" in target_stream:
+                    ep["forceTls"] = "same"
+                elif "forceTls" not in ep:
+                    ep["forceTls"] = "tls"
 
         settings_json = json.dumps(target_settings, ensure_ascii=False)
         stream_json = json.dumps(target_stream, ensure_ascii=False)
@@ -50,6 +51,8 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
     target_stream = json.loads(json.dumps(default_stream))
     repairs = []
     preserved = []
+    target_snis = []
+    old_snis = []
 
     # Сохранение пользовательского названия инбаунда (remark), если оно было изменено
     final_remark = remark
@@ -149,18 +152,43 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
                 target_stream["realitySettings"]["settings"]["publicKey"] = derived_pub
                 repairs.append("восстановлен settings.publicKey по x25519")
 
-        # Ремонт мертвого swdist.microsoft.com SNI или пустых значений
+        # settings.fingerprint
+        tgt_fp = target_stream.get("realitySettings", {}).get("settings", {}).get("fingerprint")
+        cur_fp = cur_reality.get("settings", {}).get("fingerprint")
+        if tgt_fp and cur_fp and tgt_fp != cur_fp:
+            target_stream["realitySettings"]["settings"]["fingerprint"] = tgt_fp
+            repairs.append(f"обновлен fingerprint Reality ({cur_fp} -> {tgt_fp})")
+        elif cur_fp and not tgt_fp:
+            if "settings" in target_stream["realitySettings"] and isinstance(target_stream["realitySettings"]["settings"], dict):
+                target_stream["realitySettings"]["settings"]["fingerprint"] = cur_fp
+
+        # Ремонт мертвого swdist.microsoft.com SNI или пустых значений, либо обновление пула SNI
         old_snis = cur_reality.get("serverNames", [])
         old_dest = str(cur_reality.get("dest", "")).strip()
+        target_snis = target_stream["realitySettings"].get("serverNames", [])
+        c_sni_fallback = globals().get("classic_sni", "dl.google.com")
+        c_port = globals().get("classic_port", 46443)
+
         if any("swdist.microsoft.com" in s for s in old_snis) or "swdist.microsoft.com" in old_dest:
-            repairs.append(f"заменен мертвый SNI swdist.microsoft.com -> {classic_sni}")
-            target_stream["realitySettings"]["serverNames"] = [classic_sni]
-            target_stream["realitySettings"]["dest"] = f"{classic_sni}:443"
+            chosen_snis = target_snis if (target_snis and not any("swdist.microsoft.com" in s for s in target_snis)) else [c_sni_fallback]
+            target_stream["realitySettings"]["serverNames"] = chosen_snis
+            target_stream["realitySettings"]["dest"] = f"{chosen_snis[0]}:443"
             target_stream["realitySettings"]["xver"] = 0
+            repairs.append(f"заменен мертвый SNI swdist.microsoft.com -> {','.join(chosen_snis)}")
+        elif target_snis and target_snis != old_snis:
+            target_stream["realitySettings"]["serverNames"] = target_snis
+            if port == c_port or tag == "in-classic-reality" or cur_tag == "in-classic-reality":
+                target_stream["realitySettings"]["dest"] = f"{target_snis[0]}:443"
+                target_stream["realitySettings"]["target"] = f"{target_snis[0]}:443"
+                if "settings" in target_stream["realitySettings"] and isinstance(target_stream["realitySettings"]["settings"], dict):
+                    target_stream["realitySettings"]["settings"]["serverName"] = target_snis[0]
+            repairs.append(f"обновлен пул SNI Reality ({','.join(target_snis)})")
         elif old_snis:
             target_stream["realitySettings"]["serverNames"] = old_snis
             target_stream["realitySettings"]["dest"] = old_dest or target_stream["realitySettings"]["dest"]
             preserved.append(f"SNI ({','.join(old_snis)})")
+        elif target_snis:
+            target_stream["realitySettings"]["serverNames"] = target_snis
 
         # Строгая гарантия параметров VLESS REALITY (маскировка под свой сайт: Nginx Fallback + Xver=1 + target)
         s_port = globals().get("steal_port", 45443)
@@ -179,7 +207,7 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
 
         # Строгая гарантия параметров VLESS REALITY (маскировка под внешние сервисы: xver=0, dest: 443, target: 443)
         c_port = globals().get("classic_port", 46443)
-        c_sni = globals().get("classic_sni", "avito.ru")
+        c_sni = globals().get("classic_sni", "dl.google.com")
         if port == c_port or tag == "in-classic-reality" or cur_tag == "in-classic-reality":
             if not target_stream["realitySettings"].get("dest"):
                 target_stream["realitySettings"]["dest"] = f"{c_sni}:443"
@@ -190,9 +218,15 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
     # В. Проверка и ремонт xHTTP
     if protocol == "vless" and "xhttpSettings" in target_stream:
         cur_xh = cur_stream.get("xhttpSettings", {})
-        if cur_xh.get("path"):
-            target_stream["xhttpSettings"]["path"] = cur_xh["path"]
-            preserved.append(f"path ({cur_xh['path']})")
+        tgt_p = (target_stream["xhttpSettings"].get("path") or "").strip("/")
+        cur_p = (cur_xh.get("path") or "").strip("/")
+        if (not tgt_p or tgt_p == "Stream-One-Path" or tgt_p.startswith("vless-")) and cur_p:
+            target_stream["xhttpSettings"]["path"] = f"/{cur_p}/"
+            preserved.append(f"path (/{cur_p}/)")
+        elif cur_p and tgt_p == cur_p:
+            preserved.append(f"path (/{cur_p}/)")
+        elif cur_p and tgt_p != cur_p:
+            repairs.append(f"синхронизирован path xHTTP: /{cur_p}/ -> /{tgt_p}/")
         target_stream["xhttpSettings"]["mode"] = "stream-one"
         if cur_settings.get("decryption") and cur_settings["decryption"] != "none":
             target_settings["decryption"] = cur_settings["decryption"]
@@ -441,10 +475,12 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
 
     # И. Проверка и сохранение externalProxy (:443, SNI и кастомных хостов узлов)
     cur_ext = cur_stream.get("externalProxy", [])
-    expected_ext_port = 443 if protocol in ("vless", "hysteria") and port != hy2_port else (hy2_port if protocol == "hysteria" else port)
+    h_port = globals().get("hy2_port", 443)
+    expected_ext_port = 443 if protocol in ("vless", "hysteria") and port != h_port else (h_port if protocol == "hysteria" else port)
 
+    cur_domain = globals().get("domain", "")
     def_ext = default_stream.get("externalProxy", [])
-    def_dest = def_ext[0].get("dest") if (def_ext and isinstance(def_ext, list) and def_ext[0].get("dest")) else domain
+    def_dest = def_ext[0].get("dest") if (def_ext and isinstance(def_ext, list) and def_ext[0].get("dest")) else cur_domain
     def_sni = def_ext[0].get("sni", "") if (def_ext and isinstance(def_ext, list) and def_ext[0].get("sni")) else ""
 
     # Сохраняем кастомный хост узла (dest), если он был настроен и не равен localhost
@@ -453,17 +489,8 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
         ext_dest = str(cur_ext[0]["dest"]).strip()
         if ext_dest and ext_dest not in ("127.0.0.1", "localhost", "0.0.0.0"):
             target_dest = ext_dest
-            if ext_dest != domain and ext_dest != def_dest:
+            if ext_dest != cur_domain and ext_dest != def_dest:
                 preserved.append(f"кастомный хост узла ({ext_dest})")
-
-    # Сохраняем SNI для externalProxy (критично для VLESS REALITY и маршрутизации Nginx Stream L4)
-    target_sni = def_sni
-    if cur_ext and len(cur_ext) > 0 and cur_ext[0].get("sni"):
-        ext_sni = str(cur_ext[0]["sni"]).strip()
-        if ext_sni:
-            target_sni = ext_sni
-            if target_sni != def_sni:
-                preserved.append(f"кастомный externalProxy SNI ({ext_sni})")
 
     if protocol in ("shadowsocks", "mtproto", "amneziawg"):
         force_tls_val = "none"
@@ -472,36 +499,67 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
     else:
         force_tls_val = "tls"
 
-    ext_entry = {
-        "dest": target_dest,
-        "port": expected_ext_port,
-        "forceTls": force_tls_val,
-        "remark": final_remark
-    }
-    if target_sni:
-        ext_entry["sni"] = target_sni
-    if def_ext and isinstance(def_ext, list):
-        if def_ext[0].get("fingerprint"):
-            ext_entry["fingerprint"] = def_ext[0]["fingerprint"]
-        if def_ext[0].get("alpn"):
-            ext_entry["alpn"] = def_ext[0]["alpn"]
-
-    needs_ext_repair = (
-        not cur_ext
-        or cur_ext[0].get("port") != expected_ext_port
-        or cur_ext[0].get("dest") != target_dest
-        or cur_ext[0].get("remark") != final_remark
-        or cur_ext[0].get("forceTls") != force_tls_val
-        or (target_sni and cur_ext[0].get("sni") != target_sni)
-    )
-
-    if needs_ext_repair:
-        target_stream["externalProxy"] = [ext_entry]
-        sni_desc = f", sni: {target_sni}" if target_sni else ""
-        repairs.append(f"исправлен externalProxy -> {target_dest}:{expected_ext_port}{sni_desc}")
+    cur_fps = [ce.get("fingerprint") for ce in cur_ext] if (cur_ext and isinstance(cur_ext, list)) else []
+    def_fps = [de.get("fingerprint") for de in def_ext] if (def_ext and isinstance(def_ext, list)) else []
+    fp_changed = bool(def_fps and cur_fps != def_fps)
+    sni_pool_changed = bool(target_snis and target_snis != old_snis)
+    if len(def_ext) > 1 or sni_pool_changed or fp_changed:
+        updated_ext = []
+        for de in def_ext:
+            entry = dict(de)
+            if target_dest:
+                entry["dest"] = target_dest
+            entry["port"] = expected_ext_port
+            entry["forceTls"] = force_tls_val
+            updated_ext.append(entry)
+        target_stream["externalProxy"] = updated_ext
+        if cur_ext != updated_ext:
+            repairs.append(f"обновлен externalProxy ({len(updated_ext)} узлов)")
+        else:
+            preserved.append(f"externalProxy ({len(updated_ext)} узлов)")
     else:
-        target_stream["externalProxy"] = cur_ext
-        preserved.append(f"externalProxy :{expected_ext_port}")
+        # Сохраняем SNI для externalProxy (критично для VLESS REALITY и маршрутизации Nginx Stream L4)
+        target_sni = def_sni
+        if cur_ext and len(cur_ext) > 0 and cur_ext[0].get("sni"):
+            ext_sni = str(cur_ext[0]["sni"]).strip()
+            if ext_sni:
+                target_sni = ext_sni
+                if target_sni != def_sni:
+                    preserved.append(f"кастомный externalProxy SNI ({ext_sni})")
+
+        ext_entry = {
+            "dest": target_dest,
+            "port": expected_ext_port,
+            "forceTls": force_tls_val,
+            "remark": final_remark
+        }
+        if target_sni:
+            ext_entry["sni"] = target_sni
+        if def_ext and isinstance(def_ext, list):
+            if def_ext[0].get("fingerprint"):
+                ext_entry["fingerprint"] = def_ext[0]["fingerprint"]
+            if def_ext[0].get("alpn"):
+                ext_entry["alpn"] = def_ext[0]["alpn"]
+
+        def_fp = def_ext[0].get("fingerprint") if (def_ext and isinstance(def_ext, list) and len(def_ext) > 0) else None
+        cur_fp_single = cur_ext[0].get("fingerprint") if (cur_ext and isinstance(cur_ext, list) and len(cur_ext) > 0) else None
+        needs_ext_repair = (
+            not cur_ext
+            or cur_ext[0].get("port") != expected_ext_port
+            or cur_ext[0].get("dest") != target_dest
+            or cur_ext[0].get("remark") != final_remark
+            or cur_ext[0].get("forceTls") != force_tls_val
+            or (target_sni and cur_ext[0].get("sni") != target_sni)
+            or (def_fp and cur_fp_single != def_fp)
+        )
+
+        if needs_ext_repair:
+            target_stream["externalProxy"] = [ext_entry]
+            sni_desc = f", sni: {target_sni}" if target_sni else ""
+            repairs.append(f"исправлен externalProxy -> {target_dest}:{expected_ext_port}{sni_desc}")
+        else:
+            target_stream["externalProxy"] = cur_ext
+            preserved.append(f"externalProxy :{expected_ext_port}")
 
     # Синхронизация клиентов в реестре (client_traffics, clients, client_inbounds)
     if "sync_inbound_clients" in globals():

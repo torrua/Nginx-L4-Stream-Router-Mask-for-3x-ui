@@ -8,50 +8,57 @@ EXPERT_MODE=${EXPERT_MODE:-0}
 SKIP_INTERVIEW=0
 if [ "$NON_INTERACTIVE" -eq 0 ]; then
     print_mask_banner
-    has_interrupted_run=0
-    TARGET_RESUME_STEP=0
-    FAILED_STEP_TITLE=""
-    if [ -n "${CHECKPOINT_FAILED:-}" ] && [ "${FAILED_STEP_NUM:-0}" -gt 0 ]; then
-        has_interrupted_run=1
-        TARGET_RESUME_STEP="$FAILED_STEP_NUM"
-        FAILED_STEP_TITLE="${INSTALLATION_TITLES[$CHECKPOINT_FAILED]:-${STEP_NAMES[$FAILED_STEP_NUM]:-Шаг $FAILED_STEP_NUM}}"
-    elif [ "$LAST_COMPLETED_STEP" -gt 0 ] && [ "$LAST_COMPLETED_STEP" -lt "$TOTAL_STEPS" ]; then
-        has_interrupted_run=1
-        TARGET_RESUME_STEP=$(( LAST_COMPLETED_STEP + 1 ))
-        FAILED_STEP_TITLE="${STEP_NAMES[$TARGET_RESUME_STEP]:-Шаг $TARGET_RESUME_STEP}"
-    fi
-
-    if [ "$has_interrupted_run" -eq 1 ]; then
-        echo -e "  ${YELLOW}${BOLD}Обнаружена незавершенная установка!${NC}"
+    if [ "${STEP_EXPLICIT:-0}" -eq 1 ]; then
+        SKIP_INTERVIEW=1
+        ok "Запуск с указанного шага $RESUME_STEP (${STEP_NAMES[$RESUME_STEP]:-Шаг $RESUME_STEP})..."
+    else
+        has_interrupted_run=0
+        TARGET_RESUME_STEP=0
+        FAILED_STEP_TITLE=""
         if [ -n "${CHECKPOINT_FAILED:-}" ] && [ "${FAILED_STEP_NUM:-0}" -gt 0 ]; then
-            echo -e "  ${RED}Предыдущая установка была прервана на шаге:${NC} ${WHITE}Шаг $TARGET_RESUME_STEP из $TOTAL_STEPS ($FAILED_STEP_TITLE)${NC}"
-            if [ "$LAST_COMPLETED_STEP" -gt 0 ]; then
+            has_interrupted_run=1
+            TARGET_RESUME_STEP="$FAILED_STEP_NUM"
+            FAILED_STEP_TITLE="${INSTALLATION_TITLES[$CHECKPOINT_FAILED]:-${STEP_NAMES[$FAILED_STEP_NUM]:-Шаг $FAILED_STEP_NUM}}"
+        elif [ "$LAST_COMPLETED_STEP" -gt 0 ] && [ "$LAST_COMPLETED_STEP" -lt "$TOTAL_STEPS" ]; then
+            has_interrupted_run=1
+            TARGET_RESUME_STEP=$(( LAST_COMPLETED_STEP + 1 ))
+            FAILED_STEP_TITLE="${STEP_NAMES[$TARGET_RESUME_STEP]:-Шаг $TARGET_RESUME_STEP}"
+        fi
+
+        if [ "$has_interrupted_run" -eq 1 ]; then
+            echo -e "  ${YELLOW}${BOLD}Обнаружена незавершенная установка!${NC}"
+            if [ -n "${CHECKPOINT_FAILED:-}" ] && [ "${FAILED_STEP_NUM:-0}" -gt 0 ]; then
+                echo -e "  ${RED}Предыдущая установка была прервана на шаге:${NC} ${WHITE}Шаг $TARGET_RESUME_STEP из $TOTAL_STEPS ($FAILED_STEP_TITLE)${NC}"
+                if [ "$LAST_COMPLETED_STEP" -gt 0 ]; then
+                    echo -e "  ${DIM}Последний успешно завершенный шаг: ${WHITE}Шаг $LAST_COMPLETED_STEP из $TOTAL_STEPS (${STEP_NAMES[$LAST_COMPLETED_STEP]:-})${NC}"
+                fi
+            else
                 echo -e "  ${DIM}Последний успешно завершенный шаг: ${WHITE}Шаг $LAST_COMPLETED_STEP из $TOTAL_STEPS (${STEP_NAMES[$LAST_COMPLETED_STEP]:-})${NC}"
             fi
-        else
-            echo -e "  ${DIM}Последний успешно завершенный шаг: ${WHITE}Шаг $LAST_COMPLETED_STEP из $TOTAL_STEPS (${STEP_NAMES[$LAST_COMPLETED_STEP]:-})${NC}"
+            echo -e "    ${CYAN}${BOLD}[1] Повторить/продолжить с шага $TARGET_RESUME_STEP ($FAILED_STEP_TITLE)${NC} (Рекомендуется)"
+            echo -e "    ${YELLOW}[2] Начать установку заново (с шага 1)${NC}\n"
+            read -rp "  Ваш выбор [1/2] (по умолчанию: 1): " RESUME_CHOICE </dev/tty || read -r RESUME_CHOICE || RESUME_CHOICE="1"
+            RESUME_CHOICE=$(echo "${RESUME_CHOICE:-1}" | tr -d '[:space:]')
+            if [ "$RESUME_CHOICE" != "2" ]; then
+                RESUME_STEP="$TARGET_RESUME_STEP"
+                SKIP_INTERVIEW=1
+                ok "Возобновление установки с шага $RESUME_STEP..."
+            else
+                LAST_COMPLETED_STEP=0
+                RESUME_STEP=1
+                CHECKPOINT_FAILED=""
+                record_step_completed 0
+                ok "Сброс контрольной точки. Установка будет начата с первого шага."
+            fi
+            echo ""
         fi
-        echo -e "    ${CYAN}${BOLD}[1] Повторить/продолжить с шага $TARGET_RESUME_STEP ($FAILED_STEP_TITLE)${NC} (Рекомендуется)"
-        echo -e "    ${YELLOW}[2] Начать установку заново (с шага 1)${NC}\n"
-        read -rp "  Ваш выбор [1/2] (по умолчанию: 1): " RESUME_CHOICE </dev/tty || read -r RESUME_CHOICE || RESUME_CHOICE="1"
-        RESUME_CHOICE=$(echo "${RESUME_CHOICE:-1}" | tr -d '[:space:]')
-        if [ "$RESUME_CHOICE" != "2" ]; then
-            RESUME_STEP="$TARGET_RESUME_STEP"
-            SKIP_INTERVIEW=1
-            ok "Возобновление установки с шага $RESUME_STEP..."
-        else
-            LAST_COMPLETED_STEP=0
-            RESUME_STEP=1
-            CHECKPOINT_FAILED=""
-            record_step_completed 0
-            ok "Сброс контрольной точки. Установка будет начата с первого шага."
-        fi
-        echo ""
     fi
 else
     # В неинтерактивном режиме с переданным конфигом пропускаем интервью и возобновляем
     SKIP_INTERVIEW=1
-    if [ -n "${CHECKPOINT_FAILED:-}" ] && [ "${FAILED_STEP_NUM:-0}" -gt 0 ]; then
+    if [ "${STEP_EXPLICIT:-0}" -eq 1 ]; then
+        ok "Неинтерактивный режим: запуск с указанного шага $RESUME_STEP (${STEP_NAMES[$RESUME_STEP]:-Шаг $RESUME_STEP})..."
+    elif [ -n "${CHECKPOINT_FAILED:-}" ] && [ "${FAILED_STEP_NUM:-0}" -gt 0 ]; then
         RESUME_STEP="$FAILED_STEP_NUM"
         ok "Неинтерактивный режим: возобновление с шага $RESUME_STEP (${INSTALLATION_TITLES[$CHECKPOINT_FAILED]:-})..."
     elif [ "$LAST_COMPLETED_STEP" -gt 0 ] && [ "$LAST_COMPLETED_STEP" -lt "$TOTAL_STEPS" ]; then
@@ -334,8 +341,6 @@ else
 import ssl, socket, time, concurrent.futures
 
 CANDIDATES = [
-    'avito.ru',
-    'www.avito.ru',
     'dl.google.com',
     'www.apple.com',
     'itunes.apple.com',
@@ -345,7 +350,6 @@ CANDIDATES = [
     'www.amazon.com',
     'www.amd.com',
     'www.sony.com',
-    'cdn.discordapp.com',
 ]
 
 def probe(host):
@@ -412,15 +416,24 @@ for item in res:
             CLASSIC_ENABLED=1
             local c_port="${CLASSIC_PORT:-46443}"
             CLASSIC_PORTS_LIST+=("$c_port")
-            local classic_sni_list="${CLASSIC_SNI:-avito.ru}"
+            local classic_sni_list="${CLASSIC_SNI:-dl.google.com}"
             EXT_SNI_LIST=()
-            for ext_sni in $classic_sni_list; do
+            for ext_sni in ${classic_sni_list//,/ }; do
+                ext_sni=$(echo "$ext_sni" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+                [ -n "$ext_sni" ] || continue
                 [[ "$ext_sni" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]] || continue
+                [[ " ${EXT_SNI_LIST[*]:-} " =~ " ${ext_sni} " ]] && continue
                 EXT_SNI_TO_PORT["$ext_sni"]="$c_port"
                 EXT_SNI_LIST+=("$ext_sni")
                 ALL_EXT_SNIS+=("$ext_sni")
                 ok "    Внешний SNI $ext_sni привязан к инбаунд-порту $c_port"
             done
+            if [ ${#EXT_SNI_LIST[@]} -eq 0 ]; then
+                EXT_SNI_LIST=("dl.google.com")
+                EXT_SNI_TO_PORT["dl.google.com"]="$c_port"
+                ALL_EXT_SNIS+=("dl.google.com")
+                ok "    Внешний SNI dl.google.com привязан к инбаунд-порту $c_port"
+            fi
         else
             CLASSIC_ENABLED=0
         fi
@@ -445,6 +458,8 @@ for item in res:
         RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH#/}"; RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH%/}"
         validate_path_segment "$RAW_XHTTP_STREAM_PATH" "URI xHTTP"
         XHTTP_STREAM_PATH="/${RAW_XHTTP_STREAM_PATH#/}"; XHTTP_STREAM_PATH="${XHTTP_STREAM_PATH%/}/"
+
+        ensure_diag_path || return 1
 
         # UDP Протоколы
         if [[ "${ENABLE_HY2,,}" == "y" || "${ENABLE_HY2:-}" == "1" ]]; then
@@ -697,48 +712,14 @@ for item in res:
             STEAL_PORTS_LIST+=("$STEAL_PORT")
         fi
 
-        local s_dom_in=""
-        if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
-            prompt_default "  Домен/поддомен для маскировки REALITY (свой сайт)" "$old_steal_dom" s_dom_in || return $?
-            s_dom_in=$(echo "${s_dom_in:-$old_steal_dom}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
-        else
-            s_dom_in="$old_steal_dom"
-        fi
-
-        if [[ ! "$s_dom_in" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; then
-            warn "  Некорректный синтаксис домена '$s_dom_in'. Использован $old_steal_dom."
-            s_dom_in="$old_steal_dom"
-        fi
-
+        local s_dom_in="$old_steal_dom"
         if [ "$s_dom_in" = "$PRIMARY_DOMAIN" ]; then
-            warn "  Коллизия: '$s_dom_in' совпадает с главным доменом (PRIMARY_DOMAIN)!"
-            warn "  Главный домен зарезервирован за Nginx L7 (панель, веб-маска, подписки, xHTTP)."
-            warn "  Для REALITY со своим сайтом укажите поддомен (например, cdn.$PRIMARY_DOMAIN)."
-            s_dom_in="$old_steal_dom"
+            s_dom_in="cdn.$PRIMARY_DOMAIN"
         fi
 
         STEAL_DOMAINS=("$s_dom_in")
         DOMAIN_TO_PORT["$s_dom_in"]="$STEAL_PORT"
         ok "  Домен $s_dom_in привязан к инбаунд-порту $STEAL_PORT"
-
-        if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
-            echo ""
-            [ "${SHOW_TIPS:-y}" = "y" ] && echo -e "  ${CYAN}[i]${NC} ${DIM}Одного подключения REALITY (свой сайт) достаточно для всех ваших устройств.${NC}"
-            local add_more=""
-            prompt_yes_no "  Создать еще одно изолированное подключение (на другом порту)?" "n" add_more || return $?
-            if [[ "${add_more,,}" == "y" ]]; then
-                local extra_port="" extra_dom=""
-                prompt_default "    Второй порт REALITY (свой сайт)" "45444" extra_port || return $?
-                prompt_default "    Второй поддомен (напр. xr.$PRIMARY_DOMAIN)" "xr.$PRIMARY_DOMAIN" extra_dom || return $?
-                extra_dom=$(echo "${extra_dom:-}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
-                if [[ "$extra_dom" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; then
-                    STEAL_PORTS_LIST+=("$extra_port")
-                    STEAL_DOMAINS+=("$extra_dom")
-                    DOMAIN_TO_PORT["$extra_dom"]="$extra_port"
-                    ok "    Второй домен $extra_dom привязан к порту $extra_port"
-                fi
-            fi
-        fi
         return 0
     }
 
@@ -756,80 +737,33 @@ for item in res:
             fi
             CLASSIC_PORTS_LIST+=("$CLASSIC_PORT")
 
-            local scanned_snis=()
-            local scanned_lats=()
-            if command -v python3 >/dev/null 2>&1; then
-                echo -e "  ${CYAN}[*] Сканирование лучших REALITY-доменов по задержке (TLS 1.3 + h2)...${NC}"
-                while read -r s_host s_lat; do
-                    [ -n "$s_host" ] || continue
-                    scanned_snis+=("$s_host")
-                    scanned_lats+=("$s_lat")
-                done < <(scan_reality_candidates)
-            fi
-
-            if [ "${#scanned_snis[@]}" -eq 0 ]; then
-                scanned_snis=("avito.ru" "www.avito.ru" "dl.google.com" "www.apple.com" "www.samsung.com" "www.nvidia.com" "www.microsoft.com")
-                scanned_lats=("fast" "fast" "fast" "fast" "fast" "fast" "fast")
-            fi
-
-            local default_classic_sni="${CLASSIC_SNI:-${scanned_snis[0]}}"
-
-            echo ""
-            echo -e "  ${BOLD}Доступные проверенные кандидаты маскировки (REALITY Targets):${NC}"
-            for idx in "${!scanned_snis[@]}"; do
-                local num=$((idx + 1))
-                local h="${scanned_snis[$idx]}"
-                local lat="${scanned_lats[$idx]}"
-                local marker="  "
-                [ "$h" = "$default_classic_sni" ] && marker="${GREEN}★ ${NC}"
-                local lat_str="${DIM}(${lat} ms)${NC}"
-                [ "$lat" = "fast" ] && lat_str=""
-                echo -e "    ${CYAN}[$num]${NC} $marker${WHITE}$h${NC} $lat_str"
-            done
-            echo -e "    ${CYAN}[C]${NC}   ${DIM}Ввести свой собственный домен вручную${NC}"
-            echo ""
-
-            while true; do
-                echo -ne "  ${WHITE}${ARROW} Выберите номер [1-${#scanned_snis[@]}], домен или Enter для [${GREEN}${default_classic_sni}${WHITE}] ${DIM}(b - назад)${NC}: "
-                local ext_input=""
-                read -r ext_input </dev/tty || read -r ext_input || true
-                ext_input=$(echo "${ext_input:-}" | tr -d '[:space:]')
-                if [[ "${ext_input,,}" == "b" || "${ext_input,,}" == "back" || "${ext_input,,}" == "назад" ]]; then
-                    return 10
-                fi
-
-                local ext_sni=""
-                if [ -z "$ext_input" ]; then
-                    ext_sni="$default_classic_sni"
-                elif [[ "$ext_input" =~ ^[0-9]+$ ]] && [ "$ext_input" -ge 1 ] && [ "$ext_input" -le "${#scanned_snis[@]}" ]; then
-                    ext_sni="${scanned_snis[$((ext_input - 1))]}"
-                elif [[ "${ext_input,,}" == "c" ]]; then
-                    prompt_default "    Введите свой домен SNI (например, dl.google.com)" "dl.google.com" ext_sni || return $?
-                    ext_sni=$(echo "${ext_sni:-}" | tr -d '[:space:]')
-                else
-                    ext_sni="$ext_input"
-                fi
-
-                if [[ ! "$ext_sni" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; then
-                    warn "    Некорректный формат SNI: '$ext_sni'. Попробуйте снова."
-                    continue
-                fi
-
-                CLASSIC_SNI="$ext_sni"
-                EXT_SNI_LIST=("$ext_sni")
-                EXT_SNI_TO_PORT["$ext_sni"]="$CLASSIC_PORT"
-                ALL_EXT_SNIS=("$ext_sni")
-                ok "  Внешний SNI $ext_sni привязан к порту $CLASSIC_PORT"
-                break
-            done
+            local fp_input=""
+            prompt_default "  uTLS TLS Fingerprint для REALITY (chrome/firefox/safari/ios/android/edge/randomized)" "${REALITY_FINGERPRINT:-firefox}" fp_input || return $?
+            REALITY_FINGERPRINT="${fp_input,,}"
         else
             CLASSIC_PORT="${CLASSIC_PORT:-46443}"
             CLASSIC_PORTS_LIST+=("$CLASSIC_PORT")
-            local ext_sni="${CLASSIC_SNI:-avito.ru}"
-            EXT_SNI_LIST=("$ext_sni")
+            REALITY_FINGERPRINT="${REALITY_FINGERPRINT:-firefox}"
+        fi
+
+        local classic_raw="${CLASSIC_SNI:-dl.google.com}"
+        EXT_SNI_LIST=()
+        ALL_EXT_SNIS=()
+        for ext_sni in ${classic_raw//,/ }; do
+            ext_sni=$(echo "$ext_sni" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+            [ -n "$ext_sni" ] || continue
+            [[ "$ext_sni" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]] || continue
+            [[ " ${EXT_SNI_LIST[*]:-} " =~ " ${ext_sni} " ]] && continue
+            EXT_SNI_LIST+=("$ext_sni")
             EXT_SNI_TO_PORT["$ext_sni"]="$CLASSIC_PORT"
-            ALL_EXT_SNIS=("$ext_sni")
+            ALL_EXT_SNIS+=("$ext_sni")
             ok "  Внешний SNI $ext_sni привязан к порту $CLASSIC_PORT"
+        done
+        if [ ${#EXT_SNI_LIST[@]} -eq 0 ]; then
+            EXT_SNI_LIST=("dl.google.com")
+            EXT_SNI_TO_PORT["dl.google.com"]="$CLASSIC_PORT"
+            ALL_EXT_SNIS=("dl.google.com")
+            ok "  Внешний SNI dl.google.com привязан к порту $CLASSIC_PORT"
         fi
         return 0
     }
@@ -979,7 +913,6 @@ for item in res:
             HY2_PORT_HOPPING_RANGE="${HY2_PORT_HOPPING_RANGE:-20000:50000}"
             if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
                 prompt_default "  UDP-порт для Hysteria 2" "$HY2_PORT" HY2_PORT || return $?
-                prompt_default "  Домен/поддомен для Hysteria 2" "$HY2_DOMAIN" HY2_DOMAIN || return $?
                 prompt_yes_no "  Включить Port Hopping для Hysteria 2 (UDP 20000:50000)?" "$HY2_PORT_HOPPING" HY2_PORT_HOPPING || return $?
                 if is_true "$HY2_PORT_HOPPING"; then
                     prompt_default "  Диапазон портов Port Hopping" "$HY2_PORT_HOPPING_RANGE" HY2_PORT_HOPPING_RANGE || return $?
@@ -1014,7 +947,6 @@ for item in res:
             [ -n "${AWG_SERVER_HOST:-}" ] || AWG_SERVER_HOST="${PRIMARY_DOMAIN:-$WAN_IP}"
             if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
                 prompt_default "  UDP-порт для автономного AmneziaWG" "$AWG_STANDALONE_PORT" AWG_STANDALONE_PORT || return $?
-                prompt_default "  Хост/IP для подключения клиентов AmneziaWG" "$AWG_SERVER_HOST" AWG_SERVER_HOST || return $?
             fi
         else
             AWG_STANDALONE_PORT=""
@@ -1044,8 +976,6 @@ for item in res:
             MTPROTO_ADTAG="${MTPROTO_ADTAG:-}"
             if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
                 prompt_default "  TCP-порт для Telegram MTProxy" "$MTPROTO_PORT" MTPROTO_PORT || return $?
-                prompt_default "  FakeTLS домен маскировки для MTProxy" "$MTPROTO_FAKETLS_DOMAIN" MTPROTO_FAKETLS_DOMAIN || return $?
-                prompt_default "  Спонсорский promo-тег adTag (опционально, 32 hex)" "$MTPROTO_ADTAG" MTPROTO_ADTAG || return $?
             fi
         else
             MTPROTO_PORT=""
@@ -1059,7 +989,6 @@ for item in res:
             [ -n "${MASQUE_PASSWORD:-}" ] || MASQUE_PASSWORD="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "masque${RANDOM}")"
             if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
                 prompt_default "  UDP-порт для MASQUE (HTTP/3)" "$MASQUE_PORT" MASQUE_PORT || return $?
-                prompt_default "  Имя пользователя для MASQUE" "$MASQUE_USER" MASQUE_USER || return $?
             fi
         else
             MASQUE_PORT=""
@@ -1073,7 +1002,6 @@ for item in res:
             [ -n "${SS2022_PORT:-}" ] || SS2022_PORT="8388"
             if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
                 prompt_default "  Локальный порт для ShadowTLS" "$SHADOWTLS_PORT" SHADOWTLS_PORT || return $?
-                prompt_default "  FakeTLS SNI для ShadowTLS" "$SHADOWTLS_SNI" SHADOWTLS_SNI || return $?
             fi
         else
             SHADOWTLS_PORT=""
@@ -1086,7 +1014,6 @@ for item in res:
             [ -n "${WSTUNNEL_SECRET:-}" ] || WSTUNNEL_SECRET="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "wst${RANDOM}")"
             if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
                 prompt_default "  Локальный порт для Wstunnel daemon" "$WSTUNNEL_PORT" WSTUNNEL_PORT || return $?
-                prompt_default "  HTTP-путь location для Wstunnel" "$WSTUNNEL_PREFIX" WSTUNNEL_PREFIX || return $?
             fi
         else
             WSTUNNEL_PORT=""
@@ -1099,8 +1026,6 @@ for item in res:
             [ -n "${ZAPRET_FOOLING:-}" ] || ZAPRET_FOOLING="md5sig,badseq"
             if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
                 prompt_default "  Очередь NFQUEUE для Zapret" "$ZAPRET_QNUM" ZAPRET_QNUM || return $?
-                prompt_default "  Режим desync для nfqws" "$ZAPRET_DESYNC" ZAPRET_DESYNC || return $?
-                prompt_default "  Режим fooling для nfqws" "$ZAPRET_FOOLING" ZAPRET_FOOLING || return $?
             fi
         else
             ZAPRET_QNUM=""
@@ -1113,8 +1038,6 @@ for item in res:
             [ -n "${NAIVE_PASS:-}" ] || NAIVE_PASS="$(generate_urlsafe_token 16)"
             if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
                 prompt_default "  Локальный порт для NaïveProxy (Caddy)" "$NAIVE_PORT" NAIVE_PORT || return $?
-                prompt_default "  SNI-домен для NaïveProxy" "$NAIVE_DOMAIN" NAIVE_DOMAIN || return $?
-                prompt_default "  Пользователь для NaïveProxy" "$NAIVE_USER" NAIVE_USER || return $?
             fi
         else
             NAIVE_PORT=""
@@ -1130,7 +1053,6 @@ for item in res:
             [ -n "${SS2022_PORT:-}" ] || SS2022_PORT="8388"
             if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
                 prompt_default "  UDP-порт для DNSTT-сервера" "$DNSTT_PORT" DNSTT_PORT || return $?
-                prompt_default "  NS/DNS-домен зоны для DNSTT" "$DNSTT_DOMAIN" DNSTT_DOMAIN || return $?
             fi
         else
             DNSTT_PORT=""
@@ -1153,8 +1075,6 @@ for item in res:
                     MIERU_PORT_MODE="single"
                     prompt_default "  Порт для Mieru (TCP и UDP)" "${MIERU_PORT:-8450}" MIERU_PORT || return $?
                 fi
-                prompt_default "  Имя пользователя Mieru" "${MIERU_USER:-user-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "m$(date +%s | cut -c7-10)")}" MIERU_USER || return $?
-                prompt_default "  Пароль Mieru" "${MIERU_PASS:-$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "pass$(date +%s)")}" MIERU_PASS || return $?
             else
                 case "${MIERU_PORT_MODE,,}" in
                     range|pool)
@@ -1165,9 +1085,9 @@ for item in res:
                         MIERU_PORT="${MIERU_PORT:-8450}"
                         ;;
                 esac
-                [ -n "${MIERU_USER:-}" ] || MIERU_USER="user-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "mieru${RANDOM}")"
-                [ -n "${MIERU_PASS:-}" ] || MIERU_PASS="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "mieru${RANDOM}")"
             fi
+            [ -n "${MIERU_USER:-}" ] || MIERU_USER="user-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "mieru${RANDOM}")"
+            [ -n "${MIERU_PASS:-}" ] || MIERU_PASS="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "mieru${RANDOM}")"
         else
             MIERU_PORT=""
             MIERU_USER=""
@@ -1285,6 +1205,8 @@ for item in res:
             RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH#/}"; RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH%/}"
             XHTTP_STREAM_PATH="/${RAW_XHTTP_STREAM_PATH#/}"; XHTTP_STREAM_PATH="${XHTTP_STREAM_PATH%/}/"
         fi
+
+        ensure_diag_path || return 1
 
         echo
         echo -e "  ${GREEN}${CHECK} Конфигурация портов и путей 3X-UI:${NC}"
@@ -1521,7 +1443,7 @@ for item in res:
                 if [[ -z "$SERVER_PREFIX" || "${SERVER_PREFIX,,}" =~ ^(-|none|off|no)$ ]]; then
                     def_token_name="Master-Node-Cluster"
                 fi
-                if [[ "${PORTS_SETUP_MODE:-0}" == "1" ]] && declare -F prompt_default >/dev/null; then
+                if [[ "${EXPERT_MODE:-0}" == "1" ]] && declare -F prompt_default >/dev/null; then
                     prompt_default "  Имя API-токена ноды" "${NODE_TOKEN_NAME:-$def_token_name}" NODE_TOKEN_NAME || return $?
                 else
                     NODE_TOKEN_NAME="${NODE_TOKEN_NAME:-$def_token_name}"

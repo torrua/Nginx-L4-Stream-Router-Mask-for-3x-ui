@@ -113,31 +113,33 @@ import json, sys, os
 
 FALLBACK = {
     'shadow-tls': {
-        'x86_64': ('https://github.com/ihciah/shadow-tls/releases/download/v0.2.25/shadow-tls-x86_64-unknown-linux-musl', '4bdfa57db9e8bf69f10cb9fa3268846c4f3ce2d4a2a1ea9174112e432c25ea7a', 15728640, '0.2.25'),
-        'aarch64': ('https://github.com/ihciah/shadow-tls/releases/download/v0.2.25/shadow-tls-aarch64-unknown-linux-musl', '81f211925b6a55543cbe24bc99015c90ec1ae62c3328e67ff8df82bb7da255ef', 15728640, '0.2.25')
+        'x86_64': ('https://github.com/ihciah/shadow-tls/releases/download/v0.2.25/shadow-tls-x86_64-unknown-linux-musl', 'a173f5f2d57f45211b68e10ceeddc15b1791077b914fa89747bc705fddc71532', 15728640, '0.2.25'),
+        'aarch64': ('https://github.com/ihciah/shadow-tls/releases/download/v0.2.25/shadow-tls-aarch64-unknown-linux-musl', '3295476b37f549a68906519d3eaecb74bf3b6eaf9094cebb16ee84f0151373c6', 15728640, '0.2.25')
     },
     'wstunnel': {
-        'x86_64': ('https://github.com/erebe/wstunnel/releases/download/v10.1.7/wstunnel_10.1.7_linux_amd64.tar.gz', 'ca6d77e4cfcf6ce4b06f528a47ea37cb9a941fcddff4a9df315f6068e5ff4e6b', 26214400, '10.1.7'),
-        'aarch64': ('https://github.com/erebe/wstunnel/releases/download/v10.1.7/wstunnel_10.1.7_linux_arm64.tar.gz', '7a353d2bf2cb4d3d81b24d7759ad4ba7eb04cf4c5478491d904ba6b44588df8e', 26214400, '10.1.7')
+        'x86_64': ('https://github.com/erebe/wstunnel/releases/download/v10.1.7/wstunnel_10.1.7_linux_amd64.tar.gz', '79c5beda18655d8ededd507995d9aebd524c35ddc7abfd0aa733b98b3fb895a4', 26214400, '10.1.7'),
+        'aarch64': ('https://github.com/erebe/wstunnel/releases/download/v10.1.7/wstunnel_10.1.7_linux_arm64.tar.gz', '0839c8ba6c812b60d8b3f57176a3c52268f1438daa814f985d492db6c5b41c8a', 26214400, '10.1.7')
     },
     'sing-box': {
-        'x86_64': ('https://github.com/SagerNet/sing-box/releases/download/v1.11.4/sing-box-1.11.4-linux-amd64.tar.gz', '6b2cbb4ee2cb36a32cb5e2f7b8d4bb9f8e434f3c7e497ecb822d4f20bf8a0db8', 52428800, '1.11.4'),
-        'aarch64': ('https://github.com/SagerNet/sing-box/releases/download/v1.11.4/sing-box-1.11.4-linux-arm64.tar.gz', '9a01f68742b6c7314ec41be1aa7ee965ec3c457bc6a42247dc2bc89600a747ea', 52428800, '1.11.4')
+        'x86_64': ('https://github.com/SagerNet/sing-box/releases/download/v1.11.4/sing-box-1.11.4-linux-amd64.tar.gz', '0bb762ef286b36c2016d9107fc1f089be7a75f6d579b33f067d31e696c05927e', 52428800, '1.11.4'),
+        'aarch64': ('https://github.com/SagerNet/sing-box/releases/download/v1.11.4/sing-box-1.11.4-linux-arm64.tar.gz', '4e687359db42b6a28ef93f9cd2cb9549c4b0079cc7e49bc5f6ecbf98257a2507', 52428800, '1.11.4')
     },
     'zapret': {
-        'all': ('https://github.com/bol-van/zapret/releases/download/v70/zapret-v70.tar.gz', '1517409c6ae9fa4513ec8b4bcf51e18b849cb19a57fb6bc12001358e5d3264c1', 20971520, '70')
+        'all': ('https://github.com/bol-van/zapret/releases/download/v70/zapret-v70.tar.gz', '142c38a0aa17839fa33c675a740d80aff9302817a71f11212274fbedf9f03015', 20971520, '70')
     },
     'AdGuardHome': {
-        'x86_64': ('https://static.adguard.com/adguardhome/release/AdGuardHome_linux_amd64.tar.gz', '439265eb634ce5a87e02598380cf7bc51b0337d1d2b7c4a169fe5a1c3132e0c9', 41943040, '0.107.56'),
-        'aarch64': ('https://static.adguard.com/adguardhome/release/AdGuardHome_linux_arm64.tar.gz', 'c88f17a94ef933aa5a11dfbbf099ec16f28beae5c0bf323c21a19614457ee458', 41943040, '0.107.56')
+        'x86_64': ('https://github.com/AdguardTeam/AdGuardHome/releases/download/v0.107.56/AdGuardHome_linux_amd64.tar.gz', '044a8fa378de2ee90c9f290efba18d67dddba650c239c577dc138795e40b5832', 41943040, '0.107.56'),
+        'aarch64': ('https://github.com/AdguardTeam/AdGuardHome/releases/download/v0.107.56/AdGuardHome_linux_arm64.tar.gz', '2718ad45db96769e2e24272847b140dbaa6b0c873af02cec14ebe27a1c434712', 41943040, '0.107.56')
     },
     'acme.sh': {
-        'all': ('https://github.com/acmesh-official/acme.sh/archive/refs/tags/3.0.8.tar.gz', 'bf4405d43899f8d16972e2762b9f67355030e20fb3ae7068565a0cbb02e53ef7', 2097152, '3.0.8')
+        'all': ('https://github.com/acmesh-official/acme.sh/archive/refs/tags/3.0.8.tar.gz', '51f4f9580e91b038a7dd0207631bf9b1be0aab6a0094d0a3cbb4b21cd86f71df', 2097152, '3.0.8')
     }
 }
 
 comp_name = sys.argv[1]
 arch = sys.argv[2]
+arch_aliases = {'amd64': 'x86_64', 'arm64': 'aarch64'}
+arch = arch_aliases.get(arch, arch)
 manifest_p = os.environ.get('MANIFEST_FILE', '')
 
 if not manifest_p or not os.path.isfile(manifest_p):
@@ -189,14 +191,14 @@ download_manifest_component() {
     local cur_arch="${3:-}"
 
     if [ -z "$cur_arch" ]; then
-        local raw_arch
-        raw_arch=$(uname -m 2>/dev/null || echo "x86_64")
-        case "$raw_arch" in
-            x86_64|amd64) cur_arch="x86_64" ;;
-            aarch64|arm64) cur_arch="aarch64" ;;
-            *) cur_arch="x86_64" ;;
-        esac
+        cur_arch=$(uname -m 2>/dev/null || echo "x86_64")
     fi
+    case "$cur_arch" in
+        x86_64|amd64) cur_arch="x86_64" ;;
+        aarch64|arm64) cur_arch="aarch64" ;;
+        all) cur_arch="all" ;;
+        *) cur_arch="x86_64" ;;
+    esac
 
     local comp_meta
     comp_meta=$(get_manifest_component_data "$comp_name" "$cur_arch")

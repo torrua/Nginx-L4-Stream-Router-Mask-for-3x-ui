@@ -486,31 +486,33 @@ import json, sys, os
 
 FALLBACK = {
     'shadow-tls': {
-        'x86_64': ('https://github.com/ihciah/shadow-tls/releases/download/v0.2.25/shadow-tls-x86_64-unknown-linux-musl', '4bdfa57db9e8bf69f10cb9fa3268846c4f3ce2d4a2a1ea9174112e432c25ea7a', 15728640, '0.2.25'),
-        'aarch64': ('https://github.com/ihciah/shadow-tls/releases/download/v0.2.25/shadow-tls-aarch64-unknown-linux-musl', '81f211925b6a55543cbe24bc99015c90ec1ae62c3328e67ff8df82bb7da255ef', 15728640, '0.2.25')
+        'x86_64': ('https://github.com/ihciah/shadow-tls/releases/download/v0.2.25/shadow-tls-x86_64-unknown-linux-musl', 'a173f5f2d57f45211b68e10ceeddc15b1791077b914fa89747bc705fddc71532', 15728640, '0.2.25'),
+        'aarch64': ('https://github.com/ihciah/shadow-tls/releases/download/v0.2.25/shadow-tls-aarch64-unknown-linux-musl', '3295476b37f549a68906519d3eaecb74bf3b6eaf9094cebb16ee84f0151373c6', 15728640, '0.2.25')
     },
     'wstunnel': {
-        'x86_64': ('https://github.com/erebe/wstunnel/releases/download/v10.1.7/wstunnel_10.1.7_linux_amd64.tar.gz', 'ca6d77e4cfcf6ce4b06f528a47ea37cb9a941fcddff4a9df315f6068e5ff4e6b', 26214400, '10.1.7'),
-        'aarch64': ('https://github.com/erebe/wstunnel/releases/download/v10.1.7/wstunnel_10.1.7_linux_arm64.tar.gz', '7a353d2bf2cb4d3d81b24d7759ad4ba7eb04cf4c5478491d904ba6b44588df8e', 26214400, '10.1.7')
+        'x86_64': ('https://github.com/erebe/wstunnel/releases/download/v10.1.7/wstunnel_10.1.7_linux_amd64.tar.gz', '79c5beda18655d8ededd507995d9aebd524c35ddc7abfd0aa733b98b3fb895a4', 26214400, '10.1.7'),
+        'aarch64': ('https://github.com/erebe/wstunnel/releases/download/v10.1.7/wstunnel_10.1.7_linux_arm64.tar.gz', '0839c8ba6c812b60d8b3f57176a3c52268f1438daa814f985d492db6c5b41c8a', 26214400, '10.1.7')
     },
     'sing-box': {
-        'x86_64': ('https://github.com/SagerNet/sing-box/releases/download/v1.11.4/sing-box-1.11.4-linux-amd64.tar.gz', '6b2cbb4ee2cb36a32cb5e2f7b8d4bb9f8e434f3c7e497ecb822d4f20bf8a0db8', 52428800, '1.11.4'),
-        'aarch64': ('https://github.com/SagerNet/sing-box/releases/download/v1.11.4/sing-box-1.11.4-linux-arm64.tar.gz', '9a01f68742b6c7314ec41be1aa7ee965ec3c457bc6a42247dc2bc89600a747ea', 52428800, '1.11.4')
+        'x86_64': ('https://github.com/SagerNet/sing-box/releases/download/v1.11.4/sing-box-1.11.4-linux-amd64.tar.gz', '0bb762ef286b36c2016d9107fc1f089be7a75f6d579b33f067d31e696c05927e', 52428800, '1.11.4'),
+        'aarch64': ('https://github.com/SagerNet/sing-box/releases/download/v1.11.4/sing-box-1.11.4-linux-arm64.tar.gz', '4e687359db42b6a28ef93f9cd2cb9549c4b0079cc7e49bc5f6ecbf98257a2507', 52428800, '1.11.4')
     },
     'zapret': {
-        'all': ('https://github.com/bol-van/zapret/releases/download/v70/zapret-v70.tar.gz', '1517409c6ae9fa4513ec8b4bcf51e18b849cb19a57fb6bc12001358e5d3264c1', 20971520, '70')
+        'all': ('https://github.com/bol-van/zapret/releases/download/v70/zapret-v70.tar.gz', '142c38a0aa17839fa33c675a740d80aff9302817a71f11212274fbedf9f03015', 20971520, '70')
     },
     'AdGuardHome': {
-        'x86_64': ('https://static.adguard.com/adguardhome/release/AdGuardHome_linux_amd64.tar.gz', '439265eb634ce5a87e02598380cf7bc51b0337d1d2b7c4a169fe5a1c3132e0c9', 41943040, '0.107.56'),
-        'aarch64': ('https://static.adguard.com/adguardhome/release/AdGuardHome_linux_arm64.tar.gz', 'c88f17a94ef933aa5a11dfbbf099ec16f28beae5c0bf323c21a19614457ee458', 41943040, '0.107.56')
+        'x86_64': ('https://github.com/AdguardTeam/AdGuardHome/releases/download/v0.107.56/AdGuardHome_linux_amd64.tar.gz', '044a8fa378de2ee90c9f290efba18d67dddba650c239c577dc138795e40b5832', 41943040, '0.107.56'),
+        'aarch64': ('https://github.com/AdguardTeam/AdGuardHome/releases/download/v0.107.56/AdGuardHome_linux_arm64.tar.gz', '2718ad45db96769e2e24272847b140dbaa6b0c873af02cec14ebe27a1c434712', 41943040, '0.107.56')
     },
     'acme.sh': {
-        'all': ('https://github.com/acmesh-official/acme.sh/archive/refs/tags/3.0.8.tar.gz', 'bf4405d43899f8d16972e2762b9f67355030e20fb3ae7068565a0cbb02e53ef7', 2097152, '3.0.8')
+        'all': ('https://github.com/acmesh-official/acme.sh/archive/refs/tags/3.0.8.tar.gz', '51f4f9580e91b038a7dd0207631bf9b1be0aab6a0094d0a3cbb4b21cd86f71df', 2097152, '3.0.8')
     }
 }
 
 comp_name = sys.argv[1]
 arch = sys.argv[2]
+arch_aliases = {'amd64': 'x86_64', 'arm64': 'aarch64'}
+arch = arch_aliases.get(arch, arch)
 manifest_p = os.environ.get('MANIFEST_FILE', '')
 
 if not manifest_p or not os.path.isfile(manifest_p):
@@ -562,14 +564,14 @@ download_manifest_component() {
     local cur_arch="${3:-}"
 
     if [ -z "$cur_arch" ]; then
-        local raw_arch
-        raw_arch=$(uname -m 2>/dev/null || echo "x86_64")
-        case "$raw_arch" in
-            x86_64|amd64) cur_arch="x86_64" ;;
-            aarch64|arm64) cur_arch="aarch64" ;;
-            *) cur_arch="x86_64" ;;
-        esac
+        cur_arch=$(uname -m 2>/dev/null || echo "x86_64")
     fi
+    case "$cur_arch" in
+        x86_64|amd64) cur_arch="x86_64" ;;
+        aarch64|arm64) cur_arch="aarch64" ;;
+        all) cur_arch="all" ;;
+        *) cur_arch="x86_64" ;;
+    esac
 
     local comp_meta
     comp_meta=$(get_manifest_component_data "$comp_name" "$cur_arch")
@@ -748,7 +750,7 @@ def create_manifest(staging_dir: Union[str, Path], output_path: Optional[Union[s
     created_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     data = {
         "format_version": "2.0",
-        "project_version": os.environ.get("SCRIPT_VERSION", "v9.3.0"),
+        "project_version": os.environ.get("SCRIPT_VERSION", "v9.4.0"),
         "created_at": created_iso,
         "db_path": os.environ.get("DB_PATH", "/etc/x-ui/x-ui.db"),
         "files": files_map,
@@ -2165,7 +2167,7 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         -v|--version)
-            echo "maintain.sh (Nginx L4 Stream Router Mask for 3X-UI) v9.3.0"
+            echo "maintain.sh (Nginx L4 Stream Router Mask for 3X-UI) v9.4.0"
             exit 0
             ;;
         *)
@@ -2376,7 +2378,8 @@ export STEAL_PORT="${STEAL_PORT:-45443}"
 export STEAL_DOMAINS="${STEAL_DOMAINS:-}"
 export ENABLE_CLASSIC="${ENABLE_CLASSIC:-y}"
 export CLASSIC_PORT="${CLASSIC_PORT:-46443}"
-export CLASSIC_SNI="${CLASSIC_SNI:-avito.ru}"
+export CLASSIC_SNI="${CLASSIC_SNI:-dl.google.com}"
+export REALITY_FINGERPRINT="${REALITY_FINGERPRINT:-${FINGERPRINT:-firefox}}"
 export ENABLE_HY2="${ENABLE_HY2:-y}"
 export HY2_PORT="${HY2_PORT:-443}"
 export ENABLE_AWG_V3="${ENABLE_AWG_V3:-y}"
@@ -2571,8 +2574,8 @@ else:
     else:
         sub_clash_path = f"{sub_path}/clash"
 
-xhttp_port = int(os.environ.get("XHTTP_STREAM_PORT") or "50443")
-xhttp_raw_path = (os.environ.get("XHTTP_STREAM_PATH") or "").strip("/")
+xhttp_port = int(os.environ.get("XHTTP_STREAM_PORT") or os.environ.get("XHTTP_PORT") or "50443")
+xhttp_raw_path = (os.environ.get("XHTTP_STREAM_PATH") or os.environ.get("XHTTP_PATH") or "").strip("/")
 if not xhttp_raw_path or xhttp_raw_path == "Stream-One-Path" or xhttp_raw_path.startswith("vless-"):
     cur.execute("SELECT stream_settings FROM inbounds WHERE port = ?", (xhttp_port,))
     row_xh = cur.fetchone()
@@ -2597,8 +2600,20 @@ reality_fallback_port = int(os.environ.get("REALITY_FALLBACK_PORT") or "9443")
 
 enable_classic = os.environ.get("ENABLE_CLASSIC", "y").lower() in ("1", "y", "true")
 classic_port = int(os.environ.get("CLASSIC_PORT") or "46443")
-classic_sni = os.environ.get("CLASSIC_SNI") or "avito.ru"
-classic_sni = classic_sni.split()[0] if classic_sni.strip() else "avito.ru"
+classic_raw = os.environ.get("CLASSIC_SNI") or "dl.google.com"
+_parsed_snis = []
+_seen_snis = set()
+for _s in classic_raw.replace(",", " ").split():
+    _clean_s = _s.strip().strip(".").lower()
+    if _clean_s and _clean_s not in _seen_snis:
+        _seen_snis.add(_clean_s)
+        _parsed_snis.append(_clean_s)
+classic_snis = _parsed_snis if _parsed_snis else ["dl.google.com"]
+classic_sni = classic_snis[0]
+
+VALID_FINGERPRINTS = {"chrome", "firefox", "safari", "ios", "android", "edge", "360", "qq", "random", "randomized"}
+_raw_fp = (os.environ.get("REALITY_FINGERPRINT") or "firefox").strip().lower()
+reality_fingerprint = _raw_fp if (_raw_fp in VALID_FINGERPRINTS or _raw_fp) else "firefox"
 
 def resolve_cert_key_paths(target_dom: str, env_cert: str = "", env_key: str = "") -> tuple:
     """
@@ -3377,6 +3392,8 @@ print("\n[+] Синхронизация шаблона конфигурации 
 enable_warp = os.environ.get("ENABLE_WARP", "n").lower() in ("1", "y", "true")
 warp_license_key = os.environ.get("WARP_LICENSE_KEY", "").strip()
 
+# ----------------- Шаблон ядра Xray и правила маршрутизации -----------------
+
 DEFAULT_XRAY_TEMPLATE = {
     "api": {
         "services": ["HandlerService", "LoggerService", "StatsService", "RoutingService"],
@@ -3405,6 +3422,61 @@ DEFAULT_XRAY_TEMPLATE = {
     },
     "stats": {}
 }
+
+BAD_GEOSITES = {
+    "geosite:ru", "geosite:yandex", "geosite:vk", "geosite:youtube",
+    "geosite:openai", "geosite:google-gemini", "geosite:anthropic", "geosite:cloudflare"
+}
+
+YT_DOMAINS = [
+    "domain:youtube.com",
+    "domain:googlevideo.com",
+    "domain:ytimg.com",
+    "domain:youtu.be",
+    "domain:youtubei.googleapis.com",
+    "domain:yt.be"
+]
+
+RU_DOMAINS = [
+    "domain:ru",
+    "domain:su",
+    "domain:рф",
+    "domain:xn--p1ai",
+    "domain:yandex.ru",
+    "domain:yandex.net",
+    "domain:ya.ru",
+    "domain:vk.com",
+    "domain:vk.ru",
+    "domain:vkvideo.ru",
+    "domain:gosuslugi.ru",
+    "domain:sberbank.ru",
+    "domain:tbank.ru",
+    "domain:tinkoff.ru",
+    "domain:dzen.ru",
+    "domain:mail.ru",
+    "domain:rutube.ru",
+    "domain:ozon.ru",
+    "domain:wildberries.ru",
+    "domain:avito.ru"
+]
+
+WARP_DOMAINS = [
+    "domain:openai.com",
+    "domain:chatgpt.com",
+    "domain:oaistatic.com",
+    "domain:oaiusercontent.com",
+    "domain:anthropic.com",
+    "domain:claude.ai",
+    "domain:gemini.google.com",
+    "domain:aistudio.google.com",
+    "domain:deepmind.google",
+    "domain:makersuite.google.com",
+    "domain:generativelanguage.googleapis.com",
+    "domain:ai.google.dev",
+    "domain:google.com",
+    "domain:cloudflare.com",
+    "domain:challenges.cloudflare.com"
+]
 
 # Чтение и инициализация шаблона Xray
 raw_tpl = existing_settings.get("xrayTemplateConfig")
@@ -3661,63 +3733,16 @@ if enable_warp:
     routing = tpl.get("routing", {})
     rules = routing.get("rules", [])
 
-    bad_geosites = {
-        "geosite:ru", "geosite:yandex", "geosite:vk", "geosite:youtube",
-        "geosite:openai", "geosite:google-gemini", "geosite:anthropic", "geosite:cloudflare"
-    }
+    bad_geosites = BAD_GEOSITES
 
     # Очистка всех существующих правил от отсутствующих/невалидных geosite меток
     for r in rules:
         if isinstance(r, dict) and "domain" in r and isinstance(r["domain"], list):
             r["domain"] = [d for d in r["domain"] if d not in bad_geosites]
 
-    yt_domains = [
-        "domain:youtube.com",
-        "domain:googlevideo.com",
-        "domain:ytimg.com",
-        "domain:youtu.be",
-        "domain:youtubei.googleapis.com",
-        "domain:yt.be"
-    ]
-    ru_domains = [
-        "domain:ru",
-        "domain:su",
-        "domain:рф",
-        "domain:xn--p1ai",
-        "domain:yandex.ru",
-        "domain:yandex.net",
-        "domain:ya.ru",
-        "domain:vk.com",
-        "domain:vk.ru",
-        "domain:vkvideo.ru",
-        "domain:gosuslugi.ru",
-        "domain:sberbank.ru",
-        "domain:tbank.ru",
-        "domain:tinkoff.ru",
-        "domain:dzen.ru",
-        "domain:mail.ru",
-        "domain:rutube.ru",
-        "domain:ozon.ru",
-        "domain:wildberries.ru",
-        "domain:avito.ru"
-    ]
-    warp_domains = [
-        "domain:openai.com",
-        "domain:chatgpt.com",
-        "domain:oaistatic.com",
-        "domain:oaiusercontent.com",
-        "domain:anthropic.com",
-        "domain:claude.ai",
-        "domain:gemini.google.com",
-        "domain:aistudio.google.com",
-        "domain:deepmind.google",
-        "domain:makersuite.google.com",
-        "domain:generativelanguage.googleapis.com",
-        "domain:ai.google.dev",
-        "domain:google.com",
-        "domain:cloudflare.com",
-        "domain:challenges.cloudflare.com"
-    ]
+    yt_domains = YT_DOMAINS
+    ru_domains = RU_DOMAINS
+    warp_domains = WARP_DOMAINS
 
     # 1. Из правил WARP исключаем любые YouTube домены
     for r in rules:
@@ -4067,12 +4092,13 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
         if protocol == "mtproto" and "preferIp" not in target_settings:
             target_settings["preferIp"] = "prefer-ipv4"
         if "externalProxy" in target_stream and isinstance(target_stream["externalProxy"], list) and len(target_stream["externalProxy"]) > 0:
-            if protocol in ("shadowsocks", "mtproto", "amneziawg"):
-                target_stream["externalProxy"][0]["forceTls"] = "none"
-            elif protocol == "vless" and "realitySettings" in target_stream:
-                target_stream["externalProxy"][0]["forceTls"] = "same"
-            elif "forceTls" not in target_stream["externalProxy"][0]:
-                target_stream["externalProxy"][0]["forceTls"] = "tls"
+            for ep in target_stream["externalProxy"]:
+                if protocol in ("shadowsocks", "mtproto", "amneziawg"):
+                    ep["forceTls"] = "none"
+                elif protocol == "vless" and "realitySettings" in target_stream:
+                    ep["forceTls"] = "same"
+                elif "forceTls" not in ep:
+                    ep["forceTls"] = "tls"
 
         settings_json = json.dumps(target_settings, ensure_ascii=False)
         stream_json = json.dumps(target_stream, ensure_ascii=False)
@@ -4108,6 +4134,8 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
     target_stream = json.loads(json.dumps(default_stream))
     repairs = []
     preserved = []
+    target_snis = []
+    old_snis = []
 
     # Сохранение пользовательского названия инбаунда (remark), если оно было изменено
     final_remark = remark
@@ -4207,18 +4235,43 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
                 target_stream["realitySettings"]["settings"]["publicKey"] = derived_pub
                 repairs.append("восстановлен settings.publicKey по x25519")
 
-        # Ремонт мертвого swdist.microsoft.com SNI или пустых значений
+        # settings.fingerprint
+        tgt_fp = target_stream.get("realitySettings", {}).get("settings", {}).get("fingerprint")
+        cur_fp = cur_reality.get("settings", {}).get("fingerprint")
+        if tgt_fp and cur_fp and tgt_fp != cur_fp:
+            target_stream["realitySettings"]["settings"]["fingerprint"] = tgt_fp
+            repairs.append(f"обновлен fingerprint Reality ({cur_fp} -> {tgt_fp})")
+        elif cur_fp and not tgt_fp:
+            if "settings" in target_stream["realitySettings"] and isinstance(target_stream["realitySettings"]["settings"], dict):
+                target_stream["realitySettings"]["settings"]["fingerprint"] = cur_fp
+
+        # Ремонт мертвого swdist.microsoft.com SNI или пустых значений, либо обновление пула SNI
         old_snis = cur_reality.get("serverNames", [])
         old_dest = str(cur_reality.get("dest", "")).strip()
+        target_snis = target_stream["realitySettings"].get("serverNames", [])
+        c_sni_fallback = globals().get("classic_sni", "dl.google.com")
+        c_port = globals().get("classic_port", 46443)
+
         if any("swdist.microsoft.com" in s for s in old_snis) or "swdist.microsoft.com" in old_dest:
-            repairs.append(f"заменен мертвый SNI swdist.microsoft.com -> {classic_sni}")
-            target_stream["realitySettings"]["serverNames"] = [classic_sni]
-            target_stream["realitySettings"]["dest"] = f"{classic_sni}:443"
+            chosen_snis = target_snis if (target_snis and not any("swdist.microsoft.com" in s for s in target_snis)) else [c_sni_fallback]
+            target_stream["realitySettings"]["serverNames"] = chosen_snis
+            target_stream["realitySettings"]["dest"] = f"{chosen_snis[0]}:443"
             target_stream["realitySettings"]["xver"] = 0
+            repairs.append(f"заменен мертвый SNI swdist.microsoft.com -> {','.join(chosen_snis)}")
+        elif target_snis and target_snis != old_snis:
+            target_stream["realitySettings"]["serverNames"] = target_snis
+            if port == c_port or tag == "in-classic-reality" or cur_tag == "in-classic-reality":
+                target_stream["realitySettings"]["dest"] = f"{target_snis[0]}:443"
+                target_stream["realitySettings"]["target"] = f"{target_snis[0]}:443"
+                if "settings" in target_stream["realitySettings"] and isinstance(target_stream["realitySettings"]["settings"], dict):
+                    target_stream["realitySettings"]["settings"]["serverName"] = target_snis[0]
+            repairs.append(f"обновлен пул SNI Reality ({','.join(target_snis)})")
         elif old_snis:
             target_stream["realitySettings"]["serverNames"] = old_snis
             target_stream["realitySettings"]["dest"] = old_dest or target_stream["realitySettings"]["dest"]
             preserved.append(f"SNI ({','.join(old_snis)})")
+        elif target_snis:
+            target_stream["realitySettings"]["serverNames"] = target_snis
 
         # Строгая гарантия параметров VLESS REALITY (маскировка под свой сайт: Nginx Fallback + Xver=1 + target)
         s_port = globals().get("steal_port", 45443)
@@ -4237,7 +4290,7 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
 
         # Строгая гарантия параметров VLESS REALITY (маскировка под внешние сервисы: xver=0, dest: 443, target: 443)
         c_port = globals().get("classic_port", 46443)
-        c_sni = globals().get("classic_sni", "avito.ru")
+        c_sni = globals().get("classic_sni", "dl.google.com")
         if port == c_port or tag == "in-classic-reality" or cur_tag == "in-classic-reality":
             if not target_stream["realitySettings"].get("dest"):
                 target_stream["realitySettings"]["dest"] = f"{c_sni}:443"
@@ -4248,9 +4301,15 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
     # В. Проверка и ремонт xHTTP
     if protocol == "vless" and "xhttpSettings" in target_stream:
         cur_xh = cur_stream.get("xhttpSettings", {})
-        if cur_xh.get("path"):
-            target_stream["xhttpSettings"]["path"] = cur_xh["path"]
-            preserved.append(f"path ({cur_xh['path']})")
+        tgt_p = (target_stream["xhttpSettings"].get("path") or "").strip("/")
+        cur_p = (cur_xh.get("path") or "").strip("/")
+        if (not tgt_p or tgt_p == "Stream-One-Path" or tgt_p.startswith("vless-")) and cur_p:
+            target_stream["xhttpSettings"]["path"] = f"/{cur_p}/"
+            preserved.append(f"path (/{cur_p}/)")
+        elif cur_p and tgt_p == cur_p:
+            preserved.append(f"path (/{cur_p}/)")
+        elif cur_p and tgt_p != cur_p:
+            repairs.append(f"синхронизирован path xHTTP: /{cur_p}/ -> /{tgt_p}/")
         target_stream["xhttpSettings"]["mode"] = "stream-one"
         if cur_settings.get("decryption") and cur_settings["decryption"] != "none":
             target_settings["decryption"] = cur_settings["decryption"]
@@ -4499,10 +4558,12 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
 
     # И. Проверка и сохранение externalProxy (:443, SNI и кастомных хостов узлов)
     cur_ext = cur_stream.get("externalProxy", [])
-    expected_ext_port = 443 if protocol in ("vless", "hysteria") and port != hy2_port else (hy2_port if protocol == "hysteria" else port)
+    h_port = globals().get("hy2_port", 443)
+    expected_ext_port = 443 if protocol in ("vless", "hysteria") and port != h_port else (h_port if protocol == "hysteria" else port)
 
+    cur_domain = globals().get("domain", "")
     def_ext = default_stream.get("externalProxy", [])
-    def_dest = def_ext[0].get("dest") if (def_ext and isinstance(def_ext, list) and def_ext[0].get("dest")) else domain
+    def_dest = def_ext[0].get("dest") if (def_ext and isinstance(def_ext, list) and def_ext[0].get("dest")) else cur_domain
     def_sni = def_ext[0].get("sni", "") if (def_ext and isinstance(def_ext, list) and def_ext[0].get("sni")) else ""
 
     # Сохраняем кастомный хост узла (dest), если он был настроен и не равен localhost
@@ -4511,17 +4572,8 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
         ext_dest = str(cur_ext[0]["dest"]).strip()
         if ext_dest and ext_dest not in ("127.0.0.1", "localhost", "0.0.0.0"):
             target_dest = ext_dest
-            if ext_dest != domain and ext_dest != def_dest:
+            if ext_dest != cur_domain and ext_dest != def_dest:
                 preserved.append(f"кастомный хост узла ({ext_dest})")
-
-    # Сохраняем SNI для externalProxy (критично для VLESS REALITY и маршрутизации Nginx Stream L4)
-    target_sni = def_sni
-    if cur_ext and len(cur_ext) > 0 and cur_ext[0].get("sni"):
-        ext_sni = str(cur_ext[0]["sni"]).strip()
-        if ext_sni:
-            target_sni = ext_sni
-            if target_sni != def_sni:
-                preserved.append(f"кастомный externalProxy SNI ({ext_sni})")
 
     if protocol in ("shadowsocks", "mtproto", "amneziawg"):
         force_tls_val = "none"
@@ -4530,36 +4582,67 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
     else:
         force_tls_val = "tls"
 
-    ext_entry = {
-        "dest": target_dest,
-        "port": expected_ext_port,
-        "forceTls": force_tls_val,
-        "remark": final_remark
-    }
-    if target_sni:
-        ext_entry["sni"] = target_sni
-    if def_ext and isinstance(def_ext, list):
-        if def_ext[0].get("fingerprint"):
-            ext_entry["fingerprint"] = def_ext[0]["fingerprint"]
-        if def_ext[0].get("alpn"):
-            ext_entry["alpn"] = def_ext[0]["alpn"]
-
-    needs_ext_repair = (
-        not cur_ext
-        or cur_ext[0].get("port") != expected_ext_port
-        or cur_ext[0].get("dest") != target_dest
-        or cur_ext[0].get("remark") != final_remark
-        or cur_ext[0].get("forceTls") != force_tls_val
-        or (target_sni and cur_ext[0].get("sni") != target_sni)
-    )
-
-    if needs_ext_repair:
-        target_stream["externalProxy"] = [ext_entry]
-        sni_desc = f", sni: {target_sni}" if target_sni else ""
-        repairs.append(f"исправлен externalProxy -> {target_dest}:{expected_ext_port}{sni_desc}")
+    cur_fps = [ce.get("fingerprint") for ce in cur_ext] if (cur_ext and isinstance(cur_ext, list)) else []
+    def_fps = [de.get("fingerprint") for de in def_ext] if (def_ext and isinstance(def_ext, list)) else []
+    fp_changed = bool(def_fps and cur_fps != def_fps)
+    sni_pool_changed = bool(target_snis and target_snis != old_snis)
+    if len(def_ext) > 1 or sni_pool_changed or fp_changed:
+        updated_ext = []
+        for de in def_ext:
+            entry = dict(de)
+            if target_dest:
+                entry["dest"] = target_dest
+            entry["port"] = expected_ext_port
+            entry["forceTls"] = force_tls_val
+            updated_ext.append(entry)
+        target_stream["externalProxy"] = updated_ext
+        if cur_ext != updated_ext:
+            repairs.append(f"обновлен externalProxy ({len(updated_ext)} узлов)")
+        else:
+            preserved.append(f"externalProxy ({len(updated_ext)} узлов)")
     else:
-        target_stream["externalProxy"] = cur_ext
-        preserved.append(f"externalProxy :{expected_ext_port}")
+        # Сохраняем SNI для externalProxy (критично для VLESS REALITY и маршрутизации Nginx Stream L4)
+        target_sni = def_sni
+        if cur_ext and len(cur_ext) > 0 and cur_ext[0].get("sni"):
+            ext_sni = str(cur_ext[0]["sni"]).strip()
+            if ext_sni:
+                target_sni = ext_sni
+                if target_sni != def_sni:
+                    preserved.append(f"кастомный externalProxy SNI ({ext_sni})")
+
+        ext_entry = {
+            "dest": target_dest,
+            "port": expected_ext_port,
+            "forceTls": force_tls_val,
+            "remark": final_remark
+        }
+        if target_sni:
+            ext_entry["sni"] = target_sni
+        if def_ext and isinstance(def_ext, list):
+            if def_ext[0].get("fingerprint"):
+                ext_entry["fingerprint"] = def_ext[0]["fingerprint"]
+            if def_ext[0].get("alpn"):
+                ext_entry["alpn"] = def_ext[0]["alpn"]
+
+        def_fp = def_ext[0].get("fingerprint") if (def_ext and isinstance(def_ext, list) and len(def_ext) > 0) else None
+        cur_fp_single = cur_ext[0].get("fingerprint") if (cur_ext and isinstance(cur_ext, list) and len(cur_ext) > 0) else None
+        needs_ext_repair = (
+            not cur_ext
+            or cur_ext[0].get("port") != expected_ext_port
+            or cur_ext[0].get("dest") != target_dest
+            or cur_ext[0].get("remark") != final_remark
+            or cur_ext[0].get("forceTls") != force_tls_val
+            or (target_sni and cur_ext[0].get("sni") != target_sni)
+            or (def_fp and cur_fp_single != def_fp)
+        )
+
+        if needs_ext_repair:
+            target_stream["externalProxy"] = [ext_entry]
+            sni_desc = f", sni: {target_sni}" if target_sni else ""
+            repairs.append(f"исправлен externalProxy -> {target_dest}:{expected_ext_port}{sni_desc}")
+        else:
+            target_stream["externalProxy"] = cur_ext
+            preserved.append(f"externalProxy :{expected_ext_port}")
 
     # Синхронизация клиентов в реестре (client_traffics, clients, client_inbounds)
     if "sync_inbound_clients" in globals():
@@ -4599,9 +4682,9 @@ if enable_steal:
             "show": False, "xver": 1, "dest": f"127.0.0.1:{reality_fallback_port}", "target": f"127.0.0.1:{reality_fallback_port}",
             "serverNames": [steal_dom], "privateKey": def_reality_priv, "minClientVer": "1.0.0",
             "shortIds": def_reality_sids,
-            "settings": {"publicKey": def_reality_pub, "fingerprint": "firefox", "serverName": steal_dom, "spiderX": "/"}
+            "settings": {"publicKey": def_reality_pub, "fingerprint": reality_fingerprint, "serverName": steal_dom, "spiderX": "/"}
         },
-        "externalProxy": [{"dest": domain, "port": 443, "forceTls": "same", "sni": steal_dom, "fingerprint": "firefox", "remark": make_remark("VLESS Steal")}]
+        "externalProxy": [{"dest": domain, "port": 443, "forceTls": "same", "sni": steal_dom, "fingerprint": reality_fingerprint, "remark": make_remark("VLESS Steal")}]
     }
     steal_remark = make_remark("VLESS Steal")
     steal_ib_id = smart_reconcile_inbound(steal_port, "vless", "in-steal-reality", steal_remark, s_set, s_str, listen="127.0.0.1")
@@ -4615,11 +4698,21 @@ if enable_classic:
         "security": "reality",
         "realitySettings": {
             "show": False, "xver": 0, "dest": f"{classic_sni}:443", "target": f"{classic_sni}:443",
-            "serverNames": [classic_sni], "privateKey": def_reality_priv, "minClientVer": "1.0.0",
+            "serverNames": classic_snis, "privateKey": def_reality_priv, "minClientVer": "1.0.0",
             "shortIds": def_reality_sids,
-            "settings": {"publicKey": def_reality_pub, "fingerprint": "firefox", "serverName": classic_sni, "spiderX": "/"}
+            "settings": {"publicKey": def_reality_pub, "fingerprint": reality_fingerprint, "serverName": classic_sni, "spiderX": "/"}
         },
-        "externalProxy": [{"dest": domain, "port": 443, "forceTls": "same", "sni": classic_sni, "fingerprint": "firefox", "remark": make_remark("VLESS Classic")}]
+        "externalProxy": [
+            {
+                "dest": domain,
+                "port": 443,
+                "forceTls": "same",
+                "sni": csni,
+                "fingerprint": reality_fingerprint,
+                "remark": make_remark(f"VLESS Classic ({csni})" if len(classic_snis) > 1 else "VLESS Classic")
+            }
+            for csni in classic_snis
+        ]
     }
     classic_remark = make_remark("VLESS Classic")
     classic_ib_id = smart_reconcile_inbound(classic_port, "vless", "in-classic-reality", classic_remark, c_set, c_str, listen="127.0.0.1")
@@ -4652,7 +4745,7 @@ x_str = {
         }
     },
     "security": "none",
-    "externalProxy": [{"dest": domain, "port": 443, "forceTls": "tls", "sni": domain, "fingerprint": "firefox", "alpn": "h2", "remark": make_remark("VLESS xHTTP")}]
+    "externalProxy": [{"dest": domain, "port": 443, "forceTls": "tls", "sni": domain, "fingerprint": reality_fingerprint, "alpn": "h2", "remark": make_remark("VLESS xHTTP")}]
 }
 xhttp_remark = make_remark("VLESS xHTTP")
 xhttp_ib_id = smart_reconcile_inbound(xhttp_port, "vless", "in-xhttp-stream", xhttp_remark, x_set, x_str, listen="127.0.0.1")
@@ -4847,58 +4940,80 @@ cur.execute("""
         mux_params TEXT DEFAULT '',
         sockopt_params TEXT DEFAULT '',
         final_mask TEXT DEFAULT '',
-        exclude_from_sub_types TEXT DEFAULT ''
+        exclude_from_sub_types TEXT DEFAULT '',
+        shuffle_host INTEGER DEFAULT 0
     )
 """)
 cur.execute("PRAGMA table_info(hosts)")
 active_host_cols = {r[1] for r in cur.fetchall()}
+if "shuffle_host" not in active_host_cols and "shuffleHost" not in active_host_cols:
+    try:
+        cur.execute("ALTER TABLE hosts ADD COLUMN shuffle_host INTEGER DEFAULT 0")
+        active_host_cols.add("shuffle_host")
+    except Exception:
+        pass
 
-def sync_host_entry(ib_id, host_remark, addr, host_port, sec, host_sni="", host_path="", host_alpn="", host_fp="firefox", sort_order=0):
+inbound_col = "inboundId" if "inboundId" in active_host_cols else "inbound_id"
+sort_col = "sortOrder" if "sortOrder" in active_host_cols else "sort_order"
+shuffle_col = "shuffleHost" if "shuffleHost" in active_host_cols else "shuffle_host"
+
+def insert_host_entry(ib_id, host_remark, addr, host_port, sec, host_sni="", host_path="", host_alpn="", host_fp="firefox", sort_order=0, shuffle_host=0):
+    if ib_id is None or dry_run:
+        return
+    gid = str(uuid.uuid4())
+    col_candidates = {
+        "group_id": gid, "groupId": gid,
+        "inbound_id": ib_id, "inboundId": ib_id,
+        "sort_order": sort_order, "sortOrder": sort_order,
+        "remark": host_remark, "address": addr, "port": host_port, "security": sec,
+        "sni": host_sni, "host_header": "", "hostHeader": "", "path": host_path,
+        "alpn": host_alpn, "fingerprint": host_fp, "allow_insecure": 0, "allowInsecure": 0,
+        "is_disabled": 0, "isDisabled": 0, "is_hidden": 0, "isHidden": 0,
+        "tags": "", "ech_config_list": "", "mux_params": "", "sockopt_params": "",
+        "final_mask": "", "exclude_from_sub_types": "",
+        "shuffle_host": shuffle_host, "shuffleHost": shuffle_host
+    }
+    insert_data = {k: v for k, v in col_candidates.items() if k in active_host_cols}
+    keys = list(insert_data.keys())
+    vals = [insert_data[k] for k in keys]
+    placeholders = ",".join(["?"] * len(keys))
+    cur.execute(f"INSERT INTO hosts ({','.join(keys)}) VALUES ({placeholders})", vals)
+
+def sync_host_entry(ib_id, host_remark, addr, host_port, sec, host_sni="", host_path="", host_alpn="", host_fp="firefox", sort_order=0, shuffle_host=0):
     if ib_id is None:
         return
-    cur.execute("SELECT id, remark FROM hosts WHERE inbound_id = ?", (ib_id,))
+    cur.execute(f"SELECT id, remark FROM hosts WHERE {inbound_col} = ?", (ib_id,))
     h_row = cur.fetchone()
     if h_row:
         h_id, existing_rem = h_row
         final_h_remark = existing_rem if (existing_rem and existing_rem.strip()) else host_remark
         if not dry_run:
-            cur.execute("""
-                UPDATE hosts
-                SET address = ?, port = ?, security = ?, sni = ?, path = ?, alpn = ?, fingerprint = ?, sort_order = ?, remark = ?
-                WHERE id = ?
-            """, (addr, host_port, sec, host_sni, host_path, host_alpn, host_fp, sort_order, final_h_remark, h_id))
+            update_fields = [
+                "address = ?", "port = ?", "security = ?", "sni = ?",
+                "path = ?", "alpn = ?", "fingerprint = ?", f"{sort_col} = ?", "remark = ?"
+            ]
+            update_vals = [addr, host_port, sec, host_sni, host_path, host_alpn, host_fp, sort_order, final_h_remark]
+            if shuffle_col in active_host_cols:
+                update_fields.append(f"{shuffle_col} = ?")
+                update_vals.append(shuffle_host)
+            update_vals.append(h_id)
+            cur.execute(f"UPDATE hosts SET {', '.join(update_fields)} WHERE id = ?", tuple(update_vals))
     else:
-        gid = str(uuid.uuid4())
-        col_candidates = {
-            "group_id": gid, "groupId": gid,
-            "inbound_id": ib_id, "inboundId": ib_id,
-            "sort_order": sort_order, "sortOrder": sort_order,
-            "remark": host_remark, "address": addr, "port": host_port, "security": sec,
-            "sni": host_sni, "host_header": "", "hostHeader": "", "path": host_path,
-            "alpn": host_alpn, "fingerprint": host_fp, "allow_insecure": 0, "allowInsecure": 0,
-            "is_disabled": 0, "isDisabled": 0, "is_hidden": 0, "isHidden": 0,
-            "tags": "", "ech_config_list": "", "mux_params": "", "sockopt_params": "",
-            "final_mask": "", "exclude_from_sub_types": ""
-        }
-        insert_data = {k: v for k, v in col_candidates.items() if k in active_host_cols}
-        keys = list(insert_data.keys())
-        vals = [insert_data[k] for k in keys]
-        placeholders = ",".join(["?"] * len(keys))
-        if not dry_run:
-            cur.execute(f"INSERT INTO hosts ({','.join(keys)}) VALUES ({placeholders})", vals)
+        insert_host_entry(ib_id, host_remark, addr, host_port, sec, host_sni=host_sni, host_path=host_path, host_alpn=host_alpn, host_fp=host_fp, sort_order=sort_order, shuffle_host=shuffle_host)
 
 def lookup_inbound_id(tag_val, port_val):
     cur.execute("SELECT id FROM inbounds WHERE tag = ? OR port = ?", (tag_val, port_val))
     r = cur.fetchone()
     return r[0] if r else None
 
+reality_fp = globals().get("reality_fingerprint", "firefox")
 if enable_steal:
     s_iid = steal_ib_id if ('steal_ib_id' in locals() and steal_ib_id) else lookup_inbound_id("in-steal-reality", steal_port)
     if s_iid:
         cur.execute("SELECT remark FROM inbounds WHERE id = ?", (s_iid,))
         r_rem = cur.fetchone()
         s_rem = r_rem[0] if r_rem and r_rem[0] else steal_remark
-        sync_host_entry(s_iid, s_rem, domain, 443, "same", host_sni=steal_dom, host_fp="firefox", sort_order=1)
+        sync_host_entry(s_iid, s_rem, domain, 443, "same", host_sni=steal_dom, host_fp=reality_fp, sort_order=1)
 
 if enable_classic:
     c_iid = classic_ib_id if ('classic_ib_id' in locals() and classic_ib_id) else lookup_inbound_id("in-classic-reality", classic_port)
@@ -4906,14 +5021,18 @@ if enable_classic:
         cur.execute("SELECT remark FROM inbounds WHERE id = ?", (c_iid,))
         r_rem = cur.fetchone()
         c_rem = r_rem[0] if r_rem and r_rem[0] else classic_remark
-        sync_host_entry(c_iid, c_rem, domain, 443, "same", host_sni=classic_sni, host_fp="firefox", sort_order=1)
+        if not dry_run:
+            cur.execute(f"DELETE FROM hosts WHERE {inbound_col} = ?", (c_iid,))
+        for idx, csni in enumerate(classic_snis, start=1):
+            h_remark = f"{c_rem} ({csni})" if len(classic_snis) > 1 else c_rem
+            insert_host_entry(c_iid, h_remark, domain, 443, "same", host_sni=csni, host_fp=reality_fp, sort_order=idx, shuffle_host=1)
 
 x_iid = xhttp_ib_id if ('xhttp_ib_id' in locals() and xhttp_ib_id) else lookup_inbound_id("in-xhttp-stream", xhttp_port)
 if x_iid:
     cur.execute("SELECT remark FROM inbounds WHERE id = ?", (x_iid,))
     r_rem = cur.fetchone()
     x_rem = r_rem[0] if r_rem and r_rem[0] else xhttp_remark
-    sync_host_entry(x_iid, x_rem, domain, 443, "tls", host_sni=domain, host_path=f"/{xhttp_path.strip('/')}/", host_alpn=json.dumps(["h2"]), host_fp="firefox", sort_order=2)
+    sync_host_entry(x_iid, x_rem, domain, 443, "tls", host_sni=domain, host_path=f"/{xhttp_path.strip('/')}/", host_alpn=json.dumps(["h2"]), host_fp=reality_fp, sort_order=2)
 
 
 # Формирование клиентских ссылок для новых протоколов

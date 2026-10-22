@@ -104,6 +104,9 @@ schema_version: 28
 EOF_AGH
 
         # 5. Установка и запуск службы systemd
+        if [ ! -x /opt/AdGuardHome/AdGuardHome ]; then
+            die "Не удалось загрузить или распаковать бинарник AdGuard Home в /opt/AdGuardHome/AdGuardHome"
+        fi
         /opt/AdGuardHome/AdGuardHome -s install >/dev/null 2>&1 || true
 
         # 6. Ограничение памяти Go для экономии RAM на VPS

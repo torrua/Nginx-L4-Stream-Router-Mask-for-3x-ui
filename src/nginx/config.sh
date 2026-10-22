@@ -1,6 +1,43 @@
 # =============================================================
 #  ШАГ 6: ПОЛНАЯ КОНФИГУРАЦИЯ NGINX И ПЕРЕЗАПУСК СЛУЖБ
 # =============================================================
+    if [ -z "${PANEL_PATH:-}" ]; then
+        if command -v ensure_panel_path >/dev/null 2>&1; then
+            ensure_panel_path || true
+        fi
+        [ -n "${PANEL_PATH:-}" ] || PANEL_PATH="/panel-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "p${RANDOM}")/"
+    fi
+    if [ -z "${DIAG_PATH:-}" ]; then
+        if command -v ensure_diag_path >/dev/null 2>&1; then
+            ensure_diag_path || true
+        fi
+        [ -n "${DIAG_PATH:-}" ] || DIAG_PATH="/diag-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "d${RANDOM}")/"
+    fi
+    if [ -z "${DIAG_TOKEN:-}" ]; then
+        DIAG_TOKEN="$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 16 || echo "tok${RANDOM}")"
+    fi
+    if [ -z "${SUB_PATH:-}" ]; then
+        SUB_PATH="/sub-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "sub${RANDOM}")/"
+    fi
+    if [ -z "${SUB_JSON_PATH:-}" ]; then
+        SUB_JSON_PATH="${SUB_PATH}json/"
+    fi
+    if [ -z "${SUB_CLASH_PATH:-}" ]; then
+        SUB_CLASH_PATH="${SUB_PATH}clash/"
+    fi
+    if [ -z "${XHTTP_STREAM_PATH:-}" ]; then
+        XHTTP_STREAM_PATH="/$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "xh${RANDOM}")/"
+    fi
+    DECOY_MODE="${DECOY_MODE:-1}"
+    DEFAULT_FALLBACK="${DEFAULT_FALLBACK:-panel_3xui}"
+    PANEL_PORT="${PANEL_PORT:-10443}"
+    DEFAULT_PORT="${DEFAULT_PORT:-$PANEL_PORT}"
+    SUB_PORT="${SUB_PORT:-55443}"
+    XHTTP_STREAM_PORT="${XHTTP_STREAM_PORT:-50443}"
+    REALITY_FALLBACK_PORT="${REALITY_FALLBACK_PORT:-9443}"
+    SSL_BASE_DIR="${SSL_BASE_DIR:-/etc/letsencrypt/live}"
+    WEBROOT="${WEBROOT:-/var/www/html}"
+    NGINX_USER="${NGINX_USER:-nginx}"
     log "Сборка конфигурации Nginx Mainline (Stream L4 + HTTP/2 Upstream Engine)..."
 
     # Резервное копирование существующих конфигураций Nginx перед перезаписью
@@ -40,8 +77,9 @@
 
     wstunnel_badbot_bypass=""
     if is_true "${ENABLE_WSTUNNEL:-0}" && [ -n "${WSTUNNEL_PREFIX:-}" ]; then
-        wstunnel_clean_prefix="${WSTUNNEL_PREFIX%/}"
-        wstunnel_badbot_bypass="        ~^1:[01]:${wstunnel_clean_prefix}/ 0;"$'\n'
+        wstunnel_clean_prefix="${WSTUNNEL_PREFIX#/}"
+        wstunnel_clean_prefix="${wstunnel_clean_prefix%/}"
+        wstunnel_badbot_bypass="        ~^1:[01]:/${wstunnel_clean_prefix}/ 0;"$'\n'
     fi
 
     # 1. Глобальный файл конфигурации /etc/nginx/nginx.conf
@@ -341,7 +379,7 @@ EOF
 
 # 2.5 Конфигурация локаций AdGuard Home (Режим 1: на основном домене)
 AGH_MAIN_LOCATION_BLOCKS=""
-if [[ "${ENABLE_AGH:-0}" == "1" || "${ENABLE_AGH,,}" == "y" ]] && [ "${AGH_MODE:-1}" = "1" ]; then
+if is_true "${ENABLE_AGH:-0}" && [ "${AGH_MODE:-1}" = "1" ]; then
     AGH_MAIN_LOCATION_BLOCKS="
     # --- ЛОКАЦИЯ: ADGUARD HOME DOH (ENDPOINT С CLIENTID) ---
     location = /dns-query {
@@ -465,10 +503,11 @@ fi
 
 WSTUNNEL_LOCATION_BLOCK=""
 if is_true "${ENABLE_WSTUNNEL:-0}" && [ -n "${WSTUNNEL_PREFIX:-}" ]; then
-    wstunnel_clean_prefix="${WSTUNNEL_PREFIX%/}"
+    wstunnel_clean_prefix="${WSTUNNEL_PREFIX#/}"
+    wstunnel_clean_prefix="${wstunnel_clean_prefix%/}"
     WSTUNNEL_LOCATION_BLOCK="
     # --- ЛОКАЦИЯ: WSTUNNEL (L7 WebSocket Tunnel) ---
-    location ^~ ${wstunnel_clean_prefix}/ {
+    location ^~ /${wstunnel_clean_prefix}/ {
         proxy_pass http://127.0.0.1:${WSTUNNEL_PORT:-8080};
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
@@ -1028,6 +1067,22 @@ server {
         proxy_set_header Connection \$connection_upgrade;
     }
 
+    # --- ЛОКАЦИЯ: VLESS xHTTP (Native gRPC / H2 Stream-One) ---
+    location ^~ ${XHTTP_STREAM_PATH} {
+        client_max_body_size 0;
+        client_body_timeout 1h;
+        grpc_read_timeout 1h;
+        grpc_send_timeout 1h;
+        grpc_socket_keepalive on;
+
+        grpc_set_header Host \$http_host;
+        grpc_set_header X-Real-IP \$ak_real_ip;
+        grpc_set_header X-Forwarded-For \$ak_real_ip;
+        grpc_set_header X-Forwarded-Proto \$scheme;
+
+        grpc_pass grpc://xray_xhttp_stream;
+    }
+
     location = /robots.txt {
         root $WEBROOT;
         access_log off;
@@ -1056,7 +1111,7 @@ EOF
 done
 
     # 6. Виртуальный хост для AdGuard Home (Режим 2: отдельный поддомен)
-    if [[ "${ENABLE_AGH:-0}" == "1" || "${ENABLE_AGH,,}" == "y" ]] && [ "${AGH_MODE:-1}" = "2" ] && [ -n "${AGH_DOMAIN:-}" ] && [ -f "${SSL_BASE_DIR}/$AGH_DOMAIN/fullchain.pem" ]; then
+    if is_true "${ENABLE_AGH:-0}" && [ "${AGH_MODE:-1}" = "2" ] && [ -n "${AGH_DOMAIN:-}" ] && [ -f "${SSL_BASE_DIR:-/etc/letsencrypt/live}/$AGH_DOMAIN/fullchain.pem" ]; then
         cat << EOF > "/etc/nginx/conf.d/03-adguard.conf"
 upstream adguard_backend { server 127.0.0.1:${PORT_AGH_WEB:-3000}; keepalive 32; }
 

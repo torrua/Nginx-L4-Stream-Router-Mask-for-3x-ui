@@ -268,11 +268,11 @@ setup_wstunnel_service() {
     log "Настройка службы Wstunnel L7..."
     local cur_arch
     cur_arch=$(uname -m 2>/dev/null || echo "x86_64")
-    local ws_arch="amd64"
+    local ws_arch="x86_64"
     case "$cur_arch" in
-        x86_64|amd64) ws_arch="amd64" ;;
-        aarch64|arm64) ws_arch="arm64" ;;
-        *) ws_arch="amd64" ;;
+        x86_64|amd64) ws_arch="x86_64" ;;
+        aarch64|arm64) ws_arch="aarch64" ;;
+        *) ws_arch="x86_64" ;;
     esac
 
     local bin_dir="${LOCAL_BIN_DIR:-/usr/local/bin}"

@@ -13,7 +13,7 @@ apply_express_defaults() {
     express_default STEAL_DOMAINS_STR "cdn.$PRIMARY_DOMAIN"
     express_default ENABLE_CLASSIC y
     express_default CLASSIC_PORT 46443
-    express_default CLASSIC_SNI avito.ru
+    express_default CLASSIC_SNI dl.google.com
     express_default ENABLE_HY2 y
     express_default HY2_PORT 443
     express_default HY2_DOMAIN "$PRIMARY_DOMAIN"

@@ -1263,6 +1263,256 @@ rm -f "$cache_file"
         ext2 = st2.get("externalProxy", [])
         self.assertEqual(ext2[0].get("sni"), "avito.ru", "externalProxy must keep SNI on reconcile update")
 
+    def test_smart_reconcile_inbound_multi_sni_pool_and_external_proxies(self):
+        """Verify smart_reconcile_inbound configures multiple SNIs in serverNames and updates when pool changes."""
+        reconcile = self.ns["smart_reconcile_inbound"]
+        initial_pool = ["dl.google.com", "www.google.com"]
+        c_settings = {
+            "clients": [{"id": str(uuid.uuid4()), "flow": "xtls-rprx-vision", "email": "Client", "subId": "12345678", "enable": True}],
+            "decryption": "none"
+        }
+        c_stream = {
+            "network": "tcp",
+            "security": "reality",
+            "tcpSettings": {"acceptProxyProtocol": True, "header": {"type": "none"}},
+            "realitySettings": {
+                "show": False, "xver": 0, "dest": f"{initial_pool[0]}:443", "target": f"{initial_pool[0]}:443",
+                "serverNames": initial_pool, "privateKey": "testprivkey", "minClientVer": "1.0.0",
+                "shortIds": ["abcdef12"],
+                "settings": {"publicKey": "testpubkey", "fingerprint": "firefox", "serverName": initial_pool[0], "spiderX": "/"}
+            },
+            "externalProxy": [
+                {"dest": "test.example.com", "port": 443, "forceTls": "same", "sni": s, "fingerprint": "firefox", "remark": f"VLESS Classic ({s})"}
+                for s in initial_pool
+            ]
+        }
+        # 1. First run creates inbound with initial pool
+        ib_id = reconcile(46443, "vless", "in-classic-reality", "VLESS Classic", c_settings, c_stream, listen="127.0.0.1")
+        self.assertIsNotNone(ib_id)
+
+        self.cur.execute("SELECT stream_settings FROM inbounds WHERE id = ?", (ib_id,))
+        st = json.loads(self.cur.fetchone()[0])
+        self.assertEqual(st["realitySettings"]["serverNames"], initial_pool)
+        self.assertEqual(st["realitySettings"]["dest"], "dl.google.com:443")
+        self.assertEqual(len(st["externalProxy"]), 2)
+        self.assertEqual([p["sni"] for p in st["externalProxy"]], initial_pool)
+
+        # 2. Second run with a new pool (e.g. speed.cloudflare.com cache.cloudflare.com) must UPDATE serverNames, dest and externalProxy
+        new_pool = ["speed.cloudflare.com", "cache.cloudflare.com"]
+        c_stream2 = {
+            "network": "tcp",
+            "security": "reality",
+            "tcpSettings": {"acceptProxyProtocol": True, "header": {"type": "none"}},
+            "realitySettings": {
+                "show": False, "xver": 0, "dest": f"{new_pool[0]}:443", "target": f"{new_pool[0]}:443",
+                "serverNames": new_pool, "privateKey": "testprivkey", "minClientVer": "1.0.0",
+                "shortIds": ["abcdef12"],
+                "settings": {"publicKey": "testpubkey", "fingerprint": "firefox", "serverName": new_pool[0], "spiderX": "/"}
+            },
+            "externalProxy": [
+                {"dest": "test.example.com", "port": 443, "forceTls": "same", "sni": s, "fingerprint": "firefox", "remark": f"VLESS Classic ({s})"}
+                for s in new_pool
+            ]
+        }
+        ib_id2 = reconcile(46443, "vless", "in-classic-reality", "VLESS Classic", c_settings, c_stream2, listen="127.0.0.1")
+        self.assertEqual(ib_id, ib_id2)
+
+        self.cur.execute("SELECT stream_settings FROM inbounds WHERE id = ?", (ib_id,))
+        st2 = json.loads(self.cur.fetchone()[0])
+        self.assertEqual(st2["realitySettings"]["serverNames"], new_pool, "serverNames must be updated with the new pool from configuration")
+        self.assertEqual(st2["realitySettings"]["dest"], "speed.cloudflare.com:443", "dest must be updated to first SNI of new pool")
+        self.assertEqual(st2["realitySettings"]["target"], "speed.cloudflare.com:443", "target must match dest")
+        self.assertEqual(st2["realitySettings"]["settings"]["serverName"], "speed.cloudflare.com", "settings.serverName must be updated to primary target")
+        self.assertEqual(len(st2["externalProxy"]), 2, "externalProxy must contain 2 entries for the new pool")
+        self.assertEqual([p["sni"] for p in st2["externalProxy"]], new_pool, "externalProxy SNIs must match new pool")
+
+    def test_reality_fingerprint_parameter_and_reconciliation(self):
+        """Verify REALITY_FINGERPRINT parameter parsing and reconciliation in smart_reconcile_inbound."""
+        reconcile = self.ns["smart_reconcile_inbound"]
+        priv, pub = "p1", "p2"
+
+        valid_fps = {"chrome", "firefox", "safari", "ios", "android", "edge", "360", "qq", "random", "randomized"}
+        for fp in ["chrome", "CHROME", "safari", "randomized"]:
+            clean_fp = fp.strip().lower()
+            self.assertIn(clean_fp, valid_fps)
+
+        init_stream = {
+            "network": "tcp",
+            "security": "reality",
+            "realitySettings": {
+                "dest": "dl.google.com:443",
+                "serverNames": ["dl.google.com"],
+                "privateKey": priv,
+                "shortIds": ["0123456789abcdef"],
+                "settings": {"publicKey": pub, "fingerprint": "firefox", "serverName": "dl.google.com", "spiderX": "/"}
+            },
+            "externalProxy": [{"dest": "example.com", "port": 443, "forceTls": "same", "sni": "dl.google.com", "fingerprint": "firefox", "remark": "VLESS Classic"}]
+        }
+        c_settings = {"clients": [{"id": "00000000-0000-0000-0000-000000000000", "flow": "xtls-rprx-vision", "email": "test@domain.com"}]}
+        ib_id = reconcile(46443, "vless", "in-classic-reality", "VLESS Classic", c_settings, init_stream, listen="127.0.0.1")
+
+        new_stream = {
+            "network": "tcp",
+            "security": "reality",
+            "realitySettings": {
+                "dest": "dl.google.com:443",
+                "serverNames": ["dl.google.com"],
+                "privateKey": priv,
+                "shortIds": ["0123456789abcdef"],
+                "settings": {"publicKey": pub, "fingerprint": "chrome", "serverName": "dl.google.com", "spiderX": "/"}
+            },
+            "externalProxy": [{"dest": "example.com", "port": 443, "forceTls": "same", "sni": "dl.google.com", "fingerprint": "chrome", "remark": "VLESS Classic"}]
+        }
+        reconcile(46443, "vless", "in-classic-reality", "VLESS Classic", c_settings, new_stream, listen="127.0.0.1")
+
+        self.cur.execute("SELECT stream_settings FROM inbounds WHERE id = ?", (ib_id,))
+        st = json.loads(self.cur.fetchone()[0])
+        self.assertEqual(st["realitySettings"]["settings"]["fingerprint"], "chrome", "settings.fingerprint must be updated to chrome")
+        self.assertEqual(st["externalProxy"][0]["fingerprint"], "chrome", "externalProxy[0].fingerprint must be updated to chrome")
+
+    def test_reconcile_hosts_table_multiple_snis_and_shuffle_host(self):
+        """Verify hosts table synchronization deletes prior hosts and inserts rows with shuffle_host=1 across schemas."""
+        reconcile_src = (ROOT / "src/panel/reconcile.py").read_text(encoding="utf-8")
+        start_marker = 'cur.execute("PRAGMA table_info(hosts)")'
+        end_marker = 'x_iid = xhttp_ib_id'
+        idx1 = reconcile_src.index(start_marker)
+        idx2 = reconcile_src.index(end_marker)
+        hosts_block = reconcile_src[idx1:idx2]
+
+        # 1. Test snake_case schema (inbound_id, sort_order, shuffle_host)
+        c_iid = 42
+        self.cur.execute("""
+            CREATE TABLE IF NOT EXISTS hosts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id TEXT DEFAULT '',
+                inbound_id INTEGER NOT NULL DEFAULT 0,
+                sort_order INTEGER DEFAULT 0,
+                remark TEXT DEFAULT '',
+                address TEXT DEFAULT '',
+                port INTEGER DEFAULT 443,
+                security TEXT DEFAULT 'same',
+                sni TEXT DEFAULT '',
+                host_header TEXT DEFAULT '',
+                path TEXT DEFAULT '',
+                alpn TEXT DEFAULT '',
+                fingerprint TEXT DEFAULT '',
+                allow_insecure INTEGER DEFAULT 0,
+                is_disabled INTEGER DEFAULT 0,
+                is_hidden INTEGER DEFAULT 0,
+                tags TEXT DEFAULT '',
+                ech_config_list TEXT DEFAULT '',
+                mux_params TEXT DEFAULT '',
+                sockopt_params TEXT DEFAULT '',
+                final_mask TEXT DEFAULT '',
+                exclude_from_sub_types TEXT DEFAULT '',
+                shuffle_host INTEGER DEFAULT 0
+            )
+        """)
+        self.cur.execute("CREATE TABLE IF NOT EXISTS inbounds_test (id INTEGER PRIMARY KEY, remark TEXT)")
+        # Insert stale host for inbound 42
+        self.cur.execute("INSERT INTO hosts (inbound_id, remark, address, port, security, sni, shuffle_host) VALUES (?, 'old', 'old.com', 443, 'same', 'old.sni.com', 0)", (c_iid,))
+        self.conn.commit()
+
+        # Multi-SNI pool with spaces, commas, duplicates and mixed case
+        classic_raw = "speed.cloudflare.com, cache.cloudflare.com, SPEED.CLOUDFLARE.COM"
+        _parsed = []
+        _seen = set()
+        for _s in classic_raw.replace(",", " ").split():
+            _c = _s.strip().strip(".").lower()
+            if _c and _c not in _seen:
+                _seen.add(_c)
+                _parsed.append(_c)
+        classic_snis = _parsed
+
+        self.assertEqual(classic_snis, ["speed.cloudflare.com", "cache.cloudflare.com"], "Duplicates and case must be normalized")
+
+        ns_snake = {
+            "cur": self.cur,
+            "dry_run": False,
+            "classic_ib_id": c_iid,
+            "classic_port": 46443,
+            "enable_steal": False,
+            "enable_classic": True,
+            "classic_snis": classic_snis,
+            "domain": "test.example.com",
+            "classic_remark": "VLESS Classic",
+            "uuid": uuid,
+        }
+        exec(hosts_block, ns_snake)
+        self.conn.commit()
+
+        self.cur.execute("SELECT sort_order, remark, sni, shuffle_host FROM hosts WHERE inbound_id = ? ORDER BY sort_order", (c_iid,))
+        rows = self.cur.fetchall()
+        self.assertEqual(len(rows), 2, "Stale host must be deleted and exactly 2 pool hosts inserted")
+        self.assertEqual(rows[0][0], 1)
+        self.assertEqual(rows[0][1], "VLESS Classic (speed.cloudflare.com)")
+        self.assertEqual(rows[0][2], "speed.cloudflare.com")
+        self.assertEqual(rows[0][3], 1, "shuffle_host must be 1 for client auto-rotation")
+
+        self.assertEqual(rows[1][0], 2)
+        self.assertEqual(rows[1][1], "VLESS Classic (cache.cloudflare.com)")
+        self.assertEqual(rows[1][2], "cache.cloudflare.com")
+        self.assertEqual(rows[1][3], 1, "shuffle_host must be 1 for client auto-rotation")
+
+        # 2. Test camelCase schema (inboundId, sortOrder, shuffleHost) - ensures no 'no such column: inbound_id'
+        conn_camel = sqlite3.connect(":memory:")
+        cur_camel = conn_camel.cursor()
+        cur_camel.execute("CREATE TABLE inbounds (id INTEGER PRIMARY KEY, remark TEXT)")
+        cur_camel.execute("INSERT INTO inbounds VALUES (99, 'VLESS Classic')")
+        cur_camel.execute("""
+            CREATE TABLE hosts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                groupId TEXT DEFAULT '',
+                inboundId INTEGER NOT NULL DEFAULT 0,
+                sortOrder INTEGER DEFAULT 0,
+                remark TEXT DEFAULT '',
+                address TEXT DEFAULT '',
+                port INTEGER DEFAULT 443,
+                security TEXT DEFAULT 'same',
+                sni TEXT DEFAULT '',
+                hostHeader TEXT DEFAULT '',
+                path TEXT DEFAULT '',
+                alpn TEXT DEFAULT '',
+                fingerprint TEXT DEFAULT '',
+                allowInsecure INTEGER DEFAULT 0,
+                isDisabled INTEGER DEFAULT 0,
+                isHidden INTEGER DEFAULT 0,
+                tags TEXT DEFAULT '',
+                echConfigList TEXT DEFAULT '',
+                muxParams TEXT DEFAULT '',
+                sockoptParams TEXT DEFAULT '',
+                finalMask TEXT DEFAULT '',
+                excludeFromSubTypes TEXT DEFAULT '',
+                shuffleHost INTEGER DEFAULT 0
+            )
+        """)
+        # Insert stale host with inboundId
+        cur_camel.execute("INSERT INTO hosts (inboundId, remark, address, port, security, sni, shuffleHost) VALUES (99, 'old-camel', 'old.com', 443, 'same', 'old.sni', 0)")
+        conn_camel.commit()
+
+        ns_camel = {
+            "cur": cur_camel,
+            "dry_run": False,
+            "classic_ib_id": 99,
+            "classic_port": 46443,
+            "enable_steal": False,
+            "enable_classic": True,
+            "classic_snis": ["apple.com", "cdn.apple.com"],
+            "domain": "test.example.com",
+            "classic_remark": "VLESS Classic",
+            "uuid": uuid,
+        }
+        # Must execute cleanly without OperationalError
+        exec(hosts_block, ns_camel)
+        conn_camel.commit()
+
+        cur_camel.execute("SELECT sortOrder, remark, sni, shuffleHost FROM hosts WHERE inboundId = ? ORDER BY sortOrder", (99,))
+        rows_camel = cur_camel.fetchall()
+        self.assertEqual(len(rows_camel), 2, "Stale host must be deleted and exactly 2 pool hosts inserted into camelCase schema")
+        self.assertEqual(rows_camel[0], (1, "VLESS Classic (apple.com)", "apple.com", 1))
+        self.assertEqual(rows_camel[1], (2, "VLESS Classic (cdn.apple.com)", "cdn.apple.com", 1))
+        conn_camel.close()
+
     def test_xhttp_reconcile_preserves_xmux_noSSE_xPadding_and_encryption(self):
         """Verify that smart_reconcile_inbound preserves xmux, noSSEHeader, xPaddingBytes, and encryption for xHTTP."""
         reconcile = self.ns["smart_reconcile_inbound"]
@@ -1357,7 +1607,10 @@ rm -f "$cache_file"
             self.assertIn("VLESS xHTTP EnKey:", text, f"VLESS xHTTP EnKey: must be written to credentials in {name}")
             self.assertIn('"xmux": {', text, f"Reference xmux block must be in {name}")
             self.assertIn('"maxConcurrency": "0"', text, f"xmux maxConcurrency: 0 must be in {name}")
-            self.assertIn('"fingerprint": "firefox"', text, f"fingerprint: 'firefox' must be in {name}")
+            self.assertTrue(
+                '"fingerprint": reality_fingerprint' in text or '"fingerprint": "firefox"' in text,
+                f"fingerprint parameter must be in {name}"
+            )
 
         # Ensure configure-panel.sh does not delete /run/3xui_unified_client.env
         self.assertNotIn('rm -f "$c_env"', conf_sh.split('for c_env in "/run/3xui_unified_client.env"')[1][:200],
@@ -1545,6 +1798,37 @@ class TestBashScopeRegressions(unittest.TestCase):
         # Ensure awg_p in step 3 standalone is not using local outside function
         m_step3_awg = re.search(r'deploy_amneziawg_backend\s+if command -v ufw[^;]*;\s*then\s+([^\n]+)', setup_sh)
         self.assertNotIn("local awg_p=", setup_sh.split("🎉 УСТАНОВКА АВТОНОМНОГО СЕРВЕРА AMNEZIAWG УСПЕШНО ЗАВЕРШЕНА")[0][-500:])
+
+    def test_classic_sni_pool_parsing_and_deduplication_in_bash(self):
+        """Verify that env.sh and wizard.sh correctly split multi-SNI pools with spaces and commas, deduplicating entries."""
+        if not BASH.exists():
+            self.skipTest(f"bash not found at {BASH}")
+
+        bash_script = """
+set -e
+source "src/common/colors.sh"
+source "src/common/logger.sh"
+is_true() { local val="${1:-0}"; [[ "$val" == "1" || "${val,,}" == "y" || "${val,,}" == "true" ]]; }
+NON_INTERACTIVE=1
+declare -g -A EXT_SNI_TO_PORT=()
+CLASSIC_PORTS_LIST=(46443)
+CLASSIC_PORT=46443
+ENABLE_CLASSIC=y
+CLASSIC_SNI="speed.cloudflare.com, cache.cloudflare.com, speed.cloudflare.com, SPEED.CLOUDFLARE.COM"
+PRIMARY_DOMAIN="example.com"
+source "src/system/env.sh"
+reconstruct_arrays_from_vars
+
+echo "COUNT=${#EXT_SNI_LIST[@]}"
+for s in "${EXT_SNI_LIST[@]}"; do
+    echo "SNI=$s,PORT=${EXT_SNI_TO_PORT[$s]}"
+done
+"""
+        res = run_shell(bash_script)
+        self.assertEqual(res.returncode, 0, f"Error: {res.stderr}")
+        self.assertIn("COUNT=2", res.stdout)
+        self.assertIn("SNI=speed.cloudflare.com,PORT=46443", res.stdout)
+        self.assertIn("SNI=cache.cloudflare.com,PORT=46443", res.stdout)
 
     def test_amnezia_vpnuri_naming_and_modern_container(self):
         """Verify that Amnezia vpn:// URI uses informative server name and modern amnezia-awg2 container."""

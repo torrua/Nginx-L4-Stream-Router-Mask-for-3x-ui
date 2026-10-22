@@ -253,6 +253,180 @@ printf 'SECRET=%s' "$RAW_PATH"
         self.assertIn('SUB_PATH="new-sub"', saved)
         self.assertIn('XHTTP_STREAM_PATH="new-stream"', saved)
 
+    def test_diag_path_ensured_when_unbound(self):
+        result = self.shell("""
+PRIMARY_DOMAIN=example.com
+unset DIAG_PATH DIAG_TOKEN 2>/dev/null || true
+ensure_diag_path
+printf '%s|%s' "$DIAG_PATH" "$DIAG_TOKEN"
+""")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertRegex(result.stdout, r"^/diag-[0-9a-f]{32}/\|[a-z0-9]{16}$")
+
+    def test_install_step_nginx_config_unbound_variable_guard(self):
+        nginx_conf = bundle_file(SRC_DIR / "nginx/config.sh", SRC_DIR)
+        nginx_dir = (self.work / "etc" / "nginx").as_posix()
+        (self.work / "etc" / "nginx" / "conf.d").mkdir(parents=True, exist_ok=True)
+        (self.work / "etc" / "nginx" / "stream.d").mkdir(parents=True, exist_ok=True)
+        (self.work / "etc" / "nginx" / "modules-enabled").mkdir(parents=True, exist_ok=True)
+        (self.work / "var" / "cache" / "nginx").mkdir(parents=True, exist_ok=True)
+        nginx_conf = nginx_conf.replace("/etc/nginx", nginx_dir)
+        nginx_conf = nginx_conf.replace("/var/cache/nginx", (self.work / "var" / "cache" / "nginx").as_posix())
+        code = f"""
+backup_nginx_configs() {{ :; }}
+restore_nginx_configs() {{ :; }}
+run_with_spinner() {{ :; }}
+ensure_nginx_stream_module() {{ :; }}
+determine_nginx_http2_mode() {{ HTTP2_HTTP_PARAMS=""; HTTP2_LISTEN_PARAM=""; HTTP2_DIRECTIVE=""; }}
+NGINX_USER="nginx"
+PRIMARY_DOMAIN="example.com"
+ALL_DOMAINS=("example.com")
+PANEL_PORT=10443
+SUB_PORT=55443
+XHTTP_STREAM_PORT=50443
+PORT_AGH_WEB=3000
+REALITY_FALLBACK_PORT=9443
+WEBROOT="{self.work.as_posix()}/www"
+mkdir -p "$WEBROOT"
+
+install_step_nginx_config() {{
+{nginx_conf}
+}}
+
+unset DIAG_PATH DIAG_TOKEN PANEL_PATH SUB_PATH SUB_JSON_PATH SUB_CLASH_PATH XHTTP_STREAM_PATH 2>/dev/null || true
+
+install_step_nginx_config
+printf 'OK|%s|%s' "$DIAG_PATH" "$DIAG_TOKEN"
+"""
+        result = self.shell(code)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertRegex(result.stdout, r"^OK\|/diag-[0-9a-f]{32}/\|[a-z0-9]{16}$")
+
+    def test_diag_path_preserved_when_configured(self):
+        result = self.shell("""
+PRIMARY_DOMAIN=example.com
+DIAG_PATH=my-custom-diag
+DIAG_TOKEN=secrettoken12345
+ensure_diag_path
+printf '%s|%s' "$DIAG_PATH" "$DIAG_TOKEN"
+""")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "/my-custom-diag/|secrettoken12345")
+
+    def test_finalize_installation_config_ensures_diag_path(self):
+        result = self.shell("""
+PRIMARY_DOMAIN=example.com
+ENABLE_WEB_STACK=y
+unset DIAG_PATH DIAG_TOKEN 2>/dev/null || true
+finalize_installation_config
+printf '%s|%s' "$DIAG_PATH" "$DIAG_TOKEN"
+""")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertRegex(result.stdout, r"^/diag-[0-9a-f]{32}/\|[a-z0-9]{16}$")
+
+    def test_save_session_state_ensures_diag_path(self):
+        target = shlex.quote((self.work / "saved_diag.env").as_posix())
+        result = self.shell(f"""
+PRIMARY_DOMAIN=example.com
+ENABLE_WEB_STACK=y
+unset DIAG_PATH DIAG_TOKEN 2>/dev/null || true
+save_session_state {target}
+source {target}
+printf '%s|%s' "$DIAG_PATH" "$DIAG_TOKEN"
+""")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertRegex(result.stdout, r"^/diag-[0-9a-f]{32}/\|[a-z0-9]{16}$")
+
+    def test_xhttp_path_consistency_env_and_reconcile(self):
+        """Verify reconcile.py uses XHTTP_STREAM_PATH from environment."""
+        result = subprocess.run([
+            sys.executable, "-c",
+            "import os; os.environ['XHTTP_STREAM_PATH'] = 'custom-stream'; "
+            "xhttp_raw_path = (os.environ.get('XHTTP_STREAM_PATH') or os.environ.get('XHTTP_PATH') or '').strip('/'); "
+            "print(f'/{xhttp_raw_path}/')"
+        ], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), "/custom-stream/")
+
+    def test_configure_panel_exports_all_reconcile_variables(self):
+        """Audit that all environment variables accessed in reconcile.py are exported by configure.sh."""
+        import re
+        rec_text = (SRC_DIR / "panel/reconcile.py").read_text(encoding="utf-8")
+        conf_text = (SRC_DIR / "panel/configure.sh").read_text(encoding="utf-8")
+
+        rec_vars = set(re.findall(r"os\.environ(?:\[\s*[\x22\x27](\w+)[\x22\x27]\s*\]|\.get\(\s*[\x22\x27](\w+)[\x22\x27])", rec_text))
+        rec_vars = {v[0] or v[1] for v in rec_vars}
+        conf_exports = set(re.findall(r"export\s+([A-Za-z0-9_]+)", conf_text))
+
+        missing = rec_vars - conf_exports
+        self.assertEqual(missing, set(), f"Variables queried in reconcile.py but not exported by configure.sh: {missing}")
+
+    def test_default_ports_and_parameters_synchronization(self):
+        """Verify that default ports and settings in configure.sh match env.sh."""
+        import re
+        conf_text = (SRC_DIR / "panel/configure.sh").read_text(encoding="utf-8")
+        conf_defaults = dict(re.findall(r"^    ([A-Z0-9_]+)=\"\$\{\1:-([^}]*)\}\"", conf_text, re.MULTILINE))
+
+        env_text = (SRC_DIR / "system/env.sh").read_text(encoding="utf-8")
+        env_defaults = dict(re.findall(r"([A-Z0-9_]+)=\"\$\{\1:-([^}]*)\}\"", env_text))
+
+        critical_keys = [
+            "DNSTT_PORT", "MTPROTO_PORT", "NAIVE_PORT", "TUIC_PORT",
+            "MASQUE_PORT", "WSTUNNEL_PORT", "SHADOWTLS_PORT", "SS2022_PORT",
+            "ZAPRET_DESYNC", "ZAPRET_FOOLING", "ZAPRET_QNUM"
+        ]
+        for key in critical_keys:
+            if key in conf_defaults and key in env_defaults:
+                self.assertEqual(
+                    conf_defaults[key], env_defaults[key],
+                    f"Default mismatch for {key}: configure.sh='{conf_defaults[key]}' vs env.sh='{env_defaults[key]}'"
+                )
+
+    def test_xhttp_inbound_path_reconciliation_honors_configured_path(self):
+        """Verify smart_reconcile_inbound updates xHTTP path when explicitly configured, and preserves on placeholder."""
+        import sqlite3
+        import json
+        code = (SRC_DIR / "xray/inbounds.py").read_text(encoding="utf-8")
+        conn = sqlite3.connect(":memory:")
+        cur = conn.cursor()
+        cur.execute("CREATE TABLE inbounds (id INTEGER PRIMARY KEY, user_id INTEGER, up INTEGER, down INTEGER, total INTEGER, remark TEXT, enable INTEGER, expiry_time INTEGER, listen TEXT, port INTEGER UNIQUE, protocol TEXT, settings TEXT, stream_settings TEXT, tag TEXT, sniffing TEXT)")
+
+        ns = {
+            "json": json,
+            "conn": conn,
+            "cur": cur,
+            "admin_id": 1,
+            "dry_run": False,
+            "force_remarks": False,
+            "unified_email": "test@domain.com",
+            "unified_uuid": "11111111-1111-1111-1111-111111111111",
+            "unified_sub_id": "sub123",
+            "unified_awg_hpk": "",
+            "rf_port": 9443,
+            "rf_dest": "gateway.icloud.com:443",
+            "domain": "example.com",
+            "make_remark": lambda x: x,
+        }
+        exec(code, ns)
+
+        init_settings = {"clients": [{"id": "11111111-1111-1111-1111-111111111111", "email": "test@domain.com"}]}
+        init_stream = {"network": "xhttp", "xhttpSettings": {"path": "/old-path/", "mode": "stream-one"}}
+        ns["smart_reconcile_inbound"](50443, "vless", "in-xhttp", "xhttp", init_settings, init_stream, "127.0.0.1")
+
+        # Reconcile with new configured path -> should update to /new-path/
+        new_stream = {"network": "xhttp", "xhttpSettings": {"path": "/new-path/", "mode": "stream-one"}}
+        ns["smart_reconcile_inbound"](50443, "vless", "in-xhttp", "xhttp", init_settings, new_stream, "127.0.0.1")
+        cur.execute("SELECT stream_settings FROM inbounds WHERE port = 50443")
+        res = json.loads(cur.fetchone()[0])
+        self.assertEqual(res["xhttpSettings"]["path"], "/new-path/")
+
+        # Reconcile with placeholder -> should preserve existing /new-path/
+        ph_stream = {"network": "xhttp", "xhttpSettings": {"path": "/Stream-One-Path/", "mode": "stream-one"}}
+        ns["smart_reconcile_inbound"](50443, "vless", "in-xhttp", "xhttp", init_settings, ph_stream, "127.0.0.1")
+        cur.execute("SELECT stream_settings FROM inbounds WHERE port = 50443")
+        res2 = json.loads(cur.fetchone()[0])
+        self.assertEqual(res2["xhttpSettings"]["path"], "/new-path/")
+
 
 if __name__ == "__main__":
     unittest.main()

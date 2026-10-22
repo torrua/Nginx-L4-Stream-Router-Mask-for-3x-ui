@@ -588,6 +588,16 @@ get_manifest_component_data "{comp}" "{arch}"
             self.assertGreater(int(max_sz), 0, f"Invalid size for {comp}: {max_sz}")
             self.assertTrue(bool(ver), f"Empty version for {comp}")
 
+        # Test arch alias normalization (amd64 -> x86_64, arm64 -> aarch64)
+        for alias, expected in [("amd64", "x86_64"), ("arm64", "aarch64")]:
+            script = f"""
+source src/common/download.sh
+get_manifest_component_data "wstunnel" "{alias}"
+"""
+            res = self.run_bash(script)
+            self.assertEqual(res.returncode, 0, f"Alias {alias} failed: {res.stderr}")
+            self.assertIn("wstunnel", res.stdout)
+
     def test_t05_manifest_fallback_parity(self):
         """Test that FALLBACK embedded in download.sh matches components-manifest.json."""
         manifest_path = ROOT / "components-manifest.json"

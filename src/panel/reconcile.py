@@ -78,8 +78,8 @@ else:
     else:
         sub_clash_path = f"{sub_path}/clash"
 
-xhttp_port = int(os.environ.get("XHTTP_STREAM_PORT") or "50443")
-xhttp_raw_path = (os.environ.get("XHTTP_STREAM_PATH") or "").strip("/")
+xhttp_port = int(os.environ.get("XHTTP_STREAM_PORT") or os.environ.get("XHTTP_PORT") or "50443")
+xhttp_raw_path = (os.environ.get("XHTTP_STREAM_PATH") or os.environ.get("XHTTP_PATH") or "").strip("/")
 if not xhttp_raw_path or xhttp_raw_path == "Stream-One-Path" or xhttp_raw_path.startswith("vless-"):
     cur.execute("SELECT stream_settings FROM inbounds WHERE port = ?", (xhttp_port,))
     row_xh = cur.fetchone()
@@ -104,8 +104,20 @@ reality_fallback_port = int(os.environ.get("REALITY_FALLBACK_PORT") or "9443")
 
 enable_classic = os.environ.get("ENABLE_CLASSIC", "y").lower() in ("1", "y", "true")
 classic_port = int(os.environ.get("CLASSIC_PORT") or "46443")
-classic_sni = os.environ.get("CLASSIC_SNI") or "avito.ru"
-classic_sni = classic_sni.split()[0] if classic_sni.strip() else "avito.ru"
+classic_raw = os.environ.get("CLASSIC_SNI") or "dl.google.com"
+_parsed_snis = []
+_seen_snis = set()
+for _s in classic_raw.replace(",", " ").split():
+    _clean_s = _s.strip().strip(".").lower()
+    if _clean_s and _clean_s not in _seen_snis:
+        _seen_snis.add(_clean_s)
+        _parsed_snis.append(_clean_s)
+classic_snis = _parsed_snis if _parsed_snis else ["dl.google.com"]
+classic_sni = classic_snis[0]
+
+VALID_FINGERPRINTS = {"chrome", "firefox", "safari", "ios", "android", "edge", "360", "qq", "random", "randomized"}
+_raw_fp = (os.environ.get("REALITY_FINGERPRINT") or "firefox").strip().lower()
+reality_fingerprint = _raw_fp if (_raw_fp in VALID_FINGERPRINTS or _raw_fp) else "firefox"
 
 def resolve_cert_key_paths(target_dom: str, env_cert: str = "", env_key: str = "") -> tuple:
     """
@@ -456,34 +468,7 @@ print("\n[+] Синхронизация шаблона конфигурации 
 enable_warp = os.environ.get("ENABLE_WARP", "n").lower() in ("1", "y", "true")
 warp_license_key = os.environ.get("WARP_LICENSE_KEY", "").strip()
 
-DEFAULT_XRAY_TEMPLATE = {
-    "api": {
-        "services": ["HandlerService", "LoggerService", "StatsService", "RoutingService"],
-        "tag": "api"
-    },
-    "inbounds": [{
-        "listen": "127.0.0.1", "port": 62789, "protocol": "tunnel",
-        "settings": {"rewriteAddress": "127.0.0.1"}, "tag": "api"
-    }],
-    "log": {"access": "none", "dnsLog": False, "error": "", "loglevel": "warning", "maskAddress": ""},
-    "metrics": {"listen": "127.0.0.1:11111", "tag": "metrics_out"},
-    "outbounds": [
-        {"protocol": "freedom", "settings": {"domainStrategy": "AsIs"}, "tag": "direct"},
-        {"protocol": "blackhole", "settings": {}, "tag": "blocked"}
-    ],
-    "policy": {
-        "levels": {"0": {"statsUserDownlink": True, "statsUserUplink": True}},
-        "system": {"statsInboundDownlink": True, "statsInboundUplink": True, "statsOutboundDownlink": False, "statsOutboundUplink": False}
-    },
-    "routing": {
-        "domainStrategy": "AsIs",
-        "rules": [
-            {"inboundTag": ["api"], "outboundTag": "api", "type": "field"},
-            {"ip": ["geoip:private"], "outboundTag": "blocked", "type": "field"}
-        ]
-    },
-    "stats": {}
-}
+# @include "xray/routing.py"
 
 # Чтение и инициализация шаблона Xray
 raw_tpl = existing_settings.get("xrayTemplateConfig")
@@ -740,63 +725,16 @@ if enable_warp:
     routing = tpl.get("routing", {})
     rules = routing.get("rules", [])
 
-    bad_geosites = {
-        "geosite:ru", "geosite:yandex", "geosite:vk", "geosite:youtube",
-        "geosite:openai", "geosite:google-gemini", "geosite:anthropic", "geosite:cloudflare"
-    }
+    bad_geosites = BAD_GEOSITES
 
     # Очистка всех существующих правил от отсутствующих/невалидных geosite меток
     for r in rules:
         if isinstance(r, dict) and "domain" in r and isinstance(r["domain"], list):
             r["domain"] = [d for d in r["domain"] if d not in bad_geosites]
 
-    yt_domains = [
-        "domain:youtube.com",
-        "domain:googlevideo.com",
-        "domain:ytimg.com",
-        "domain:youtu.be",
-        "domain:youtubei.googleapis.com",
-        "domain:yt.be"
-    ]
-    ru_domains = [
-        "domain:ru",
-        "domain:su",
-        "domain:рф",
-        "domain:xn--p1ai",
-        "domain:yandex.ru",
-        "domain:yandex.net",
-        "domain:ya.ru",
-        "domain:vk.com",
-        "domain:vk.ru",
-        "domain:vkvideo.ru",
-        "domain:gosuslugi.ru",
-        "domain:sberbank.ru",
-        "domain:tbank.ru",
-        "domain:tinkoff.ru",
-        "domain:dzen.ru",
-        "domain:mail.ru",
-        "domain:rutube.ru",
-        "domain:ozon.ru",
-        "domain:wildberries.ru",
-        "domain:avito.ru"
-    ]
-    warp_domains = [
-        "domain:openai.com",
-        "domain:chatgpt.com",
-        "domain:oaistatic.com",
-        "domain:oaiusercontent.com",
-        "domain:anthropic.com",
-        "domain:claude.ai",
-        "domain:gemini.google.com",
-        "domain:aistudio.google.com",
-        "domain:deepmind.google",
-        "domain:makersuite.google.com",
-        "domain:generativelanguage.googleapis.com",
-        "domain:ai.google.dev",
-        "domain:google.com",
-        "domain:cloudflare.com",
-        "domain:challenges.cloudflare.com"
-    ]
+    yt_domains = YT_DOMAINS
+    ru_domains = RU_DOMAINS
+    warp_domains = WARP_DOMAINS
 
     # 1. Из правил WARP исключаем любые YouTube домены
     for r in rules:
@@ -1151,9 +1089,9 @@ if enable_steal:
             "show": False, "xver": 1, "dest": f"127.0.0.1:{reality_fallback_port}", "target": f"127.0.0.1:{reality_fallback_port}",
             "serverNames": [steal_dom], "privateKey": def_reality_priv, "minClientVer": "1.0.0",
             "shortIds": def_reality_sids,
-            "settings": {"publicKey": def_reality_pub, "fingerprint": "firefox", "serverName": steal_dom, "spiderX": "/"}
+            "settings": {"publicKey": def_reality_pub, "fingerprint": reality_fingerprint, "serverName": steal_dom, "spiderX": "/"}
         },
-        "externalProxy": [{"dest": domain, "port": 443, "forceTls": "same", "sni": steal_dom, "fingerprint": "firefox", "remark": make_remark("VLESS Steal")}]
+        "externalProxy": [{"dest": domain, "port": 443, "forceTls": "same", "sni": steal_dom, "fingerprint": reality_fingerprint, "remark": make_remark("VLESS Steal")}]
     }
     steal_remark = make_remark("VLESS Steal")
     steal_ib_id = smart_reconcile_inbound(steal_port, "vless", "in-steal-reality", steal_remark, s_set, s_str, listen="127.0.0.1")
@@ -1167,11 +1105,21 @@ if enable_classic:
         "security": "reality",
         "realitySettings": {
             "show": False, "xver": 0, "dest": f"{classic_sni}:443", "target": f"{classic_sni}:443",
-            "serverNames": [classic_sni], "privateKey": def_reality_priv, "minClientVer": "1.0.0",
+            "serverNames": classic_snis, "privateKey": def_reality_priv, "minClientVer": "1.0.0",
             "shortIds": def_reality_sids,
-            "settings": {"publicKey": def_reality_pub, "fingerprint": "firefox", "serverName": classic_sni, "spiderX": "/"}
+            "settings": {"publicKey": def_reality_pub, "fingerprint": reality_fingerprint, "serverName": classic_sni, "spiderX": "/"}
         },
-        "externalProxy": [{"dest": domain, "port": 443, "forceTls": "same", "sni": classic_sni, "fingerprint": "firefox", "remark": make_remark("VLESS Classic")}]
+        "externalProxy": [
+            {
+                "dest": domain,
+                "port": 443,
+                "forceTls": "same",
+                "sni": csni,
+                "fingerprint": reality_fingerprint,
+                "remark": make_remark(f"VLESS Classic ({csni})" if len(classic_snis) > 1 else "VLESS Classic")
+            }
+            for csni in classic_snis
+        ]
     }
     classic_remark = make_remark("VLESS Classic")
     classic_ib_id = smart_reconcile_inbound(classic_port, "vless", "in-classic-reality", classic_remark, c_set, c_str, listen="127.0.0.1")
@@ -1204,7 +1152,7 @@ x_str = {
         }
     },
     "security": "none",
-    "externalProxy": [{"dest": domain, "port": 443, "forceTls": "tls", "sni": domain, "fingerprint": "firefox", "alpn": "h2", "remark": make_remark("VLESS xHTTP")}]
+    "externalProxy": [{"dest": domain, "port": 443, "forceTls": "tls", "sni": domain, "fingerprint": reality_fingerprint, "alpn": "h2", "remark": make_remark("VLESS xHTTP")}]
 }
 xhttp_remark = make_remark("VLESS xHTTP")
 xhttp_ib_id = smart_reconcile_inbound(xhttp_port, "vless", "in-xhttp-stream", xhttp_remark, x_set, x_str, listen="127.0.0.1")
@@ -1399,58 +1347,80 @@ cur.execute("""
         mux_params TEXT DEFAULT '',
         sockopt_params TEXT DEFAULT '',
         final_mask TEXT DEFAULT '',
-        exclude_from_sub_types TEXT DEFAULT ''
+        exclude_from_sub_types TEXT DEFAULT '',
+        shuffle_host INTEGER DEFAULT 0
     )
 """)
 cur.execute("PRAGMA table_info(hosts)")
 active_host_cols = {r[1] for r in cur.fetchall()}
+if "shuffle_host" not in active_host_cols and "shuffleHost" not in active_host_cols:
+    try:
+        cur.execute("ALTER TABLE hosts ADD COLUMN shuffle_host INTEGER DEFAULT 0")
+        active_host_cols.add("shuffle_host")
+    except Exception:
+        pass
 
-def sync_host_entry(ib_id, host_remark, addr, host_port, sec, host_sni="", host_path="", host_alpn="", host_fp="firefox", sort_order=0):
+inbound_col = "inboundId" if "inboundId" in active_host_cols else "inbound_id"
+sort_col = "sortOrder" if "sortOrder" in active_host_cols else "sort_order"
+shuffle_col = "shuffleHost" if "shuffleHost" in active_host_cols else "shuffle_host"
+
+def insert_host_entry(ib_id, host_remark, addr, host_port, sec, host_sni="", host_path="", host_alpn="", host_fp="firefox", sort_order=0, shuffle_host=0):
+    if ib_id is None or dry_run:
+        return
+    gid = str(uuid.uuid4())
+    col_candidates = {
+        "group_id": gid, "groupId": gid,
+        "inbound_id": ib_id, "inboundId": ib_id,
+        "sort_order": sort_order, "sortOrder": sort_order,
+        "remark": host_remark, "address": addr, "port": host_port, "security": sec,
+        "sni": host_sni, "host_header": "", "hostHeader": "", "path": host_path,
+        "alpn": host_alpn, "fingerprint": host_fp, "allow_insecure": 0, "allowInsecure": 0,
+        "is_disabled": 0, "isDisabled": 0, "is_hidden": 0, "isHidden": 0,
+        "tags": "", "ech_config_list": "", "mux_params": "", "sockopt_params": "",
+        "final_mask": "", "exclude_from_sub_types": "",
+        "shuffle_host": shuffle_host, "shuffleHost": shuffle_host
+    }
+    insert_data = {k: v for k, v in col_candidates.items() if k in active_host_cols}
+    keys = list(insert_data.keys())
+    vals = [insert_data[k] for k in keys]
+    placeholders = ",".join(["?"] * len(keys))
+    cur.execute(f"INSERT INTO hosts ({','.join(keys)}) VALUES ({placeholders})", vals)
+
+def sync_host_entry(ib_id, host_remark, addr, host_port, sec, host_sni="", host_path="", host_alpn="", host_fp="firefox", sort_order=0, shuffle_host=0):
     if ib_id is None:
         return
-    cur.execute("SELECT id, remark FROM hosts WHERE inbound_id = ?", (ib_id,))
+    cur.execute(f"SELECT id, remark FROM hosts WHERE {inbound_col} = ?", (ib_id,))
     h_row = cur.fetchone()
     if h_row:
         h_id, existing_rem = h_row
         final_h_remark = existing_rem if (existing_rem and existing_rem.strip()) else host_remark
         if not dry_run:
-            cur.execute("""
-                UPDATE hosts
-                SET address = ?, port = ?, security = ?, sni = ?, path = ?, alpn = ?, fingerprint = ?, sort_order = ?, remark = ?
-                WHERE id = ?
-            """, (addr, host_port, sec, host_sni, host_path, host_alpn, host_fp, sort_order, final_h_remark, h_id))
+            update_fields = [
+                "address = ?", "port = ?", "security = ?", "sni = ?",
+                "path = ?", "alpn = ?", "fingerprint = ?", f"{sort_col} = ?", "remark = ?"
+            ]
+            update_vals = [addr, host_port, sec, host_sni, host_path, host_alpn, host_fp, sort_order, final_h_remark]
+            if shuffle_col in active_host_cols:
+                update_fields.append(f"{shuffle_col} = ?")
+                update_vals.append(shuffle_host)
+            update_vals.append(h_id)
+            cur.execute(f"UPDATE hosts SET {', '.join(update_fields)} WHERE id = ?", tuple(update_vals))
     else:
-        gid = str(uuid.uuid4())
-        col_candidates = {
-            "group_id": gid, "groupId": gid,
-            "inbound_id": ib_id, "inboundId": ib_id,
-            "sort_order": sort_order, "sortOrder": sort_order,
-            "remark": host_remark, "address": addr, "port": host_port, "security": sec,
-            "sni": host_sni, "host_header": "", "hostHeader": "", "path": host_path,
-            "alpn": host_alpn, "fingerprint": host_fp, "allow_insecure": 0, "allowInsecure": 0,
-            "is_disabled": 0, "isDisabled": 0, "is_hidden": 0, "isHidden": 0,
-            "tags": "", "ech_config_list": "", "mux_params": "", "sockopt_params": "",
-            "final_mask": "", "exclude_from_sub_types": ""
-        }
-        insert_data = {k: v for k, v in col_candidates.items() if k in active_host_cols}
-        keys = list(insert_data.keys())
-        vals = [insert_data[k] for k in keys]
-        placeholders = ",".join(["?"] * len(keys))
-        if not dry_run:
-            cur.execute(f"INSERT INTO hosts ({','.join(keys)}) VALUES ({placeholders})", vals)
+        insert_host_entry(ib_id, host_remark, addr, host_port, sec, host_sni=host_sni, host_path=host_path, host_alpn=host_alpn, host_fp=host_fp, sort_order=sort_order, shuffle_host=shuffle_host)
 
 def lookup_inbound_id(tag_val, port_val):
     cur.execute("SELECT id FROM inbounds WHERE tag = ? OR port = ?", (tag_val, port_val))
     r = cur.fetchone()
     return r[0] if r else None
 
+reality_fp = globals().get("reality_fingerprint", "firefox")
 if enable_steal:
     s_iid = steal_ib_id if ('steal_ib_id' in locals() and steal_ib_id) else lookup_inbound_id("in-steal-reality", steal_port)
     if s_iid:
         cur.execute("SELECT remark FROM inbounds WHERE id = ?", (s_iid,))
         r_rem = cur.fetchone()
         s_rem = r_rem[0] if r_rem and r_rem[0] else steal_remark
-        sync_host_entry(s_iid, s_rem, domain, 443, "same", host_sni=steal_dom, host_fp="firefox", sort_order=1)
+        sync_host_entry(s_iid, s_rem, domain, 443, "same", host_sni=steal_dom, host_fp=reality_fp, sort_order=1)
 
 if enable_classic:
     c_iid = classic_ib_id if ('classic_ib_id' in locals() and classic_ib_id) else lookup_inbound_id("in-classic-reality", classic_port)
@@ -1458,14 +1428,18 @@ if enable_classic:
         cur.execute("SELECT remark FROM inbounds WHERE id = ?", (c_iid,))
         r_rem = cur.fetchone()
         c_rem = r_rem[0] if r_rem and r_rem[0] else classic_remark
-        sync_host_entry(c_iid, c_rem, domain, 443, "same", host_sni=classic_sni, host_fp="firefox", sort_order=1)
+        if not dry_run:
+            cur.execute(f"DELETE FROM hosts WHERE {inbound_col} = ?", (c_iid,))
+        for idx, csni in enumerate(classic_snis, start=1):
+            h_remark = f"{c_rem} ({csni})" if len(classic_snis) > 1 else c_rem
+            insert_host_entry(c_iid, h_remark, domain, 443, "same", host_sni=csni, host_fp=reality_fp, sort_order=idx, shuffle_host=1)
 
 x_iid = xhttp_ib_id if ('xhttp_ib_id' in locals() and xhttp_ib_id) else lookup_inbound_id("in-xhttp-stream", xhttp_port)
 if x_iid:
     cur.execute("SELECT remark FROM inbounds WHERE id = ?", (x_iid,))
     r_rem = cur.fetchone()
     x_rem = r_rem[0] if r_rem and r_rem[0] else xhttp_remark
-    sync_host_entry(x_iid, x_rem, domain, 443, "tls", host_sni=domain, host_path=f"/{xhttp_path.strip('/')}/", host_alpn=json.dumps(["h2"]), host_fp="firefox", sort_order=2)
+    sync_host_entry(x_iid, x_rem, domain, 443, "tls", host_sni=domain, host_path=f"/{xhttp_path.strip('/')}/", host_alpn=json.dumps(["h2"]), host_fp=reality_fp, sort_order=2)
 
 
 # Формирование клиентских ссылок для новых протоколов

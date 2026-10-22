@@ -137,8 +137,8 @@ STEAL_DOMAINS="cdn.yourdomain.online"
 # Сценарий 2: Classic External REALITY (Внешний камуфляж) [y/n]
 ENABLE_CLASSIC="y"
 CLASSIC_PORT="46443"
-# Внешние доверенные SNI (через пробел, например: "avito.ru")
-CLASSIC_SNI="avito.ru"
+# Внешние доверенные SNI (через пробел, например: "dl.google.com")
+CLASSIC_SNI="dl.google.com"
 
 # --- 3. ВНУТРЕННИЕ ПОРТЫ И ПУТИ 3X-UI И xHTTP ---
 PANEL_PORT="10443"

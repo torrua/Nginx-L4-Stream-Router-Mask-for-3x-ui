@@ -736,7 +736,12 @@ for item in res:
                 CLASSIC_PORT="46443"
             fi
             CLASSIC_PORTS_LIST+=("$CLASSIC_PORT")
+        else
+            CLASSIC_PORT="${CLASSIC_PORT:-46443}"
+            CLASSIC_PORTS_LIST+=("$CLASSIC_PORT")
+        fi
 
+        if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
             local fp_keys=("firefox" "chrome" "safari" "ios" "android" "edge" "randomized")
             local fp_labels=(
                 "Mozilla Firefox (по умолчанию)"
@@ -748,10 +753,46 @@ for item in res:
                 "Случайный браузерный профиль при старте"
             )
             prompt_select "  Выберите uTLS TLS Fingerprint для REALITY" REALITY_FINGERPRINT "${REALITY_FINGERPRINT:-firefox}" fp_keys fp_labels || return $?
+
+            local sni_preset_keys=(
+                "dl.google.com www.google.com"
+                "www.microsoft.com wwwqa.microsoft.com staticview.microsoft.com"
+                "www.apple.com icloud.com"
+                "www.samsung.com"
+                "custom"
+            )
+            local sni_preset_labels=(
+                "Google пул (dl.google.com, www.google.com — по умолчанию)"
+                "Microsoft пул (www.microsoft.com, wwwqa, staticview)"
+                "Apple пул (www.apple.com, icloud.com)"
+                "Samsung (www.samsung.com)"
+                "Ввести свой собственный SNI или пул доменов вручную"
+            )
+            local default_sni_choice="${CLASSIC_SNI:-dl.google.com www.google.com}"
+            local chosen_sni_preset=""
+            local matched_preset="custom"
+            for pk in "${sni_preset_keys[@]}"; do
+                if [ "$pk" = "$default_sni_choice" ]; then
+                    matched_preset="$pk"
+                    break
+                fi
+            done
+            if [ "$matched_preset" = "custom" ] && [ -z "${CLASSIC_SNI:-}" ]; then
+                matched_preset="${sni_preset_keys[0]}"
+            fi
+
+            prompt_select "  Выберите SNI для маскировки REALITY (или свой пул)" chosen_sni_preset "$matched_preset" sni_preset_keys sni_preset_labels || return $?
+
+            if [ "$chosen_sni_preset" = "custom" ]; then
+                local custom_sni_input=""
+                prompt_default "  Введите внешний SNI или пул доменов через пробел/запятую" "${CLASSIC_SNI:-dl.google.com}" custom_sni_input || return $?
+                CLASSIC_SNI="$custom_sni_input"
+            else
+                CLASSIC_SNI="$chosen_sni_preset"
+            fi
         else
-            CLASSIC_PORT="${CLASSIC_PORT:-46443}"
-            CLASSIC_PORTS_LIST+=("$CLASSIC_PORT")
             REALITY_FINGERPRINT="${REALITY_FINGERPRINT:-firefox}"
+            CLASSIC_SNI="${CLASSIC_SNI:-dl.google.com}"
         fi
 
         local classic_raw="${CLASSIC_SNI:-dl.google.com}"

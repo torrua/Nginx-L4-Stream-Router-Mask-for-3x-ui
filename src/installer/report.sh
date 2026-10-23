@@ -37,6 +37,18 @@ report_installation() {
     done
     echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}\n"
 
+    echo -e "  ${YELLOW}${BOLD}🗑️  Команда для удаления установленного сервера:${NC}"
+    echo -e "  - ${YELLOW}Быстрая команда:${NC}       ${CYAN}${BOLD}vpn-uninstall${NC} ${DIM}(или sudo vpn-uninstall)${NC}"
+    echo -e "  - ${YELLOW}Удаление через curl:${NC}   ${CYAN}curl -sSL \"https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/uninstall.sh\" | sudo bash${NC}"
+    if [ -f "./uninstall.sh" ]; then
+        echo -e "  - ${YELLOW}Локальный скрипт:${NC}      ${WHITE}sudo ./uninstall.sh${NC}"
+    elif [ -f "./install.sh" ]; then
+        echo -e "  - ${YELLOW}Локальный скрипт:${NC}      ${WHITE}sudo ./install.sh --uninstall${NC}"
+    elif [ -f "./setup.sh" ]; then
+        echo -e "  - ${YELLOW}Локальный скрипт:${NC}      ${WHITE}sudo ./setup.sh --uninstall${NC}"
+    fi
+    echo ""
+
     if is_true "${DEBUG_MODE:-0}" || [ -n "${FORCE_LOG_EXPORT:-}" ]; then
         if command -v offer_debug_log_export >/dev/null 2>&1; then
             offer_debug_log_export

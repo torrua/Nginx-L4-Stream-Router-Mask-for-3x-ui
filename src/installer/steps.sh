@@ -533,7 +533,7 @@ setup_dnstt_service() {
 
     if [ ! -x "$dnstt_bin" ] && command -v go >/dev/null 2>&1; then
         log "Компиляция dnstt-server из исходников (Go)..."
-        if CGO_ENABLED=0 go install -ldflags='-s -w' www.bamsoftware.com/git/dnstt.git/dnstt-server@latest 2>/dev/null; then
+        if CGO_ENABLED=0 go install -ldflags='-s -w' www.bamsoftware.com/git/dnstt.git/dnstt-server@latest >/dev/null 2>&1; then
             local gopath="$(go env GOPATH 2>/dev/null || echo "$HOME/go")"
             if [ -f "${gopath}/bin/dnstt-server" ]; then
                 cp "${gopath}/bin/dnstt-server" "${bin_dir}/dnstt-server"
@@ -552,10 +552,10 @@ setup_dnstt_service() {
 
     if [ ! -f /etc/dnstt/server.key ] || [ ! -f /etc/dnstt/server.pub ]; then
         if [ -x "$dnstt_bin" ]; then
-            "$dnstt_bin" -gen-key -privkey-file /etc/dnstt/server.key -pubkey-file /etc/dnstt/server.pub 2>/dev/null || true
+            "$dnstt_bin" -gen-key -privkey-file /etc/dnstt/server.key -pubkey-file /etc/dnstt/server.pub >/dev/null 2>&1 || true
         fi
         if [ ! -f /etc/dnstt/server.key ] || [ ! -f /etc/dnstt/server.pub ]; then
-            python3 - /etc/dnstt/server.key /etc/dnstt/server.pub << 'EOF_DNSTT_KEY' 2>/dev/null || true
+            python3 - /etc/dnstt/server.key /etc/dnstt/server.pub << 'EOF_DNSTT_KEY' >/dev/null 2>&1 || true
 try:
     from src.common.crypto_engine import generate_dnstt_keypair
 except ImportError:

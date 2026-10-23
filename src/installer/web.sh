@@ -36,7 +36,7 @@ EOF
     chown -R "$NGINX_USER:$NGINX_USER" "$WEBROOT" /var/cache/nginx /var/www/mirror /var/www/proxy_temp
     chmod 755 "$WEBROOT" /var/cache/nginx /var/www/mirror /var/www/proxy_temp
 
-    # Стартовый HTTP-сервер для верификации ACME (создается только если Шаг 4 выполняется)
+    # Стартовый HTTP-сервер для валидации домена (создается только если Шаг 4 выполняется)
     if [ "$SSL_ENGINE_CHOICE" = "1" ] && [ "${RESUME_STEP:-1}" -le 4 ]; then
         NGINX_80_SERVER_NAMES="${ALL_DOMAINS[*]}"
 
@@ -52,7 +52,7 @@ EOF
         # Удаляем директивы listen [::]: из существующих файлов conf.d
         sed -i '/\[::\]/d' /etc/nginx/conf.d/*.conf 2>/dev/null || true
 
-        log "Создание стартового HTTP-сервера для верификации ACME..."
+        log "Создание стартового HTTP-сервера для валидации домена..."
         cat << EOF > "/etc/nginx/conf.d/00-acme.conf"
 server {
     listen 80;

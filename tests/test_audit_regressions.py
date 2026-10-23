@@ -2026,7 +2026,7 @@ echo "AGH_CLIENT_ID=$AGH_CLIENT_ID"
         self.assertIn("[0] Нет (по умолчанию)", wizard_sh)
         self.assertIn("[1] Да (все порты)", wizard_sh)
         self.assertIn("[2] Только внешние", wizard_sh)
-        self.assertIn("ручная настройка всех портов (внешних клиентских и внутренних локальных)", wizard_sh)
+        self.assertIn("ручная настройка всех портов (внешних клиентских и внутренних)", wizard_sh)
         self.assertIn("ручная настройка только внешних клиентских портов (все внутренние — по умолчанию)", wizard_sh)
 
         # In env.sh and prompts.sh, default is 0
@@ -2063,6 +2063,125 @@ echo "AGH_CLIENT_ID=$AGH_CLIENT_ID"
         self.assertIn("ENABLE_STEAL_COMPAT", chk_sh)
         self.assertIn("STEAL_COMPAT_PORT", chk_sh)
         self.assertIn("STEAL_COMPAT_DOMAIN", chk_sh)
+
+    def test_unified_port_terminology_and_subdomain_prompts(self):
+        """Verify unified port terminology and customizable REALITY subdomains."""
+        wizard_sh = (ROOT / "src/tui/wizard.sh").read_text(encoding="utf-8")
+
+        # 1. Custom subdomain input in configure_steal_settings and STEAL_COMPAT
+        self.assertIn('prompt_default "  Субдомен для REALITY (свой сайт)"', wizard_sh)
+        self.assertIn('prompt_default "  Субдомен для REALITY Backup"', wizard_sh)
+
+        # 2. No occurrences of "Локальный порт" in wizard.sh
+        self.assertNotIn("Локальный порт", wizard_sh)
+
+        # 3. All internal ports use "Внутренний порт"
+        self.assertIn('prompt_default "  Внутренний порт Xray для REALITY (свой сайт)"', wizard_sh)
+        self.assertIn('prompt_default "  Внутренний порт Xray для REALITY (внешние сервисы)"', wizard_sh)
+        self.assertIn('prompt_default "  Внутренний порт Xray для REALITY Backup"', wizard_sh)
+        self.assertIn('prompt_default "  Внутренний порт для ShadowTLS"', wizard_sh)
+        self.assertIn('prompt_default "  Внутренний порт для Wstunnel daemon"', wizard_sh)
+        self.assertIn('prompt_default "  Внутренний порт для NaïveProxy (Caddy)"', wizard_sh)
+        self.assertIn('prompt_default "  Внутренний порт веб-панели управления"', wizard_sh)
+        self.assertIn('prompt_default "  Внутренний порт сервера подписок"', wizard_sh)
+        self.assertIn('prompt_default "  Внутренний порт инбаунда VLESS xHTTP"', wizard_sh)
+
+        # 4. STEAL_COMPAT internal port check must only trigger on mode 1, not mode 2
+        # Ensure STEAL_COMPAT_PORT prompt is wrapped with mode 1 check
+        start = wizard_sh.index("# Настройки VLESS REALITY Backup")
+        end = wizard_sh.index("# Настройки VLESS REALITY (внешние сервисы)")
+        block_compat = wizard_sh[start:end]
+        self.assertIn('if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then', block_compat)
+        self.assertIn('Внутренний порт Xray для REALITY Backup', block_compat)
+
+        # 5. SUB_TITLE prompt default is SERVER_PREFIX instead of empty
+        self.assertIn('prompt_default "  Заголовок подписки для клиентов" "${SUB_TITLE:-${SERVER_PREFIX:-Server}}"', wizard_sh)
+
+        # 6. ENABLE_HOST_SECURITY defaults to 'y' (Y/n prompt)
+        self.assertIn('prompt_yes_no "Настроить безопасность сервера (SSH-ключи, порт и защиту Fail2ban)?" "${ENABLE_HOST_SECURITY:-y}"', wizard_sh)
+        self.assertIn('ENABLE_HOST_SECURITY="${ENABLE_HOST_SECURITY:-y}"', wizard_sh)
+        self.assertIn('ENABLE_HOST_SECURITY="y"', (ROOT / "server-setup.env.example").read_text(encoding="utf-8"))
+
+        # 7. DNSTT key generation stdout/stderr redirected to /dev/null
+        steps_sh = (ROOT / "src/installer/steps.sh").read_text(encoding="utf-8")
+        self.assertIn('"$dnstt_bin" -gen-key -privkey-file /etc/dnstt/server.key -pubkey-file /etc/dnstt/server.pub >/dev/null 2>&1', steps_sh)
+
+        # 8. qrencode in system packages and awg setup
+        packages_sh = (ROOT / "src/system/packages.sh").read_text(encoding="utf-8")
+        awg_setup_sh = (ROOT / "src/awg/setup.sh").read_text(encoding="utf-8")
+        self.assertIn('[qrencode]="qrencode"', packages_sh)
+        self.assertIn('qrencode', awg_setup_sh)
+
+        # 9. report-web.sh and report-awg.sh suppress raw JSON QR output
+        report_web = (ROOT / "src/installer/report-web.sh").read_text(encoding="utf-8")
+        report_awg = (ROOT / "src/installer/report-awg.sh").read_text(encoding="utf-8")
+        for rep in (report_web, report_awg):
+            self.assertIn('qr_out=$(/root/awg/manage-clients.sh qr client-1 2>/dev/null', rep)
+            self.assertIn('"$qr_out" != "{"*', rep)
+            self.assertIn('echo "$qr_out"', rep)
+
+        # 10. manage_clients.py prints QR directly to stdout and supports --json
+        mgr_py = (ROOT / "src/awg/manage_clients.py").read_text(encoding="utf-8")
+        self.assertIn('if action in ("qr", "show-qr"):', mgr_py)
+        self.assertIn('json_mode = True', mgr_py)
+        self.assertIn('if not json_mode and res.get("ok") and res.get("qr_ascii"):', mgr_py)
+        self.assertIn('print(res["qr_ascii"])', mgr_py)
+
+    def test_diagnostics_bundle_and_nginx_routing(self):
+        """Verify diagnostics assets bundling in install.sh and robust Nginx routing."""
+        sec_sh = (ROOT / "src/system/security.sh").read_text(encoding="utf-8")
+        install_sh = (ROOT / "install.sh").read_text(encoding="utf-8")
+        nginx_sh = (ROOT / "src/nginx/config.sh").read_text(encoding="utf-8")
+
+        # 1. Fallback embedding in security.sh
+        self.assertIn('EOF_DIAG_INDEX', sec_sh)
+        self.assertIn('EOF_DIAG_ST', sec_sh)
+        self.assertIn('EOF_DIAG_STW', sec_sh)
+        self.assertIn('EOF_DIAG_MTR', sec_sh)
+        self.assertIn('EOF_DIAG_SVC', sec_sh)
+
+        # 2. Bundled assets in install.sh
+        self.assertIn('VPN Network Diagnostics', install_sh)
+        self.assertIn('Speedtest', install_sh)
+        self.assertIn('DiagnosticsHandler', install_sh)
+        self.assertIn('vpn-diagnostics.service', install_sh)
+
+        # 3. Nginx auth map accepts both cookie and URL query token
+        self.assertIn('map "\\$cookie_diag_key:\\$arg_token" \\$diag_auth', nginx_sh)
+        self.assertIn('"~^${DIAG_TOKEN}:" 1;', nginx_sh)
+        self.assertIn('"~:${DIAG_TOKEN}\\$" 1;', nginx_sh)
+
+        # 4. Nginx location does not use broken try_files with alias
+        self.assertNotIn('try_files $uri $uri/ /index.html;', nginx_sh)
+        self.assertNotIn('try_files \\$uri \\$uri/ /index.html;', nginx_sh)
+
+        # 5. Cookie path is '/' and SameSite is 'Lax'
+        self.assertIn('add_header Set-Cookie "diag_key=${DIAG_TOKEN}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=86400" always;', nginx_sh)
+
+        # 6. Slash normalization redirects
+        self.assertIn('location = ${DIAG_PATH%/} {', nginx_sh)
+        self.assertIn('location = ${PANEL_PATH}diag/ {', nginx_sh)
+
+        # 7. Updated step title and log message for Nginx / SSL validation
+        plan_sh = (ROOT / "src/installer/plan.sh").read_text(encoding="utf-8")
+        web_sh = (ROOT / "src/installer/web.sh").read_text(encoding="utf-8")
+        self.assertIn('[nginx]="Установка Nginx и подготовка к выпуску SSL-сертификатов"', plan_sh)
+        self.assertNotIn('[nginx]="Установка Nginx и подготовка HTTP для ACME"', plan_sh)
+        self.assertIn('log "Создание стартового HTTP-сервера для валидации домена..."', web_sh)
+        self.assertNotIn('log "Создание стартового HTTP-сервера для верификации ACME..."', web_sh)
+
+        # 8. Nginx activation message with version and arch
+        self.assertIn('ok " Активирован веб-сервер Nginx v${nginx_ver} (${nginx_arch})"', nginx_sh)
+
+        # 9. Uninstall command output at end of installation
+        report_sh = (ROOT / "src/installer/report.sh").read_text(encoding="utf-8")
+        uninst_sh = (ROOT / "src/system/uninstall.sh").read_text(encoding="utf-8")
+        self.assertIn("vpn-uninstall", report_sh)
+        self.assertIn("curl -sSL", report_sh)
+        self.assertIn("uninstall.sh", report_sh)
+        self.assertIn("setup_uninstall_command", uninst_sh)
+        self.assertIn("/usr/local/bin/vpn-uninstall", uninst_sh)
+
 
 
 

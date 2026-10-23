@@ -2,7 +2,7 @@
 FROM caddy:builder AS builder
 
 RUN xcaddy build \
-    --with github.com/caddyserver/forwardproxy@caddy2=github.com/klzgrad/forwardproxy@naive \
+    --with github.com/caddyserver/forwardproxy@caddy2=github.com/klzgrad/forwardproxy@c096d6a00cb28e019cc1995b04bdc6a9311d8024 \
     --with github.com/caddy-dns/cloudflare
 
 FROM caddy:latest

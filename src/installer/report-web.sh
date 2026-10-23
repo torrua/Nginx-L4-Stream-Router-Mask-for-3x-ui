@@ -74,6 +74,12 @@ API Token:             ${NODE_TOKEN:-Не получен}
 TLS сертификат:        Действительный (Let's Encrypt / acme.sh)
 EOF_NODE_CRED
     fi
+    cat << 'EOF_UNINST_CRED' >> "$CRED_FILE"
+=====================================================================
+КОМАНДА ДЛЯ УДАЛЕНИЯ СЕРВЕРА (ДЕИНСТАЛЛЯЦИЯ)
+vpn-uninstall
+(или curl -sSL "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/uninstall.sh" | sudo bash)
+EOF_UNINST_CRED
     echo "=====================================================================" >> "$CRED_FILE"
     chmod 600 "$CRED_FILE"
     umask "$credential_umask"
@@ -178,9 +184,13 @@ fi
         echo
 
         if [ -f "/root/awg/client-1.conf" ] && command -v /root/awg/manage-clients.sh >/dev/null 2>&1; then
-            echo -e "  ${WHITE}${BOLD}QR-код для подключения первого клиента (client-1):${NC}"
-            /root/awg/manage-clients.sh qr client-1 2>/dev/null || true
-            echo
+            local qr_out=""
+            qr_out=$(/root/awg/manage-clients.sh qr client-1 2>/dev/null || true)
+            if [ -n "$qr_out" ] && [[ "$qr_out" != "{"* ]]; then
+                echo -e "  ${WHITE}${BOLD}QR-код для подключения первого клиента (client-1):${NC}"
+                echo "$qr_out"
+                echo
+            fi
         fi
     fi
 

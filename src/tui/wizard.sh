@@ -635,7 +635,7 @@ EOF_REALITY_SCANNER
             WARP_LICENSE_KEY=""
         fi
 
-        ENABLE_HOST_SECURITY="${ENABLE_HOST_SECURITY:-n}"
+        ENABLE_HOST_SECURITY="${ENABLE_HOST_SECURITY:-y}"
         local _act_p
         _act_p=$(detect_active_ssh_port)
         [ -n "$_act_p" ] || _act_p=22
@@ -705,13 +705,14 @@ EOF_REALITY_SCANNER
 
     configure_steal_settings() {
         local old_steal_dom="${STEAL_DOMAINS[0]:-${STEAL_DOMAINS_STR:-cdn.$PRIMARY_DOMAIN}}"
+        [ -n "$old_steal_dom" ] && [ "$old_steal_dom" != "$PRIMARY_DOMAIN" ] || old_steal_dom="cdn.$PRIMARY_DOMAIN"
         local old_steal_port="${STEAL_PORTS_LIST[0]:-${STEAL_PORT:-45443}}"
         STEAL_PORTS_LIST=()
         STEAL_DOMAINS=()
 
         if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
             local port_input=""
-            prompt_default "  Локальный порт Xray для REALITY (свой сайт)" "$old_steal_port" port_input || return $?
+            prompt_default "  Внутренний порт Xray для REALITY (свой сайт)" "$old_steal_port" port_input || return $?
             STEAL_PORT="$port_input"
             if [[ ! "$STEAL_PORT" =~ ^[0-9]+$ ]] || [ "$STEAL_PORT" -le 0 ] || [ "$STEAL_PORT" -gt 65535 ]; then
                 warn "  Некорректный номер порта. Установлен порт по умолчанию: 45443."
@@ -724,12 +725,33 @@ EOF_REALITY_SCANNER
         fi
 
         local s_dom_in="$old_steal_dom"
-        if [ "$s_dom_in" = "$PRIMARY_DOMAIN" ]; then
+        while true; do
+            prompt_default "  Субдомен для REALITY (свой сайт)" "$s_dom_in" s_dom_in || return $?
+            s_dom_in=$(echo "${s_dom_in:-cdn.$PRIMARY_DOMAIN}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+            if [ -z "$s_dom_in" ]; then
+                s_dom_in="cdn.$PRIMARY_DOMAIN"
+            fi
+            if [[ "$s_dom_in" != *.* ]]; then
+                s_dom_in="${s_dom_in}.${PRIMARY_DOMAIN}"
+            fi
+            if [ "$s_dom_in" = "$PRIMARY_DOMAIN" ]; then
+                warn "  Субдомен не может совпадать с главным доменом ($PRIMARY_DOMAIN), так как главный домен занят Nginx L7."
+                s_dom_in="cdn.$PRIMARY_DOMAIN"
+                continue
+            fi
+            if [[ "$s_dom_in" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; then
+                break
+            fi
+            warn "  Некорректный формат доменного имени: '$s_dom_in'. Попробуйте снова."
             s_dom_in="cdn.$PRIMARY_DOMAIN"
-        fi
+        done
 
+        if [ -n "$old_steal_dom" ] && [ "$old_steal_dom" != "$s_dom_in" ]; then
+            unset "DOMAIN_TO_PORT[$old_steal_dom]" 2>/dev/null || true
+        fi
         STEAL_DOMAINS=("$s_dom_in")
         DOMAIN_TO_PORT["$s_dom_in"]="$STEAL_PORT"
+        [[ " ${ALL_DOMAINS[*]} " =~ " ${s_dom_in} " ]] || ALL_DOMAINS+=("$s_dom_in")
         ok "  Домен $s_dom_in привязан к инбаунд-порту $STEAL_PORT"
         return 0
     }
@@ -740,7 +762,7 @@ EOF_REALITY_SCANNER
 
         if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
             local port_input=""
-            prompt_default "  Локальный порт Xray для REALITY (внешние сервисы)" "${CLASSIC_PORT:-46443}" port_input || return $?
+            prompt_default "  Внутренний порт Xray для REALITY (внешние сервисы)" "${CLASSIC_PORT:-46443}" port_input || return $?
             CLASSIC_PORT="$port_input"
             if [[ ! "$CLASSIC_PORT" =~ ^[0-9]+$ ]] || [ "$CLASSIC_PORT" -le 0 ] || [ "$CLASSIC_PORT" -gt 65535 ]; then
                 warn "  Некорректный номер порта. Установлен порт по умолчанию: 46443."
@@ -1105,7 +1127,7 @@ EOF_PARSE_PROBE
         echo
         echo -e "  ${BOLD}Настройка сетевых портов подключения:${NC}"
         echo -e "    ${GREEN}[0] Нет (по умолчанию)${NC} — безопасные рекомендованные порты для всех протоколов и служб"
-        echo -e "    ${CYAN}[1] Да (все порты)${NC}     — ручная настройка всех портов (внешних клиентских и внутренних локальных)"
+        echo -e "    ${CYAN}[1] Да (все порты)${NC}     — ручная настройка всех портов (внешних клиентских и внутренних)"
         echo -e "    ${CYAN}[2] Только внешние${NC}     — ручная настройка только внешних клиентских портов (все внутренние — по умолчанию)"
         echo
 
@@ -1149,10 +1171,38 @@ EOF_PARSE_PROBE
         if is_true "$ENABLE_STEAL_COMPAT"; then
             STEAL_COMPAT_ENABLED=1
             STEAL_COMPAT_PORT="${STEAL_COMPAT_PORT:-47443}"
-            STEAL_COMPAT_DOMAIN="${STEAL_COMPAT_DOMAIN:-static.${PRIMARY_DOMAIN:-}}"
-            if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
-                prompt_default "  Локальный порт Xray для REALITY Backup" "$STEAL_COMPAT_PORT" STEAL_COMPAT_PORT || return $?
-                prompt_default "  Субдомен для REALITY Backup" "$STEAL_COMPAT_DOMAIN" STEAL_COMPAT_DOMAIN || return $?
+            local old_sc_dom="${STEAL_COMPAT_DOMAIN:-static.${PRIMARY_DOMAIN:-}}"
+            [ -n "$old_sc_dom" ] && [ "$old_sc_dom" != "$PRIMARY_DOMAIN" ] || old_sc_dom="static.$PRIMARY_DOMAIN"
+
+            if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
+                prompt_default "  Внутренний порт Xray для REALITY Backup" "$STEAL_COMPAT_PORT" STEAL_COMPAT_PORT || return $?
+            fi
+
+            local sc_dom_in="$old_sc_dom"
+            while true; do
+                prompt_default "  Субдомен для REALITY Backup" "$sc_dom_in" sc_dom_in || return $?
+                sc_dom_in=$(echo "${sc_dom_in:-static.$PRIMARY_DOMAIN}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+                if [ -z "$sc_dom_in" ]; then
+                    sc_dom_in="static.$PRIMARY_DOMAIN"
+                fi
+                if [[ "$sc_dom_in" != *.* ]]; then
+                    sc_dom_in="${sc_dom_in}.${PRIMARY_DOMAIN}"
+                fi
+                if [ "$sc_dom_in" = "$PRIMARY_DOMAIN" ]; then
+                    warn "  Субдомен не может совпадать с главным доменом ($PRIMARY_DOMAIN), так как главный домен занят Nginx L7."
+                    sc_dom_in="static.$PRIMARY_DOMAIN"
+                    continue
+                fi
+                if [[ "$sc_dom_in" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; then
+                    break
+                fi
+                warn "  Некорректный формат доменного имени: '$sc_dom_in'. Попробуйте снова."
+                sc_dom_in="static.$PRIMARY_DOMAIN"
+            done
+            STEAL_COMPAT_DOMAIN="$sc_dom_in"
+
+            if [ -n "$old_sc_dom" ] && [ "$old_sc_dom" != "$sc_dom_in" ]; then
+                unset "DOMAIN_TO_PORT[$old_sc_dom]" 2>/dev/null || true
             fi
             DOMAIN_TO_PORT["$STEAL_COMPAT_DOMAIN"]="$STEAL_COMPAT_PORT"
             [[ " ${ALL_DOMAINS[*]} " =~ " ${STEAL_COMPAT_DOMAIN} " ]] || ALL_DOMAINS+=("$STEAL_COMPAT_DOMAIN")
@@ -1181,7 +1231,7 @@ EOF_PARSE_PROBE
             HY2_PORT_HOPPING="${HY2_PORT_HOPPING:-n}"
             HY2_PORT_HOPPING_RANGE="${HY2_PORT_HOPPING_RANGE:-20000:50000}"
             if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
-                prompt_default "  UDP-порт для Hysteria 2" "$HY2_PORT" HY2_PORT || return $?
+                prompt_default "  Внешний UDP-порт для Hysteria 2" "$HY2_PORT" HY2_PORT || return $?
                 prompt_yes_no "  Включить Port Hopping для Hysteria 2 (UDP 20000:50000)?" "$HY2_PORT_HOPPING" HY2_PORT_HOPPING || return $?
                 if is_true "$HY2_PORT_HOPPING"; then
                     prompt_default "  Диапазон портов Port Hopping" "$HY2_PORT_HOPPING_RANGE" HY2_PORT_HOPPING_RANGE || return $?
@@ -1196,7 +1246,7 @@ EOF_PARSE_PROBE
         if is_true "$ENABLE_AWG_V3"; then
             [ -n "${AWG_V3_PORT:-}" ] || AWG_V3_PORT="8443"
             if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
-                prompt_default "  UDP-порт для AmneziaWG v3.1" "$AWG_V3_PORT" AWG_V3_PORT || return $?
+                prompt_default "  Внешний UDP-порт для AmneziaWG v3.1" "$AWG_V3_PORT" AWG_V3_PORT || return $?
             fi
         else
             AWG_V3_PORT=""
@@ -1205,7 +1255,7 @@ EOF_PARSE_PROBE
         if is_true "$ENABLE_AWG_V2"; then
             [ -n "${AWG_V2_PORT:-}" ] || AWG_V2_PORT="8444"
             if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
-                prompt_default "  UDP-порт для AmneziaWG v2.0" "$AWG_V2_PORT" AWG_V2_PORT || return $?
+                prompt_default "  Внешний UDP-порт для AmneziaWG v2.0" "$AWG_V2_PORT" AWG_V2_PORT || return $?
             fi
         else
             AWG_V2_PORT=""
@@ -1215,7 +1265,7 @@ EOF_PARSE_PROBE
             [ -n "${AWG_STANDALONE_PORT:-}" ] || AWG_STANDALONE_PORT="8445"
             [ -n "${AWG_SERVER_HOST:-}" ] || AWG_SERVER_HOST="${PRIMARY_DOMAIN:-$WAN_IP}"
             if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
-                prompt_default "  UDP-порт для автономного AmneziaWG" "$AWG_STANDALONE_PORT" AWG_STANDALONE_PORT || return $?
+                prompt_default "  Внешний UDP-порт для автономного AmneziaWG" "$AWG_STANDALONE_PORT" AWG_STANDALONE_PORT || return $?
             fi
         else
             AWG_STANDALONE_PORT=""
@@ -1224,7 +1274,7 @@ EOF_PARSE_PROBE
         if is_true "$ENABLE_TUIC"; then
             [ -n "${TUIC_PORT:-}" ] || TUIC_PORT="8448"
             if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
-                prompt_default "  UDP-порт для TUIC v5" "$TUIC_PORT" TUIC_PORT || return $?
+                prompt_default "  Внешний UDP-порт для TUIC v5" "$TUIC_PORT" TUIC_PORT || return $?
             fi
         else
             TUIC_PORT=""
@@ -1233,7 +1283,7 @@ EOF_PARSE_PROBE
         if is_true "$ENABLE_SS2022"; then
             [ -n "${SS2022_PORT:-}" ] || SS2022_PORT="8388"
             if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
-                prompt_default "  Порт для Shadowsocks 2022 (TCP/UDP)" "$SS2022_PORT" SS2022_PORT || return $?
+                prompt_default "  Внешний порт для Shadowsocks 2022 (TCP/UDP)" "$SS2022_PORT" SS2022_PORT || return $?
             fi
         else
             SS2022_PORT=""
@@ -1244,7 +1294,7 @@ EOF_PARSE_PROBE
             [ -n "${MTPROTO_FAKETLS_DOMAIN:-}" ] || MTPROTO_FAKETLS_DOMAIN="gateway.icloud.com"
             MTPROTO_ADTAG="${MTPROTO_ADTAG:-}"
             if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
-                prompt_default "  TCP-порт для Telegram MTProxy" "$MTPROTO_PORT" MTPROTO_PORT || return $?
+                prompt_default "  Внешний TCP-порт для Telegram MTProxy" "$MTPROTO_PORT" MTPROTO_PORT || return $?
             fi
         else
             MTPROTO_PORT=""
@@ -1257,7 +1307,7 @@ EOF_PARSE_PROBE
             [ -n "${MASQUE_USER:-}" ] || MASQUE_USER="client"
             [ -n "${MASQUE_PASSWORD:-}" ] || MASQUE_PASSWORD="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "masque${RANDOM}")"
             if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
-                prompt_default "  UDP-порт для MASQUE (HTTP/3)" "$MASQUE_PORT" MASQUE_PORT || return $?
+                prompt_default "  Внешний UDP-порт для MASQUE (HTTP/3)" "$MASQUE_PORT" MASQUE_PORT || return $?
             fi
         else
             MASQUE_PORT=""
@@ -1270,7 +1320,7 @@ EOF_PARSE_PROBE
             ENABLE_SS2022=1
             [ -n "${SS2022_PORT:-}" ] || SS2022_PORT="8388"
             if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
-                prompt_default "  Локальный порт для ShadowTLS" "$SHADOWTLS_PORT" SHADOWTLS_PORT || return $?
+                prompt_default "  Внутренний порт для ShadowTLS" "$SHADOWTLS_PORT" SHADOWTLS_PORT || return $?
             fi
         else
             SHADOWTLS_PORT=""
@@ -1282,7 +1332,7 @@ EOF_PARSE_PROBE
             ensure_wstunnel_prefix || return 1
             [ -n "${WSTUNNEL_SECRET:-}" ] || WSTUNNEL_SECRET="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "wst${RANDOM}")"
             if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
-                prompt_default "  Локальный порт для Wstunnel daemon" "$WSTUNNEL_PORT" WSTUNNEL_PORT || return $?
+                prompt_default "  Внутренний порт для Wstunnel daemon" "$WSTUNNEL_PORT" WSTUNNEL_PORT || return $?
             fi
         else
             WSTUNNEL_PORT=""
@@ -1306,7 +1356,7 @@ EOF_PARSE_PROBE
             [ -n "${NAIVE_DOMAIN:-}" ] || NAIVE_DOMAIN="naive.${PRIMARY_DOMAIN:-}"
             [ -n "${NAIVE_PASS:-}" ] || NAIVE_PASS="$(generate_urlsafe_token 16)"
             if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
-                prompt_default "  Локальный порт для NaïveProxy (Caddy)" "$NAIVE_PORT" NAIVE_PORT || return $?
+                prompt_default "  Внутренний порт для NaïveProxy (Caddy)" "$NAIVE_PORT" NAIVE_PORT || return $?
             fi
         else
             NAIVE_PORT=""
@@ -1321,7 +1371,7 @@ EOF_PARSE_PROBE
             ENABLE_SS2022=1
             [ -n "${SS2022_PORT:-}" ] || SS2022_PORT="8388"
             if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
-                prompt_default "  UDP-порт для DNSTT-сервера" "$DNSTT_PORT" DNSTT_PORT || return $?
+                prompt_default "  Внешний UDP-порт для DNSTT-сервера" "$DNSTT_PORT" DNSTT_PORT || return $?
             fi
         else
             DNSTT_PORT=""
@@ -1372,7 +1422,7 @@ EOF_PARSE_PROBE
         echo
         echo -e "${YELLOW}━━━ Шаг 3/11: Настройка внутренних портов и секретных путей (веб-панель и VLESS xHTTP) ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
-            echo -e "  ${CYAN}💡 Что это:${NC} Внутренние локальные порты и секретные URI-пути для веб-панели управления,"
+            echo -e "  ${CYAN}💡 Что это:${NC} Внутренние порты и секретные URI-пути для веб-панели управления,"
             echo -e "     сервера подписок для клиентов и инбаунда VLESS xHTTP (HTTP/2 Stream-One)."
             echo
         fi
@@ -1449,7 +1499,7 @@ EOF_PARSE_PROBE
             SUB_PATH="/${RAW_SUB_PATH#/}"; SUB_PATH="${SUB_PATH%/}/"
             SUB_JSON_PATH="${SUB_PATH%/}/json/"
             SUB_CLASH_PATH="${SUB_PATH%/}/clash/"
-            prompt_default "  Заголовок подписки для клиентов (Enter - без заголовка)" "${SUB_TITLE:-}" SUB_TITLE || return $?
+            prompt_default "  Заголовок подписки для клиентов" "${SUB_TITLE:-${SERVER_PREFIX:-Server}}" SUB_TITLE || return $?
 
             local rand_x_path="$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "xh${RANDOM}")"
             local r_xhttp="${RAW_XHTTP_STREAM_PATH:-${XHTTP_STREAM_PATH:-$rand_x_path}}"
@@ -1772,7 +1822,7 @@ EOF_PARSE_PROBE
 
         local current_configured_port="${SSH_PORT:-$SSH_ACTIVE_PORT}"
 
-        prompt_yes_no "Настроить безопасность сервера (SSH-ключи, порт и защиту Fail2ban)?" "${ENABLE_HOST_SECURITY:-n}" ENABLE_HOST_SECURITY || return $?
+        prompt_yes_no "Настроить безопасность сервера (SSH-ключи, порт и защиту Fail2ban)?" "${ENABLE_HOST_SECURITY:-y}" ENABLE_HOST_SECURITY || return $?
         if is_true "$ENABLE_HOST_SECURITY"; then
             ENABLE_HOST_SECURITY="y"
 

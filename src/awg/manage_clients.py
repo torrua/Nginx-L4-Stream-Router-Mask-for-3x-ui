@@ -1307,8 +1307,12 @@ def show_qr(client_name):
     ansi_qr = ""
     if shutil.which("qrencode"):
         stdout, _, rc = run_cmd(f"qrencode -t ANSIUTF8 '{content}' 2>/dev/null")
-        if rc == 0 and stdout:
+        if rc == 0 and stdout and stdout.strip():
             ansi_qr = stdout
+        else:
+            stdout, _, rc = run_cmd(f"qrencode -t UTF8 '{content}' 2>/dev/null")
+            if rc == 0 and stdout and stdout.strip():
+                ansi_qr = stdout
 
     return {
         "ok": True,
@@ -1471,6 +1475,7 @@ def main():
     preset = None
 
     raw_mode = False
+    json_mode = False
 
     args = sys.argv[1:]
     for arg in args:
@@ -1500,6 +1505,8 @@ def main():
             shred_privkey = True
         elif arg in ("--raw", "-r"):
             raw_mode = True
+        elif arg in ("--json", "-j"):
+            json_mode = True
         elif arg in ("--qr", "-q"):
             qr_mode = True
         elif arg in ("--i1", "--i1=dns", "--cps"):
@@ -1552,10 +1559,11 @@ def main():
             res = purge_expired()
         elif action in ("qr", "show-qr"):
             res = show_qr(client_name or "client-1")
-            if res.get("ok") and res.get("qr_ascii"):
-                print(res["qr_ascii"], file=sys.stderr)
             if raw_mode and res.get("ok") and res.get("vpnuri"):
                 print(res["vpnuri"])
+                sys.exit(0)
+            if not json_mode and res.get("ok") and res.get("qr_ascii"):
+                print(res["qr_ascii"])
                 sys.exit(0)
         elif action == "backup":
             res = backup_configs()

@@ -456,6 +456,26 @@ run_uninstall
         for pkg in user_third_party_pkgs:
             self.assertFalse(stack_pkg_regex.match(pkg), f"Third-party package {pkg} must NEVER be matched by purge regex")
 
+    def test_uninstall_prompts_handle_closed_stdin(self):
+        """Verify that uninstall prompts gracefully handle closed stdin or tty redirection."""
+        snap_dir = self.work / "backups/server_setup"
+        snippet = f"""
+set -euo pipefail
+TARGET_ROOT="{self.target_root.as_posix()}"
+SNAPSHOT_DIR="{snap_dir.as_posix()}"
+
+source "{ROOT.as_posix()}/src/common/colors.sh"
+source "{ROOT.as_posix()}/src/common/logger.sh"
+source "{ROOT.as_posix()}/src/system/snapshot.sh"
+source "{ROOT.as_posix()}/src/system/uninstall.sh"
+
+run_uninstall </dev/null || echo "EXIT_STATUS=$?"
+"""
+        res = self.run_bash_snippet(snippet)
+        self.assertIn("EXIT_STATUS=", res.stdout)
+        self.assertIn("Интерактивный терминал (/dev/tty) недоступен", res.stdout)
+
+
 
 if __name__ == "__main__":
     unittest.main()

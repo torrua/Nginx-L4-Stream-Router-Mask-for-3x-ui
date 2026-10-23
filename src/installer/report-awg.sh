@@ -24,7 +24,11 @@
     echo
 
     if [ -f "/root/awg/client-1.conf" ] && command -v /root/awg/manage-clients.sh >/dev/null 2>&1; then
-        echo -e "  ${WHITE}${BOLD}QR-код для подключения первого клиента (client-1):${NC}"
-        /root/awg/manage-clients.sh qr client-1 2>/dev/null || true
-        echo
+        local qr_out=""
+        qr_out=$(/root/awg/manage-clients.sh qr client-1 2>/dev/null || true)
+        if [ -n "$qr_out" ] && [[ "$qr_out" != "{"* ]]; then
+            echo -e "  ${WHITE}${BOLD}QR-код для подключения первого клиента (client-1):${NC}"
+            echo "$qr_out"
+            echo
+        fi
     fi

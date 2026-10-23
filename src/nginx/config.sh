@@ -212,9 +212,10 @@ ${wstunnel_badbot_bypass}        ~^1:[01]:/dns-query 0;
         default 0;
     }
 
-    map \$cookie_diag_key \$diag_auth {
+    map "\$cookie_diag_key:\$arg_token" \$diag_auth {
         default 0;
-        "${DIAG_TOKEN}" 1;
+        "~^${DIAG_TOKEN}:" 1;
+        "~:${DIAG_TOKEN}\$" 1;
     }
 
     limit_req_zone \$binary_remote_addr zone=bot:1m rate=4r/s;
@@ -624,11 +625,14 @@ server {
         error_page 401 403 = @diag_login;
         try_files /__nonexistent @diag_sso_ok;
     }
+    location = ${PANEL_PATH}diag/ {
+        return 302 ${PANEL_PATH}diag;
+    }
     location @diag_login {
         return 302 ${PANEL_PATH};
     }
     location @diag_sso_ok {
-        add_header Set-Cookie "diag_key=${DIAG_TOKEN}; Path=${DIAG_PATH}; Secure; HttpOnly; SameSite=Strict; Max-Age=86400" always;
+        add_header Set-Cookie "diag_key=${DIAG_TOKEN}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=86400" always;
         return 302 ${DIAG_PATH};
     }
     location = /__diag_auth {
@@ -645,11 +649,14 @@ server {
     location @diag_denied { return 401; }
 
     # --- ЛОКАЦИЯ 1.2: ПОРТАЛ ВЕБ-ДИАГНОСТИКИ (СТРОГОЕ СОКРЫТИЕ 404 БЕЗ УТЕЧКИ ПУТИ) ---
+    location = ${DIAG_PATH%/} {
+        return 302 ${DIAG_PATH}\$is_args\$args;
+    }
     location ^~ ${DIAG_PATH} {
         if (\$diag_auth = 0) { return 404; }
         alias /var/www/diagnostics/;
         index index.html;
-        try_files \$uri \$uri/ /index.html;
+        add_header Set-Cookie "diag_key=${DIAG_TOKEN}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=86400" always;
         add_header Cache-Control "no-store, no-cache, must-revalidate" always;
         add_header X-Robots-Tag "noindex, nofollow" always;
     }
@@ -909,11 +916,14 @@ server {
         error_page 401 403 = @diag_login;
         try_files /__nonexistent @diag_sso_ok;
     }
+    location = ${PANEL_PATH}diag/ {
+        return 302 ${PANEL_PATH}diag;
+    }
     location @diag_login {
         return 302 ${PANEL_PATH};
     }
     location @diag_sso_ok {
-        add_header Set-Cookie "diag_key=${DIAG_TOKEN}; Path=${DIAG_PATH}; Secure; HttpOnly; SameSite=Strict; Max-Age=86400" always;
+        add_header Set-Cookie "diag_key=${DIAG_TOKEN}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=86400" always;
         return 302 ${DIAG_PATH};
     }
     location = /__diag_auth {
@@ -930,11 +940,14 @@ server {
     location @diag_denied { return 401; }
 
     # --- ЛОКАЦИЯ 1.2: ПОРТАЛ ВЕБ-ДИАГНОСТИКИ (СТРОГОЕ СОКРЫТИЕ 404 БЕЗ УТЕЧКИ ПУТИ) ---
+    location = ${DIAG_PATH%/} {
+        return 302 ${DIAG_PATH}\$is_args\$args;
+    }
     location ^~ ${DIAG_PATH} {
         if (\$diag_auth = 0) { return 404; }
         alias /var/www/diagnostics/;
         index index.html;
-        try_files \$uri \$uri/ /index.html;
+        add_header Set-Cookie "diag_key=${DIAG_TOKEN}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=86400" always;
         add_header Cache-Control "no-store, no-cache, must-revalidate" always;
         add_header X-Robots-Tag "noindex, nofollow" always;
     }
@@ -1188,9 +1201,17 @@ EOF
     fi
 
     # Развертывание демона веб-диагностики и статических файлов перед запуском Nginx
-    setup_vpn_diagnostics 2>/dev/null || true
+    setup_vpn_diagnostics || true
 
     run_with_spinner "Тестирование конфигурации и перезапуск Nginx Mainline" nginx_reload_task || {
         restore_nginx_configs
         die "Ошибка запуска Nginx. Конфигурация автоматически возвращена в исходное состояние."
     }
+
+    local nginx_ver="$(nginx -v 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n1 || echo "")"
+    local nginx_arch="$(uname -s 2>/dev/null || echo "Linux") $(uname -m 2>/dev/null || echo "x86_64")"
+    if [ -n "$nginx_ver" ]; then
+        ok " Активирован веб-сервер Nginx v${nginx_ver} (${nginx_arch})"
+    else
+        ok " Активирован веб-сервер Nginx (${nginx_arch})"
+    fi

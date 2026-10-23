@@ -629,6 +629,33 @@ setup_vpn_diagnostics() {
         cp -a "$src_diag/vpn-diagnostics.service" "$svc_file" 2>/dev/null || true
     fi
 
+    # Автономный fallback: развертывание встроенных ресурсов при отсутствии папки diagnostics на сервере
+    if [ ! -f "$diag_dir/index.html" ]; then
+        cat << 'EOF_DIAG_INDEX' > "$diag_dir/index.html"
+# @include "diagnostics/index.html"
+EOF_DIAG_INDEX
+    fi
+    if [ ! -f "$diag_dir/speedtest.js" ]; then
+        cat << 'EOF_DIAG_ST' > "$diag_dir/speedtest.js"
+# @include "diagnostics/speedtest.js"
+EOF_DIAG_ST
+    fi
+    if [ ! -f "$diag_dir/speedtest_worker.js" ]; then
+        cat << 'EOF_DIAG_STW' > "$diag_dir/speedtest_worker.js"
+# @include "diagnostics/speedtest_worker.js"
+EOF_DIAG_STW
+    fi
+    if [ ! -f "$bin_dir/mtr-backend.py" ]; then
+        cat << 'EOF_DIAG_MTR' > "$bin_dir/mtr-backend.py"
+# @include "diagnostics/mtr-backend.py"
+EOF_DIAG_MTR
+    fi
+    if [ ! -f "$svc_file" ]; then
+        cat << 'EOF_DIAG_SVC' > "$svc_file"
+# @include "diagnostics/vpn-diagnostics.service"
+EOF_DIAG_SVC
+    fi
+
     # Гарантируем наличие утилиты mtr для бэкенда диагностики
     if ! command -v mtr >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
         apt-get install -y -qq mtr-tiny >/dev/null 2>&1 || true

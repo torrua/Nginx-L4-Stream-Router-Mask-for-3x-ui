@@ -372,7 +372,7 @@ reconstruct_arrays_from_vars() {
     MIERU_PASS="${MIERU_PASS:-}"
     MIERU_MTU="${MIERU_MTU:-1400}"
     CF_AUTH_METHOD="${CF_AUTH_METHOD:-1}"
-    _v="${ENABLE_HOST_SECURITY:-n}"; if is_true "$_v"; then ENABLE_HOST_SECURITY="y"; else ENABLE_HOST_SECURITY="n"; fi
+    _v="${ENABLE_HOST_SECURITY:-y}"; if is_true "$_v"; then ENABLE_HOST_SECURITY="y"; else ENABLE_HOST_SECURITY="n"; fi
     SSH_PORT="${SSH_PORT:-${SSH_ACTIVE_PORT:-22}}"
     _v="${ENABLE_FAIL2BAN:-n}"; if is_true "$_v"; then ENABLE_FAIL2BAN="y"; else ENABLE_FAIL2BAN="n"; fi
     _v="${DISABLE_PASSWORD_AUTH:-n}"; if is_true "$_v"; then DISABLE_PASSWORD_AUTH="y"; else DISABLE_PASSWORD_AUTH="n"; fi
@@ -480,7 +480,7 @@ save_session_state() {
     local mieru_save="n"
     v="${ENABLE_MIERU:-n}"; is_true "$v" && mieru_save="y"
     local host_security_save="n"
-    v="${ENABLE_HOST_SECURITY:-n}"; is_true "$v" && host_security_save="y"
+    v="${ENABLE_HOST_SECURITY:-y}"; is_true "$v" && host_security_save="y"
     local fail2ban_save="n"
     v="${ENABLE_FAIL2BAN:-n}"; is_true "$v" && fail2ban_save="y"
     local disable_pwd_save="n"

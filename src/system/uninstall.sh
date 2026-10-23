@@ -109,7 +109,16 @@ run_uninstall() {
     echo -e "  7. Удаление конфигурационных и рабочих каталогов стека;\n"
 
     if [ "${UNINSTALL_FORCE:-0}" -ne 1 ]; then
-        read -r -p "Вы уверены, что хотите продолжить? [y/N]: " confirm_uninstall
+        local confirm_uninstall=""
+        if [ -e /dev/tty ] && { : </dev/tty; } 2>/dev/null; then
+            read -r -p "Вы уверены, что хотите продолжить? [y/N]: " confirm_uninstall </dev/tty || confirm_uninstall="n"
+        elif [ -t 0 ]; then
+            read -r -p "Вы уверены, что хотите продолжить? [y/N]: " confirm_uninstall || confirm_uninstall="n"
+        else
+            echo -e "${YELLOW}Интерактивный терминал (/dev/tty) недоступен. Для неинтерактивного удаления передайте флаг -y: ${CYAN}curl ... | sudo bash -s -- -y${NC}"
+            return 1
+        fi
+
         if [[ ! "$confirm_uninstall" =~ ^[YyДд1] ]]; then
             echo -e "${YELLOW}Удаление отменено пользователем.${NC}"
             return 0
@@ -120,7 +129,12 @@ run_uninstall() {
             echo ""
             echo -e "${CYAN}Управление SSL-сертификатами:${NC}"
             echo -e "  Сохранение сертификатов предотвращает исчерпание недельных лимитов Let's Encrypt при повторной настройке."
-            read -r -p "Удалить выпущенные SSL-сертификаты (/etc/letsencrypt, /etc/ssl/acme, ~/.acme.sh)? [y/N]: " confirm_certs
+            local confirm_certs="n"
+            if [ -e /dev/tty ] && { : </dev/tty; } 2>/dev/null; then
+                read -r -p "Удалить выпущенные SSL-сертификаты (/etc/letsencrypt, /etc/ssl/acme, ~/.acme.sh)? [y/N]: " confirm_certs </dev/tty || confirm_certs="n"
+            elif [ -t 0 ]; then
+                read -r -p "Удалить выпущенные SSL-сертификаты (/etc/letsencrypt, /etc/ssl/acme, ~/.acme.sh)? [y/N]: " confirm_certs || confirm_certs="n"
+            fi
             if [[ "$confirm_certs" =~ ^[YyДд1] ]]; then
                 UNINSTALL_KEEP_CERTS=0
             else
@@ -559,6 +573,7 @@ run_uninstall() {
         "${target_root}/usr/local/bin/mieru-cli"
         "${target_root}/usr/local/bin/awg-mgr"
         "${target_root}/usr/local/bin/manage-services"
+        "${target_root}/usr/local/bin/vpn-uninstall"
         "${target_root}/usr/local/bin/update-xray-geo.sh"
     )
     for b in "${bins_to_remove[@]}"; do
@@ -633,3 +648,26 @@ run_uninstall() {
     echo -e "Все компоненты стека удалены, правила безопасности и доступ по SSH сохранены.\n"
     return 0
 }
+
+setup_uninstall_command() {
+    local bin_path="/usr/local/bin/vpn-uninstall"
+    mkdir -p /usr/local/bin 2>/dev/null || true
+    cat << 'EOF_VPN_UNINSTALL' > "$bin_path"
+#!/usr/bin/env bash
+# Universal VPN stack uninstall runner
+set -e
+if [ -f "/root/uninstall.sh" ]; then
+    exec bash "/root/uninstall.sh" "$@"
+elif [ -f "./uninstall.sh" ]; then
+    exec bash "./uninstall.sh" "$@"
+elif [ -f "/root/install.sh" ]; then
+    exec bash "/root/install.sh" --uninstall "$@"
+elif [ -f "/root/setup.sh" ]; then
+    exec bash "/root/setup.sh" --uninstall "$@"
+else
+    curl -sSL "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/uninstall.sh" | bash -s -- "$@"
+fi
+EOF_VPN_UNINSTALL
+    chmod 755 "$bin_path" 2>/dev/null || true
+}
+

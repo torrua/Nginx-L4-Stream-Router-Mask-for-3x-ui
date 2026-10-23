@@ -3,7 +3,7 @@
 #!/usr/bin/env bash
 #
 # ==============================================================================
-# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v9.6.0 Universal
+# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v9.6.1 Universal
 # Nginx L4 Stream + 3X-UI + Unix Sockets + Native proxy_http_version 2 + 3 Decoys
 # ==============================================================================
 # Архитектура:
@@ -29,7 +29,7 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="v9.6.0"
+SCRIPT_VERSION="v9.6.1"
 
 
 # Checkpoints use stable step IDs and input signatures, independent of UI numbering.
@@ -1027,7 +1027,7 @@ generate_config_template() {
     local target_file="${1:-server-setup.env.example}"
     cat << 'EOF_CONF' > "$target_file"
 # ==============================================================================
-# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v9.6.0 Universal)
+# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v9.6.1 Universal)
 # ==============================================================================
 # Данный файл позволяет выполнять полностью автоматическую установку:
 # ./setup.sh --config server-setup.env --non-interactive --force
@@ -1295,7 +1295,7 @@ MIERU_MTU="1400"
 
 # --- 10. БЕЗОПАСНОСТЬ ХОСТА (HOST SECURITY & SSH HARDENING) ---
 # Включить настройку безопасности хоста (порт SSH, ключи, защита от брутфорса) [y/n]
-ENABLE_HOST_SECURITY="n"
+ENABLE_HOST_SECURITY="y"
 # Пользовательский порт SSH (1024-65535 или текущий 22)
 SSH_PORT="22"
 # Установить и настроить Fail2ban для защиты от брутфорса SSH [y/n]
@@ -1388,6 +1388,7 @@ install_prerequisites() {
         [ufw]="ufw"
         [python3]="python3"
         [mtr]="mtr-tiny"
+        [qrencode]="qrencode"
     )
     for cmd in "${!pkg_map[@]}"; do
         if ! command -v "$cmd" >/dev/null 2>&1; then
@@ -2154,7 +2155,7 @@ reconstruct_arrays_from_vars() {
     MIERU_PASS="${MIERU_PASS:-}"
     MIERU_MTU="${MIERU_MTU:-1400}"
     CF_AUTH_METHOD="${CF_AUTH_METHOD:-1}"
-    _v="${ENABLE_HOST_SECURITY:-n}"; if is_true "$_v"; then ENABLE_HOST_SECURITY="y"; else ENABLE_HOST_SECURITY="n"; fi
+    _v="${ENABLE_HOST_SECURITY:-y}"; if is_true "$_v"; then ENABLE_HOST_SECURITY="y"; else ENABLE_HOST_SECURITY="n"; fi
     SSH_PORT="${SSH_PORT:-${SSH_ACTIVE_PORT:-22}}"
     _v="${ENABLE_FAIL2BAN:-n}"; if is_true "$_v"; then ENABLE_FAIL2BAN="y"; else ENABLE_FAIL2BAN="n"; fi
     _v="${DISABLE_PASSWORD_AUTH:-n}"; if is_true "$_v"; then DISABLE_PASSWORD_AUTH="y"; else DISABLE_PASSWORD_AUTH="n"; fi
@@ -2262,7 +2263,7 @@ save_session_state() {
     local mieru_save="n"
     v="${ENABLE_MIERU:-n}"; is_true "$v" && mieru_save="y"
     local host_security_save="n"
-    v="${ENABLE_HOST_SECURITY:-n}"; is_true "$v" && host_security_save="y"
+    v="${ENABLE_HOST_SECURITY:-y}"; is_true "$v" && host_security_save="y"
     local fail2ban_save="n"
     v="${ENABLE_FAIL2BAN:-n}"; is_true "$v" && fail2ban_save="y"
     local disable_pwd_save="n"
@@ -2943,7 +2944,16 @@ run_uninstall() {
     echo -e "  7. Удаление конфигурационных и рабочих каталогов стека;\n"
 
     if [ "${UNINSTALL_FORCE:-0}" -ne 1 ]; then
-        read -r -p "Вы уверены, что хотите продолжить? [y/N]: " confirm_uninstall
+        local confirm_uninstall=""
+        if [ -e /dev/tty ] && { : </dev/tty; } 2>/dev/null; then
+            read -r -p "Вы уверены, что хотите продолжить? [y/N]: " confirm_uninstall </dev/tty || confirm_uninstall="n"
+        elif [ -t 0 ]; then
+            read -r -p "Вы уверены, что хотите продолжить? [y/N]: " confirm_uninstall || confirm_uninstall="n"
+        else
+            echo -e "${YELLOW}Интерактивный терминал (/dev/tty) недоступен. Для неинтерактивного удаления передайте флаг -y: ${CYAN}curl ... | sudo bash -s -- -y${NC}"
+            return 1
+        fi
+
         if [[ ! "$confirm_uninstall" =~ ^[YyДд1] ]]; then
             echo -e "${YELLOW}Удаление отменено пользователем.${NC}"
             return 0
@@ -2954,7 +2964,12 @@ run_uninstall() {
             echo ""
             echo -e "${CYAN}Управление SSL-сертификатами:${NC}"
             echo -e "  Сохранение сертификатов предотвращает исчерпание недельных лимитов Let's Encrypt при повторной настройке."
-            read -r -p "Удалить выпущенные SSL-сертификаты (/etc/letsencrypt, /etc/ssl/acme, ~/.acme.sh)? [y/N]: " confirm_certs
+            local confirm_certs="n"
+            if [ -e /dev/tty ] && { : </dev/tty; } 2>/dev/null; then
+                read -r -p "Удалить выпущенные SSL-сертификаты (/etc/letsencrypt, /etc/ssl/acme, ~/.acme.sh)? [y/N]: " confirm_certs </dev/tty || confirm_certs="n"
+            elif [ -t 0 ]; then
+                read -r -p "Удалить выпущенные SSL-сертификаты (/etc/letsencrypt, /etc/ssl/acme, ~/.acme.sh)? [y/N]: " confirm_certs || confirm_certs="n"
+            fi
             if [[ "$confirm_certs" =~ ^[YyДд1] ]]; then
                 UNINSTALL_KEEP_CERTS=0
             else
@@ -3393,6 +3408,7 @@ run_uninstall() {
         "${target_root}/usr/local/bin/mieru-cli"
         "${target_root}/usr/local/bin/awg-mgr"
         "${target_root}/usr/local/bin/manage-services"
+        "${target_root}/usr/local/bin/vpn-uninstall"
         "${target_root}/usr/local/bin/update-xray-geo.sh"
     )
     for b in "${bins_to_remove[@]}"; do
@@ -3467,6 +3483,29 @@ run_uninstall() {
     echo -e "Все компоненты стека удалены, правила безопасности и доступ по SSH сохранены.\n"
     return 0
 }
+
+setup_uninstall_command() {
+    local bin_path="/usr/local/bin/vpn-uninstall"
+    mkdir -p /usr/local/bin 2>/dev/null || true
+    cat << 'EOF_VPN_UNINSTALL' > "$bin_path"
+#!/usr/bin/env bash
+# Universal VPN stack uninstall runner
+set -e
+if [ -f "/root/uninstall.sh" ]; then
+    exec bash "/root/uninstall.sh" "$@"
+elif [ -f "./uninstall.sh" ]; then
+    exec bash "./uninstall.sh" "$@"
+elif [ -f "/root/install.sh" ]; then
+    exec bash "/root/install.sh" --uninstall "$@"
+elif [ -f "/root/setup.sh" ]; then
+    exec bash "/root/setup.sh" --uninstall "$@"
+else
+    curl -sSL "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/uninstall.sh" | bash -s -- "$@"
+fi
+EOF_VPN_UNINSTALL
+    chmod 755 "$bin_path" 2>/dev/null || true
+}
+
 #!/usr/bin/env bash
 # ==============================================================================
 #  DEBUG LOG EXPORT & RETRIEVAL ENGINE
@@ -6818,6 +6857,1894 @@ setup_vpn_diagnostics() {
         cp -a "$src_diag/vpn-diagnostics.service" "$svc_file" 2>/dev/null || true
     fi
 
+    # Автономный fallback: развертывание встроенных ресурсов при отсутствии папки diagnostics на сервере
+    if [ ! -f "$diag_dir/index.html" ]; then
+        cat << 'EOF_DIAG_INDEX' > "$diag_dir/index.html"
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="robots" content="noindex,nofollow">
+<title>VPN Network Diagnostics</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1320;--panel:#132135;--panel2:#182b45;--border:#223854;--text:#eef4fc;--muted:#91a7c0;--cyan:#00d2c4;--blue:#7aa7ff;--ok:#5cdb95;--warn:#ffb86c;--danger:#ff6b6b;--mono:ui-monospace,SFMono-Regular,Consolas,monospace}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:radial-gradient(ellipse 90% 45% at 50% -20%,#1e385c 0%,transparent 75%),var(--bg);color:var(--text);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+button,input{font:inherit}a{color:var(--blue);text-decoration:none}a:hover{color:var(--cyan);text-decoration:underline}
+.wrap{width:min(1100px,calc(100% - 36px));margin:auto}
+.head{padding:32px 0 24px;display:flex;align-items:center;justify-content:space-between;gap:16px;border-bottom:1px solid var(--border)}
+.brand{display:flex;align-items:center;gap:12px;font-weight:800;letter-spacing:.03em;font-size:18px}
+.mark{width:38px;height:38px;border-radius:10px;background:#183654;display:grid;place-items:center;color:var(--cyan);font:700 20px var(--mono);box-shadow:0 0 16px rgba(0,210,196,.2)}
+.pill{border:1px solid #2d556e;color:var(--cyan);background:#0e2836;border-radius:100px;padding:5px 12px;font-size:12px;font-weight:600}
+.intro{padding:28px 0 24px}
+.eyebrow{font:700 11px/1.5 var(--mono);letter-spacing:.22em;text-transform:uppercase;color:var(--cyan)}
+h1{font-size:clamp(26px,4vw,44px);line-height:1.15;letter-spacing:-.03em;margin:10px 0 12px;font-weight:800}
+.intro p{margin:0;max-width:680px;font-size:15px;color:var(--muted)}
+.meta{margin-top:20px;display:flex;gap:10px;flex-wrap:wrap}
+.meta>span{display:inline-flex;align-items:center;background:#122338;color:#c4d8ed;padding:6px 12px;border:1px solid var(--border);border-radius:8px;font:13px var(--mono)}
+main{padding:10px 0 50px}
+.panel{background:linear-gradient(145deg,rgba(19,33,53,.9),rgba(15,26,42,.95));border:1px solid var(--border);border-radius:16px;padding:26px;margin-bottom:20px;box-shadow:0 8px 30px rgba(0,0,0,.15)}
+.panel-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:20px}
+.panel h2{margin:0;font-size:19px;font-weight:700;display:flex;align-items:center}
+.panel h2 span{display:inline-grid;place-items:center;margin-right:10px;width:28px;height:28px;border:1px solid #2a4768;border-radius:8px;background:#183452;color:var(--cyan);font:700 13px var(--mono)}
+.hint{font-size:13px;color:var(--muted);margin:5px 0 0}
+.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.metric{background:#0e1a29;border:1px solid #20344d;border-radius:12px;padding:18px 14px;min-width:0}
+.metric-label{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#91a7c0;font-weight:600}
+.metric-value{font-weight:800;font-size:clamp(28px,2.8vw,38px);line-height:1.15;margin:10px 0 2px;font-variant-numeric:tabular-nums;color:#fff}
+.metric-unit{color:var(--muted);font-size:12px}
+.metric-note{color:var(--cyan);font-size:12px;margin-top:6px;min-height:16px}
+.row-actions{margin-top:20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.btn{appearance:none;background:var(--cyan);border:none;color:#041c22;border-radius:9px;padding:12px 22px;font-weight:700;cursor:pointer;min-height:44px;transition:all .15s ease}
+.btn:hover{background:#38f2e5;box-shadow:0 0 14px rgba(0,210,196,.35)}
+.btn:disabled{opacity:.5;cursor:wait;box-shadow:none}
+.btn.secondary{background:transparent;border:1px solid #365373;color:var(--text)}
+.btn.secondary:hover{background:#1b334d}
+.status{color:var(--muted);font-size:13px;min-height:20px}
+.status[data-kind=ok]{color:var(--ok)}
+.status[data-kind=warn]{color:var(--warn)}
+.status[data-kind=error]{color:var(--danger)}
+.fields{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap}
+.field{display:grid;gap:6px;font-size:13px;color:var(--muted)}
+.field input, .field select{width:140px;padding:10px 12px;background:#0d1826;border:1px solid #2e4766;border-radius:9px;color:var(--text);min-height:44px}
+.terminal{margin:18px 0 0;padding:16px;background:#060e19;border:1px solid #243c57;border-radius:10px;color:#d8e8f8;font:12px/1.65 var(--mono);white-space:pre-wrap;overflow:auto;max-height:450px;display:none}
+.terminal.is-visible{display:block}
+.files{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.file{background:#0e1a29;border:1px solid #223752;border-radius:12px;padding:16px 14px;display:flex;flex-direction:column;gap:3px;min-width:0;transition:border-color .15s}
+.file:hover{border-color:var(--cyan);text-decoration:none}
+.file strong{color:var(--text);font-size:18px}
+.file small{font:11px var(--mono);color:var(--muted)}
+.file em{color:var(--cyan);font-size:12px;font-style:normal;margin-top:6px}
+.footer{padding:22px 0 35px;border-top:1px solid var(--border);color:var(--muted);font-size:12px;display:flex;justify-content:space-between;gap:14px}
+@media(max-width:760px){.metrics,.files{grid-template-columns:repeat(2,minmax(0,1fr))}.head{padding-top:20px}.panel{padding:18px}.footer{flex-direction:column}}
+@media(max-width:420px){.metrics,.files{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="head">
+    <div class="brand">
+      <span class="mark" aria-hidden="true">&#x26A1;</span>
+      <span>VPN DIAGNOSTICS</span>
+    </div>
+    <span class="pill">Защищённая сессия</span>
+  </header>
+
+  <section class="intro">
+    <span class="eyebrow">Скорость · Задержка · Маршрутизация ТСПУ</span>
+    <h1>Диагностика сети и качества соединения</h1>
+    <p>Тестирование пропускной способности канала между вашим устройством и VPS, проверка задержки, джиттера и анализ обратного маршрута MTR до вашего провайдера.</p>
+    <div class="meta">
+      <span>Сервер:&nbsp;<strong id="server-meta">localhost</strong></span>
+      <span>Ваш IP:&nbsp;<strong id="client-ip">Определение...</strong></span>
+    </div>
+  </section>
+
+  <main>
+    <!-- Speedtest Section -->
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <h2><span>01</span> Тест скорости канала</h2>
+          <p class="hint">LibreSpeed Core · Генерация трафика на лету (RAM) без износа диска</p>
+        </div>
+        <span class="pill">Без телеметрии</span>
+      </div>
+      <div class="metrics">
+        <div class="metric">
+          <div class="metric-label">&#x2193; Входящая (Download)</div>
+          <div class="metric-value" id="dl-speed">—</div>
+          <div class="metric-unit">Мбит/с</div>
+          <div class="metric-note" id="dl-note"></div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">&#x2191; Исходящая (Upload)</div>
+          <div class="metric-value" id="ul-speed">—</div>
+          <div class="metric-unit">Мбит/с</div>
+          <div class="metric-note" id="ul-note"></div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Пинг (Latency)</div>
+          <div class="metric-value" id="ping-val">—</div>
+          <div class="metric-unit">мс</div>
+          <div class="metric-note"></div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Джиттер (Jitter)</div>
+          <div class="metric-value" id="jitter-val">—</div>
+          <div class="metric-unit">мс</div>
+          <div class="metric-note"></div>
+        </div>
+      </div>
+      <div class="row-actions">
+        <button type="button" class="btn" id="speed-btn">Запустить тест скорости</button>
+        <span class="status" id="speed-status" role="status">Готов к запуску.</span>
+      </div>
+    </section>
+
+    <!-- MTR Section -->
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <h2><span>02</span> Трассировка маршрута (MTR)</h2>
+          <p class="hint">Диагностика сетевого тракта от сервера до вашего IP с замером потерь пакетов на узлах оператора</p>
+        </div>
+      </div>
+      <div class="fields">
+        <label class="field" for="pkt-count">
+          Количество пакетов
+          <select id="pkt-count">
+            <option value="5" selected>5 циклов (~15 сек)</option>
+            <option value="10">10 циклов (~30 сек)</option>
+            <option value="20">20 циклов (~60 сек)</option>
+          </select>
+        </label>
+        <button class="btn" id="mtr-btn" type="button">Запустить MTR</button>
+      </div>
+      <p class="status" id="mtr-status">Опрос узлов начинается после нажатия кнопки.</p>
+      <pre id="mtr-result" class="terminal" tabindex="0" aria-label="Результаты MTR"></pre>
+    </section>
+
+    <!-- On-the-fly Download Stream Files -->
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <h2><span>03</span> Тестовая загрузка потоков (Direct Stream)</h2>
+          <p class="hint">Потоковая генерация байтов на лету в RAM сервера для проверки стабильности длительного скачивания</p>
+        </div>
+      </div>
+      <div class="files">
+        <a class="file" download href="api/st/down?size=15k">
+          <strong>15 КБ</strong>
+          <small>test-15k.bin</small>
+          <em>Скачать поток &#x2197;</em>
+        </a>
+        <a class="file" download href="api/st/down?size=10m">
+          <strong>10 МБ</strong>
+          <small>test-10m.bin</small>
+          <em>Скачать поток &#x2197;</em>
+        </a>
+        <a class="file" download href="api/st/down?size=100m">
+          <strong>100 МБ</strong>
+          <small>test-100m.bin</small>
+          <em>Скачать поток &#x2197;</em>
+        </a>
+        <a class="file" download href="api/st/down?size=1g">
+          <strong>1 ГБ</strong>
+          <small>test-1g.bin</small>
+          <em>Скачать поток &#x2197;</em>
+        </a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>VPN Suite Diagnostics &middot; Автономная утилита</span>
+    <span>Движок: <a href="https://github.com/librespeed/speedtest" target="_blank" rel="noopener noreferrer">LibreSpeed</a> (LGPLv3)</span>
+  </footer>
+</div>
+
+<script src="speedtest.js"></script>
+<script>
+(()=>{
+  'use strict';
+  const byId = id => document.getElementById(id);
+  const speedStatus = byId('speed-status');
+  const speedBtn = byId('speed-btn');
+  let speedtest = null;
+  let speedRunning = false;
+
+  // Set server meta from window.location
+  byId('server-meta').textContent = window.location.hostname || 'VPS';
+
+  // Client IP detection via fast Nginx endpoint
+  async function detectClient(){
+    try {
+      const res = await fetch('api/st/getip', {cache:'no-store'});
+      if (res.ok) {
+        const text = (await res.text()).trim();
+        byId('client-ip').textContent = text || 'Определён';
+      }
+    } catch(e) {
+      byId('client-ip').textContent = 'Доступен';
+    }
+  }
+  detectClient();
+
+  // Speedtest runner
+  speedBtn.addEventListener('click', () => {
+    if (speedRunning) {
+      if (speedtest) speedtest.abort();
+      return;
+    }
+    if (typeof Speedtest !== 'function') {
+      speedStatus.textContent = 'Ошибка загрузки модуля LibreSpeed.';
+      speedStatus.dataset.kind = 'error';
+      return;
+    }
+
+    for (const id of ['dl-speed','ul-speed','ping-val','jitter-val']) byId(id).textContent = '—';
+    for (const id of ['dl-note','ul-note']) byId(id).textContent = '';
+
+    try {
+      speedtest = new Speedtest();
+      speedtest.setParameter('url_dl', 'api/st/down?size=25m');
+      speedtest.setParameter('url_ul', 'api/st/up');
+      speedtest.setParameter('url_ping', 'api/st/ping');
+      speedtest.setParameter('url_getIp', 'api/st/getip');
+      speedtest.setParameter('getIp_ispInfo', false);
+      speedtest.setParameter('telemetry_level', 0);
+
+      speedtest.onupdate = d => {
+        if (d.dlStatus) byId('dl-speed').textContent = d.dlStatus;
+        if (d.ulStatus) byId('ul-speed').textContent = d.ulStatus;
+        if (d.pingStatus) byId('ping-val').textContent = d.pingStatus;
+        if (d.jitterStatus) byId('jitter-val').textContent = d.jitterStatus;
+        byId('dl-note').textContent = d.testState === 1 ? Math.round((Number(d.dlProgress)||0)*100)+'%' : '';
+        byId('ul-note').textContent = d.testState === 3 ? Math.round((Number(d.ulProgress)||0)*100)+'%' : '';
+
+        const phases = {0:'Подготовка...', 1:'Тестирование входящей скорости (Download)...', 2:'Замер задержки (Ping/Jitter)...', 3:'Тестирование исходящей скорости (Upload)...'};
+        if (phases[d.testState]) speedStatus.textContent = phases[d.testState];
+      };
+
+      speedtest.onend = aborted => {
+        speedRunning = false;
+        speedBtn.textContent = 'Запустить тест скорости';
+        byId('dl-note').textContent = '';
+        byId('ul-note').textContent = '';
+        speedStatus.textContent = aborted ? 'Тест остановлен.' : 'Тест успешно завершён!';
+        speedStatus.dataset.kind = aborted ? 'warn' : 'ok';
+        speedtest = null;
+      };
+
+      speedRunning = true;
+      speedBtn.textContent = 'Остановить тест';
+      speedStatus.textContent = 'Инициализация теста...';
+      speedStatus.dataset.kind = '';
+      speedtest.start();
+    } catch(err) {
+      speedRunning = false;
+      speedBtn.textContent = 'Запустить тест скорости';
+      speedtest = null;
+      speedStatus.textContent = 'Ошибка: ' + err.message;
+      speedStatus.dataset.kind = 'error';
+    }
+  });
+
+  // MTR Runner
+  const mtrBtn = byId('mtr-btn');
+  const mtrStatus = byId('mtr-status');
+  const mtrOutput = byId('mtr-result');
+
+  mtrBtn.addEventListener('click', async () => {
+    mtrBtn.disabled = true;
+    mtrStatus.textContent = 'Выполняется трассировка MTR... Пожалуйста, подождите.';
+    mtrStatus.dataset.kind = 'warn';
+    mtrOutput.classList.remove('is-visible');
+    mtrOutput.textContent = '';
+
+    const count = byId('pkt-count').value || '5';
+    try {
+      const res = await fetch('api/mtr', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({count: parseInt(count, 10)})
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        mtrStatus.textContent = `Трассировка MTR завершена (${data.count} циклов до ${data.target}):`;
+        mtrStatus.dataset.kind = 'ok';
+        mtrOutput.textContent = data.output || 'Нет данных трассировки.';
+        mtrOutput.classList.add('is-visible');
+      } else {
+        mtrStatus.textContent = 'Ошибка MTR: ' + (data.error || 'Сбой выполнения.');
+        mtrStatus.dataset.kind = 'error';
+        if (data.output) {
+          mtrOutput.textContent = data.output;
+          mtrOutput.classList.add('is-visible');
+        }
+      }
+    } catch(e) {
+      mtrStatus.textContent = 'Сетевая ошибка при вызове MTR: ' + e.message;
+      mtrStatus.dataset.kind = 'error';
+    } finally {
+      mtrBtn.disabled = false;
+    }
+  });
+})();
+</script>
+</body>
+</html>
+EOF_DIAG_INDEX
+    fi
+    if [ ! -f "$diag_dir/speedtest.js" ]; then
+        cat << 'EOF_DIAG_ST' > "$diag_dir/speedtest.js"
+/*
+	LibreSpeed - Main
+	by Federico Dossena
+	https://github.com/librespeed/speedtest/
+	GNU LGPLv3 License
+*/
+
+/*
+   This is the main interface between your webpage and the speed test.
+   It hides the speed test web worker to the page, and provides many convenient functions to control the test.
+
+   The best way to learn how to use this is to look at the basic example, but here's some documentation.
+
+   To initialize the test, create a new Speedtest object:
+    let s=new Speedtest();
+   Now you can think of this as a finite state machine. These are the states (use getState() to see them):
+   - 0: here you can change the speed test settings (such as test duration) with the setParameter("parameter",value) method. From here you can either start the test using start() (goes to state 3) or you can add multiple test points using addTestPoint(server) or addTestPoints(serverList) (goes to state 1). Additionally, this is the perfect moment to set up callbacks for the onupdate(data) and onend(aborted) events.
+   - 1: here you can add test points. You only need to do this if you want to use multiple test points.
+        A server is defined as an object like this:
+        {
+            name: "User friendly name",
+            server:"http://yourBackend.com/",     <---- URL to your server. You can specify http:// or https://. If your server supports both, just write // without the protocol
+            dlURL:"garbage.php"    <----- path to garbage.php or its replacement on the server
+            ulURL:"empty.php"    <----- path to empty.php or its replacement on the server
+            pingURL:"empty.php"    <----- path to empty.php or its replacement on the server. This is used to ping the server by this selector
+            getIpURL:"getIP.php"    <----- path to getIP.php or its replacement on the server
+        }
+        While in state 1, you can only add test points, you cannot change the test settings. When you're done, use selectServer(callback) to select the test point with the lowest ping. This is asynchronous, when it's done, it will call your callback function and move to state 2. Calling setSelectedServer(server) will manually select a server and move to state 2.
+    - 2: test point selected, ready to start the test. Use start() to begin, this will move to state 3
+    - 3: test running. Here, your onupdate event callback will be called periodically, with data coming from the worker about speed and progress. A data object will be passed to your onupdate function, with the following items:
+            - dlStatus: download speed in Mbit/s
+            - ulStatus: upload speed in Mbit/s
+            - pingStatus: ping in ms
+            - jitterStatus: jitter in ms
+            - dlProgress: progress of the download test as a float 0-1
+            - ulProgress: progress of the upload test as a float 0-1
+            - pingProgress: progress of the ping/jitter test as a float 0-1
+            - testState: state of the test (-1=not started, 0=starting, 1=download test, 2=ping+jitter test, 3=upload test, 4=finished, 5=aborted)
+            - clientIp: IP address of the client performing the test (and optionally ISP and distance)
+        At the end of the test, the onend function will be called, with a boolean specifying whether the test was aborted or if it ended normally.
+        The test can be aborted at any time with abort().
+        At the end of the test, it will move to state 4
+    - 4: test finished. You can run it again by calling start() if you want.
+ */
+
+function Speedtest() {
+  this._serverList = []; //when using multiple points of test, this is a list of test points
+  this._selectedServer = null; //when using multiple points of test, this is the selected server
+  this._settings = {}; //settings for the speed test worker
+  this._state = 0; //0=adding settings, 1=adding servers, 2=server selection done, 3=test running, 4=done
+  console.log(
+    "LibreSpeed by Federico Dossena v6.1.0 - https://github.com/librespeed/speedtest"
+  );
+}
+
+Speedtest.prototype = {
+  constructor: Speedtest,
+  /**
+   * Returns the state of the test: 0=adding settings, 1=adding servers, 2=server selection done, 3=test running, 4=done
+   */
+  getState: function() {
+    return this._state;
+  },
+  /**
+   * Change one of the test settings from their defaults.
+   * - parameter: string with the name of the parameter that you want to set
+   * - value: new value for the parameter
+   *
+   * Invalid values or nonexistant parameters will be ignored by the speed test worker.
+   */
+  setParameter: function(parameter, value) {
+    if (this._state == 3)
+      throw "You cannot change the test settings while running the test";
+    this._settings[parameter] = value;
+    if(parameter === "telemetry_extra"){
+        this._originalExtra=this._settings.telemetry_extra;
+    }
+  },
+  /**
+   * Used internally to check if a server object contains all the required elements.
+   * Also fixes the server URL if needed.
+   */
+  _checkServerDefinition: function(server) {
+    try {
+      if (typeof server.name !== "string")
+        throw "Name string missing from server definition (name)";
+      if (typeof server.server !== "string")
+        throw "Server address string missing from server definition (server)";
+      if (server.server.charAt(server.server.length - 1) != "/")
+        server.server += "/";
+      if (server.server.indexOf("//") == 0)
+        server.server = location.protocol + server.server;
+      if (typeof server.dlURL !== "string")
+        throw "Download URL string missing from server definition (dlURL)";
+      if (typeof server.ulURL !== "string")
+        throw "Upload URL string missing from server definition (ulURL)";
+      if (typeof server.pingURL !== "string")
+        throw "Ping URL string missing from server definition (pingURL)";
+      if (typeof server.getIpURL !== "string")
+        throw "GetIP URL string missing from server definition (getIpURL)";
+    } catch (e) {
+      throw "Invalid server definition";
+    }
+  },
+  /**
+   * Add a test point (multiple points of test)
+   * server: the server to be added as an object. Must contain the following elements:
+   *  {
+   *       name: "User friendly name",
+   *       server:"http://yourBackend.com/",   URL to your server. You can specify http:// or https://. If your server supports both, just write // without the protocol
+   *       dlURL:"garbage.php"   path to garbage.php or its replacement on the server
+   *       ulURL:"empty.php"   path to empty.php or its replacement on the server
+   *       pingURL:"empty.php"   path to empty.php or its replacement on the server. This is used to ping the server by this selector
+   *       getIpURL:"getIP.php"   path to getIP.php or its replacement on the server
+   *   }
+   */
+  addTestPoint: function(server) {
+    this._checkServerDefinition(server);
+    if (this._state == 0) this._state = 1;
+    if (this._state != 1) throw "You can't add a server after server selection";
+    this._settings.mpot = true;
+    this._serverList.push(server);
+  },
+  /**
+   * Same as addTestPoint, but you can pass an array of servers
+   */
+  addTestPoints: function(list) {
+    for (let i = 0; i < list.length; i++) this.addTestPoint(list[i]);
+  },
+  /**
+   * Load a JSON server list from URL (multiple points of test)
+   * url: the url where the server list can be fetched. Must be an array with objects containing the following elements:
+   *  {
+   *       "name": "User friendly name",
+   *       "server":"http://yourBackend.com/",   URL to your server. You can specify http:// or https://. If your server supports both, just write // without the protocol
+   *       "dlURL":"garbage.php"   path to garbage.php or its replacement on the server
+   *       "ulURL":"empty.php"   path to empty.php or its replacement on the server
+   *       "pingURL":"empty.php"   path to empty.php or its replacement on the server. This is used to ping the server by this selector
+   *       "getIpURL":"getIP.php"   path to getIP.php or its replacement on the server
+   *   }
+   * result: callback to be called when the list is loaded correctly. An array with the loaded servers will be passed to this function, or null if it failed
+   */
+  loadServerList: function(url,result) {
+    if (this._state == 0) this._state = 1;
+    if (this._state != 1) throw "You can't add a server after server selection";
+    this._settings.mpot = true;
+    let xhr = new XMLHttpRequest();
+    xhr.onload = function(){
+      try{
+        const servers=JSON.parse(xhr.responseText);
+        for(let i=0;i<servers.length;i++){
+          this._checkServerDefinition(servers[i]);
+        }
+        this.addTestPoints(servers);
+        result(servers);
+      }catch(e){
+        result(null);
+      }
+    }.bind(this);
+    xhr.onerror = function(){result(null);}
+    xhr.open("GET",url);
+    xhr.send();
+  },
+  /**
+   * Returns the selected server (multiple points of test)
+   */
+  getSelectedServer: function() {
+    if (this._state < 2 || this._selectedServer == null)
+      throw "No server is selected";
+    return this._selectedServer;
+  },
+  /**
+   * Manually selects one of the test points (multiple points of test)
+   */
+  setSelectedServer: function(server) {
+    this._checkServerDefinition(server);
+    if (this._state == 3)
+      throw "You can't select a server while the test is running";
+    this._selectedServer = server;
+    this._state = 2;
+  },
+  /**
+   * Automatically selects a server from the list of added test points. The server with the lowest ping will be chosen. (multiple points of test)
+   * The process is asynchronous and the passed result callback function will be called when it's done, then the test can be started.
+   */
+  selectServer: function(result) {
+    if (this._state != 1) {
+      if (this._state == 0) throw "No test points added";
+      if (this._state == 2) throw "Server already selected";
+      if (this._state >= 3)
+        throw "You can't select a server while the test is running";
+    }
+    if (this._selectServerCalled) throw "selectServer already called"; else this._selectServerCalled=true;
+    /*this function goes through a list of servers. For each server, the ping is measured, then the server with the function selected is called with the best server, or null if all the servers were down.
+     */
+    const select = function(serverList, selected) {
+      //pings the specified URL, then calls the function result. Result will receive a parameter which is either the time it took to ping the URL, or -1 if something went wrong.
+      const PING_TIMEOUT = 2000;
+      let USE_PING_TIMEOUT = true; //will be disabled on unsupported browsers
+      if (/MSIE.(\d+\.\d+)/i.test(navigator.userAgent)) {
+        //IE11 doesn't support XHR timeout
+        USE_PING_TIMEOUT = false;
+      }
+      const ping = function(url, rtt) {
+        url += (url.match(/\?/) ? "&" : "?") + "cors=true";
+        let xhr = new XMLHttpRequest();
+        let t = new Date().getTime();
+        xhr.onload = function() {
+          if (xhr.responseText.length == 0) {
+            //we expect an empty response
+            let instspd = new Date().getTime() - t; //rough timing estimate
+            try {
+              //try to get more accurate timing using performance API
+              let p = performance.getEntriesByName(url);
+              p = p[p.length - 1];
+              let d = p.responseStart - p.requestStart;
+              if (d <= 0) d = p.duration;
+              if (d > 0 && d < instspd) instspd = d;
+            } catch (e) {}
+            rtt(instspd);
+          } else rtt(-1);
+        }.bind(this);
+        xhr.onerror = function() {
+          rtt(-1);
+        }.bind(this);
+        xhr.open("GET", url);
+        if (USE_PING_TIMEOUT) {
+          try {
+            xhr.timeout = PING_TIMEOUT;
+            xhr.ontimeout = xhr.onerror;
+          } catch (e) {}
+        }
+        xhr.send();
+      }.bind(this);
+
+      //this function repeatedly pings a server to get a good estimate of the ping. When it's done, it calls the done function without parameters. At the end of the execution, the server will have a new parameter called pingT, which is either the best ping we got from the server or -1 if something went wrong.
+      const PINGS = 3, //up to 3 pings are performed, unless the server is down...
+        SLOW_THRESHOLD = 500; //...or one of the pings is above this threshold
+      const checkServer = function(server, done) {
+        let i = 0;
+        server.pingT = -1;
+        if (server.server.indexOf(location.protocol) == -1) done();
+        else {
+          const nextPing = function() {
+            if (i++ == PINGS) {
+              done();
+              return;
+            }
+            ping(
+              server.server + server.pingURL,
+              function(t) {
+                if (t >= 0) {
+                  if (t < server.pingT || server.pingT == -1) server.pingT = t;
+                  if (t < SLOW_THRESHOLD) nextPing();
+                  else done();
+                } else done();
+              }.bind(this)
+            );
+          }.bind(this);
+          nextPing();
+        }
+      }.bind(this);
+      //check servers in list, one by one
+      let i = 0;
+      const done = function() {
+        let bestServer = null;
+        for (let i = 0; i < serverList.length; i++) {
+          if (
+            serverList[i].pingT != -1 &&
+            (bestServer == null || serverList[i].pingT < bestServer.pingT)
+          )
+            bestServer = serverList[i];
+        }
+        selected(bestServer);
+      }.bind(this);
+      const nextServer = function() {
+        if (i == serverList.length) {
+          done();
+          return;
+        }
+        checkServer(serverList[i++], nextServer);
+      }.bind(this);
+      nextServer();
+    }.bind(this);
+
+    //parallel server selection
+    const CONCURRENCY = 6;
+    let serverLists = [];
+    for (let i = 0; i < CONCURRENCY; i++) {
+      serverLists[i] = [];
+    }
+    for (let i = 0; i < this._serverList.length; i++) {
+      serverLists[i % CONCURRENCY].push(this._serverList[i]);
+    }
+    let completed = 0;
+    let bestServer = null;
+    for (let i = 0; i < CONCURRENCY; i++) {
+      select(
+        serverLists[i],
+        function(server) {
+          if (server != null) {
+            if (bestServer == null || server.pingT < bestServer.pingT)
+              bestServer = server;
+          }
+          completed++;
+          if (completed == CONCURRENCY) {
+            this._selectedServer = bestServer;
+            this._state = 2;
+            if (result) result(bestServer);
+          }
+        }.bind(this)
+      );
+    }
+  },
+  /**
+   * Starts the test.
+   * During the test, the onupdate(data) callback function will be called periodically with data from the worker.
+   * At the end of the test, the onend(aborted) function will be called with a boolean telling you if the test was aborted or if it ended normally.
+   */
+  start: function() {
+    if (this._state == 3) throw "Test already running";
+    this.worker = new Worker("speedtest_worker.js?r=" + Math.random());
+    this.worker.onmessage = function(e) {
+      if (e.data === this._prevData) return;
+      else this._prevData = e.data;
+      const data = JSON.parse(e.data);
+      try {
+        if (this.onupdate) this.onupdate(data);
+      } catch (e) {
+        console.error("Speedtest onupdate event threw exception: " + e);
+      }
+      if (data.testState >= 4) {
+        clearInterval(this.updater);
+        this._state = 4;
+        try {
+          if (this.onend) this.onend(data.testState == 5);
+        } catch (e) {
+          console.error("Speedtest onend event threw exception: " + e);
+        }
+      }
+    }.bind(this);
+    this.updater = setInterval(
+      function() {
+        this.worker.postMessage("status");
+      }.bind(this),
+      200
+    );
+    if (this._state == 1)
+        throw "When using multiple points of test, you must call selectServer before starting the test";
+    if (this._state == 2) {
+      this._settings.url_dl =
+        this._selectedServer.server + this._selectedServer.dlURL;
+      this._settings.url_ul =
+        this._selectedServer.server + this._selectedServer.ulURL;
+      this._settings.url_ping =
+        this._selectedServer.server + this._selectedServer.pingURL;
+      this._settings.url_getIp =
+        this._selectedServer.server + this._selectedServer.getIpURL;
+      if (typeof this._originalExtra !== "undefined") {
+        this._settings.telemetry_extra = JSON.stringify({
+          server: this._selectedServer.name,
+          extra: this._originalExtra
+        });
+      } else
+        this._settings.telemetry_extra = JSON.stringify({
+          server: this._selectedServer.name
+        });
+    }
+    this._state = 3;
+    this.worker.postMessage("start " + JSON.stringify(this._settings));
+  },
+  /**
+   * Aborts the test while it's running.
+   */
+  abort: function() {
+    if (this._state < 3) throw "You cannot abort a test that's not started yet";
+    if (this._state < 4) this.worker.postMessage("abort");
+  }
+};
+EOF_DIAG_ST
+    fi
+    if [ ! -f "$diag_dir/speedtest_worker.js" ]; then
+        cat << 'EOF_DIAG_STW' > "$diag_dir/speedtest_worker.js"
+/*
+	LibreSpeed - Worker
+	by Federico Dossena
+	https://github.com/librespeed/speedtest/
+	GNU LGPLv3 License
+*/
+
+// data reported to main thread
+let testState = -1; // -1=not started, 0=starting, 1=download test, 2=ping+jitter test, 3=upload test, 4=finished, 5=abort
+let dlStatus = ""; // download speed in megabit/s with 2 decimal digits
+let ulStatus = ""; // upload speed in megabit/s with 2 decimal digits
+let pingStatus = ""; // ping in milliseconds with 2 decimal digits
+let jitterStatus = ""; // jitter in milliseconds with 2 decimal digits
+let clientIp = ""; // client's IP address as reported by getIP.php
+let dlProgress = 0; //progress of download test 0-1
+let ulProgress = 0; //progress of upload test 0-1
+let pingProgress = 0; //progress of ping+jitter test 0-1
+let testId = null; //test ID (sent back by telemetry if used, null otherwise)
+
+let log = ""; //telemetry log
+function tlog(s) {
+	if (settings.telemetry_level >= 2) {
+		log += Date.now() + ": " + s + "\n";
+	}
+}
+function tverb(s) {
+	if (settings.telemetry_level >= 3) {
+		log += Date.now() + ": " + s + "\n";
+	}
+}
+function twarn(s) {
+	if (settings.telemetry_level >= 2) {
+		log += Date.now() + " WARN: " + s + "\n";
+	}
+	console.warn(s);
+}
+
+// test settings. can be overridden by sending specific values with the start command
+let settings = {
+	mpot: false, //set to true when in MPOT mode
+	test_order: "IP_D_U", //order in which tests will be performed as a string. D=Download, U=Upload, P=Ping+Jitter, I=IP, _=1 second delay
+	time_ul_max: 15, // max duration of upload test in seconds
+	time_dl_max: 15, // max duration of download test in seconds
+	time_auto: true, // if set to true, tests will take less time on faster connections
+	time_ulGraceTime: 3, //time to wait in seconds before actually measuring ul speed (wait for buffers to fill)
+	time_dlGraceTime: 1.5, //time to wait in seconds before actually measuring dl speed (wait for TCP window to increase)
+	count_ping: 10, // number of pings to perform in ping test
+	url_dl: "backend/garbage.php", // path to a large file or garbage.php, used for download test. must be relative to this js file
+	url_ul: "backend/empty.php", // path to an empty file, used for upload test. must be relative to this js file
+	url_ping: "backend/empty.php", // path to an empty file, used for ping test. must be relative to this js file
+	url_getIp: "backend/getIP.php", // path to getIP.php relative to this js file, or a similar thing that outputs the client's ip
+	getIp_ispInfo: true, //if set to true, the server will include ISP info with the IP address
+	getIp_ispInfo_distance: "km", //km or mi=estimate distance from server in km/mi; set to false to disable distance estimation. getIp_ispInfo must be enabled in order for this to work
+	xhr_dlMultistream: 6, // number of download streams to use (can be different if enable_quirks is active)
+	xhr_ulMultistream: 3, // number of upload streams to use (can be different if enable_quirks is active)
+	xhr_multistreamDelay: 300, //how much concurrent requests should be delayed
+	xhr_ignoreErrors: 1, // 0=fail on errors, 1=attempt to restart a stream if it fails, 2=ignore all errors
+	xhr_dlUseBlob: false, // if set to true, it reduces ram usage but uses the hard drive (useful with large garbagePhp_chunkSize and/or high xhr_dlMultistream)
+	xhr_ul_blob_megabytes: 20, //size in megabytes of the upload blobs sent in the upload test (forced to 4 on chrome mobile)
+	garbagePhp_chunkSize: 100, // size of chunks sent by garbage.php (can be different if enable_quirks is active)
+	enable_quirks: true, // enable quirks for specific browsers. currently it overrides settings to optimize for specific browsers, unless they are already being overridden with the start command
+	ping_allowPerformanceApi: true, // if enabled, the ping test will attempt to calculate the ping more precisely using the Performance API. Currently works perfectly in Chrome, badly in Edge, and not at all in Firefox. If Performance API is not supported or the result is obviously wrong, a fallback is provided.
+	overheadCompensationFactor: 1.06, //can be changed to compensate for transport overhead. (see doc.md for some other values)
+	useMebibits: false, //if set to true, speed will be reported in mebibits/s instead of megabits/s
+	telemetry_level: 0, // 0=disabled, 1=basic (results only), 2=full (results and timing) 3=debug (results+log)
+	url_telemetry: "results/telemetry.php", // path to the script that adds telemetry data to the database
+	telemetry_extra: "", //extra data that can be passed to the telemetry through the settings
+    forceIE11Workaround: false //when set to true, it will force the IE11 upload test on all browsers. Debug only
+};
+
+let xhr = null; // array of currently active xhr requests
+let interval = null; // timer used in tests
+let test_pointer = 0; //pointer to the next test to run inside settings.test_order
+
+/*
+  this function is used on URLs passed in the settings to determine whether we need a ? or an & as a separator
+*/
+function url_sep(url) {
+	return url.match(/\?/) ? "&" : "?";
+}
+
+/*
+	listener for commands from main thread to this worker.
+	commands:
+	-status: returns the current status as a JSON string containing testState, dlStatus, ulStatus, pingStatus, clientIp, jitterStatus, dlProgress, ulProgress, pingProgress
+	-abort: aborts the current test
+	-start: starts the test. optionally, settings can be passed as JSON.
+		example: start {"time_ul_max":"10", "time_dl_max":"10", "count_ping":"50"}
+*/
+this.addEventListener("message", function(e) {
+	const params = e.data.split(" ");
+	if (params[0] === "status") {
+		// return status
+		postMessage(
+			JSON.stringify({
+				testState: testState,
+				dlStatus: dlStatus,
+				ulStatus: ulStatus,
+				pingStatus: pingStatus,
+				clientIp: clientIp,
+				jitterStatus: jitterStatus,
+				dlProgress: dlProgress,
+				ulProgress: ulProgress,
+				pingProgress: pingProgress,
+				testId: testId
+			})
+		);
+	}
+	if (params[0] === "start" && testState === -1) {
+		// start new test
+		testState = 0;
+		try {
+			// parse settings, if present
+			let s = {};
+			try {
+				const ss = e.data.substring(5);
+				if (ss) s = JSON.parse(ss);
+			} catch (e) {
+				twarn("Error parsing custom settings JSON. Please check your syntax");
+			}
+			//copy custom settings
+			for (let key in s) {
+				if (typeof settings[key] !== "undefined") settings[key] = s[key];
+				else twarn("Unknown setting ignored: " + key);
+			}
+			const ua = navigator.userAgent;
+			// quirks for specific browsers. apply only if not overridden. more may be added in future releases
+			if (settings.enable_quirks || (typeof s.enable_quirks !== "undefined" && s.enable_quirks)) {
+				if (/Firefox.(\d+\.\d+)/i.test(ua)) {
+					if (typeof s.ping_allowPerformanceApi === "undefined") {
+						// ff performance API sucks
+						settings.ping_allowPerformanceApi = false;
+					}
+				}
+				if (/Edge.(\d+\.\d+)/i.test(ua)) {
+					if (typeof s.xhr_dlMultistream === "undefined") {
+						// edge more precise with 3 download streams
+						settings.xhr_dlMultistream = 3;
+					}
+				}
+				if (/Chrome.(\d+)/i.test(ua) && !!self.fetch) {
+					if (typeof s.xhr_dlMultistream === "undefined") {
+						// chrome more precise with 5 streams
+						settings.xhr_dlMultistream = 5;
+					}
+				}
+			}
+			if (/Edge.(\d+\.\d+)/i.test(ua)) {
+				//Edge 15 introduced a bug that causes onprogress events to not get fired, we have to use the "small chunks" workaround that reduces accuracy
+				settings.forceIE11Workaround = true;
+			}
+			if (/PlayStation 4.(\d+\.\d+)/i.test(ua)) {
+				//PS4 browser has the same bug as IE11/Edge
+				settings.forceIE11Workaround = true;
+			}
+			if (/Chrome.(\d+)/i.test(ua) && /Android|iPhone|iPad|iPod|Windows Phone/i.test(ua)) {
+				//cheap af
+				//Chrome mobile introduced a limitation somewhere around version 65, we have to limit XHR upload size to 4 megabytes
+				settings.xhr_ul_blob_megabytes = 4;
+			}
+			if (/^((?!chrome|android|crios|fxios).)*safari/i.test(ua)) {
+				//Safari also needs the IE11 workaround but only for the MPOT version
+				settings.forceIE11Workaround = true;
+			}
+			//telemetry_level has to be parsed and not just copied
+			if (typeof s.telemetry_level !== "undefined") settings.telemetry_level = s.telemetry_level === "basic" ? 1 : s.telemetry_level === "full" ? 2 : s.telemetry_level === "debug" ? 3 : 0; // telemetry level
+			//transform test_order to uppercase, just in case
+			settings.test_order = settings.test_order.toUpperCase();
+		} catch (e) {
+			twarn("Possible error in custom test settings. Some settings might not have been applied. Exception: " + e);
+		}
+		// run the tests
+		tverb(JSON.stringify(settings));
+		test_pointer = 0;
+		let iRun = false,
+			dRun = false,
+			uRun = false,
+			pRun = false;
+		const runNextTest = function() {
+			if (testState == 5) return;
+			if (test_pointer >= settings.test_order.length) {
+				//test is finished
+				if (settings.telemetry_level > 0)
+					sendTelemetry(function(id) {
+						testState = 4;
+						if (id != null) testId = id;
+					});
+				else testState = 4;
+				return;
+			}
+			switch (settings.test_order.charAt(test_pointer)) {
+				case "I":
+					{
+						test_pointer++;
+						if (iRun) {
+							runNextTest();
+							return;
+						} else iRun = true;
+						getIp(runNextTest);
+					}
+					break;
+				case "D":
+					{
+						test_pointer++;
+						if (dRun) {
+							runNextTest();
+							return;
+						} else dRun = true;
+						testState = 1;
+						dlTest(runNextTest);
+					}
+					break;
+				case "U":
+					{
+						test_pointer++;
+						if (uRun) {
+							runNextTest();
+							return;
+						} else uRun = true;
+						testState = 3;
+						ulTest(runNextTest);
+					}
+					break;
+				case "P":
+					{
+						test_pointer++;
+						if (pRun) {
+							runNextTest();
+							return;
+						} else pRun = true;
+						testState = 2;
+						pingTest(runNextTest);
+					}
+					break;
+				case "_":
+					{
+						test_pointer++;
+						setTimeout(runNextTest, 1000);
+					}
+					break;
+				default:
+					test_pointer++;
+			}
+		};
+		runNextTest();
+	}
+	if (params[0] === "abort") {
+		// abort command
+        if (testState >= 4) return;
+		tlog("manually aborted");
+		clearRequests(); // stop all xhr activity
+		runNextTest = null;
+		if (interval) clearInterval(interval); // clear timer if present
+		if (settings.telemetry_level > 1) sendTelemetry(function() {});
+		testState = 5; //set test as aborted
+		dlStatus = "";
+		ulStatus = "";
+		pingStatus = "";
+		jitterStatus = "";
+        clientIp = "";
+		dlProgress = 0;
+		ulProgress = 0;
+		pingProgress = 0;
+	}
+});
+// stops all XHR activity, aggressively
+function clearRequests() {
+	tverb("stopping pending XHRs");
+	if (xhr) {
+		for (let i = 0; i < xhr.length; i++) {
+			try {
+				xhr[i].onprogress = null;
+				xhr[i].onload = null;
+				xhr[i].onerror = null;
+			} catch (e) {}
+			try {
+				xhr[i].upload.onprogress = null;
+				xhr[i].upload.onload = null;
+				xhr[i].upload.onerror = null;
+			} catch (e) {}
+			try {
+				xhr[i].abort();
+			} catch (e) {}
+			try {
+				delete xhr[i];
+			} catch (e) {}
+		}
+		xhr = null;
+	}
+}
+// gets client's IP using url_getIp, then calls the done function
+let ipCalled = false; // used to prevent multiple accidental calls to getIp
+let ispInfo = ""; //used for telemetry
+function getIp(done) {
+	tverb("getIp");
+	if (ipCalled) return;
+	else ipCalled = true; // getIp already called?
+	let startT = new Date().getTime();
+	xhr = new XMLHttpRequest();
+	xhr.onload = function() {
+		tlog("IP: " + xhr.responseText + ", took " + (new Date().getTime() - startT) + "ms");
+		try {
+			const data = JSON.parse(xhr.responseText);
+			clientIp = data.processedString;
+			ispInfo = data.rawIspInfo;
+		} catch (e) {
+			clientIp = xhr.responseText;
+			ispInfo = "";
+		}
+		done();
+	};
+	xhr.onerror = function() {
+		tlog("getIp failed, took " + (new Date().getTime() - startT) + "ms");
+		done();
+	};
+	xhr.open("GET", settings.url_getIp + url_sep(settings.url_getIp) + (settings.mpot ? "cors=true&" : "") + (settings.getIp_ispInfo ? "isp=true" + (settings.getIp_ispInfo_distance ? "&distance=" + settings.getIp_ispInfo_distance + "&" : "&") : "&") + "r=" + Math.random(), true);
+	xhr.send();
+}
+// download test, calls done function when it's over
+let dlCalled = false; // used to prevent multiple accidental calls to dlTest
+function dlTest(done) {
+	tverb("dlTest");
+	if (dlCalled) return;
+	else dlCalled = true; // dlTest already called?
+	let totLoaded = 0.0, // total number of loaded bytes
+		startT = new Date().getTime(), // timestamp when test was started
+		bonusT = 0, //how many milliseconds the test has been shortened by (higher on faster connections)
+		graceTimeDone = false, //set to true after the grace time is past
+		failed = false; // set to true if a stream fails
+	xhr = [];
+	// function to create a download stream. streams are slightly delayed so that they will not end at the same time
+	const testStream = function(i, delay) {
+		setTimeout(
+			function() {
+				if (testState !== 1) return; // delayed stream ended up starting after the end of the download test
+				tverb("dl test stream started " + i + " " + delay);
+				let prevLoaded = 0; // number of bytes loaded last time onprogress was called
+				let x = new XMLHttpRequest();
+				xhr[i] = x;
+				xhr[i].onprogress = function(event) {
+					tverb("dl stream progress event " + i + " " + event.loaded);
+					if (testState !== 1) {
+						try {
+							x.abort();
+						} catch (e) {}
+					} // just in case this XHR is still running after the download test
+					// progress event, add number of new loaded bytes to totLoaded
+					const loadDiff = event.loaded <= 0 ? 0 : event.loaded - prevLoaded;
+					if (isNaN(loadDiff) || !isFinite(loadDiff) || loadDiff < 0) return; // just in case
+					totLoaded += loadDiff;
+					prevLoaded = event.loaded;
+				}.bind(this);
+				xhr[i].onload = function() {
+					// the large file has been loaded entirely, start again
+					tverb("dl stream finished " + i);
+					try {
+						xhr[i].abort();
+					} catch (e) {} // reset the stream data to empty ram
+					testStream(i, 0);
+				}.bind(this);
+				xhr[i].onerror = function() {
+					// error
+					tverb("dl stream failed " + i);
+					if (settings.xhr_ignoreErrors === 0) failed = true; //abort
+					try {
+						xhr[i].abort();
+					} catch (e) {}
+					delete xhr[i];
+					if (settings.xhr_ignoreErrors === 1) testStream(i, 0); //restart stream
+				}.bind(this);
+				// send xhr
+				try {
+					if (settings.xhr_dlUseBlob) xhr[i].responseType = "blob";
+					else xhr[i].responseType = "arraybuffer";
+				} catch (e) {}
+				xhr[i].open("GET", settings.url_dl + url_sep(settings.url_dl) + (settings.mpot ? "cors=true&" : "") + "r=" + Math.random() + "&ckSize=" + settings.garbagePhp_chunkSize, true); // random string to prevent caching
+				xhr[i].send();
+			}.bind(this),
+			1 + delay
+		);
+	}.bind(this);
+	// open streams
+	for (let i = 0; i < settings.xhr_dlMultistream; i++) {
+		testStream(i, settings.xhr_multistreamDelay * i);
+	}
+	// every 200ms, update dlStatus
+	interval = setInterval(
+		function() {
+			tverb("DL: " + dlStatus + (graceTimeDone ? "" : " (in grace time)"));
+			const t = new Date().getTime() - startT;
+			if (graceTimeDone) dlProgress = (t + bonusT) / (settings.time_dl_max * 1000);
+			if (t < 200) return;
+			if (!graceTimeDone) {
+				if (t > 1000 * settings.time_dlGraceTime) {
+					if (totLoaded > 0) {
+						// if the connection is so slow that we didn't get a single chunk yet, do not reset
+						startT = new Date().getTime();
+						bonusT = 0;
+						totLoaded = 0.0;
+					}
+					graceTimeDone = true;
+				}
+			} else {
+				const speed = totLoaded / (t / 1000.0);
+				if (settings.time_auto) {
+					//decide how much to shorten the test. Every 200ms, the test is shortened by the bonusT calculated here
+					const bonus = (5.0 * speed) / 100000;
+					bonusT += bonus > 400 ? 400 : bonus;
+				}
+				//update status
+				dlStatus = ((speed * 8 * settings.overheadCompensationFactor) / (settings.useMebibits ? 1048576 : 1000000)).toFixed(2); // speed is multiplied by 8 to go from bytes to bits, overhead compensation is applied, then everything is divided by 1048576 or 1000000 to go to megabits/mebibits
+				if ((t + bonusT) / 1000.0 > settings.time_dl_max || failed) {
+					// test is over, stop streams and timer
+					if (failed || isNaN(dlStatus)) dlStatus = "Fail";
+					clearRequests();
+					clearInterval(interval);
+					dlProgress = 1;
+					tlog("dlTest: " + dlStatus + ", took " + (new Date().getTime() - startT) + "ms");
+					done();
+				}
+			}
+		}.bind(this),
+		200
+	);
+}
+// upload test, calls done function when it's over
+let ulCalled = false; // used to prevent multiple accidental calls to ulTest
+function ulTest(done) {
+	tverb("ulTest");
+	if (ulCalled) return;
+	else ulCalled = true; // ulTest already called?
+	// garbage data for upload test
+	let r = new ArrayBuffer(1048576);
+	const maxInt = Math.pow(2, 32) - 1;
+	try {
+		r = new Uint32Array(r);
+		for (let i = 0; i < r.length; i++) r[i] = Math.random() * maxInt;
+	} catch (e) {}
+	let req = [];
+	let reqsmall = [];
+	for (let i = 0; i < settings.xhr_ul_blob_megabytes; i++) req.push(r);
+	req = new Blob(req);
+	r = new ArrayBuffer(262144);
+	try {
+		r = new Uint32Array(r);
+		for (let i = 0; i < r.length; i++) r[i] = Math.random() * maxInt;
+	} catch (e) {}
+	reqsmall.push(r);
+	reqsmall = new Blob(reqsmall);
+	const testFunction = function() {
+		let totLoaded = 0.0, // total number of transmitted bytes
+			startT = new Date().getTime(), // timestamp when test was started
+			bonusT = 0, //how many milliseconds the test has been shortened by (higher on faster connections)
+			graceTimeDone = false, //set to true after the grace time is past
+			failed = false; // set to true if a stream fails
+		xhr = [];
+		// function to create an upload stream. streams are slightly delayed so that they will not end at the same time
+		const testStream = function(i, delay) {
+			setTimeout(
+				function() {
+					if (testState !== 3) return; // delayed stream ended up starting after the end of the upload test
+					tverb("ul test stream started " + i + " " + delay);
+					let prevLoaded = 0; // number of bytes transmitted last time onprogress was called
+					let x = new XMLHttpRequest();
+					xhr[i] = x;
+					let ie11workaround;
+					if (settings.forceIE11Workaround) ie11workaround = true;
+					else {
+						try {
+							xhr[i].upload.onprogress;
+							ie11workaround = false;
+						} catch (e) {
+							ie11workaround = true;
+						}
+					}
+					if (ie11workaround) {
+						// IE11 workaround: xhr.upload does not work properly, therefore we send a bunch of small 256k requests and use the onload event as progress. This is not precise, especially on fast connections
+						xhr[i].onload = xhr[i].onerror = function() {
+							tverb("ul stream progress event (ie11wa)");
+							totLoaded += reqsmall.size;
+							testStream(i, 0);
+						};
+						xhr[i].open("POST", settings.url_ul + url_sep(settings.url_ul) + (settings.mpot ? "cors=true&" : "") + "r=" + Math.random(), true); // random string to prevent caching
+						try {
+							xhr[i].setRequestHeader("Content-Encoding", "identity"); // disable compression (some browsers may refuse it, but data is incompressible anyway)
+						} catch (e) {}
+						//No Content-Type header in MPOT branch because it triggers bugs in some browsers
+						xhr[i].send(reqsmall);
+					} else {
+						// REGULAR version, no workaround
+						xhr[i].upload.onprogress = function(event) {
+							tverb("ul stream progress event " + i + " " + event.loaded);
+							if (testState !== 3) {
+								try {
+									x.abort();
+								} catch (e) {}
+							} // just in case this XHR is still running after the upload test
+							// progress event, add number of new loaded bytes to totLoaded
+							const loadDiff = event.loaded <= 0 ? 0 : event.loaded - prevLoaded;
+							if (isNaN(loadDiff) || !isFinite(loadDiff) || loadDiff < 0) return; // just in case
+							totLoaded += loadDiff;
+							prevLoaded = event.loaded;
+						}.bind(this);
+						xhr[i].upload.onload = function() {
+							// this stream sent all the garbage data, start again
+							tverb("ul stream finished " + i);
+							testStream(i, 0);
+						}.bind(this);
+						xhr[i].upload.onerror = function() {
+							tverb("ul stream failed " + i);
+							if (settings.xhr_ignoreErrors === 0) failed = true; //abort
+							try {
+								xhr[i].abort();
+							} catch (e) {}
+							delete xhr[i];
+							if (settings.xhr_ignoreErrors === 1) testStream(i, 0); //restart stream
+						}.bind(this);
+						// send xhr
+						xhr[i].open("POST", settings.url_ul + url_sep(settings.url_ul) + (settings.mpot ? "cors=true&" : "") + "r=" + Math.random(), true); // random string to prevent caching
+						try {
+							xhr[i].setRequestHeader("Content-Encoding", "identity"); // disable compression (some browsers may refuse it, but data is incompressible anyway)
+						} catch (e) {}
+						//No Content-Type header in MPOT branch because it triggers bugs in some browsers
+						xhr[i].send(req);
+					}
+				}.bind(this),
+				delay
+			);
+		}.bind(this);
+		// open streams
+		for (let i = 0; i < settings.xhr_ulMultistream; i++) {
+			testStream(i, settings.xhr_multistreamDelay * i);
+		}
+		// every 200ms, update ulStatus
+		interval = setInterval(
+			function() {
+				tverb("UL: " + ulStatus + (graceTimeDone ? "" : " (in grace time)"));
+				const t = new Date().getTime() - startT;
+				if (graceTimeDone) ulProgress = (t + bonusT) / (settings.time_ul_max * 1000);
+				if (t < 200) return;
+				if (!graceTimeDone) {
+					if (t > 1000 * settings.time_ulGraceTime) {
+						if (totLoaded > 0) {
+							// if the connection is so slow that we didn't get a single chunk yet, do not reset
+							startT = new Date().getTime();
+							bonusT = 0;
+							totLoaded = 0.0;
+						}
+						graceTimeDone = true;
+					}
+				} else {
+					const speed = totLoaded / (t / 1000.0);
+					if (settings.time_auto) {
+						//decide how much to shorten the test. Every 200ms, the test is shortened by the bonusT calculated here
+						const bonus = (5.0 * speed) / 100000;
+						bonusT += bonus > 400 ? 400 : bonus;
+					}
+					//update status
+					ulStatus = ((speed * 8 * settings.overheadCompensationFactor) / (settings.useMebibits ? 1048576 : 1000000)).toFixed(2); // speed is multiplied by 8 to go from bytes to bits, overhead compensation is applied, then everything is divided by 1048576 or 1000000 to go to megabits/mebibits
+					if ((t + bonusT) / 1000.0 > settings.time_ul_max || failed) {
+						// test is over, stop streams and timer
+						if (failed || isNaN(ulStatus)) ulStatus = "Fail";
+						clearRequests();
+						clearInterval(interval);
+						ulProgress = 1;
+						tlog("ulTest: " + ulStatus + ", took " + (new Date().getTime() - startT) + "ms");
+						done();
+					}
+				}
+			}.bind(this),
+			200
+		);
+	}.bind(this);
+	if (settings.mpot) {
+		tverb("Sending POST request before performing upload test");
+		xhr = [];
+		xhr[0] = new XMLHttpRequest();
+		xhr[0].onload = xhr[0].onerror = function() {
+			tverb("POST request sent, starting upload test");
+			testFunction();
+		}.bind(this);
+		xhr[0].open("POST", settings.url_ul);
+		xhr[0].send();
+	} else testFunction();
+}
+// ping+jitter test, function done is called when it's over
+let ptCalled = false; // used to prevent multiple accidental calls to pingTest
+function pingTest(done) {
+	tverb("pingTest");
+	if (ptCalled) return;
+	else ptCalled = true; // pingTest already called?
+	const startT = new Date().getTime(); //when the test was started
+	let prevT = null; // last time a pong was received
+	let ping = 0.0; // current ping value
+	let jitter = 0.0; // current jitter value
+	let i = 0; // counter of pongs received
+	let prevInstspd = 0; // last ping time, used for jitter calculation
+	xhr = [];
+	// ping function
+	const doPing = function() {
+		tverb("ping");
+		pingProgress = i / settings.count_ping;
+		prevT = new Date().getTime();
+		xhr[0] = new XMLHttpRequest();
+		xhr[0].onload = function() {
+			// pong
+			tverb("pong");
+			if (i === 0) {
+				prevT = new Date().getTime(); // first pong
+			} else {
+				let instspd = new Date().getTime() - prevT;
+				if (settings.ping_allowPerformanceApi) {
+					try {
+						//try to get accurate performance timing using performance api
+						let p = performance.getEntries();
+						p = p[p.length - 1];
+						let d = p.responseStart - p.requestStart;
+						if (d <= 0) d = p.duration;
+						if (d > 0 && d < instspd) instspd = d;
+					} catch (e) {
+						//if not possible, keep the estimate
+						tverb("Performance API not supported, using estimate");
+					}
+				}
+				//noticed that some browsers randomly have 0ms ping
+				if (instspd < 1) instspd = prevInstspd;
+				if (instspd < 1) instspd = 1;
+				const instjitter = Math.abs(instspd - prevInstspd);
+				if (i === 1) ping = instspd;
+				/* first ping, can't tell jitter yet*/ else {
+					if (instspd < ping) ping = instspd; // update ping, if the instant ping is lower
+					if (i === 2) jitter = instjitter;
+					//discard the first jitter measurement because it might be much higher than it should be
+					else jitter = instjitter > jitter ? jitter * 0.3 + instjitter * 0.7 : jitter * 0.8 + instjitter * 0.2; // update jitter, weighted average. spikes in ping values are given more weight.
+				}
+				prevInstspd = instspd;
+			}
+			pingStatus = ping.toFixed(2);
+			jitterStatus = jitter.toFixed(2);
+			i++;
+			tverb("ping: " + pingStatus + " jitter: " + jitterStatus);
+			if (i < settings.count_ping) doPing();
+			else {
+				// more pings to do?
+				pingProgress = 1;
+				tlog("ping: " + pingStatus + " jitter: " + jitterStatus + ", took " + (new Date().getTime() - startT) + "ms");
+				done();
+			}
+		}.bind(this);
+		xhr[0].onerror = function() {
+			// a ping failed, cancel test
+			tverb("ping failed");
+			if (settings.xhr_ignoreErrors === 0) {
+				//abort
+				pingStatus = "Fail";
+				jitterStatus = "Fail";
+				clearRequests();
+				tlog("ping test failed, took " + (new Date().getTime() - startT) + "ms");
+				pingProgress = 1;
+				done();
+			}
+			if (settings.xhr_ignoreErrors === 1) doPing(); //retry ping
+			if (settings.xhr_ignoreErrors === 2) {
+				//ignore failed ping
+				i++;
+				if (i < settings.count_ping) doPing();
+				else {
+					// more pings to do?
+					pingProgress = 1;
+					tlog("ping: " + pingStatus + " jitter: " + jitterStatus + ", took " + (new Date().getTime() - startT) + "ms");
+					done();
+				}
+			}
+		}.bind(this);
+		// send xhr
+		xhr[0].open("GET", settings.url_ping + url_sep(settings.url_ping) + (settings.mpot ? "cors=true&" : "") + "r=" + Math.random(), true); // random string to prevent caching
+		xhr[0].send();
+	}.bind(this);
+	doPing(); // start first ping
+}
+// telemetry
+function sendTelemetry(done) {
+	if (settings.telemetry_level < 1) return;
+	xhr = new XMLHttpRequest();
+	xhr.onload = function() {
+		try {
+			const parts = xhr.responseText.split(" ");
+			if (parts[0] == "id") {
+				try {
+					let id = parts[1];
+					done(id);
+				} catch (e) {
+					done(null);
+				}
+			} else done(null);
+		} catch (e) {
+			done(null);
+		}
+	};
+	xhr.onerror = function() {
+		console.log("TELEMETRY ERROR " + xhr.status);
+		done(null);
+	};
+	xhr.open("POST", settings.url_telemetry + url_sep(settings.url_telemetry) + (settings.mpot ? "cors=true&" : "") + "r=" + Math.random(), true);
+	const telemetryIspInfo = {
+		processedString: clientIp,
+		rawIspInfo: typeof ispInfo === "object" ? ispInfo : ""
+	};
+	try {
+		const fd = new FormData();
+		fd.append("ispinfo", JSON.stringify(telemetryIspInfo));
+		fd.append("dl", dlStatus);
+		fd.append("ul", ulStatus);
+		fd.append("ping", pingStatus);
+		fd.append("jitter", jitterStatus);
+		fd.append("log", settings.telemetry_level > 1 ? log : "");
+		fd.append("extra", settings.telemetry_extra);
+		xhr.send(fd);
+	} catch (ex) {
+		const postData = "extra=" + encodeURIComponent(settings.telemetry_extra) + "&ispinfo=" + encodeURIComponent(JSON.stringify(telemetryIspInfo)) + "&dl=" + encodeURIComponent(dlStatus) + "&ul=" + encodeURIComponent(ulStatus) + "&ping=" + encodeURIComponent(pingStatus) + "&jitter=" + encodeURIComponent(jitterStatus) + "&log=" + encodeURIComponent(settings.telemetry_level > 1 ? log : "");
+		xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+		xhr.send(postData);
+	}
+}
+EOF_DIAG_STW
+    fi
+    if [ ! -f "$bin_dir/mtr-backend.py" ]; then
+        cat << 'EOF_DIAG_MTR' > "$bin_dir/mtr-backend.py"
+#!/usr/bin/env python3
+"""
+VPN Diagnostics and MTR Backend
+High-performance, secure backend for network diagnostics, LibreSpeed and MTR.
+Communicates via Unix domain socket with Nginx reverse proxy.
+Hardened according to RELIABILITY_PLAN T18-T20:
+- Bounded rate limiting with automatic pruning to prevent memory exhaustion
+- Concurrency limiting via semaphores (global & per-client)
+- Strict IP validation: loopback, private, link-local, multicast, reserved and IPv4-mapped bypass prevention
+- Child process lifecycle tracking and guaranteed termination on shutdown
+"""
+
+import argparse
+import ipaddress
+import json
+import logging
+import os
+import re
+import signal
+import socket
+import socketserver
+import subprocess
+import sys
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlparse
+
+# --- Constants ---
+MAX_PACKET_COUNT = 100
+MIN_PACKET_COUNT = 1
+DEFAULT_PACKET_COUNT = 5
+MTR_TIMEOUT = 360
+RATE_LIMIT_WINDOW = 60
+RATE_LIMIT_MAX = 3
+MAX_RATE_STORE_ENTRIES = 1000
+MAX_CONCURRENT_MTR = 2
+MTR_BIN = "/usr/bin/mtr"
+DEFAULT_CHUNK_SIZE = 1024 * 1024  # 1 MB chunk for streaming
+MAX_DOWNLOAD_SIZE = 1024 * 1024 * 1024  # 1 GB max on-the-fly download
+DEFAULT_DOWNLOAD_SIZE = 25 * 1024 * 1024  # 25 MB default
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    stream=sys.stderr,
+)
+log = logging.getLogger("vpn-diagnostics")
+
+# Concurrency and rate limiter synchronization
+_mtr_semaphore = threading.Semaphore(MAX_CONCURRENT_MTR)
+_rate_store = {}
+_active_mtr_ips = set()
+_active_lock = threading.Lock()
+_active_subprocesses = set()
+_subproc_lock = threading.Lock()
+
+
+def rate_check(client_ip: str) -> bool:
+    """Check rate limit for client IP with bounded store and automatic pruning."""
+    now = time.monotonic()
+    with _active_lock:
+        # Periodic pruning if store grows
+        if len(_rate_store) > MAX_RATE_STORE_ENTRIES:
+            expired_ips = [
+                ip for ip, tms in _rate_store.items()
+                if not tms or (now - tms[-1] >= RATE_LIMIT_WINDOW)
+            ]
+            for ip in expired_ips:
+                _rate_store.pop(ip, None)
+            if len(_rate_store) > MAX_RATE_STORE_ENTRIES:
+                for ip in list(_rate_store.keys())[:200]:
+                    _rate_store.pop(ip, None)
+
+        times = _rate_store.get(client_ip, [])
+        times = [t for t in times if now - t < RATE_LIMIT_WINDOW]
+        if len(times) >= RATE_LIMIT_MAX:
+            _rate_store[client_ip] = times
+            return False
+        times.append(now)
+        _rate_store[client_ip] = times
+        return True
+
+
+def validate_ip(raw: str) -> str:
+    """Validate client IP, unmapping IPv4-mapped IPv6 and rejecting private/loopback/reserved."""
+    cleaned = raw.strip()
+    if not cleaned:
+        raise ValueError("Missing client IP address")
+    try:
+        ip = ipaddress.ip_address(cleaned)
+    except ValueError:
+        raise ValueError(f"Invalid IP address format: {cleaned}")
+
+    # Unmap IPv4-mapped IPv6 address (e.g. ::ffff:127.0.0.1 or ::ffff:10.0.0.1)
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+
+    if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified:
+        raise ValueError("MTR cannot be run against private, loopback, or reserved IP ranges")
+
+    if not getattr(ip, "is_global", False):
+        raise ValueError("MTR cannot be run against non-global IP ranges")
+
+    return str(ip)
+
+
+def parse_size_bytes(raw: str) -> int:
+    """Parse size string like '15k', '100m', '1g' or integer bytes into integer."""
+    raw = (raw or "").strip().lower()
+    if not raw:
+        return DEFAULT_DOWNLOAD_SIZE
+    match = re.match(r"^(\d+)([kmg]?)$", raw)
+    if not match:
+        return DEFAULT_DOWNLOAD_SIZE
+    val, unit = int(match.group(1)), match.group(2)
+    multiplier = 1
+    if unit == "k":
+        multiplier = 1024
+    elif unit == "m":
+        multiplier = 1024 * 1024
+    elif unit == "g":
+        multiplier = 1024 * 1024 * 1024
+    size = val * multiplier
+    return min(max(size, 1024), MAX_DOWNLOAD_SIZE)
+
+
+def run_mtr(target_ip: str, count: int) -> dict:
+    if not os.path.isfile(MTR_BIN):
+        return {"success": False, "error": "mtr binary not installed (/usr/bin/mtr)", "output": ""}
+    cmd = [
+        MTR_BIN,
+        "--report",
+        "--report-wide",
+        "--no-dns",
+        "--max-ttl", "30",
+        "--report-cycles", str(count),
+        "--",
+        target_ip,
+    ]
+    log.info("Executing MTR: %s cycles -> %s", count, target_ip)
+    proc = None
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            env={"PATH": "/usr/bin:/bin", "HOME": "/tmp", "LC_ALL": "C"},
+        )
+        with _subproc_lock:
+            _active_subprocesses.add(proc)
+        stdout, stderr = proc.communicate(timeout=MTR_TIMEOUT)
+        if proc.returncode != 0:
+            return {"success": False, "error": f"mtr failed ({proc.returncode}): {stderr[:400]}", "output": stdout or ""}
+        return {"success": True, "output": stdout or "", "error": ""}
+    except subprocess.TimeoutExpired:
+        if proc:
+            try:
+                proc.kill()
+                proc.communicate()
+            except Exception:
+                pass
+        return {"success": False, "error": "mtr execution timed out", "output": ""}
+    except Exception as exc:
+        log.error("mtr exception: %s", exc)
+        return {"success": False, "error": str(exc), "output": ""}
+    finally:
+        if proc:
+            with _subproc_lock:
+                _active_subprocesses.discard(proc)
+
+
+class DiagnosticsHandler(BaseHTTPRequestHandler):
+    def log_message(self, fmt, *args):
+        log.debug("http: " + fmt, *args)
+
+    def _client_ip(self) -> str:
+        # Strictly trust X-Real-IP passed by Nginx from proxy_protocol
+        ip = self.headers.get("X-Real-IP", "").strip()
+        if ip:
+            return ip
+        # Fallback to direct socket peer
+        if isinstance(self.client_address, tuple):
+            return self.client_address[0]
+        return "127.0.0.1"
+
+    def _send_json(self, code: int, body: dict) -> None:
+        payload = json.dumps(body).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def _send_text(self, code: int, text: str) -> None:
+        payload = text.encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def do_GET(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+
+        if path in ("/health", "/healthz") or path.endswith("/health"):
+            self._send_json(200, {"ok": True, "service": "vpn-diagnostics"})
+            return
+
+        if path in ("/api/st/getip", "/getip", "/api/st/getIP", "/getIP") or path.lower().endswith(("/api/st/getip", "/getip")):
+            self._send_text(200, self._client_ip() + "\n")
+            return
+
+        # On-the-fly streaming download test (zero disk space consumed!)
+        if (
+            path in ("/api/st/down", "/down", "/api/st/download", "/download")
+            or path.endswith(("/api/st/down", "/down", "/api/st/download", "/download"))
+            or "/testfiles/" in path
+        ):
+            params = parse_qs(parsed.query)
+            size_param = params.get("size", [""])[0]
+            if not size_param and "test-" in path:
+                m = re.search(r"test-([0-9]+[kmg]?)\.bin", path)
+                if m:
+                    size_param = m.group(1)
+
+            total_bytes = parse_size_bytes(size_param)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(total_bytes))
+            self.send_header("Content-Disposition", f'attachment; filename="test-{total_bytes}.bin"')
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+
+            chunk = b"\x00" * DEFAULT_CHUNK_SIZE
+            bytes_left = total_bytes
+            try:
+                while bytes_left > 0:
+                    send_size = min(bytes_left, DEFAULT_CHUNK_SIZE)
+                    if send_size == DEFAULT_CHUNK_SIZE:
+                        self.wfile.write(chunk)
+                    else:
+                        self.wfile.write(chunk[:send_size])
+                    bytes_left -= send_size
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
+
+        self._send_json(404, {"error": "not found"})
+
+    def do_POST(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+
+        # Upload sink: read and discard payload up to 64MB
+        if (
+            path in ("/api/st/up", "/up", "/api/st/upload", "/upload")
+            or path.endswith(("/api/st/up", "/up", "/api/st/upload", "/upload"))
+        ):
+            content_length = int(self.headers.get("Content-Length", "0"))
+            to_read = min(content_length, 64 * 1024 * 1024)
+            received = 0
+            buf_size = 512 * 1024
+            while received < to_read:
+                chunk = self.rfile.read(min(buf_size, to_read - received))
+                if not chunk:
+                    break
+                received += len(chunk)
+            self._send_text(200, "")
+            return
+
+        # MTR Traceroute endpoint with concurrency and rate limits (T20)
+        if path in ("/api/mtr", "/mtr") or path.endswith("/api/mtr"):
+            raw_ip = self._client_ip()
+            if not rate_check(raw_ip):
+                self._send_json(429, {"error": "Rate limit exceeded. Please wait 60 seconds before running MTR again."})
+                return
+
+            try:
+                target_ip = validate_ip(raw_ip)
+            except ValueError as e:
+                self._send_json(400, {"error": str(e)})
+                return
+
+            with _active_lock:
+                if target_ip in _active_mtr_ips:
+                    self._send_json(429, {"error": "An active MTR session is already running for this target."})
+                    return
+                _active_mtr_ips.add(target_ip)
+
+            acquired = _mtr_semaphore.acquire(blocking=False)
+            if not acquired:
+                with _active_lock:
+                    _active_mtr_ips.discard(target_ip)
+                self._send_json(429, {"error": "Global MTR concurrency limit reached. Please try again shortly."})
+                return
+
+            try:
+                content_length = int(self.headers.get("Content-Length", "0"))
+                packet_count = DEFAULT_PACKET_COUNT
+                if 0 < content_length < 1024:
+                    body_raw = self.rfile.read(content_length).decode("utf-8", errors="replace")
+                    try:
+                        if self.headers.get("Content-Type", "").startswith("application/json"):
+                            data = json.loads(body_raw)
+                            packet_count = int(data.get("count", DEFAULT_PACKET_COUNT))
+                        else:
+                            params = parse_qs(body_raw)
+                            packet_count = int(params.get("count", [str(DEFAULT_PACKET_COUNT)])[0])
+                    except Exception:
+                        packet_count = DEFAULT_PACKET_COUNT
+
+                packet_count = max(MIN_PACKET_COUNT, min(packet_count, MAX_PACKET_COUNT))
+                result = run_mtr(target_ip, packet_count)
+                code = 200 if result["success"] else 500
+                result["target"] = target_ip
+                result["count"] = packet_count
+                self._send_json(code, result)
+                return
+            finally:
+                _mtr_semaphore.release()
+                with _active_lock:
+                    _active_mtr_ips.discard(target_ip)
+
+        self._send_json(404, {"error": "not found"})
+
+
+if hasattr(socketserver, "UnixStreamServer"):
+    class UnixThreadingHTTPServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+        daemon_threads = True
+
+        def server_bind(self):
+            super().server_bind()
+            self.server_name = "localhost"
+            self.server_port = 80
+else:
+    UnixThreadingHTTPServer = None
+
+
+def main():
+    parser = argparse.ArgumentParser(description="VPN Diagnostics and MTR Backend")
+    parser.add_argument("--socket", type=str, default="/run/vpn-diagnostics/mtr-backend.sock", help="Unix domain socket path")
+    parser.add_argument("--port", type=int, default=0, help="Optional TCP port (127.0.0.1)")
+    args = parser.parse_args()
+
+    # Signal handlers to ensure active child processes are killed on stop
+    def _cleanup_signal_handler(signum, frame):
+        log.info("Shutdown signal received (%s), terminating active child processes...", signum)
+        with _subproc_lock:
+            for p in list(_active_subprocesses):
+                try:
+                    p.kill()
+                except Exception:
+                    pass
+            _active_subprocesses.clear()
+        sys.exit(0)
+
+    try:
+        signal.signal(signal.SIGTERM, _cleanup_signal_handler)
+        signal.signal(signal.SIGINT, _cleanup_signal_handler)
+    except Exception:
+        pass
+
+    if args.port > 0:
+        server = ThreadingHTTPServer(("127.0.0.1", args.port), DiagnosticsHandler)
+        server.daemon_threads = True
+        log.info("Diagnostics backend listening on TCP 127.0.0.1:%d", args.port)
+    else:
+        if UnixThreadingHTTPServer is None:
+            sys.exit("Unix domain sockets are not supported on this platform. Use --port instead.")
+        sock_path = args.socket
+        sock_dir = os.path.dirname(sock_path)
+        if sock_dir and not os.path.exists(sock_dir):
+            os.makedirs(sock_dir, exist_ok=True)
+
+        if os.path.exists(sock_path):
+            try:
+                os.unlink(sock_path)
+            except OSError as e:
+                log.warning("Could not unlink existing socket %s: %s", sock_path, e)
+        server = UnixThreadingHTTPServer(sock_path, DiagnosticsHandler)
+        try:
+            # Grant rw access strictly to www-data (mode 0660, T18.C04)
+            os.chmod(sock_path, 0o660)
+            import grp
+            gid = grp.getgrnam("www-data").gr_gid
+            os.chown(sock_path, -1, gid)
+        except Exception as e:
+            log.warning("Could not set socket ownership to www-data: %s", e)
+        log.info("Diagnostics backend listening on Unix socket %s", sock_path)
+
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        with _subproc_lock:
+            for p in list(_active_subprocesses):
+                try:
+                    p.kill()
+                except Exception:
+                    pass
+            _active_subprocesses.clear()
+        if args.port == 0 and os.path.exists(args.socket):
+            try:
+                os.unlink(args.socket)
+            except OSError:
+                pass
+
+
+if __name__ == "__main__":
+    main()
+EOF_DIAG_MTR
+    fi
+    if [ ! -f "$svc_file" ]; then
+        cat << 'EOF_DIAG_SVC' > "$svc_file"
+[Unit]
+Description=VPN Diagnostic and MTR Backend
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+RuntimeDirectory=vpn-diagnostics
+RuntimeDirectoryMode=0755
+ExecStart=/usr/bin/python3 /usr/local/lib/vpn-diagnostics/mtr-backend.py --socket /run/vpn-diagnostics/mtr-backend.sock
+Restart=always
+RestartSec=3s
+KillMode=control-group
+LimitNOFILE=65535
+ProtectSystem=strict
+ProtectHome=yes
+NoNewPrivileges=no
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+
+[Install]
+WantedBy=multi-user.target
+EOF_DIAG_SVC
+    fi
+
     # Гарантируем наличие утилиты mtr для бэкенда диагностики
     if ! command -v mtr >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
         apt-get install -y -qq mtr-tiny >/dev/null 2>&1 || true
@@ -7208,9 +9135,9 @@ EOF_PPA
     # 3. Установка ядра, заголовков и пакетов AmneziaWG
     local kheaders="linux-headers-$(uname -r)"
     apt-get install -y --no-install-recommends "${apt_flags[@]}" \
-        "$kheaders" build-essential dkms wireguard-tools amneziawg-tools amneziawg-dkms -q 2>/dev/null || \
+        "$kheaders" build-essential dkms wireguard-tools amneziawg-tools amneziawg-dkms qrencode -q 2>/dev/null || \
     apt-get install -y --no-install-recommends "${apt_flags[@]}" \
-        wireguard-tools amneziawg-tools amneziawg-dkms -q 2>/dev/null || true
+        wireguard-tools amneziawg-tools amneziawg-dkms qrencode -q 2>/dev/null || true
 
     # 4. Проверка и загрузка модуля ядра
     modprobe amneziawg 2>/dev/null || true
@@ -8729,8 +10656,12 @@ def show_qr(client_name):
     ansi_qr = ""
     if shutil.which("qrencode"):
         stdout, _, rc = run_cmd(f"qrencode -t ANSIUTF8 '{content}' 2>/dev/null")
-        if rc == 0 and stdout:
+        if rc == 0 and stdout and stdout.strip():
             ansi_qr = stdout
+        else:
+            stdout, _, rc = run_cmd(f"qrencode -t UTF8 '{content}' 2>/dev/null")
+            if rc == 0 and stdout and stdout.strip():
+                ansi_qr = stdout
 
     return {
         "ok": True,
@@ -8893,6 +10824,7 @@ def main():
     preset = None
 
     raw_mode = False
+    json_mode = False
 
     args = sys.argv[1:]
     for arg in args:
@@ -8922,6 +10854,8 @@ def main():
             shred_privkey = True
         elif arg in ("--raw", "-r"):
             raw_mode = True
+        elif arg in ("--json", "-j"):
+            json_mode = True
         elif arg in ("--qr", "-q"):
             qr_mode = True
         elif arg in ("--i1", "--i1=dns", "--cps"):
@@ -8974,10 +10908,11 @@ def main():
             res = purge_expired()
         elif action in ("qr", "show-qr"):
             res = show_qr(client_name or "client-1")
-            if res.get("ok") and res.get("qr_ascii"):
-                print(res["qr_ascii"], file=sys.stderr)
             if raw_mode and res.get("ok") and res.get("vpnuri"):
                 print(res["vpnuri"])
+                sys.exit(0)
+            if not json_mode and res.get("ok") and res.get("qr_ascii"):
+                print(res["qr_ascii"])
                 sys.exit(0)
         elif action == "backup":
             res = backup_configs()
@@ -9903,7 +11838,7 @@ setup_naive_service() {
         local caddy_tmp="/tmp/caddy_naive_$$"
         mkdir -p "$caddy_tmp"
         local rel_ver="${SCRIPT_VERSION:-v9.1.0}"
-        [[ "$rel_ver" == "v9.6.0" ]] && rel_ver="v9.1.0"
+        [[ "$rel_ver" == "v9.6.1" ]] && rel_ver="v9.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/caddy-naive-linux-${caddy_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
@@ -10049,7 +11984,7 @@ setup_dnstt_service() {
         local dnstt_tmp="/tmp/dnstt_$$"
         mkdir -p "$dnstt_tmp"
         local rel_ver="${SCRIPT_VERSION:-v9.1.0}"
-        [[ "$rel_ver" == "v9.6.0" ]] && rel_ver="v9.1.0"
+        [[ "$rel_ver" == "v9.6.1" ]] && rel_ver="v9.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/dnstt-server-linux-${dnstt_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
@@ -10069,7 +12004,7 @@ setup_dnstt_service() {
 
     if [ ! -x "$dnstt_bin" ] && command -v go >/dev/null 2>&1; then
         log "Компиляция dnstt-server из исходников (Go)..."
-        if CGO_ENABLED=0 go install -ldflags='-s -w' www.bamsoftware.com/git/dnstt.git/dnstt-server@latest 2>/dev/null; then
+        if CGO_ENABLED=0 go install -ldflags='-s -w' www.bamsoftware.com/git/dnstt.git/dnstt-server@latest >/dev/null 2>&1; then
             local gopath="$(go env GOPATH 2>/dev/null || echo "$HOME/go")"
             if [ -f "${gopath}/bin/dnstt-server" ]; then
                 cp "${gopath}/bin/dnstt-server" "${bin_dir}/dnstt-server"
@@ -10088,10 +12023,10 @@ setup_dnstt_service() {
 
     if [ ! -f /etc/dnstt/server.key ] || [ ! -f /etc/dnstt/server.pub ]; then
         if [ -x "$dnstt_bin" ]; then
-            "$dnstt_bin" -gen-key -privkey-file /etc/dnstt/server.key -pubkey-file /etc/dnstt/server.pub 2>/dev/null || true
+            "$dnstt_bin" -gen-key -privkey-file /etc/dnstt/server.key -pubkey-file /etc/dnstt/server.pub >/dev/null 2>&1 || true
         fi
         if [ ! -f /etc/dnstt/server.key ] || [ ! -f /etc/dnstt/server.pub ]; then
-            python3 - /etc/dnstt/server.key /etc/dnstt/server.pub << 'EOF_DNSTT_KEY' 2>/dev/null || true
+            python3 - /etc/dnstt/server.key /etc/dnstt/server.pub << 'EOF_DNSTT_KEY' >/dev/null 2>&1 || true
 try:
     from src.common.crypto_engine import generate_dnstt_keypair
 except ImportError:
@@ -11190,7 +13125,7 @@ declare -A INSTALLATION_TITLES=(
     [packages]="Базовые системные зависимости"
     [kernel]="Сетевые параметры и лимиты"
     [security]="Безопасность SSH и Fail2ban"
-    [nginx]="Установка Nginx и подготовка HTTP для ACME"
+    [nginx]="Установка Nginx и подготовка к выпуску SSL-сертификатов"
     [certificates]="Выпуск SSL-сертификатов"
     [decoy]="Развертывание выбранного сайта"
     [nginx_config]="Конфигурация и проверка Nginx"
@@ -11400,7 +13335,7 @@ EOF
     chown -R "$NGINX_USER:$NGINX_USER" "$WEBROOT" /var/cache/nginx /var/www/mirror /var/www/proxy_temp
     chmod 755 "$WEBROOT" /var/cache/nginx /var/www/mirror /var/www/proxy_temp
 
-    # Стартовый HTTP-сервер для верификации ACME (создается только если Шаг 4 выполняется)
+    # Стартовый HTTP-сервер для валидации домена (создается только если Шаг 4 выполняется)
     if [ "$SSL_ENGINE_CHOICE" = "1" ] && [ "${RESUME_STEP:-1}" -le 4 ]; then
         NGINX_80_SERVER_NAMES="${ALL_DOMAINS[*]}"
 
@@ -11416,7 +13351,7 @@ EOF
         # Удаляем директивы listen [::]: из существующих файлов conf.d
         sed -i '/\[::\]/d' /etc/nginx/conf.d/*.conf 2>/dev/null || true
 
-        log "Создание стартового HTTP-сервера для верификации ACME..."
+        log "Создание стартового HTTP-сервера для валидации домена..."
         cat << EOF > "/etc/nginx/conf.d/00-acme.conf"
 server {
     listen 80;
@@ -12508,9 +14443,10 @@ ${wstunnel_badbot_bypass}        ~^1:[01]:/dns-query 0;
         default 0;
     }
 
-    map \$cookie_diag_key \$diag_auth {
+    map "\$cookie_diag_key:\$arg_token" \$diag_auth {
         default 0;
-        "${DIAG_TOKEN}" 1;
+        "~^${DIAG_TOKEN}:" 1;
+        "~:${DIAG_TOKEN}\$" 1;
     }
 
     limit_req_zone \$binary_remote_addr zone=bot:1m rate=4r/s;
@@ -12920,11 +14856,14 @@ server {
         error_page 401 403 = @diag_login;
         try_files /__nonexistent @diag_sso_ok;
     }
+    location = ${PANEL_PATH}diag/ {
+        return 302 ${PANEL_PATH}diag;
+    }
     location @diag_login {
         return 302 ${PANEL_PATH};
     }
     location @diag_sso_ok {
-        add_header Set-Cookie "diag_key=${DIAG_TOKEN}; Path=${DIAG_PATH}; Secure; HttpOnly; SameSite=Strict; Max-Age=86400" always;
+        add_header Set-Cookie "diag_key=${DIAG_TOKEN}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=86400" always;
         return 302 ${DIAG_PATH};
     }
     location = /__diag_auth {
@@ -12941,11 +14880,14 @@ server {
     location @diag_denied { return 401; }
 
     # --- ЛОКАЦИЯ 1.2: ПОРТАЛ ВЕБ-ДИАГНОСТИКИ (СТРОГОЕ СОКРЫТИЕ 404 БЕЗ УТЕЧКИ ПУТИ) ---
+    location = ${DIAG_PATH%/} {
+        return 302 ${DIAG_PATH}\$is_args\$args;
+    }
     location ^~ ${DIAG_PATH} {
         if (\$diag_auth = 0) { return 404; }
         alias /var/www/diagnostics/;
         index index.html;
-        try_files \$uri \$uri/ /index.html;
+        add_header Set-Cookie "diag_key=${DIAG_TOKEN}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=86400" always;
         add_header Cache-Control "no-store, no-cache, must-revalidate" always;
         add_header X-Robots-Tag "noindex, nofollow" always;
     }
@@ -13205,11 +15147,14 @@ server {
         error_page 401 403 = @diag_login;
         try_files /__nonexistent @diag_sso_ok;
     }
+    location = ${PANEL_PATH}diag/ {
+        return 302 ${PANEL_PATH}diag;
+    }
     location @diag_login {
         return 302 ${PANEL_PATH};
     }
     location @diag_sso_ok {
-        add_header Set-Cookie "diag_key=${DIAG_TOKEN}; Path=${DIAG_PATH}; Secure; HttpOnly; SameSite=Strict; Max-Age=86400" always;
+        add_header Set-Cookie "diag_key=${DIAG_TOKEN}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=86400" always;
         return 302 ${DIAG_PATH};
     }
     location = /__diag_auth {
@@ -13226,11 +15171,14 @@ server {
     location @diag_denied { return 401; }
 
     # --- ЛОКАЦИЯ 1.2: ПОРТАЛ ВЕБ-ДИАГНОСТИКИ (СТРОГОЕ СОКРЫТИЕ 404 БЕЗ УТЕЧКИ ПУТИ) ---
+    location = ${DIAG_PATH%/} {
+        return 302 ${DIAG_PATH}\$is_args\$args;
+    }
     location ^~ ${DIAG_PATH} {
         if (\$diag_auth = 0) { return 404; }
         alias /var/www/diagnostics/;
         index index.html;
-        try_files \$uri \$uri/ /index.html;
+        add_header Set-Cookie "diag_key=${DIAG_TOKEN}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=86400" always;
         add_header Cache-Control "no-store, no-cache, must-revalidate" always;
         add_header X-Robots-Tag "noindex, nofollow" always;
     }
@@ -13484,12 +15432,20 @@ EOF
     fi
 
     # Развертывание демона веб-диагностики и статических файлов перед запуском Nginx
-    setup_vpn_diagnostics 2>/dev/null || true
+    setup_vpn_diagnostics || true
 
     run_with_spinner "Тестирование конфигурации и перезапуск Nginx Mainline" nginx_reload_task || {
         restore_nginx_configs
         die "Ошибка запуска Nginx. Конфигурация автоматически возвращена в исходное состояние."
     }
+
+    local nginx_ver="$(nginx -v 2>&1 | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n1 || echo "")"
+    local nginx_arch="$(uname -s 2>/dev/null || echo "Linux") $(uname -m 2>/dev/null || echo "x86_64")"
+    if [ -n "$nginx_ver" ]; then
+        ok " Активирован веб-сервер Nginx v${nginx_ver} (${nginx_arch})"
+    else
+        ok " Активирован веб-сервер Nginx (${nginx_arch})"
+    fi
 }
 apply_firewall_rules() {
     :
@@ -14334,7 +16290,7 @@ def create_manifest(staging_dir: Union[str, Path], output_path: Optional[Union[s
     created_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     data = {
         "format_version": "2.0",
-        "project_version": os.environ.get("SCRIPT_VERSION", "v9.6.0"),
+        "project_version": os.environ.get("SCRIPT_VERSION", "v9.6.1"),
         "created_at": created_iso,
         "db_path": os.environ.get("DB_PATH", "/etc/x-ui/x-ui.db"),
         "files": files_map,
@@ -18860,8 +20816,8 @@ EOF_CLEAN_JSON
 УЧЕТНЫЕ ДАННЫЕ ПАНЕЛИ И СЕРВИСОВ 3X-UI
 Файл обновлен: $(date '+%Y-%m-%d %H:%M:%S')
 =====================================================================
-Панель управления:     https://${PRIMARY_DOMAIN}/${PANEL_PATH#/}/
-$([ -n "${DIAG_TOKEN:-}" ] && echo "Веб-диагностика (SSO): https://${PRIMARY_DOMAIN}/${PANEL_PATH#/}/diag")
+Панель управления:     https://${PRIMARY_DOMAIN}${PANEL_PATH}
+$([ -n "${DIAG_TOKEN:-}" ] && echo "Веб-диагностика (SSO): https://${PRIMARY_DOMAIN}${PANEL_PATH}diag")
 $([ -n "${DIAG_TOKEN:-}" ] && echo "Токен диагностики:     ${DIAG_TOKEN}")
 Логин администратора:   ${ADMIN_USERNAME:-admin}
 Пароль администратора:  ${ADMIN_PASSWORD}
@@ -18886,6 +20842,7 @@ $([ -n "${DNSTT_CLI:-}" ] && printf "DNSTT DoH Tunnel:        %s\nDNSTT Public K
 $([ -n "${MIERU_PORT:-}" ] && [ -n "${MIERU_USER:-}" ] && printf "Mieru Proxy (XChaCha20, :%s): user: %s, pass: %s (Клиентский конфиг: /root/mieru-client.json, управление: mieru-mgr)\n" "${MIERU_PORT}" "${MIERU_USER}" "${MIERU_PASS}")
 $([ -n "${NODE_TOKEN:-}" ] && printf "3X-UI Node Token:      %s\nИмя ноды (Node Name):  %s (Host: %s:443, Path: /%s/)\n" "${NODE_TOKEN}" "${NODE_TOKEN_NAME}" "${PRIMARY_DOMAIN}" "${PANEL_PATH#/}")
 (Объединяет все конфигурации: Steal REALITY, Classic REALITY, xHTTP, Hysteria 2, AWG v3, AWG v2, SS-2022, TUIC v5, MTProxy, MASQUE, ShadowTLS, Wstunnel, Zapret, NaïveProxy, DNSTT, Mieru)
+Команда для удаления:  vpn-uninstall (или curl -sSL "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/uninstall.sh" | sudo bash)
 =====================================================================
 EOF_CRED
             echo -e "  - ${BOLD}Файл с паролями:${NC}        ${CYAN}$CRED_FILE${NC} (chmod 600)"
@@ -19243,6 +21200,7 @@ install_step_awg() {
         fi
 }
 install_step_verify() {
+    setup_uninstall_command 2>/dev/null || true
     post_install_sanity_check
     if [ "${SSH_PORT:-${SSH_ACTIVE_PORT:-22}}" != "${SSH_ACTIVE_PORT:-22}" ]; then
         wait_and_finalize_ssh_transition "$SSH_PORT" "${SSH_ACTIVE_PORT:-22}"
@@ -19435,6 +21393,12 @@ API Token:             ${NODE_TOKEN:-Не получен}
 TLS сертификат:        Действительный (Let's Encrypt / acme.sh)
 EOF_NODE_CRED
     fi
+    cat << 'EOF_UNINST_CRED' >> "$CRED_FILE"
+=====================================================================
+КОМАНДА ДЛЯ УДАЛЕНИЯ СЕРВЕРА (ДЕИНСТАЛЛЯЦИЯ)
+vpn-uninstall
+(или curl -sSL "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/uninstall.sh" | sudo bash)
+EOF_UNINST_CRED
     echo "=====================================================================" >> "$CRED_FILE"
     chmod 600 "$CRED_FILE"
     umask "$credential_umask"
@@ -19539,9 +21503,13 @@ fi
         echo
 
         if [ -f "/root/awg/client-1.conf" ] && command -v /root/awg/manage-clients.sh >/dev/null 2>&1; then
-            echo -e "  ${WHITE}${BOLD}QR-код для подключения первого клиента (client-1):${NC}"
-            /root/awg/manage-clients.sh qr client-1 2>/dev/null || true
-            echo
+            local qr_out=""
+            qr_out=$(/root/awg/manage-clients.sh qr client-1 2>/dev/null || true)
+            if [ -n "$qr_out" ] && [[ "$qr_out" != "{"* ]]; then
+                echo -e "  ${WHITE}${BOLD}QR-код для подключения первого клиента (client-1):${NC}"
+                echo "$qr_out"
+                echo
+            fi
         fi
     fi
 
@@ -19638,9 +21606,13 @@ fi
     echo
 
     if [ -f "/root/awg/client-1.conf" ] && command -v /root/awg/manage-clients.sh >/dev/null 2>&1; then
-        echo -e "  ${WHITE}${BOLD}QR-код для подключения первого клиента (client-1):${NC}"
-        /root/awg/manage-clients.sh qr client-1 2>/dev/null || true
-        echo
+        local qr_out=""
+        qr_out=$(/root/awg/manage-clients.sh qr client-1 2>/dev/null || true)
+        if [ -n "$qr_out" ] && [[ "$qr_out" != "{"* ]]; then
+            echo -e "  ${WHITE}${BOLD}QR-код для подключения первого клиента (client-1):${NC}"
+            echo "$qr_out"
+            echo
+        fi
     fi
     fi
     SCRIPT_END_TIME=$(date +%s)
@@ -19673,6 +21645,18 @@ fi
         fi
     done
     echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}\n"
+
+    echo -e "  ${YELLOW}${BOLD}🗑️  Команда для удаления установленного сервера:${NC}"
+    echo -e "  - ${YELLOW}Быстрая команда:${NC}       ${CYAN}${BOLD}vpn-uninstall${NC} ${DIM}(или sudo vpn-uninstall)${NC}"
+    echo -e "  - ${YELLOW}Удаление через curl:${NC}   ${CYAN}curl -sSL \"https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/uninstall.sh\" | sudo bash${NC}"
+    if [ -f "./uninstall.sh" ]; then
+        echo -e "  - ${YELLOW}Локальный скрипт:${NC}      ${WHITE}sudo ./uninstall.sh${NC}"
+    elif [ -f "./install.sh" ]; then
+        echo -e "  - ${YELLOW}Локальный скрипт:${NC}      ${WHITE}sudo ./install.sh --uninstall${NC}"
+    elif [ -f "./setup.sh" ]; then
+        echo -e "  - ${YELLOW}Локальный скрипт:${NC}      ${WHITE}sudo ./setup.sh --uninstall${NC}"
+    fi
+    echo ""
 
     if is_true "${DEBUG_MODE:-0}" || [ -n "${FORCE_LOG_EXPORT:-}" ]; then
         if command -v offer_debug_log_export >/dev/null 2>&1; then
@@ -20957,7 +22941,7 @@ EOF_REALITY_SCANNER
             WARP_LICENSE_KEY=""
         fi
 
-        ENABLE_HOST_SECURITY="${ENABLE_HOST_SECURITY:-n}"
+        ENABLE_HOST_SECURITY="${ENABLE_HOST_SECURITY:-y}"
         local _act_p
         _act_p=$(detect_active_ssh_port)
         [ -n "$_act_p" ] || _act_p=22
@@ -21027,13 +23011,14 @@ EOF_REALITY_SCANNER
 
     configure_steal_settings() {
         local old_steal_dom="${STEAL_DOMAINS[0]:-${STEAL_DOMAINS_STR:-cdn.$PRIMARY_DOMAIN}}"
+        [ -n "$old_steal_dom" ] && [ "$old_steal_dom" != "$PRIMARY_DOMAIN" ] || old_steal_dom="cdn.$PRIMARY_DOMAIN"
         local old_steal_port="${STEAL_PORTS_LIST[0]:-${STEAL_PORT:-45443}}"
         STEAL_PORTS_LIST=()
         STEAL_DOMAINS=()
 
         if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
             local port_input=""
-            prompt_default "  Локальный порт Xray для REALITY (свой сайт)" "$old_steal_port" port_input || return $?
+            prompt_default "  Внутренний порт Xray для REALITY (свой сайт)" "$old_steal_port" port_input || return $?
             STEAL_PORT="$port_input"
             if [[ ! "$STEAL_PORT" =~ ^[0-9]+$ ]] || [ "$STEAL_PORT" -le 0 ] || [ "$STEAL_PORT" -gt 65535 ]; then
                 warn "  Некорректный номер порта. Установлен порт по умолчанию: 45443."
@@ -21046,12 +23031,33 @@ EOF_REALITY_SCANNER
         fi
 
         local s_dom_in="$old_steal_dom"
-        if [ "$s_dom_in" = "$PRIMARY_DOMAIN" ]; then
+        while true; do
+            prompt_default "  Субдомен для REALITY (свой сайт)" "$s_dom_in" s_dom_in || return $?
+            s_dom_in=$(echo "${s_dom_in:-cdn.$PRIMARY_DOMAIN}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+            if [ -z "$s_dom_in" ]; then
+                s_dom_in="cdn.$PRIMARY_DOMAIN"
+            fi
+            if [[ "$s_dom_in" != *.* ]]; then
+                s_dom_in="${s_dom_in}.${PRIMARY_DOMAIN}"
+            fi
+            if [ "$s_dom_in" = "$PRIMARY_DOMAIN" ]; then
+                warn "  Субдомен не может совпадать с главным доменом ($PRIMARY_DOMAIN), так как главный домен занят Nginx L7."
+                s_dom_in="cdn.$PRIMARY_DOMAIN"
+                continue
+            fi
+            if [[ "$s_dom_in" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; then
+                break
+            fi
+            warn "  Некорректный формат доменного имени: '$s_dom_in'. Попробуйте снова."
             s_dom_in="cdn.$PRIMARY_DOMAIN"
-        fi
+        done
 
+        if [ -n "$old_steal_dom" ] && [ "$old_steal_dom" != "$s_dom_in" ]; then
+            unset "DOMAIN_TO_PORT[$old_steal_dom]" 2>/dev/null || true
+        fi
         STEAL_DOMAINS=("$s_dom_in")
         DOMAIN_TO_PORT["$s_dom_in"]="$STEAL_PORT"
+        [[ " ${ALL_DOMAINS[*]} " =~ " ${s_dom_in} " ]] || ALL_DOMAINS+=("$s_dom_in")
         ok "  Домен $s_dom_in привязан к инбаунд-порту $STEAL_PORT"
         return 0
     }
@@ -21062,7 +23068,7 @@ EOF_REALITY_SCANNER
 
         if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
             local port_input=""
-            prompt_default "  Локальный порт Xray для REALITY (внешние сервисы)" "${CLASSIC_PORT:-46443}" port_input || return $?
+            prompt_default "  Внутренний порт Xray для REALITY (внешние сервисы)" "${CLASSIC_PORT:-46443}" port_input || return $?
             CLASSIC_PORT="$port_input"
             if [[ ! "$CLASSIC_PORT" =~ ^[0-9]+$ ]] || [ "$CLASSIC_PORT" -le 0 ] || [ "$CLASSIC_PORT" -gt 65535 ]; then
                 warn "  Некорректный номер порта. Установлен порт по умолчанию: 46443."
@@ -21427,7 +23433,7 @@ EOF_PARSE_PROBE
         echo
         echo -e "  ${BOLD}Настройка сетевых портов подключения:${NC}"
         echo -e "    ${GREEN}[0] Нет (по умолчанию)${NC} — безопасные рекомендованные порты для всех протоколов и служб"
-        echo -e "    ${CYAN}[1] Да (все порты)${NC}     — ручная настройка всех портов (внешних клиентских и внутренних локальных)"
+        echo -e "    ${CYAN}[1] Да (все порты)${NC}     — ручная настройка всех портов (внешних клиентских и внутренних)"
         echo -e "    ${CYAN}[2] Только внешние${NC}     — ручная настройка только внешних клиентских портов (все внутренние — по умолчанию)"
         echo
 
@@ -21471,10 +23477,38 @@ EOF_PARSE_PROBE
         if is_true "$ENABLE_STEAL_COMPAT"; then
             STEAL_COMPAT_ENABLED=1
             STEAL_COMPAT_PORT="${STEAL_COMPAT_PORT:-47443}"
-            STEAL_COMPAT_DOMAIN="${STEAL_COMPAT_DOMAIN:-static.${PRIMARY_DOMAIN:-}}"
-            if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
-                prompt_default "  Локальный порт Xray для REALITY Backup" "$STEAL_COMPAT_PORT" STEAL_COMPAT_PORT || return $?
-                prompt_default "  Субдомен для REALITY Backup" "$STEAL_COMPAT_DOMAIN" STEAL_COMPAT_DOMAIN || return $?
+            local old_sc_dom="${STEAL_COMPAT_DOMAIN:-static.${PRIMARY_DOMAIN:-}}"
+            [ -n "$old_sc_dom" ] && [ "$old_sc_dom" != "$PRIMARY_DOMAIN" ] || old_sc_dom="static.$PRIMARY_DOMAIN"
+
+            if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
+                prompt_default "  Внутренний порт Xray для REALITY Backup" "$STEAL_COMPAT_PORT" STEAL_COMPAT_PORT || return $?
+            fi
+
+            local sc_dom_in="$old_sc_dom"
+            while true; do
+                prompt_default "  Субдомен для REALITY Backup" "$sc_dom_in" sc_dom_in || return $?
+                sc_dom_in=$(echo "${sc_dom_in:-static.$PRIMARY_DOMAIN}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+                if [ -z "$sc_dom_in" ]; then
+                    sc_dom_in="static.$PRIMARY_DOMAIN"
+                fi
+                if [[ "$sc_dom_in" != *.* ]]; then
+                    sc_dom_in="${sc_dom_in}.${PRIMARY_DOMAIN}"
+                fi
+                if [ "$sc_dom_in" = "$PRIMARY_DOMAIN" ]; then
+                    warn "  Субдомен не может совпадать с главным доменом ($PRIMARY_DOMAIN), так как главный домен занят Nginx L7."
+                    sc_dom_in="static.$PRIMARY_DOMAIN"
+                    continue
+                fi
+                if [[ "$sc_dom_in" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; then
+                    break
+                fi
+                warn "  Некорректный формат доменного имени: '$sc_dom_in'. Попробуйте снова."
+                sc_dom_in="static.$PRIMARY_DOMAIN"
+            done
+            STEAL_COMPAT_DOMAIN="$sc_dom_in"
+
+            if [ -n "$old_sc_dom" ] && [ "$old_sc_dom" != "$sc_dom_in" ]; then
+                unset "DOMAIN_TO_PORT[$old_sc_dom]" 2>/dev/null || true
             fi
             DOMAIN_TO_PORT["$STEAL_COMPAT_DOMAIN"]="$STEAL_COMPAT_PORT"
             [[ " ${ALL_DOMAINS[*]} " =~ " ${STEAL_COMPAT_DOMAIN} " ]] || ALL_DOMAINS+=("$STEAL_COMPAT_DOMAIN")
@@ -21503,7 +23537,7 @@ EOF_PARSE_PROBE
             HY2_PORT_HOPPING="${HY2_PORT_HOPPING:-n}"
             HY2_PORT_HOPPING_RANGE="${HY2_PORT_HOPPING_RANGE:-20000:50000}"
             if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
-                prompt_default "  UDP-порт для Hysteria 2" "$HY2_PORT" HY2_PORT || return $?
+                prompt_default "  Внешний UDP-порт для Hysteria 2" "$HY2_PORT" HY2_PORT || return $?
                 prompt_yes_no "  Включить Port Hopping для Hysteria 2 (UDP 20000:50000)?" "$HY2_PORT_HOPPING" HY2_PORT_HOPPING || return $?
                 if is_true "$HY2_PORT_HOPPING"; then
                     prompt_default "  Диапазон портов Port Hopping" "$HY2_PORT_HOPPING_RANGE" HY2_PORT_HOPPING_RANGE || return $?
@@ -21518,7 +23552,7 @@ EOF_PARSE_PROBE
         if is_true "$ENABLE_AWG_V3"; then
             [ -n "${AWG_V3_PORT:-}" ] || AWG_V3_PORT="8443"
             if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
-                prompt_default "  UDP-порт для AmneziaWG v3.1" "$AWG_V3_PORT" AWG_V3_PORT || return $?
+                prompt_default "  Внешний UDP-порт для AmneziaWG v3.1" "$AWG_V3_PORT" AWG_V3_PORT || return $?
             fi
         else
             AWG_V3_PORT=""
@@ -21527,7 +23561,7 @@ EOF_PARSE_PROBE
         if is_true "$ENABLE_AWG_V2"; then
             [ -n "${AWG_V2_PORT:-}" ] || AWG_V2_PORT="8444"
             if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
-                prompt_default "  UDP-порт для AmneziaWG v2.0" "$AWG_V2_PORT" AWG_V2_PORT || return $?
+                prompt_default "  Внешний UDP-порт для AmneziaWG v2.0" "$AWG_V2_PORT" AWG_V2_PORT || return $?
             fi
         else
             AWG_V2_PORT=""
@@ -21537,7 +23571,7 @@ EOF_PARSE_PROBE
             [ -n "${AWG_STANDALONE_PORT:-}" ] || AWG_STANDALONE_PORT="8445"
             [ -n "${AWG_SERVER_HOST:-}" ] || AWG_SERVER_HOST="${PRIMARY_DOMAIN:-$WAN_IP}"
             if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
-                prompt_default "  UDP-порт для автономного AmneziaWG" "$AWG_STANDALONE_PORT" AWG_STANDALONE_PORT || return $?
+                prompt_default "  Внешний UDP-порт для автономного AmneziaWG" "$AWG_STANDALONE_PORT" AWG_STANDALONE_PORT || return $?
             fi
         else
             AWG_STANDALONE_PORT=""
@@ -21546,7 +23580,7 @@ EOF_PARSE_PROBE
         if is_true "$ENABLE_TUIC"; then
             [ -n "${TUIC_PORT:-}" ] || TUIC_PORT="8448"
             if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
-                prompt_default "  UDP-порт для TUIC v5" "$TUIC_PORT" TUIC_PORT || return $?
+                prompt_default "  Внешний UDP-порт для TUIC v5" "$TUIC_PORT" TUIC_PORT || return $?
             fi
         else
             TUIC_PORT=""
@@ -21555,7 +23589,7 @@ EOF_PARSE_PROBE
         if is_true "$ENABLE_SS2022"; then
             [ -n "${SS2022_PORT:-}" ] || SS2022_PORT="8388"
             if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
-                prompt_default "  Порт для Shadowsocks 2022 (TCP/UDP)" "$SS2022_PORT" SS2022_PORT || return $?
+                prompt_default "  Внешний порт для Shadowsocks 2022 (TCP/UDP)" "$SS2022_PORT" SS2022_PORT || return $?
             fi
         else
             SS2022_PORT=""
@@ -21566,7 +23600,7 @@ EOF_PARSE_PROBE
             [ -n "${MTPROTO_FAKETLS_DOMAIN:-}" ] || MTPROTO_FAKETLS_DOMAIN="gateway.icloud.com"
             MTPROTO_ADTAG="${MTPROTO_ADTAG:-}"
             if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
-                prompt_default "  TCP-порт для Telegram MTProxy" "$MTPROTO_PORT" MTPROTO_PORT || return $?
+                prompt_default "  Внешний TCP-порт для Telegram MTProxy" "$MTPROTO_PORT" MTPROTO_PORT || return $?
             fi
         else
             MTPROTO_PORT=""
@@ -21579,7 +23613,7 @@ EOF_PARSE_PROBE
             [ -n "${MASQUE_USER:-}" ] || MASQUE_USER="client"
             [ -n "${MASQUE_PASSWORD:-}" ] || MASQUE_PASSWORD="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "masque${RANDOM}")"
             if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
-                prompt_default "  UDP-порт для MASQUE (HTTP/3)" "$MASQUE_PORT" MASQUE_PORT || return $?
+                prompt_default "  Внешний UDP-порт для MASQUE (HTTP/3)" "$MASQUE_PORT" MASQUE_PORT || return $?
             fi
         else
             MASQUE_PORT=""
@@ -21592,7 +23626,7 @@ EOF_PARSE_PROBE
             ENABLE_SS2022=1
             [ -n "${SS2022_PORT:-}" ] || SS2022_PORT="8388"
             if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
-                prompt_default "  Локальный порт для ShadowTLS" "$SHADOWTLS_PORT" SHADOWTLS_PORT || return $?
+                prompt_default "  Внутренний порт для ShadowTLS" "$SHADOWTLS_PORT" SHADOWTLS_PORT || return $?
             fi
         else
             SHADOWTLS_PORT=""
@@ -21604,7 +23638,7 @@ EOF_PARSE_PROBE
             ensure_wstunnel_prefix || return 1
             [ -n "${WSTUNNEL_SECRET:-}" ] || WSTUNNEL_SECRET="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "wst${RANDOM}")"
             if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
-                prompt_default "  Локальный порт для Wstunnel daemon" "$WSTUNNEL_PORT" WSTUNNEL_PORT || return $?
+                prompt_default "  Внутренний порт для Wstunnel daemon" "$WSTUNNEL_PORT" WSTUNNEL_PORT || return $?
             fi
         else
             WSTUNNEL_PORT=""
@@ -21628,7 +23662,7 @@ EOF_PARSE_PROBE
             [ -n "${NAIVE_DOMAIN:-}" ] || NAIVE_DOMAIN="naive.${PRIMARY_DOMAIN:-}"
             [ -n "${NAIVE_PASS:-}" ] || NAIVE_PASS="$(generate_urlsafe_token 16)"
             if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
-                prompt_default "  Локальный порт для NaïveProxy (Caddy)" "$NAIVE_PORT" NAIVE_PORT || return $?
+                prompt_default "  Внутренний порт для NaïveProxy (Caddy)" "$NAIVE_PORT" NAIVE_PORT || return $?
             fi
         else
             NAIVE_PORT=""
@@ -21643,7 +23677,7 @@ EOF_PARSE_PROBE
             ENABLE_SS2022=1
             [ -n "${SS2022_PORT:-}" ] || SS2022_PORT="8388"
             if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
-                prompt_default "  UDP-порт для DNSTT-сервера" "$DNSTT_PORT" DNSTT_PORT || return $?
+                prompt_default "  Внешний UDP-порт для DNSTT-сервера" "$DNSTT_PORT" DNSTT_PORT || return $?
             fi
         else
             DNSTT_PORT=""
@@ -21694,7 +23728,7 @@ EOF_PARSE_PROBE
         echo
         echo -e "${YELLOW}━━━ Шаг 3/11: Настройка внутренних портов и секретных путей (веб-панель и VLESS xHTTP) ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
-            echo -e "  ${CYAN}💡 Что это:${NC} Внутренние локальные порты и секретные URI-пути для веб-панели управления,"
+            echo -e "  ${CYAN}💡 Что это:${NC} Внутренние порты и секретные URI-пути для веб-панели управления,"
             echo -e "     сервера подписок для клиентов и инбаунда VLESS xHTTP (HTTP/2 Stream-One)."
             echo
         fi
@@ -21771,7 +23805,7 @@ EOF_PARSE_PROBE
             SUB_PATH="/${RAW_SUB_PATH#/}"; SUB_PATH="${SUB_PATH%/}/"
             SUB_JSON_PATH="${SUB_PATH%/}/json/"
             SUB_CLASH_PATH="${SUB_PATH%/}/clash/"
-            prompt_default "  Заголовок подписки для клиентов (Enter - без заголовка)" "${SUB_TITLE:-}" SUB_TITLE || return $?
+            prompt_default "  Заголовок подписки для клиентов" "${SUB_TITLE:-${SERVER_PREFIX:-Server}}" SUB_TITLE || return $?
 
             local rand_x_path="$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "xh${RANDOM}")"
             local r_xhttp="${RAW_XHTTP_STREAM_PATH:-${XHTTP_STREAM_PATH:-$rand_x_path}}"
@@ -22094,7 +24128,7 @@ EOF_PARSE_PROBE
 
         local current_configured_port="${SSH_PORT:-$SSH_ACTIVE_PORT}"
 
-        prompt_yes_no "Настроить безопасность сервера (SSH-ключи, порт и защиту Fail2ban)?" "${ENABLE_HOST_SECURITY:-n}" ENABLE_HOST_SECURITY || return $?
+        prompt_yes_no "Настроить безопасность сервера (SSH-ключи, порт и защиту Fail2ban)?" "${ENABLE_HOST_SECURITY:-y}" ENABLE_HOST_SECURITY || return $?
         if is_true "$ENABLE_HOST_SECURITY"; then
             ENABLE_HOST_SECURITY="y"
 

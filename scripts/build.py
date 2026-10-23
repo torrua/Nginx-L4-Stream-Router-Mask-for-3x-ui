@@ -105,11 +105,13 @@ def sync_version_in_docs(version: str, root_dir: Path = ROOT_DIR) -> list[str]:
 
 
 def resolve_include_path(inc_str: str, current_file: Path, src_dir: Path) -> Path:
-    """Resolve an include path relative to current file or src/."""
+    """Resolve an include path relative to current file, src/, or ROOT_DIR."""
     if inc_str.startswith("./") or inc_str.startswith("../"):
         target = (current_file.parent / inc_str).resolve()
     else:
         target = (src_dir / inc_str).resolve()
+        if not target.is_file() and (ROOT_DIR / inc_str).is_file():
+            target = (ROOT_DIR / inc_str).resolve()
     return target
 
 

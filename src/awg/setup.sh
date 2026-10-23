@@ -48,9 +48,9 @@ EOF_PPA
     # 3. Установка ядра, заголовков и пакетов AmneziaWG
     local kheaders="linux-headers-$(uname -r)"
     apt-get install -y --no-install-recommends "${apt_flags[@]}" \
-        "$kheaders" build-essential dkms wireguard-tools amneziawg-tools amneziawg-dkms -q 2>/dev/null || \
+        "$kheaders" build-essential dkms wireguard-tools amneziawg-tools amneziawg-dkms qrencode -q 2>/dev/null || \
     apt-get install -y --no-install-recommends "${apt_flags[@]}" \
-        wireguard-tools amneziawg-tools amneziawg-dkms -q 2>/dev/null || true
+        wireguard-tools amneziawg-tools amneziawg-dkms qrencode -q 2>/dev/null || true
 
     # 4. Проверка и загрузка модуля ядра
     modprobe amneziawg 2>/dev/null || true

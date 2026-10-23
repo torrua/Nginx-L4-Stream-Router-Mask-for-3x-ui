@@ -49,7 +49,7 @@ function Speedtest() {
   this._settings = {}; //settings for the speed test worker
   this._state = 0; //0=adding settings, 1=adding servers, 2=server selection done, 3=test running, 4=done
   console.log(
-    "LibreSpeed by Federico Dossena v6.1.0 - https://github.com/librespeed/speedtest"
+    "LibreSpeed by Federico Dossena v6.3.1 - https://github.com/librespeed/speedtest"
   );
 }
 
@@ -66,7 +66,7 @@ Speedtest.prototype = {
    * - parameter: string with the name of the parameter that you want to set
    * - value: new value for the parameter
    *
-   * Invalid values or nonexistant parameters will be ignored by the speed test worker.
+   * Invalid values or nonexistent parameters will be ignored by the speed test worker.
    */
   setParameter: function(parameter, value) {
     if (this._state == 3)
@@ -239,7 +239,11 @@ Speedtest.prototype = {
       const checkServer = function(server, done) {
         let i = 0;
         server.pingT = -1;
-        if (server.server.indexOf(location.protocol) == -1) done();
+        if (
+          location.protocol === "https:" &&
+          server.server.substring(0, 7).toLowerCase() === "http://"
+        )
+          done();
         else {
           const nextPing = function() {
             if (i++ == PINGS) {

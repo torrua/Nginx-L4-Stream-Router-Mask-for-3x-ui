@@ -3,7 +3,7 @@
 #!/usr/bin/env bash
 #
 # ==============================================================================
-# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v9.6.1 Universal
+# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v9.6.2 Universal
 # Nginx L4 Stream + 3X-UI + Unix Sockets + Native proxy_http_version 2 + 3 Decoys
 # ==============================================================================
 # Архитектура:
@@ -29,7 +29,7 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="v9.6.1"
+SCRIPT_VERSION="v9.6.2"
 
 
 # Checkpoints use stable step IDs and input signatures, independent of UI numbering.
@@ -80,7 +80,7 @@ checkpoint_signature() {
         certificates) keys="PRIMARY_DOMAIN ALL_DOMAINS SSL_ENGINE_CHOICE CF_AUTH_METHOD CF_Token CF_Account_ID CF_Email CF_Key" ;;
         decoy) keys="PRIMARY_DOMAIN DECOY_MODE" ;;
         security) keys="SSH_PORT SSH_PUBLIC_KEY ENABLE_HOST_SECURITY ENABLE_FAIL2BAN DISABLE_PASSWORD_AUTH" ;;
-        *) keys="PRIMARY_DOMAIN ALL_DOMAINS STEAL_PORTS_LIST CLASSIC_PORTS_LIST EXT_SNI_LIST ALL_EXT_SNIS ADD_WWW ENABLE_WEB_STACK ENABLE_STEAL STEAL_DOMAINS STEAL_PORT ENABLE_STEAL_COMPAT STEAL_COMPAT_PORT STEAL_COMPAT_DOMAIN ENABLE_CLASSIC CLASSIC_SNI CLASSIC_PORT REALITY_FINGERPRINT PANEL_PORT PANEL_PATH ADMIN_USERNAME ADMIN_PASSWORD SUB_PORT SUB_PATH SUB_CLASH_PATH SUB_TITLE XHTTP_STREAM_PORT XHTTP_STREAM_PATH ENABLE_HY2 HY2_PORT HY2_DOMAIN HY2_PORT_HOPPING HY2_PORT_HOPPING_RANGE ENABLE_AWG_V3 AWG_V3_PORT ENABLE_AWG_V2 AWG_V2_PORT ENABLE_AWG_STANDALONE AWG_STANDALONE_PORT AWG_SERVER_HOST AWG_PRIMARY_DNS AWG_SECONDARY_DNS ENABLE_AGH AGH_MODE AGH_DOMAIN AGH_USER AGH_PASS AGH_CLIENT_ID AGH_XRAY_DNS PORT_AGH_WEB PORT_AGH_DNS DIAG_PATH DIAG_TOKEN ENABLE_WARP WARP_LICENSE_KEY ENABLE_SS2022 SS2022_PORT SS2022_METHOD SS2022_PASSWORD ENABLE_TUIC TUIC_PORT TUIC_UUID TUIC_PASSWORD ENABLE_MTPROTO MTPROTO_PORT MTPROTO_SECRET ENABLE_MASQUE MASQUE_PORT MASQUE_PASSWORD ENABLE_SHADOWTLS SHADOWTLS_PORT SHADOWTLS_DOMAIN SHADOWTLS_PASSWORD ENABLE_NAIVE NAIVE_PORT NAIVE_DOMAIN NAIVE_USER NAIVE_PASS ENABLE_WSTUNNEL WSTUNNEL_PORT WSTUNNEL_PREFIX WSTUNNEL_SECRET ENABLE_DNSTT DNSTT_PORT DNSTT_DOMAIN DNSTT_PUBKEY ENABLE_ZAPRET ZAPRET_QNUM ZAPRET_DESYNC ZAPRET_FOOLING ENABLE_MIERU MIERU_PORT_MODE MIERU_PORT MIERU_TRANSPORT MIERU_USER MIERU_PASS MIERU_MTU AUTO_SETUP_3XUI ENABLE_NODE_TOKEN NODE_TOKEN NODE_TOKEN_NAME TIME_LOCATION BLOCK_SMTP BLOCK_LAN WEB_LISTEN SUB_LISTEN AWG_HEADER_PROTECTION_KEY AWG_RANDOM_TRAILERS AWG_SUBNET_IP AWG_SUBNET_CIDR MTPROTO_FAKETLS_DOMAIN MTPROTO_ADTAG SHADOWTLS_SNI WSTUNNEL_DOMAIN" ;;
+        *) keys="PRIMARY_DOMAIN ALL_DOMAINS STEAL_PORTS_LIST CLASSIC_PORTS_LIST EXT_SNI_LIST ALL_EXT_SNIS ADD_WWW ENABLE_WEB_STACK ENABLE_STEAL STEAL_DOMAINS STEAL_PORT ENABLE_STEAL_COMPAT STEAL_COMPAT_PORT STEAL_COMPAT_DOMAIN ENABLE_CLASSIC CLASSIC_SNI CLASSIC_PORT REALITY_FINGERPRINT PORTS_SETUP_MODE PATHS_SETUP_MODE CREDS_SETUP_MODE PANEL_PORT PANEL_PATH ADMIN_USERNAME ADMIN_PASSWORD SUB_PORT SUB_PATH SUB_CLASH_PATH SUB_TITLE XHTTP_STREAM_PORT XHTTP_STREAM_PATH ENABLE_HY2 HY2_PORT HY2_DOMAIN HY2_PORT_HOPPING HY2_PORT_HOPPING_RANGE ENABLE_AWG_V3 AWG_V3_PORT ENABLE_AWG_V2 AWG_V2_PORT ENABLE_AWG_STANDALONE AWG_STANDALONE_PORT AWG_SERVER_HOST AWG_PRIMARY_DNS AWG_SECONDARY_DNS ENABLE_AGH AGH_MODE AGH_DOMAIN AGH_USER AGH_PASS AGH_CLIENT_ID AGH_XRAY_DNS PORT_AGH_WEB PORT_AGH_DNS DIAG_PATH DIAG_TOKEN ENABLE_WARP WARP_LICENSE_KEY ENABLE_SS2022 SS2022_PORT SS2022_METHOD SS2022_PASSWORD ENABLE_TUIC TUIC_PORT TUIC_UUID TUIC_PASSWORD ENABLE_MTPROTO MTPROTO_PORT MTPROTO_SECRET ENABLE_MASQUE MASQUE_PORT MASQUE_PASSWORD ENABLE_SHADOWTLS SHADOWTLS_PORT SHADOWTLS_DOMAIN SHADOWTLS_PASSWORD ENABLE_NAIVE NAIVE_PORT NAIVE_DOMAIN NAIVE_USER NAIVE_PASS ENABLE_WSTUNNEL WSTUNNEL_PORT WSTUNNEL_PREFIX WSTUNNEL_SECRET ENABLE_DNSTT DNSTT_PORT DNSTT_DOMAIN DNSTT_PUBKEY ENABLE_ZAPRET ZAPRET_QNUM ZAPRET_DESYNC ZAPRET_FOOLING ENABLE_MIERU MIERU_PORT_MODE MIERU_PORT MIERU_TRANSPORT MIERU_USER MIERU_PASS MIERU_MTU AUTO_SETUP_3XUI ENABLE_NODE_TOKEN NODE_TOKEN NODE_TOKEN_NAME TIME_LOCATION BLOCK_SMTP BLOCK_LAN WEB_LISTEN SUB_LISTEN AWG_HEADER_PROTECTION_KEY AWG_RANDOM_TRAILERS AWG_SUBNET_IP AWG_SUBNET_CIDR MTPROTO_FAKETLS_DOMAIN MTPROTO_ADTAG SHADOWTLS_SNI WSTUNNEL_DOMAIN" ;;
     esac
     {
         printf '%s\0' "${SCRIPT_VERSION:-unknown}" "$id"
@@ -1027,7 +1027,7 @@ generate_config_template() {
     local target_file="${1:-server-setup.env.example}"
     cat << 'EOF_CONF' > "$target_file"
 # ==============================================================================
-# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v9.6.1 Universal)
+# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v9.6.2 Universal)
 # ==============================================================================
 # Данный файл позволяет выполнять полностью автоматическую установку:
 # ./setup.sh --config server-setup.env --non-interactive --force
@@ -2330,6 +2330,7 @@ REALITY_FINGERPRINT="${REALITY_FINGERPRINT:-${FINGERPRINT:-firefox}}"
 
 PORTS_SETUP_MODE="${PORTS_SETUP_MODE:-0}"
 PATHS_SETUP_MODE="${PATHS_SETUP_MODE:-0}"
+CREDS_SETUP_MODE="${CREDS_SETUP_MODE:-0}"
 REALITY_FALLBACK_PORT="${REALITY_FALLBACK_PORT:-9443}"
 
 PANEL_PORT="${PANEL_PORT:-10443}"
@@ -4504,6 +4505,7 @@ ROTATE_PATHS=0
 FORCE_DNS=${FORCE_DNS:-0}
 PORTS_SETUP_MODE="${PORTS_SETUP_MODE:-0}"
 PATHS_SETUP_MODE="${PATHS_SETUP_MODE:-0}"
+CREDS_SETUP_MODE="${CREDS_SETUP_MODE:-0}"
 SAVED_CONFIG_FILE="server-setup.env"
 
 CLI_PRIMARY_DOMAIN=""
@@ -7232,7 +7234,7 @@ function Speedtest() {
   this._settings = {}; //settings for the speed test worker
   this._state = 0; //0=adding settings, 1=adding servers, 2=server selection done, 3=test running, 4=done
   console.log(
-    "LibreSpeed by Federico Dossena v6.1.0 - https://github.com/librespeed/speedtest"
+    "LibreSpeed by Federico Dossena v6.3.1 - https://github.com/librespeed/speedtest"
   );
 }
 
@@ -7249,7 +7251,7 @@ Speedtest.prototype = {
    * - parameter: string with the name of the parameter that you want to set
    * - value: new value for the parameter
    *
-   * Invalid values or nonexistant parameters will be ignored by the speed test worker.
+   * Invalid values or nonexistent parameters will be ignored by the speed test worker.
    */
   setParameter: function(parameter, value) {
     if (this._state == 3)
@@ -7422,7 +7424,11 @@ Speedtest.prototype = {
       const checkServer = function(server, done) {
         let i = 0;
         server.pingT = -1;
-        if (server.server.indexOf(location.protocol) == -1) done();
+        if (
+          location.protocol === "https:" &&
+          server.server.substring(0, 7).toLowerCase() === "http://"
+        )
+          done();
         else {
           const nextPing = function() {
             if (i++ == PINGS) {
@@ -7712,21 +7718,21 @@ this.addEventListener("message", function(e) {
 				}
 			}
 			if (/Edge.(\d+\.\d+)/i.test(ua)) {
-				//Edge 15 introduced a bug that causes onprogress events to not get fired, we have to use the "small chunks" workaround that reduces accuracy
-				settings.forceIE11Workaround = true;
+				if (typeof s.forceIE11Workaround === "undefined") {
+					//Edge 15 introduced a bug that causes onprogress events to not get fired, we have to use the "small chunks" workaround that reduces accuracy
+					settings.forceIE11Workaround = true;
+				}
 			}
 			if (/PlayStation 4.(\d+\.\d+)/i.test(ua)) {
-				//PS4 browser has the same bug as IE11/Edge
-				settings.forceIE11Workaround = true;
+				if (typeof s.forceIE11Workaround === "undefined") {
+					//PS4 browser has the same bug as IE11/Edge
+					settings.forceIE11Workaround = true;
+				}
 			}
 			if (/Chrome.(\d+)/i.test(ua) && /Android|iPhone|iPad|iPod|Windows Phone/i.test(ua)) {
 				//cheap af
 				//Chrome mobile introduced a limitation somewhere around version 65, we have to limit XHR upload size to 4 megabytes
 				settings.xhr_ul_blob_megabytes = 4;
-			}
-			if (/^((?!chrome|android|crios|fxios).)*safari/i.test(ua)) {
-				//Safari also needs the IE11 workaround but only for the MPOT version
-				settings.forceIE11Workaround = true;
 			}
 			//telemetry_level has to be parsed and not just copied
 			if (typeof s.telemetry_level !== "undefined") settings.telemetry_level = s.telemetry_level === "basic" ? 1 : s.telemetry_level === "full" ? 2 : s.telemetry_level === "debug" ? 3 : 0; // telemetry level
@@ -7911,12 +7917,18 @@ function dlTest(done) {
 						} catch (e) {}
 					} // just in case this XHR is still running after the download test
 					// progress event, add number of new loaded bytes to totLoaded
+					if (x.status && (x.status < 200 || x.status >= 300)) return;
 					const loadDiff = event.loaded <= 0 ? 0 : event.loaded - prevLoaded;
 					if (isNaN(loadDiff) || !isFinite(loadDiff) || loadDiff < 0) return; // just in case
 					totLoaded += loadDiff;
 					prevLoaded = event.loaded;
 				}.bind(this);
 				xhr[i].onload = function() {
+					if (x.status && (x.status < 200 || x.status >= 300)) {
+						tverb("dl stream error status " + x.status);
+						if (settings.xhr_ignoreErrors === 0) failed = true;
+						return;
+					}
 					// the large file has been loaded entirely, start again
 					tverb("dl stream finished " + i);
 					try {
@@ -8068,18 +8080,28 @@ function ulTest(done) {
 							prevLoaded = event.loaded;
 						}.bind(this);
 						xhr[i].upload.onload = function() {
-							// this stream sent all the garbage data, start again
-							tverb("ul stream finished " + i);
-							testStream(i, 0);
+							// body uploaded, but response not yet available.
+							// xhr.onload below handles the full lifecycle.
 						}.bind(this);
 						xhr[i].upload.onerror = function() {
 							tverb("ul stream failed " + i);
-							if (settings.xhr_ignoreErrors === 0) failed = true; //abort
-							try {
-								xhr[i].abort();
-							} catch (e) {}
+							if (settings.xhr_ignoreErrors === 0) failed = true;
+							try { x.abort(); } catch (e) {}
 							delete xhr[i];
-							if (settings.xhr_ignoreErrors === 1) testStream(i, 0); //restart stream
+							if (settings.xhr_ignoreErrors === 1) testStream(i, 0);
+						}.bind(this);
+						xhr[i].onload = function() {
+							// response complete — check status on captured x, not xhr[i]
+							if (x.status >= 200 && x.status < 300) {
+								tverb("ul stream finished " + i);
+								testStream(i, 0);
+							} else {
+								tverb("ul stream failed with HTTP " + x.status + " " + i);
+								if (settings.xhr_ignoreErrors === 0) failed = true;
+								try { x.abort(); } catch (e) {}
+								delete xhr[i];
+								if (settings.xhr_ignoreErrors === 1) testStream(i, 0);
+							}
 						}.bind(this);
 						// send xhr
 						xhr[i].open("POST", settings.url_ul + url_sep(settings.url_ul) + (settings.mpot ? "cors=true&" : "") + "r=" + Math.random(), true); // random string to prevent caching
@@ -8419,13 +8441,43 @@ def parse_size_bytes(raw: str) -> int:
     return min(max(size, 1024), MAX_DOWNLOAD_SIZE)
 
 
+def format_mtr_json(json_str: str, target_ip: str, count: int) -> str:
+    try:
+        data = json.loads(json_str)
+        report = data.get("report", {})
+        mtr_meta = report.get("mtr", {})
+        src = mtr_meta.get("src", "server")
+        tests = mtr_meta.get("tests", count)
+        hubs = report.get("hubs", [])
+        if not hubs:
+            return ""
+        header = f"HOST: {src:<32} Loss%   Snt   Last    Avg   Best   Wrst  StDev\n"
+        lines = [header]
+        for hub in hubs:
+            c = hub.get("count", 0)
+            host = hub.get("host", "???")
+            loss = hub.get("Loss%", 0.0)
+            snt = hub.get("Snt", tests)
+            last = hub.get("Last", 0.0)
+            avg = hub.get("Avg", 0.0)
+            best = hub.get("Best", 0.0)
+            wrst = hub.get("Wrst", 0.0)
+            stdev = hub.get("StDev", 0.0)
+            prefix = f" {c:>2}.|-- {host:<30}"
+            lines.append(f"{prefix} {loss:>5.1f}% {snt:>5} {last:>6.1f} {avg:>6.1f} {best:>6.1f} {wrst:>6.1f} {stdev:>6.1f}\n")
+        return "".join(lines)
+    except Exception as e:
+        log.warning("Could not format MTR JSON: %s", e)
+        return ""
+
+
 def run_mtr(target_ip: str, count: int) -> dict:
     if not os.path.isfile(MTR_BIN):
         return {"success": False, "error": "mtr binary not installed (/usr/bin/mtr)", "output": ""}
+    # Use --json mode to prevent buffer overflow crashes present in mtr 0.95 report mode under glibc fortify
     cmd = [
         MTR_BIN,
-        "--report",
-        "--report-wide",
+        "--json",
         "--no-dns",
         "--max-ttl", "30",
         "--report-cycles", str(count),
@@ -8447,8 +8499,37 @@ def run_mtr(target_ip: str, count: int) -> dict:
             _active_subprocesses.add(proc)
         stdout, stderr = proc.communicate(timeout=MTR_TIMEOUT)
         if proc.returncode != 0:
+            # Fallback to --raw mode if --json fails
+            fallback_cmd = [
+                MTR_BIN,
+                "--raw",
+                "--no-dns",
+                "--max-ttl", "30",
+                "--report-cycles", str(count),
+                "--",
+                target_ip,
+            ]
+            try:
+                proc2 = subprocess.Popen(
+                    fallback_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    stdin=subprocess.DEVNULL,
+                    env={"PATH": "/usr/bin:/bin", "HOME": "/tmp", "LC_ALL": "C"},
+                )
+                with _subproc_lock:
+                    _active_subprocesses.add(proc2)
+                f_stdout, f_stderr = proc2.communicate(timeout=MTR_TIMEOUT)
+                if proc2.returncode == 0:
+                    return {"success": True, "output": f_stdout or "", "error": ""}
+            except Exception:
+                pass
             return {"success": False, "error": f"mtr failed ({proc.returncode}): {stderr[:400]}", "output": stdout or ""}
-        return {"success": True, "output": stdout or "", "error": ""}
+
+        formatted_table = format_mtr_json(stdout, target_ip, count)
+        output_text = formatted_table if formatted_table else stdout
+        return {"success": True, "output": output_text, "error": ""}
     except subprocess.TimeoutExpired:
         if proc:
             try:
@@ -8554,20 +8635,45 @@ class DiagnosticsHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
 
-        # Upload sink: read and discard payload up to 64MB
+        # Upload sink: read and discard payload up to 128MB (supporting Content-Length and Transfer-Encoding: chunked)
         if (
             path in ("/api/st/up", "/up", "/api/st/upload", "/upload")
             or path.endswith(("/api/st/up", "/up", "/api/st/upload", "/upload"))
         ):
-            content_length = int(self.headers.get("Content-Length", "0"))
-            to_read = min(content_length, 64 * 1024 * 1024)
-            received = 0
-            buf_size = 512 * 1024
-            while received < to_read:
-                chunk = self.rfile.read(min(buf_size, to_read - received))
-                if not chunk:
-                    break
-                received += len(chunk)
+            te = self.headers.get("Transfer-Encoding", "").lower()
+            if "chunked" in te:
+                received = 0
+                max_bytes = 128 * 1024 * 1024
+                try:
+                    while received < max_bytes:
+                        line = self.rfile.readline(64)
+                        if not line:
+                            break
+                        chunk_sz = int(line.strip().split(b";")[0] or b"0", 16)
+                        if chunk_sz == 0:
+                            self.rfile.read(2)
+                            break
+                        to_read = min(chunk_sz, max_bytes - received)
+                        self.rfile.read(to_read)
+                        received += to_read
+                        if to_read < chunk_sz:
+                            self.rfile.read(chunk_sz - to_read)
+                        self.rfile.read(2)
+                except Exception:
+                    pass
+            else:
+                try:
+                    content_length = int(self.headers.get("Content-Length", "0"))
+                except ValueError:
+                    content_length = 0
+                to_read = min(content_length, 128 * 1024 * 1024)
+                received = 0
+                buf_size = 512 * 1024
+                while received < to_read:
+                    chunk = self.rfile.read(min(buf_size, to_read - received))
+                    if not chunk:
+                        break
+                    received += len(chunk)
             self._send_text(200, "")
             return
 
@@ -8682,13 +8788,18 @@ def main():
                 log.warning("Could not unlink existing socket %s: %s", sock_path, e)
         server = UnixThreadingHTTPServer(sock_path, DiagnosticsHandler)
         try:
-            # Grant rw access strictly to www-data (mode 0660, T18.C04)
-            os.chmod(sock_path, 0o660)
+            # Grant rw access to reverse proxy (nginx / www-data)
+            os.chmod(sock_path, 0o666)
             import grp
-            gid = grp.getgrnam("www-data").gr_gid
-            os.chown(sock_path, -1, gid)
+            for grp_name in ("nginx", "www-data"):
+                try:
+                    gid = grp.getgrnam(grp_name).gr_gid
+                    os.chown(sock_path, -1, gid)
+                    break
+                except (KeyError, PermissionError):
+                    continue
         except Exception as e:
-            log.warning("Could not set socket ownership to www-data: %s", e)
+            log.warning("Could not set socket permissions/ownership: %s", e)
         log.info("Diagnostics backend listening on Unix socket %s", sock_path)
 
     try:
@@ -8726,6 +8837,7 @@ User=www-data
 Group=www-data
 RuntimeDirectory=vpn-diagnostics
 RuntimeDirectoryMode=0755
+UMask=000
 ExecStart=/usr/bin/python3 /usr/local/lib/vpn-diagnostics/mtr-backend.py --socket /run/vpn-diagnostics/mtr-backend.sock
 Restart=always
 RestartSec=3s
@@ -8750,7 +8862,13 @@ EOF_DIAG_SVC
         apt-get install -y -qq mtr-tiny >/dev/null 2>&1 || true
     fi
 
-    # Назначение прав
+    # Назначение прав и групп доступа к диагностическому сервису
+    if id -u nginx >/dev/null 2>&1 && id -g www-data >/dev/null 2>&1; then
+        usermod -a -G www-data nginx 2>/dev/null || true
+    fi
+    if id -u www-data >/dev/null 2>&1 && id -g nginx >/dev/null 2>&1; then
+        usermod -a -G nginx www-data 2>/dev/null || true
+    fi
     chown -R www-data:www-data "$diag_dir" 2>/dev/null || chown -R nginx:nginx "$diag_dir" 2>/dev/null || true
     chmod -R 755 "$diag_dir" 2>/dev/null || true
     chmod 755 "$bin_dir/mtr-backend.py" 2>/dev/null || true
@@ -11838,7 +11956,7 @@ setup_naive_service() {
         local caddy_tmp="/tmp/caddy_naive_$$"
         mkdir -p "$caddy_tmp"
         local rel_ver="${SCRIPT_VERSION:-v9.1.0}"
-        [[ "$rel_ver" == "v9.6.1" ]] && rel_ver="v9.1.0"
+        [[ "$rel_ver" == "v9.6.2" ]] && rel_ver="v9.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/caddy-naive-linux-${caddy_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
@@ -11984,7 +12102,7 @@ setup_dnstt_service() {
         local dnstt_tmp="/tmp/dnstt_$$"
         mkdir -p "$dnstt_tmp"
         local rel_ver="${SCRIPT_VERSION:-v9.1.0}"
-        [[ "$rel_ver" == "v9.6.1" ]] && rel_ver="v9.1.0"
+        [[ "$rel_ver" == "v9.6.2" ]] && rel_ver="v9.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/dnstt-server-linux-${dnstt_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
@@ -13047,6 +13165,7 @@ apply_express_defaults() {
     express_default DECOY_MODE 1
     express_default PORTS_SETUP_MODE 0
     express_default PATHS_SETUP_MODE 0
+    express_default CREDS_SETUP_MODE 0
     express_default SSL_ENGINE_CHOICE 1
     express_default AUTO_SETUP_3XUI y
     express_default ENABLE_WARP y
@@ -16290,7 +16409,7 @@ def create_manifest(staging_dir: Union[str, Path], output_path: Optional[Union[s
     created_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     data = {
         "format_version": "2.0",
-        "project_version": os.environ.get("SCRIPT_VERSION", "v9.6.1"),
+        "project_version": os.environ.get("SCRIPT_VERSION", "v9.6.2"),
         "created_at": created_iso,
         "db_path": os.environ.get("DB_PATH", "/etc/x-ui/x-ui.db"),
         "files": files_map,
@@ -21841,6 +21960,7 @@ else
                     ENABLE_CLASSIC=""
                     PORTS_SETUP_MODE=0
                     PATHS_SETUP_MODE=0
+                    CREDS_SETUP_MODE=0
                     ENABLE_HY2=""
                     ENABLE_AWG_V3=""
                     ENABLE_AWG_V2=""
@@ -22997,6 +23117,10 @@ EOF_REALITY_SCANNER
         prompt_default "  Префикс названия сервера для клиентов (например: 🇳🇱 NL-AMS, Frankfurt, MyServer)" "$def_srv" SERVER_PREFIX || return $?
         SERVER_PREFIX="${SERVER_PREFIX:-$def_srv}"
 
+        local def_sub="${SUB_TITLE:-$SERVER_PREFIX}"
+        prompt_default "  Отображаемый заголовок профиля подписки (SUB_TITLE)" "$def_sub" SUB_TITLE || return $?
+        SUB_TITLE="${SUB_TITLE:-$SERVER_PREFIX}"
+
         if [[ ! "$PRIMARY_DOMAIN" =~ ^www\. ]]; then
             [ "${SHOW_TIPS:-y}" = "y" ] && echo -e "  ${DIM}• Рекомендуется выпустить сертификат и для www.$PRIMARY_DOMAIN для защиты от ошибок SSL.${NC}"
             prompt_yes_no "  Добавить алиас 'www.$PRIMARY_DOMAIN' для выпуска SSL и привязки к Nginx?" "${ADD_WWW:-y}" ADD_WWW || return $?
@@ -23005,7 +23129,7 @@ EOF_REALITY_SCANNER
         fi
 
         rebuild_all_domains
-        ok "Основной домен настроен: $PRIMARY_DOMAIN (префикс: $SERVER_PREFIX)"
+        ok "Основной домен настроен: $PRIMARY_DOMAIN (префикс: $SERVER_PREFIX, заголовок подписки: $SUB_TITLE)"
         return 0
     }
 
@@ -23085,20 +23209,19 @@ EOF_REALITY_SCANNER
         local pool_apple="www.apple.com images.apple.com"
         local pool_samsung="www.samsung.com samsung.com"
 
-        if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
-            local fp_keys=("firefox" "chrome" "safari" "ios" "android" "edge" "randomized")
-            local fp_labels=(
-                "Mozilla Firefox (по умолчанию)"
-                "Google Chrome / Chromium"
-                "Apple Safari / WebKit (macOS / iOS)"
-                "Apple iOS Network Stack"
-                "Android OkHttp / Google Pixel"
-                "Microsoft Edge"
-                "Случайный браузерный профиль при старте"
-            )
-            prompt_select "  Выберите uTLS TLS Fingerprint для REALITY" REALITY_FINGERPRINT "${REALITY_FINGERPRINT:-firefox}" fp_keys fp_labels || return $?
+        local fp_keys=("firefox" "chrome" "safari" "ios" "android" "edge" "randomized")
+        local fp_labels=(
+            "Mozilla Firefox (по умолчанию)"
+            "Google Chrome / Chromium"
+            "Apple Safari / WebKit (macOS / iOS)"
+            "Apple iOS Network Stack"
+            "Android OkHttp / Google Pixel"
+            "Microsoft Edge"
+            "Случайный браузерный профиль при старте"
+        )
+        prompt_select "  Выберите uTLS TLS Fingerprint для REALITY" REALITY_FINGERPRINT "${REALITY_FINGERPRINT:-firefox}" fp_keys fp_labels || return $?
 
-            local scan_tmp
+        local scan_tmp
             scan_tmp=$(mktemp 2>/dev/null || echo "/tmp/reality_scan_$$.json")
             local scan_success=0
 
@@ -23313,10 +23436,6 @@ EOF_PARSE_PROBE
                         ;;
                 esac
             done
-        else
-            REALITY_FINGERPRINT="${REALITY_FINGERPRINT:-firefox}"
-            CLASSIC_SNI="${CLASSIC_SNI:-$pool_google}"
-        fi
 
         local classic_raw="${CLASSIC_SNI:-dl.google.com}"
         EXT_SNI_LIST=()
@@ -23726,25 +23845,39 @@ EOF_PARSE_PROBE
 
     q_step_ports() {
         echo
-        echo -e "${YELLOW}━━━ Шаг 3/11: Настройка внутренних портов и секретных путей (веб-панель и VLESS xHTTP) ━━━${NC}"
+        echo -e "${YELLOW}━━━ Шаг 3/11: Настройка внутренних портов, секретных путей и учетных данных ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
-            echo -e "  ${CYAN}💡 Что это:${NC} Внутренние порты и секретные URI-пути для веб-панели управления,"
-            echo -e "     сервера подписок для клиентов и инбаунда VLESS xHTTP (HTTP/2 Stream-One)."
+            echo -e "  ${CYAN}💡 Что это:${NC} Внутренние порты, секретные URI-пути для веб-панели управления,"
+            echo -e "     сервера подписок, а также логины и пароли всех активных служб и протоколов."
             echo
         fi
 
-        # --- 1. Внутренние сетевые порты служб ---
         local ask_internal_ports=0
-        if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
-            ask_internal_ports=1
-        elif [ "${EDITING_FROM_REVIEW:-0}" -eq 1 ]; then
-            local change_ports="n"
-            prompt_yes_no "  Настроить внутренние порты служб (:10443, :55443, :50443) вручную?" "n" change_ports || return $?
-            if is_true "$change_ports"; then
+        local ask_paths_custom=0
+        local ask_creds_custom=0
+
+        if [ "${EDITING_FROM_REVIEW:-0}" -eq 1 ]; then
+            echo
+            echo -e "  ${BOLD}Что вы хотите изменить в разделе [3]?${NC}"
+            echo -e "    ${CYAN}1)${NC} Внутренние сетевые порты (:10443, :55443, :50443)"
+            echo -e "    ${CYAN}2)${NC} Секретные URI-пути веб-панели и подписок"
+            echo -e "    ${CYAN}3)${NC} Учетные данные (логины и пароли всех служб)"
+            echo -e "    ${GREEN}4)${NC} Изменить все параметры последовательно"
+            local sub_edit="4"
+            prompt_default "  Ваш выбор (1-4)" "4" sub_edit || return $?
+            case "$sub_edit" in
+                1) ask_internal_ports=1 ;;
+                2) ask_paths_custom=1 ;;
+                3) ask_creds_custom=1 ;;
+                *) ask_internal_ports=1; ask_paths_custom=1; ask_creds_custom=1 ;;
+            esac
+        else
+            if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then
                 ask_internal_ports=1
             fi
         fi
 
+        # --- 1. Внутренние сетевые порты служб ---
         if [ "$ask_internal_ports" -eq 1 ]; then
             prompt_default "  Внутренний порт веб-панели управления" "${PANEL_PORT:-10443}" PANEL_PORT || return $?
             prompt_default "  Внутренний порт сервера подписок" "${SUB_PORT:-55443}" SUB_PORT || return $?
@@ -23755,42 +23888,39 @@ EOF_PARSE_PROBE
             XHTTP_STREAM_PORT="${XHTTP_STREAM_PORT:-50443}"
         fi
 
-        # --- 2. Секретные URI-пути и доступ к 3X-UI (Отдельный вопрос) ---
-        echo
-        echo -e "  ${BOLD}Настройка секретных URI-путей и доступа к 3X-UI:${NC}"
-        echo -e "    ${GREEN}[0] Нет (по умолчанию)${NC} — случайные криптостойкие URI-пути и пароль (защита от сканеров и ботов)"
-        echo -e "    ${CYAN}[1] Да (вручную)${NC}       — задать свои URI-пути (панель, подписки, xHTTP), логин и пароль"
-        echo
+        # --- 2. Секретные URI-пути веб-панели и подписок ---
+        if [ "${EDITING_FROM_REVIEW:-0}" -eq 0 ] || [ "$ask_paths_custom" -eq 1 ]; then
+            echo
+            echo -e "  ${BOLD}Настройка секретных веб-путей (URI):${NC}"
+            echo -e "    ${GREEN}[0] Нет (по умолчанию)${NC} — случайные криптостойкие URI-пути (защита от сканеров и ботов)"
+            echo -e "    ${CYAN}[1] Да (вручную)${NC}       — задать свои URI-пути (панель, подписки, xHTTP)"
+            echo
 
-        local ask_paths=0
-        local paths_mode_input=""
-        while true; do
-            prompt_default "  Хотите ли вы настраивать секретные URI-пути и пароли вручную? [0/1]" "${PATHS_SETUP_MODE:-0}" paths_mode_input || return $?
-            paths_mode_input=$(echo "${paths_mode_input:-0}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
-            case "$paths_mode_input" in
-                0|n|no|нет)
-                    PATHS_SETUP_MODE=0
-                    ask_paths=0
-                    ok "Выбран автоматический режим: пути и пароли генерируются криптостойкими хешами."
-                    break
-                    ;;
-                1|y|yes|да)
-                    PATHS_SETUP_MODE=1
-                    ask_paths=1
-                    ok "Выбран ручной ввод URI-путей и учетных данных."
-                    break
-                    ;;
-                *)
-                    warn "  Пожалуйста, введите 0 (Нет) или 1 (Да)."
-                    ;;
-            esac
-        done
+            local paths_mode_input=""
+            while true; do
+                prompt_default "  Хотите ли вы настраивать секретные URI-пути вручную? [0/1]" "${PATHS_SETUP_MODE:-0}" paths_mode_input || return $?
+                paths_mode_input=$(echo "${paths_mode_input:-0}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+                case "$paths_mode_input" in
+                    0|n|no|нет)
+                        PATHS_SETUP_MODE=0
+                        ask_paths_custom=0
+                        ok "Выбран автоматический режим: пути генерируются криптостойкими хешами."
+                        break
+                        ;;
+                    1|y|yes|да)
+                        PATHS_SETUP_MODE=1
+                        ask_paths_custom=1
+                        ok "Выбран ручной ввод URI-путей."
+                        break
+                        ;;
+                    *)
+                        warn "  Пожалуйста, введите 0 (Нет) или 1 (Да)."
+                        ;;
+                esac
+            done
+        fi
 
-        if [ "$ask_paths" -eq 1 ]; then
-            prompt_default "  Логин администратора 3X-UI" "${ADMIN_USERNAME:-admin}" ADMIN_USERNAME || return $?
-            local def_pass="${ADMIN_PASSWORD:-$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 12 || echo "Admin1234567")}"
-            prompt_default "  Пароль администратора 3X-UI" "$def_pass" ADMIN_PASSWORD || return $?
-
+        if [ "$ask_paths_custom" -eq 1 ]; then
             ensure_panel_path || return 1
             local r_path="$RAW_PATH"
             prompt_default "  Секретный URI-путь к веб-панели (без слэшей)" "$r_path" RAW_PATH || return $?
@@ -23805,7 +23935,6 @@ EOF_PARSE_PROBE
             SUB_PATH="/${RAW_SUB_PATH#/}"; SUB_PATH="${SUB_PATH%/}/"
             SUB_JSON_PATH="${SUB_PATH%/}/json/"
             SUB_CLASH_PATH="${SUB_PATH%/}/clash/"
-            prompt_default "  Заголовок подписки для клиентов" "${SUB_TITLE:-${SERVER_PREFIX:-Server}}" SUB_TITLE || return $?
 
             local rand_x_path="$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "xh${RANDOM}")"
             local r_xhttp="${RAW_XHTTP_STREAM_PATH:-${XHTTP_STREAM_PATH:-$rand_x_path}}"
@@ -23814,9 +23943,6 @@ EOF_PARSE_PROBE
             validate_path_segment "$RAW_XHTTP_STREAM_PATH" "URI xHTTP"
             XHTTP_STREAM_PATH="/${RAW_XHTTP_STREAM_PATH#/}"; XHTTP_STREAM_PATH="${XHTTP_STREAM_PATH%/}/"
         else
-            ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
-            [ -n "${ADMIN_PASSWORD:-}" ] || ADMIN_PASSWORD="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 12 || echo "Admin1234567")"
-
             ensure_panel_path || return 1
             validate_path_segment "$RAW_PATH" "URI панели"
 
@@ -23833,13 +23959,104 @@ EOF_PARSE_PROBE
 
         ensure_diag_path || return 1
 
+        # --- 3. Учетные данные всех протоколов и сервисов (логины и пароли) ---
+        if [ "${EDITING_FROM_REVIEW:-0}" -eq 0 ] || [ "$ask_creds_custom" -eq 1 ]; then
+            echo
+            echo -e "  ${BOLD}Настройка учетных данных (логины и пароли всех служб):${NC}"
+            echo -e "    ${GREEN}[0] Нет (по умолчанию)${NC} — автоматическая генерация надежных паролей и ключей (рекомендуется)"
+            echo -e "    ${CYAN}[1] Да (вручную)${NC}       — задать свои логины и пароли для панели 3X-UI и сервисов"
+            echo
+
+            local creds_mode_input=""
+            while true; do
+                prompt_default "  Хотите ли вы настраивать логины и пароли служб вручную? [0/1]" "${CREDS_SETUP_MODE:-0}" creds_mode_input || return $?
+                creds_mode_input=$(echo "${creds_mode_input:-0}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+                case "$creds_mode_input" in
+                    0|n|no|нет)
+                        CREDS_SETUP_MODE=0
+                        ask_creds_custom=0
+                        ok "Выбран автоматический режим: учетные данные генерируются криптостойкими методами."
+                        break
+                        ;;
+                    1|y|yes|да)
+                        CREDS_SETUP_MODE=1
+                        ask_creds_custom=1
+                        ok "Выбран ручной ввод учетных данных."
+                        break
+                        ;;
+                    *)
+                        warn "  Пожалуйста, введите 0 (Нет) или 1 (Да)."
+                        ;;
+                esac
+            done
+        fi
+
+        if [ "$ask_creds_custom" -eq 1 ]; then
+            # 3X-UI Web Panel
+            prompt_default "  Логин администратора 3X-UI" "${ADMIN_USERNAME:-admin}" ADMIN_USERNAME || return $?
+            local def_pass="${ADMIN_PASSWORD:-$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 12 || echo "Admin1234567")}"
+            prompt_default "  Пароль администратора 3X-UI" "$def_pass" ADMIN_PASSWORD || return $?
+
+            # NaïveProxy
+            if is_true "$ENABLE_NAIVE"; then
+                prompt_default "  Имя пользователя для NaïveProxy" "${NAIVE_USER:-user}" NAIVE_USER || return $?
+                local def_npass="${NAIVE_PASS:-$(generate_urlsafe_token 16)}"
+                prompt_default "  Пароль для NaïveProxy" "$def_npass" NAIVE_PASS || return $?
+            fi
+
+            # Mieru Proxy
+            if is_true "$ENABLE_MIERU"; then
+                local def_muser="${MIERU_USER:-user-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "mieru${RANDOM}")}"
+                prompt_default "  Имя пользователя для Mieru Proxy" "$def_muser" MIERU_USER || return $?
+                local def_mpass="${MIERU_PASS:-$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "mieru${RANDOM}")}"
+                prompt_default "  Пароль для Mieru Proxy" "$def_mpass" MIERU_PASS || return $?
+            fi
+
+            # MASQUE
+            if is_true "$ENABLE_MASQUE"; then
+                prompt_default "  Имя пользователя для MASQUE (HTTP/3)" "${MASQUE_USER:-client}" MASQUE_USER || return $?
+                local def_mqpass="${MASQUE_PASSWORD:-$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "masque${RANDOM}")}"
+                prompt_default "  Пароль для MASQUE" "$def_mqpass" MASQUE_PASSWORD || return $?
+            fi
+
+            # ShadowTLS v4
+            if is_true "$ENABLE_SHADOWTLS"; then
+                local def_stpass="${SHADOWTLS_PASSWORD:-$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "stls${RANDOM}")}"
+                prompt_default "  Пароль (Shared Secret) для ShadowTLS" "$def_stpass" SHADOWTLS_PASSWORD || return $?
+            fi
+
+            # Wstunnel
+            if is_true "$ENABLE_WSTUNNEL"; then
+                local def_wpass="${WSTUNNEL_SECRET:-$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "wst${RANDOM}")}"
+                prompt_default "  Секретный токен для Wstunnel" "$def_wpass" WSTUNNEL_SECRET || return $?
+            fi
+
+            # Telegram MTProxy
+            if is_true "$ENABLE_MTPROTO"; then
+                local def_mtsec="${MTPROTO_SECRET:-$(head /dev/urandom 2>/dev/null | tr -dc a-f0-9 | head -c 32 || echo "0123456789abcdef0123456789abcdef")}"
+                prompt_default "  Секретный ключ MTProxy (32 hex)" "$def_mtsec" MTPROTO_SECRET || return $?
+            fi
+        else
+            ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
+            [ -n "${ADMIN_PASSWORD:-}" ] || ADMIN_PASSWORD="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 12 || echo "Admin1234567")"
+            [ -n "${NAIVE_USER:-}" ] || NAIVE_USER="user"
+            [ -n "${NAIVE_PASS:-}" ] || NAIVE_PASS="$(generate_urlsafe_token 16)"
+            [ -n "${MIERU_USER:-}" ] || MIERU_USER="user-$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "mieru${RANDOM}")"
+            [ -n "${MIERU_PASS:-}" ] || MIERU_PASS="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "mieru${RANDOM}")"
+            [ -n "${MASQUE_USER:-}" ] || MASQUE_USER="client"
+            [ -n "${MASQUE_PASSWORD:-}" ] || MASQUE_PASSWORD="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "masque${RANDOM}")"
+            [ -n "${SHADOWTLS_PASSWORD:-}" ] || SHADOWTLS_PASSWORD="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "stls${RANDOM}")"
+            [ -n "${WSTUNNEL_SECRET:-}" ] || WSTUNNEL_SECRET="$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 16 || echo "wst${RANDOM}")"
+            [ -n "${MTPROTO_SECRET:-}" ] || MTPROTO_SECRET="$(head /dev/urandom 2>/dev/null | tr -dc a-f0-9 | head -c 32 || echo "0123456789abcdef0123456789abcdef")"
+        fi
+
         echo
-        echo -e "  ${GREEN}${CHECK} Конфигурация портов и путей 3X-UI:${NC}"
+        echo -e "  ${GREEN}${CHECK} Конфигурация портов, путей и учетных данных:${NC}"
         echo -e "    ${DIM}• Порты:${NC}   Панель :$PANEL_PORT, Подписки :$SUB_PORT, xHTTP :$XHTTP_STREAM_PORT"
         echo -e "    ${DIM}• Пути:${NC}    Панель: $PANEL_PATH, Подписки: $SUB_PATH, Clash: $SUB_CLASH_PATH, xHTTP: $XHTTP_STREAM_PATH"
-        echo -e "    ${DIM}• Доступ:${NC}  Логин: ${BOLD}$ADMIN_USERNAME${NC}, Пароль: ${YELLOW}$ADMIN_PASSWORD${NC}"
+        echo -e "    ${DIM}• Доступ:${NC}  3X-UI: ${BOLD}$ADMIN_USERNAME${NC} (Пароль: ${YELLOW}$ADMIN_PASSWORD${NC})"
 
-        ok "Внутренние порты и пути сконфигурированы."
+        ok "Внутренние порты, пути и учетные данные сконфигурированы."
         return 0
     }
 
@@ -23910,12 +24127,17 @@ EOF_PARSE_PROBE
                 AGH_DOMAIN=""
             fi
 
-            prompt_default "  Логин администратора AdGuard Home" "${AGH_USER:-admin}" AGH_USER || return $?
-            local def_ag_pass="${AGH_PASS:-AgHome_$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 8 || echo 'Pass1234')}"
-            prompt_default "  Пароль администратора AdGuard Home" "$def_ag_pass" AGH_PASS || return $?
             ensure_agh_client_id || return 1
-            local def_agh_cid="$AGH_CLIENT_ID"
-            prompt_default "  Секретный ClientID токен для роутера" "$def_agh_cid" AGH_CLIENT_ID || return $?
+            if [ "${CREDS_SETUP_MODE:-0}" = "1" ] || [ "${EDITING_FROM_REVIEW:-0}" -eq 1 ]; then
+                prompt_default "  Логин администратора AdGuard Home" "${AGH_USER:-admin}" AGH_USER || return $?
+                local def_ag_pass="${AGH_PASS:-AgHome_$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 8 || echo 'Pass1234')}"
+                prompt_default "  Пароль администратора AdGuard Home" "$def_ag_pass" AGH_PASS || return $?
+                local def_agh_cid="$AGH_CLIENT_ID"
+                prompt_default "  Секретный ClientID токен для роутера" "$def_agh_cid" AGH_CLIENT_ID || return $?
+            else
+                AGH_USER="${AGH_USER:-admin}"
+                [ -n "${AGH_PASS:-}" ] || AGH_PASS="AgHome_$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 8 || echo 'Pass1234')"
+            fi
             prompt_yes_no "  Использовать AdGuard Home как DNS для VPN-клиентов (Xray)?" "${AGH_XRAY_DNS:-n}" AGH_XRAY_DNS || return $?
             ok "AdGuard Home настроен (Режим: $AGH_MODE, ClientID: $AGH_CLIENT_ID)"
         else
@@ -24257,8 +24479,9 @@ EOF_PARSE_PROBE
         echo
         local dom_disp="${PRIMARY_DOMAIN:-не настроен}"
         local srv_pref="${SERVER_PREFIX:-Server}"
+        local sub_tit="${SUB_TITLE:-$srv_pref}"
         local add_w="${ADD_WWW:-n}"
-        echo -e "  ${CYAN}[1]${NC} ${BOLD}Основной домен:${NC}       ${WHITE}$dom_disp${NC} (Префикс клиентов: ${GREEN}$srv_pref${NC}, www: ${add_w})"
+        echo -e "  ${CYAN}[1]${NC} ${BOLD}Основной домен:${NC}       ${WHITE}$dom_disp${NC} (Префикс: ${GREEN}$srv_pref${NC}, Подписка: ${GREEN}$sub_tit${NC}, www: ${add_w})"
 
         local port_mode_str="Автоматический (по умолчанию)"
         [ "${PORTS_SETUP_MODE:-0}" = "1" ] && port_mode_str="Ручной (все порты)"
@@ -24348,10 +24571,13 @@ EOF_PARSE_PROBE
 
         local paths_mode_str="Автоматический (криптостойкие хеши)"
         [ "${PATHS_SETUP_MODE:-0}" = "1" ] && paths_mode_str="Ручной ввод"
-        echo -e "  ${CYAN}[3]${NC} ${BOLD}Внутренние порты и пути:${NC} (Режим путей: ${WHITE}${paths_mode_str}${NC})"
+        local creds_mode_str="Автоматический (криптопароли)"
+        [ "${CREDS_SETUP_MODE:-0}" = "1" ] && creds_mode_str="Ручной ввод"
+        echo -e "  ${CYAN}[3]${NC} ${BOLD}Внутренние порты, пути и доступы:${NC} (Пути: ${WHITE}${paths_mode_str}${NC}, Учетные данные: ${WHITE}${creds_mode_str}${NC})"
+        echo -e "      ${DIM}• Режимы:${NC}  Режим путей: ${WHITE}${paths_mode_str}${NC}, Режим учетных данных: ${WHITE}${creds_mode_str}${NC}"
         echo -e "      ${DIM}• Порты:${NC}   Панель :${WHITE}$PANEL_PORT${NC}, Подписки :${WHITE}$SUB_PORT${NC}, xHTTP :${WHITE}$XHTTP_STREAM_PORT${NC}"
         echo -e "      ${DIM}• Пути:${NC}    Панель: ${WHITE}$PANEL_PATH${NC}, Подписки: ${WHITE}$SUB_PATH${NC}, Clash: ${WHITE}$SUB_CLASH_PATH${NC}, xHTTP: ${WHITE}$XHTTP_STREAM_PATH${NC}"
-        echo -e "      ${DIM}• Доступ:${NC}  Логин: ${WHITE}$ADMIN_USERNAME${NC}, Пароль: ${YELLOW}$ADMIN_PASSWORD${NC}"
+        echo -e "      ${DIM}• Доступ:${NC}  3X-UI: ${WHITE}$ADMIN_USERNAME${NC} (Пароль: ${YELLOW}$ADMIN_PASSWORD${NC})"
 
         local agh_status="${RED}Отключен${NC}"
         if is_true "${ENABLE_AGH:-0}"; then

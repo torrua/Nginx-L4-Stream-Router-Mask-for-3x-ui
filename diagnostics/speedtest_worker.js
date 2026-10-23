@@ -146,21 +146,21 @@ this.addEventListener("message", function(e) {
 				}
 			}
 			if (/Edge.(\d+\.\d+)/i.test(ua)) {
-				//Edge 15 introduced a bug that causes onprogress events to not get fired, we have to use the "small chunks" workaround that reduces accuracy
-				settings.forceIE11Workaround = true;
+				if (typeof s.forceIE11Workaround === "undefined") {
+					//Edge 15 introduced a bug that causes onprogress events to not get fired, we have to use the "small chunks" workaround that reduces accuracy
+					settings.forceIE11Workaround = true;
+				}
 			}
 			if (/PlayStation 4.(\d+\.\d+)/i.test(ua)) {
-				//PS4 browser has the same bug as IE11/Edge
-				settings.forceIE11Workaround = true;
+				if (typeof s.forceIE11Workaround === "undefined") {
+					//PS4 browser has the same bug as IE11/Edge
+					settings.forceIE11Workaround = true;
+				}
 			}
 			if (/Chrome.(\d+)/i.test(ua) && /Android|iPhone|iPad|iPod|Windows Phone/i.test(ua)) {
 				//cheap af
 				//Chrome mobile introduced a limitation somewhere around version 65, we have to limit XHR upload size to 4 megabytes
 				settings.xhr_ul_blob_megabytes = 4;
-			}
-			if (/^((?!chrome|android|crios|fxios).)*safari/i.test(ua)) {
-				//Safari also needs the IE11 workaround but only for the MPOT version
-				settings.forceIE11Workaround = true;
 			}
 			//telemetry_level has to be parsed and not just copied
 			if (typeof s.telemetry_level !== "undefined") settings.telemetry_level = s.telemetry_level === "basic" ? 1 : s.telemetry_level === "full" ? 2 : s.telemetry_level === "debug" ? 3 : 0; // telemetry level
@@ -345,12 +345,18 @@ function dlTest(done) {
 						} catch (e) {}
 					} // just in case this XHR is still running after the download test
 					// progress event, add number of new loaded bytes to totLoaded
+					if (x.status && (x.status < 200 || x.status >= 300)) return;
 					const loadDiff = event.loaded <= 0 ? 0 : event.loaded - prevLoaded;
 					if (isNaN(loadDiff) || !isFinite(loadDiff) || loadDiff < 0) return; // just in case
 					totLoaded += loadDiff;
 					prevLoaded = event.loaded;
 				}.bind(this);
 				xhr[i].onload = function() {
+					if (x.status && (x.status < 200 || x.status >= 300)) {
+						tverb("dl stream error status " + x.status);
+						if (settings.xhr_ignoreErrors === 0) failed = true;
+						return;
+					}
 					// the large file has been loaded entirely, start again
 					tverb("dl stream finished " + i);
 					try {
@@ -502,18 +508,28 @@ function ulTest(done) {
 							prevLoaded = event.loaded;
 						}.bind(this);
 						xhr[i].upload.onload = function() {
-							// this stream sent all the garbage data, start again
-							tverb("ul stream finished " + i);
-							testStream(i, 0);
+							// body uploaded, but response not yet available.
+							// xhr.onload below handles the full lifecycle.
 						}.bind(this);
 						xhr[i].upload.onerror = function() {
 							tverb("ul stream failed " + i);
-							if (settings.xhr_ignoreErrors === 0) failed = true; //abort
-							try {
-								xhr[i].abort();
-							} catch (e) {}
+							if (settings.xhr_ignoreErrors === 0) failed = true;
+							try { x.abort(); } catch (e) {}
 							delete xhr[i];
-							if (settings.xhr_ignoreErrors === 1) testStream(i, 0); //restart stream
+							if (settings.xhr_ignoreErrors === 1) testStream(i, 0);
+						}.bind(this);
+						xhr[i].onload = function() {
+							// response complete — check status on captured x, not xhr[i]
+							if (x.status >= 200 && x.status < 300) {
+								tverb("ul stream finished " + i);
+								testStream(i, 0);
+							} else {
+								tverb("ul stream failed with HTTP " + x.status + " " + i);
+								if (settings.xhr_ignoreErrors === 0) failed = true;
+								try { x.abort(); } catch (e) {}
+								delete xhr[i];
+								if (settings.xhr_ignoreErrors === 1) testStream(i, 0);
+							}
 						}.bind(this);
 						// send xhr
 						xhr[i].open("POST", settings.url_ul + url_sep(settings.url_ul) + (settings.mpot ? "cors=true&" : "") + "r=" + Math.random(), true); // random string to prevent caching

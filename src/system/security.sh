@@ -661,7 +661,13 @@ EOF_DIAG_SVC
         apt-get install -y -qq mtr-tiny >/dev/null 2>&1 || true
     fi
 
-    # Назначение прав
+    # Назначение прав и групп доступа к диагностическому сервису
+    if id -u nginx >/dev/null 2>&1 && id -g www-data >/dev/null 2>&1; then
+        usermod -a -G www-data nginx 2>/dev/null || true
+    fi
+    if id -u www-data >/dev/null 2>&1 && id -g nginx >/dev/null 2>&1; then
+        usermod -a -G nginx www-data 2>/dev/null || true
+    fi
     chown -R www-data:www-data "$diag_dir" 2>/dev/null || chown -R nginx:nginx "$diag_dir" 2>/dev/null || true
     chmod -R 755 "$diag_dir" 2>/dev/null || true
     chmod 755 "$bin_dir/mtr-backend.py" 2>/dev/null || true

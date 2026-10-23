@@ -2042,16 +2042,30 @@ echo "AGH_CLIENT_ID=$AGH_CLIENT_ID"
         prompts_sh = (ROOT / "src/tui/prompts.sh").read_text(encoding="utf-8")
         express_sh = (ROOT / "src/installer/express.sh").read_text(encoding="utf-8")
 
-        # Separate question in Step 3
-        self.assertIn("Хотите ли вы настраивать секретные URI-пути и пароли вручную? [0/1]", wizard_sh)
+        # Separate questions in Step 3 for paths and credentials
+        self.assertIn("Хотите ли вы настраивать секретные URI-пути вручную? [0/1]", wizard_sh)
+        self.assertIn("Хотите ли вы настраивать логины и пароли служб вручную? [0/1]", wizard_sh)
         self.assertIn("PATHS_SETUP_MODE", wizard_sh)
+        self.assertIn("CREDS_SETUP_MODE", wizard_sh)
         self.assertIn('PATHS_SETUP_MODE="${PATHS_SETUP_MODE:-0}"', env_sh)
+        self.assertIn('CREDS_SETUP_MODE="${CREDS_SETUP_MODE:-0}"', env_sh)
         self.assertIn('PATHS_SETUP_MODE="${PATHS_SETUP_MODE:-0}"', prompts_sh)
+        self.assertIn('CREDS_SETUP_MODE="${CREDS_SETUP_MODE:-0}"', prompts_sh)
         self.assertIn("express_default PATHS_SETUP_MODE 0", express_sh)
+        self.assertIn("express_default CREDS_SETUP_MODE 0", express_sh)
 
-        # Check review screen shows both
+        # Check review screen shows all three modes
         self.assertIn("Режим портов:", wizard_sh)
         self.assertIn("Режим путей:", wizard_sh)
+        self.assertIn("Режим учетных данных:", wizard_sh)
+
+    def test_reality_classic_sni_not_coupled_to_ports_setup_mode(self):
+        """Verify that REALITY Classic SNI selection is not coupled to PORTS_SETUP_MODE != 0."""
+        wizard_sh = (ROOT / "src/tui/wizard.sh").read_text(encoding="utf-8")
+        # Ensure configure_classic_settings does not wrap the scanner/prompt in if PORTS_SETUP_MODE != 0
+        self.assertNotIn('if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then\n            local fp_keys', wizard_sh)
+        self.assertIn("Выберите uTLS TLS Fingerprint для REALITY", wizard_sh)
+        self.assertIn("Выберите SNI для маскировки REALITY (или свой пул)", wizard_sh)
 
     def test_steal_compat_env_and_checkpoint_keys(self):
         """Verify that Steal Compat variables and checkpoint keys are properly registered."""
@@ -2094,8 +2108,8 @@ echo "AGH_CLIENT_ID=$AGH_CLIENT_ID"
         self.assertIn('if [ "${PORTS_SETUP_MODE:-0}" = "1" ]; then', block_compat)
         self.assertIn('Внутренний порт Xray для REALITY Backup', block_compat)
 
-        # 5. SUB_TITLE prompt default is SERVER_PREFIX instead of empty
-        self.assertIn('prompt_default "  Заголовок подписки для клиентов" "${SUB_TITLE:-${SERVER_PREFIX:-Server}}"', wizard_sh)
+        # 5. SUB_TITLE prompt default is SERVER_PREFIX instead of empty and configured outside secret paths
+        self.assertIn('prompt_default "  Отображаемый заголовок профиля подписки (SUB_TITLE)" "$def_sub" SUB_TITLE', wizard_sh)
 
         # 6. ENABLE_HOST_SECURITY defaults to 'y' (Y/n prompt)
         self.assertIn('prompt_yes_no "Настроить безопасность сервера (SSH-ключи, порт и защиту Fail2ban)?" "${ENABLE_HOST_SECURITY:-y}"', wizard_sh)

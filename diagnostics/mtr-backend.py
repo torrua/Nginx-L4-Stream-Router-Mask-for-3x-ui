@@ -125,13 +125,43 @@ def parse_size_bytes(raw: str) -> int:
     return min(max(size, 1024), MAX_DOWNLOAD_SIZE)
 
 
+def format_mtr_json(json_str: str, target_ip: str, count: int) -> str:
+    try:
+        data = json.loads(json_str)
+        report = data.get("report", {})
+        mtr_meta = report.get("mtr", {})
+        src = mtr_meta.get("src", "server")
+        tests = mtr_meta.get("tests", count)
+        hubs = report.get("hubs", [])
+        if not hubs:
+            return ""
+        header = f"HOST: {src:<32} Loss%   Snt   Last    Avg   Best   Wrst  StDev\n"
+        lines = [header]
+        for hub in hubs:
+            c = hub.get("count", 0)
+            host = hub.get("host", "???")
+            loss = hub.get("Loss%", 0.0)
+            snt = hub.get("Snt", tests)
+            last = hub.get("Last", 0.0)
+            avg = hub.get("Avg", 0.0)
+            best = hub.get("Best", 0.0)
+            wrst = hub.get("Wrst", 0.0)
+            stdev = hub.get("StDev", 0.0)
+            prefix = f" {c:>2}.|-- {host:<30}"
+            lines.append(f"{prefix} {loss:>5.1f}% {snt:>5} {last:>6.1f} {avg:>6.1f} {best:>6.1f} {wrst:>6.1f} {stdev:>6.1f}\n")
+        return "".join(lines)
+    except Exception as e:
+        log.warning("Could not format MTR JSON: %s", e)
+        return ""
+
+
 def run_mtr(target_ip: str, count: int) -> dict:
     if not os.path.isfile(MTR_BIN):
         return {"success": False, "error": "mtr binary not installed (/usr/bin/mtr)", "output": ""}
+    # Use --json mode to prevent buffer overflow crashes present in mtr 0.95 report mode under glibc fortify
     cmd = [
         MTR_BIN,
-        "--report",
-        "--report-wide",
+        "--json",
         "--no-dns",
         "--max-ttl", "30",
         "--report-cycles", str(count),
@@ -153,8 +183,37 @@ def run_mtr(target_ip: str, count: int) -> dict:
             _active_subprocesses.add(proc)
         stdout, stderr = proc.communicate(timeout=MTR_TIMEOUT)
         if proc.returncode != 0:
+            # Fallback to --raw mode if --json fails
+            fallback_cmd = [
+                MTR_BIN,
+                "--raw",
+                "--no-dns",
+                "--max-ttl", "30",
+                "--report-cycles", str(count),
+                "--",
+                target_ip,
+            ]
+            try:
+                proc2 = subprocess.Popen(
+                    fallback_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    stdin=subprocess.DEVNULL,
+                    env={"PATH": "/usr/bin:/bin", "HOME": "/tmp", "LC_ALL": "C"},
+                )
+                with _subproc_lock:
+                    _active_subprocesses.add(proc2)
+                f_stdout, f_stderr = proc2.communicate(timeout=MTR_TIMEOUT)
+                if proc2.returncode == 0:
+                    return {"success": True, "output": f_stdout or "", "error": ""}
+            except Exception:
+                pass
             return {"success": False, "error": f"mtr failed ({proc.returncode}): {stderr[:400]}", "output": stdout or ""}
-        return {"success": True, "output": stdout or "", "error": ""}
+
+        formatted_table = format_mtr_json(stdout, target_ip, count)
+        output_text = formatted_table if formatted_table else stdout
+        return {"success": True, "output": output_text, "error": ""}
     except subprocess.TimeoutExpired:
         if proc:
             try:
@@ -260,20 +319,45 @@ class DiagnosticsHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
 
-        # Upload sink: read and discard payload up to 64MB
+        # Upload sink: read and discard payload up to 128MB (supporting Content-Length and Transfer-Encoding: chunked)
         if (
             path in ("/api/st/up", "/up", "/api/st/upload", "/upload")
             or path.endswith(("/api/st/up", "/up", "/api/st/upload", "/upload"))
         ):
-            content_length = int(self.headers.get("Content-Length", "0"))
-            to_read = min(content_length, 64 * 1024 * 1024)
-            received = 0
-            buf_size = 512 * 1024
-            while received < to_read:
-                chunk = self.rfile.read(min(buf_size, to_read - received))
-                if not chunk:
-                    break
-                received += len(chunk)
+            te = self.headers.get("Transfer-Encoding", "").lower()
+            if "chunked" in te:
+                received = 0
+                max_bytes = 128 * 1024 * 1024
+                try:
+                    while received < max_bytes:
+                        line = self.rfile.readline(64)
+                        if not line:
+                            break
+                        chunk_sz = int(line.strip().split(b";")[0] or b"0", 16)
+                        if chunk_sz == 0:
+                            self.rfile.read(2)
+                            break
+                        to_read = min(chunk_sz, max_bytes - received)
+                        self.rfile.read(to_read)
+                        received += to_read
+                        if to_read < chunk_sz:
+                            self.rfile.read(chunk_sz - to_read)
+                        self.rfile.read(2)
+                except Exception:
+                    pass
+            else:
+                try:
+                    content_length = int(self.headers.get("Content-Length", "0"))
+                except ValueError:
+                    content_length = 0
+                to_read = min(content_length, 128 * 1024 * 1024)
+                received = 0
+                buf_size = 512 * 1024
+                while received < to_read:
+                    chunk = self.rfile.read(min(buf_size, to_read - received))
+                    if not chunk:
+                        break
+                    received += len(chunk)
             self._send_text(200, "")
             return
 
@@ -388,13 +472,18 @@ def main():
                 log.warning("Could not unlink existing socket %s: %s", sock_path, e)
         server = UnixThreadingHTTPServer(sock_path, DiagnosticsHandler)
         try:
-            # Grant rw access strictly to www-data (mode 0660, T18.C04)
-            os.chmod(sock_path, 0o660)
+            # Grant rw access to reverse proxy (nginx / www-data)
+            os.chmod(sock_path, 0o666)
             import grp
-            gid = grp.getgrnam("www-data").gr_gid
-            os.chown(sock_path, -1, gid)
+            for grp_name in ("nginx", "www-data"):
+                try:
+                    gid = grp.getgrnam(grp_name).gr_gid
+                    os.chown(sock_path, -1, gid)
+                    break
+                except (KeyError, PermissionError):
+                    continue
         except Exception as e:
-            log.warning("Could not set socket ownership to www-data: %s", e)
+            log.warning("Could not set socket permissions/ownership: %s", e)
         log.info("Diagnostics backend listening on Unix socket %s", sock_path)
 
     try:

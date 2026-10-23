@@ -16,8 +16,8 @@ install_step_security() {
         if [ "$local_target_ssh" -ne "$local_active_ssh" ] || is_true "${DISABLE_PASSWORD_AUTH:-n}"; then
             run_with_spinner "Применение конфигурации OpenSSH (порт $local_target_ssh)" apply_ssh_configuration "$local_target_ssh" "$local_active_ssh" "${DISABLE_PASSWORD_AUTH:-n}" || die "Не удалось применить конфигурацию SSH."
             if command -v ufw >/dev/null 2>&1; then
-                ufw allow "${local_active_ssh}/tcp" comment 'Current SSH Port' >/dev/null 2>&1 || true
-                ufw allow "${local_target_ssh}/tcp" comment 'Target SSH Port' >/dev/null 2>&1 || true
+                ufw allow "${local_active_ssh}/tcp" comment '[vpn-stack] Current SSH Port' >/dev/null 2>&1 || true
+                ufw allow "${local_target_ssh}/tcp" comment '[vpn-stack] Target SSH Port' >/dev/null 2>&1 || true
             fi
         fi
         if is_true "${ENABLE_FAIL2BAN:-n}"; then

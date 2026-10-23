@@ -4,7 +4,7 @@
 # ==============================================================================
 #  Provides easy multi-channel retrieval of installation and diagnostic logs:
 #    1. One-click SCP copy commands (formatted for Windows / macOS / Linux)
-#    2. Temporary one-time Web link (via Nginx or ephemeral Python server)
+#    2. Temporary one-time Web link (via Nginx webroot with automatic expiration)
 #    3. Sanitized upload to ephemeral pastebin (0x0.st / bashupload.com)
 #    4. Interactive tail preview in console
 # ==============================================================================
@@ -15,13 +15,28 @@ sanitize_debug_log() {
     local src_file="$1"
     local dst_file="$2"
     [ -f "$src_file" ] || return 1
-    # Маскирование чувствительных данных: паролей, токенов, UUID и приватных ключей
-    sed -E \
-        -e 's/(PASSWORD|PASS|SECRET|TOKEN|KEY|UUID|PRIVATE_KEY)=[^ ]+/\1=***MASKED***/gI' \
-        -e 's/(ADMIN_PASSWORD|AGH_PASS|NODE_TOKEN)=.*/\1=***MASKED***/gI' \
+
+    local tmp_dst
+    tmp_dst=$(mktemp "${TMPDIR:-/tmp}/sanitized.XXXXXX") || return 1
+
+    # Маскирование чувствительных данных: паролей, токенов, UUID, JWT, приватных ключей и JSON-полей
+    if sed -E \
+        -e 's/\x1b\[[0-9;]*m//g' \
+        -e '/-----BEGIN ([A-Z ]+)?PRIVATE KEY-----/,/-----END ([A-Z ]+)?PRIVATE KEY-----/c\***PRIVATE_KEY_BLOCK_MASKED***' \
+        -e 's/(PASSWORD|PASS|SECRET|TOKEN|KEY|UUID|PRIVATE_KEY)[[:space:]]*=[[:space:]]*[^ ]+/\1=***MASKED***/gI' \
+        -e 's/(ADMIN_PASSWORD|AGH_PASS|NODE_TOKEN)[[:space:]]*=.*/\1=***MASKED***/gI' \
+        -e 's/"(password|secret|token|privateKey|private_key)"[[:space:]]*:[[:space:]]*"[^"]+"/"\1":"***MASKED***"/gI' \
+        -e 's/(Пароль[^:]*|Password[^:]*)[[:space:]]*:[[:space:]]*[^ ]+/\1: ***MASKED***/gI' \
+        -e 's/(PrivateKey|PresharedKey)[[:space:]]*=[[:space:]]*[A-Za-z0-9+/=]{40,}/\1 = ***MASKED***/gI' \
         -e 's/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/***UUID***/gI' \
         -e 's/(ey[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{10,})/***JWT***/g' \
-        "$src_file" > "$dst_file" 2>/dev/null || cp -f "$src_file" "$dst_file"
+        "$src_file" > "$tmp_dst" 2>/dev/null; then
+        mv -f "$tmp_dst" "$dst_file"
+        return 0
+    else
+        rm -f "$tmp_dst" "$dst_file"
+        return 1
+    fi
 }
 
 get_log_export_target() {
@@ -41,59 +56,41 @@ create_web_download_link() {
     local log_path="$1"
     local webroot="${WEBROOT:-/var/www/html}"
 
-    # Сценарий 1: Nginx установлен и веб-корень доступен
-    if [ -d "$webroot" ] && [ -w "$webroot" ]; then
-        local token
-        token=$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 16 || echo "$RANDOM$RANDOM")
-        local dest_file="$webroot/debug-${token}.log"
-        cp -f "$log_path" "$dest_file" 2>/dev/null || return 1
-        chmod 644 "$dest_file" 2>/dev/null || true
-
-        # Фоновое удаление через 15 минут
-        (sleep 900 && rm -f "$dest_file") >/dev/null 2>&1 &
-
-        local host="${PRIMARY_DOMAIN:-}"
-        if [ -z "$host" ] && command -v get_wan_ip >/dev/null 2>&1; then
-            host=$(get_wan_ip 2>/dev/null || echo "")
-        fi
-        [ -n "$host" ] || host="${WAN_IP:-$(hostname -I 2>/dev/null | awk '{print $1}' || echo 'IP-СЕРВЕРА')}"
-
-        local scheme="http"
-        if [ -n "${PRIMARY_DOMAIN:-}" ] && { [ -d "/etc/letsencrypt/live/${PRIMARY_DOMAIN}" ] || [ -d "/etc/ssl/acme/${PRIMARY_DOMAIN}" ]; }; then
-            scheme="https"
-        fi
-        echo "${scheme}://${host}/debug-${token}.log"
-        return 0
+    # Доступно только при наличии установленного веб-сервера (Nginx) и доступного веб-корня
+    if [ ! -d "$webroot" ] || [ ! -w "$webroot" ]; then
+        return 1
     fi
 
-    # Сценарий 2: Фоновый временный сервер Python на случайном порту
-    if command -v python3 >/dev/null 2>&1; then
-        local port=18443
-        local srv_dir
-        srv_dir=$(mktemp -d 2>/dev/null || echo "/tmp/log_srv_$$")
-        cp -f "$log_path" "$srv_dir/server-setup.log" 2>/dev/null || return 1
-        local ip="${WAN_IP:-}"
-        if [ -z "$ip" ] && command -v get_wan_ip >/dev/null 2>&1; then
-            ip=$(get_wan_ip 2>/dev/null || echo "")
-        fi
-        [ -n "$ip" ] || ip="$(hostname -I 2>/dev/null | awk '{print $1}' || echo 'IP-СЕРВЕРА')"
-
-        if command -v ufw >/dev/null 2>&1; then
-            ufw allow "$port/tcp" comment 'Temp Debug Log' >/dev/null 2>&1 || true
-        fi
-        (
-            cd "$srv_dir"
-            timeout 600 python3 -m http.server "$port" >/dev/null 2>&1 || true
-            rm -rf "$srv_dir"
-            if command -v ufw >/dev/null 2>&1; then
-                ufw delete allow "$port/tcp" >/dev/null 2>&1 || true
-            fi
-        ) &
-        echo "http://${ip}:${port}/server-setup.log"
-        return 0
+    # Генерация случайного токена с высокой энтропией
+    local token
+    token=$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 24 || true)
+    if [ -z "$token" ] || [ "${#token}" -lt 16 ]; then
+        token=$(openssl rand -hex 16 2>/dev/null || true)
     fi
+    [ -n "$token" ] && [ "${#token}" -ge 16 ] || return 1
 
-    return 1
+    local dest_file="$webroot/debug-${token}.log"
+
+    # Обязательное маскирование чувствительных данных перед размещением в веб-каталоге
+    sanitize_debug_log "$log_path" "$dest_file" || return 1
+    chmod 644 "$dest_file" 2>/dev/null || true
+
+    # Фоновое удаление через 15 минут
+    (sleep 900 && rm -f "$dest_file") >/dev/null 2>&1 &
+
+    local host="${PRIMARY_DOMAIN:-}"
+    if [ -z "$host" ] && command -v get_wan_ip >/dev/null 2>&1; then
+        host=$(get_wan_ip 2>/dev/null || echo "")
+    fi
+    [ -n "$host" ] || host="${WAN_IP:-$(hostname -I 2>/dev/null | awk '{print $1}' || echo '')}"
+    [ -n "$host" ] || { rm -f "$dest_file"; return 1; }
+
+    local scheme="http"
+    if [ -n "${PRIMARY_DOMAIN:-}" ] && { [ -d "/etc/letsencrypt/live/${PRIMARY_DOMAIN}" ] || [ -d "/etc/ssl/acme/${PRIMARY_DOMAIN}" ]; }; then
+        scheme="https"
+    fi
+    echo "${scheme}://${host}/debug-${token}.log"
+    return 0
 }
 
 upload_to_pastebin() {
@@ -212,8 +209,9 @@ offer_debug_log_export() {
                 if [ -n "$web_url" ]; then
                     echo -e "  ${GREEN}${CHECK:-✔} Ссылка готова (действует 15 минут):${NC}"
                     echo -e "    ${WHITE}${BOLD}${web_url}${NC}"
+                    echo -e "  ${DIM}(Все пароли, ключи и токены были автоматически замаскированы)${NC}"
                 else
-                    warn "Не удалось создать веб-ссылку (Nginx и Python HTTP недоступны)."
+                    warn "Не удалось создать веб-ссылку (веб-сервер Nginx недоступен). Воспользуйтесь SCP."
                 fi
                 echo ""
                 read -rp "  Нажмите Enter для возврата к меню экспорта... " _dummy </dev/tty || true
@@ -223,7 +221,12 @@ offer_debug_log_export() {
                 echo -e "  ${CYAN}${ARROW:-➜} Очистка лога от паролей и токенов...${NC}"
                 local tmp_clean
                 tmp_clean=$(mktemp "${TMPDIR:-/tmp}/sanitized-log.XXXXXX") || continue
-                sanitize_debug_log "$log_path" "$tmp_clean"
+                if ! sanitize_debug_log "$log_path" "$tmp_clean"; then
+                    rm -f -- "$tmp_clean"
+                    warn "Ошибка безопасной санитизации журнала. Выгрузка отменена во избежание утечки секретов."
+                    read -rp "  Нажмите Enter для возврата к меню экспорта... " _dummy </dev/tty || true
+                    continue
+                fi
                 echo -e "  ${CYAN}${ARROW:-➜} Загрузка на защищенный обменник...${NC}"
                 local up_url
                 up_url=$(upload_to_pastebin "$tmp_clean" || true)

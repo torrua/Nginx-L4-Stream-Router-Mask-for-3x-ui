@@ -240,6 +240,89 @@ run_uninstall
         self.assertFalse(le_dir.exists(), "Letsencrypt dir must be deleted when UNINSTALL_KEEP_CERTS=0")
         self.assertFalse(acme_dir.exists(), ".acme.sh dir must be deleted when UNINSTALL_KEEP_CERTS=0")
 
+    def test_uninstall_snapshot_restoration(self):
+        """Verify that UFW, SSH, and Nginx configurations are restored from initial_state.tar.gz."""
+        # Mock binaries so snapshot detects pre-existence
+        mock_bin = self.work / "bin"
+        mock_bin.mkdir(parents=True, exist_ok=True)
+        (mock_bin / "nginx").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+
+        etc_ufw = self.target_root / "etc/ufw"
+        etc_ufw.mkdir(parents=True, exist_ok=True)
+        (etc_ufw / "user.rules").write_text("# ORIG_UFW_RULE\n", encoding="utf-8")
+
+        etc_ssh = self.target_root / "etc/ssh"
+        etc_ssh.mkdir(parents=True, exist_ok=True)
+        (etc_ssh / "sshd_config").write_text("Port 2222\nPermitRootLogin yes\n", encoding="utf-8")
+
+        etc_nginx = self.target_root / "etc/nginx"
+        etc_nginx.mkdir(parents=True, exist_ok=True)
+        (etc_nginx / "nginx.conf").write_text("# ORIG_NGINX\n", encoding="utf-8")
+
+        snap_dir = self.work / "backups/server_setup"
+
+        # 1. Create snapshot
+        snippet_snap = f"""
+set -euo pipefail
+if command -v cygpath >/dev/null 2>&1; then
+    export PATH="$(cygpath -u "{mock_bin.as_posix()}"):$PATH"
+else
+    export PATH="{mock_bin.as_posix()}:$PATH"
+fi
+chmod +x "{mock_bin.as_posix()}/nginx" || true
+TARGET_ROOT="{self.target_root.as_posix()}"
+SNAPSHOT_DIR="{snap_dir.as_posix()}"
+SNAPSHOT_ARCHIVE="{snap_dir.as_posix()}/initial_state.tar.gz"
+SNAPSHOT_MANIFEST="{snap_dir.as_posix()}/snapshot_manifest.json"
+SSH_PORT="2222"
+
+source "{ROOT.as_posix()}/src/common/colors.sh"
+source "{ROOT.as_posix()}/src/common/logger.sh"
+source "{ROOT.as_posix()}/src/system/snapshot.sh"
+
+create_initial_state_snapshot
+"""
+        res_snap = self.run_bash_snippet(snippet_snap)
+        self.assertEqual(res_snap.returncode, 0, f"Snapshot error: {res_snap.stderr}")
+
+        # 2. Modify files as installer would
+        (etc_ufw / "user.rules").write_text("# MODIFIED_BY_INSTALLER\n", encoding="utf-8")
+        (etc_ssh / "sshd_config").write_text("Port 9999\n", encoding="utf-8")
+        (etc_nginx / "nginx.conf").write_text("# MODIFIED_NGINX\n", encoding="utf-8")
+
+        # 3. Run uninstall
+        snippet_uninstall = f"""
+set -euo pipefail
+if command -v cygpath >/dev/null 2>&1; then
+    export PATH="$(cygpath -u "{mock_bin.as_posix()}"):$PATH"
+else
+    export PATH="{mock_bin.as_posix()}:$PATH"
+fi
+TARGET_ROOT="{self.target_root.as_posix()}"
+SNAPSHOT_DIR="{snap_dir.as_posix()}"
+SNAPSHOT_ARCHIVE="{snap_dir.as_posix()}/initial_state.tar.gz"
+SNAPSHOT_MANIFEST="{snap_dir.as_posix()}/snapshot_manifest.json"
+UNINSTALL_FORCE=1
+
+source "{ROOT.as_posix()}/src/common/colors.sh"
+source "{ROOT.as_posix()}/src/common/logger.sh"
+source "{ROOT.as_posix()}/src/system/snapshot.sh"
+source "{ROOT.as_posix()}/src/system/uninstall.sh"
+
+run_uninstall
+"""
+        res_uninst = self.run_bash_snippet(snippet_uninstall)
+        self.assertEqual(res_uninst.returncode, 0, f"Uninstall error: {res_uninst.stderr}\nStdout: {res_uninst.stdout}")
+
+        # 4. Verify restoration
+        self.assertIn("Конфигурация UFW успешно восстановлена", res_uninst.stdout)
+        self.assertIn("Конфигурация SSH успешно восстановлена", res_uninst.stdout)
+        self.assertIn("Исходная конфигурация Nginx восстановлена", res_uninst.stdout)
+
+        self.assertEqual((etc_ufw / "user.rules").read_text(encoding="utf-8"), "# ORIG_UFW_RULE\n")
+        self.assertEqual((etc_ssh / "sshd_config").read_text(encoding="utf-8"), "Port 2222\nPermitRootLogin yes\n")
+        self.assertEqual((etc_nginx / "nginx.conf").read_text(encoding="utf-8"), "# ORIG_NGINX\n")
+
     def test_uninstall_cli_help(self):
         """Verify uninstall.sh and setup.sh help outputs."""
         uninstall_sh = ROOT / "uninstall.sh"
@@ -254,6 +337,122 @@ run_uninstall
         res_setup = subprocess.run([str(BASH), str(setup_sh), "--help"], capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(res_setup.returncode, 0)
         self.assertIn("--uninstall", res_setup.stdout)
+
+    def test_uninstall_preserves_user_files_in_var_www_html(self):
+        """Verify that uninstall only removes decoy files and preserves user websites/files in /var/www/html."""
+        html_dir = self.target_root / "var/www/html"
+        html_dir.mkdir(parents=True, exist_ok=True)
+
+        # 1. User files
+        (html_dir / "my_app.php").write_text("<?php echo 'Dokploy/User Site'; ?>", encoding="utf-8")
+        custom_sub = html_dir / "custom_dir"
+        custom_sub.mkdir()
+        (custom_sub / "data.json").write_text('{"user":"data"}', encoding="utf-8")
+
+        # 2. Decoy files added by stack
+        decoy_assets = html_dir / "assets/css"
+        decoy_assets.mkdir(parents=True, exist_ok=True)
+        (decoy_assets / "datasphere.css").write_text("body { background: #000; }", encoding="utf-8")
+        (html_dir / "404.html").write_text("404 Not Found", encoding="utf-8")
+        (html_dir / "index.html").write_text("<!DOCTYPE html><html><body>DataSphere Cloud Systems</body></html>", encoding="utf-8")
+
+        snap_dir = self.work / "backups/server_setup"
+
+        snippet = f"""
+set -euo pipefail
+TARGET_ROOT="{self.target_root.as_posix()}"
+SNAPSHOT_DIR="{snap_dir.as_posix()}"
+UNINSTALL_FORCE=1
+
+source "{ROOT.as_posix()}/src/common/colors.sh"
+source "{ROOT.as_posix()}/src/common/logger.sh"
+source "{ROOT.as_posix()}/src/system/snapshot.sh"
+source "{ROOT.as_posix()}/src/system/uninstall.sh"
+
+run_uninstall
+"""
+        res = self.run_bash_snippet(snippet)
+        self.assertEqual(res.returncode, 0, f"Error: {res.stderr}\nStdout: {res.stdout}")
+
+        # Assert decoy files removed
+        self.assertFalse((html_dir / "assets").exists(), "Decoy assets dir must be removed")
+        self.assertFalse((html_dir / "404.html").exists(), "Decoy 404.html must be removed")
+        self.assertFalse((html_dir / "index.html").exists(), "Decoy index.html must be removed")
+
+        # Assert user files preserved
+        self.assertTrue(html_dir.is_dir(), "/var/www/html must be preserved because it has user files")
+        self.assertTrue((html_dir / "my_app.php").is_file(), "User php script must be intact")
+        self.assertTrue((custom_sub / "data.json").is_file(), "User custom directory must be intact")
+
+    def test_uninstall_preserves_user_ufw_rules(self):
+        """Verify that uninstall removes only [vpn-stack] UFW rules and preserves third-party rules like Dokploy."""
+        etc_ufw = self.target_root / "etc/ufw"
+        etc_ufw.mkdir(parents=True, exist_ok=True)
+        user_rules_content = (
+            "# START USER RULES\n"
+            "### tuple ### allow tcp 80 0.0.0.0/0 any 0.0.0.0/0 in comment=[vpn-stack]%20HTTP%20(ACME%20/%20Decoy)\n"
+            "-A ufw-user-input -p tcp --dport 80 -j ACCEPT -m comment --comment '[vpn-stack] HTTP (ACME / Decoy)'\n"
+            "### tuple ### allow tcp 443 0.0.0.0/0 any 0.0.0.0/0 in comment=[vpn-stack]%20HTTPS%20(Nginx%20L4%20Stream%20Router)\n"
+            "-A ufw-user-input -p tcp --dport 443 -j ACCEPT -m comment --comment '[vpn-stack] HTTPS (Nginx L4 Stream Router)'\n"
+            "### tuple ### allow tcp 3000 0.0.0.0/0 any 0.0.0.0/0 in comment=Dokploy\n"
+            "-A ufw-user-input -p tcp --dport 3000 -j ACCEPT -m comment --comment 'Dokploy'\n"
+            "### tuple ### allow tcp 8080 0.0.0.0/0 any 0.0.0.0/0 in\n"
+            "-A ufw-user-input -p tcp --dport 8080 -j ACCEPT\n"
+            "# END USER RULES\n"
+        )
+        (etc_ufw / "user.rules").write_text(user_rules_content, encoding="utf-8")
+
+        snap_dir = self.work / "backups/server_setup"
+
+        snippet = f"""
+set -euo pipefail
+TARGET_ROOT="{self.target_root.as_posix()}"
+SNAPSHOT_DIR="{snap_dir.as_posix()}"
+UNINSTALL_FORCE=1
+
+source "{ROOT.as_posix()}/src/common/colors.sh"
+source "{ROOT.as_posix()}/src/common/logger.sh"
+source "{ROOT.as_posix()}/src/system/snapshot.sh"
+source "{ROOT.as_posix()}/src/system/uninstall.sh"
+
+run_uninstall
+"""
+        res = self.run_bash_snippet(snippet)
+        self.assertEqual(res.returncode, 0, f"Error: {res.stderr}\nStdout: {res.stdout}")
+
+        cleaned_rules = (etc_ufw / "user.rules").read_text(encoding="utf-8")
+
+        # Stack rules with [vpn-stack] tag must be removed
+        self.assertNotIn("vpn-stack", cleaned_rules)
+        self.assertNotIn("HTTP (ACME / Decoy)", cleaned_rules)
+        self.assertNotIn("HTTPS (Nginx L4 Stream Router)", cleaned_rules)
+
+        # User rules must be preserved
+        self.assertIn("Dokploy", cleaned_rules)
+        self.assertIn("--dport 3000", cleaned_rules)
+        self.assertIn("--dport 8080", cleaned_rules)
+
+    def test_package_purge_whitelist_filter(self):
+        """Verify that stack_pkg_regex safely filters stack packages while safeguarding third-party software."""
+        import re
+        stack_pkg_regex = re.compile(r"^(nginx.*|libnginx.*|certbot|python3-certbot.*|fail2ban|python3-systemd|amneziawg.*|wireguard.*|libnetfilter-queue.*|apache2-utils|python3-bcrypt|mtr-tiny|socat)$")
+
+        stack_pkgs = [
+            "nginx", "nginx-common", "nginx-core", "libnginx-mod-stream", "nginx-module-stream",
+            "certbot", "python3-certbot", "python3-certbot-nginx", "fail2ban", "python3-systemd",
+            "amneziawg", "amneziawg-tools", "wireguard", "wireguard-tools", "libnetfilter-queue1",
+            "apache2-utils", "python3-bcrypt", "mtr-tiny", "socat"
+        ]
+        for pkg in stack_pkgs:
+            self.assertTrue(stack_pkg_regex.match(pkg), f"Stack package {pkg} should be matched by regex")
+
+        user_third_party_pkgs = [
+            "docker-ce", "docker-ce-cli", "containerd.io", "docker-compose-plugin",
+            "dokploy", "postgresql", "postgresql-14", "mysql-server", "mariadb-server",
+            "redis-server", "git", "htop", "tmux", "zsh", "python3-pip", "curl", "bash"
+        ]
+        for pkg in user_third_party_pkgs:
+            self.assertFalse(stack_pkg_regex.match(pkg), f"Third-party package {pkg} must NEVER be matched by purge regex")
 
 
 if __name__ == "__main__":

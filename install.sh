@@ -3,7 +3,7 @@
 #!/usr/bin/env bash
 #
 # ==============================================================================
-# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v9.4.0 Universal
+# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v9.5.0 Universal
 # Nginx L4 Stream + 3X-UI + Unix Sockets + Native proxy_http_version 2 + 3 Decoys
 # ==============================================================================
 # Архитектура:
@@ -29,7 +29,7 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="v9.4.0"
+SCRIPT_VERSION="v9.5.0"
 
 
 # Checkpoints use stable step IDs and input signatures, independent of UI numbering.
@@ -80,7 +80,7 @@ checkpoint_signature() {
         certificates) keys="PRIMARY_DOMAIN ALL_DOMAINS SSL_ENGINE_CHOICE CF_AUTH_METHOD CF_Token CF_Account_ID CF_Email CF_Key" ;;
         decoy) keys="PRIMARY_DOMAIN DECOY_MODE" ;;
         security) keys="SSH_PORT SSH_PUBLIC_KEY ENABLE_HOST_SECURITY ENABLE_FAIL2BAN DISABLE_PASSWORD_AUTH" ;;
-        *) keys="PRIMARY_DOMAIN ALL_DOMAINS STEAL_PORTS_LIST CLASSIC_PORTS_LIST EXT_SNI_LIST ALL_EXT_SNIS ADD_WWW ENABLE_WEB_STACK ENABLE_STEAL STEAL_DOMAINS STEAL_PORT ENABLE_CLASSIC CLASSIC_SNI CLASSIC_PORT REALITY_FINGERPRINT PANEL_PORT PANEL_PATH ADMIN_USERNAME ADMIN_PASSWORD SUB_PORT SUB_PATH SUB_CLASH_PATH SUB_TITLE XHTTP_STREAM_PORT XHTTP_STREAM_PATH ENABLE_HY2 HY2_PORT HY2_DOMAIN HY2_PORT_HOPPING HY2_PORT_HOPPING_RANGE ENABLE_AWG_V3 AWG_V3_PORT ENABLE_AWG_V2 AWG_V2_PORT ENABLE_AWG_STANDALONE AWG_STANDALONE_PORT AWG_SERVER_HOST AWG_PRIMARY_DNS AWG_SECONDARY_DNS ENABLE_AGH AGH_MODE AGH_DOMAIN AGH_USER AGH_PASS AGH_CLIENT_ID AGH_XRAY_DNS PORT_AGH_WEB PORT_AGH_DNS DIAG_PATH DIAG_TOKEN ENABLE_WARP WARP_LICENSE_KEY ENABLE_SS2022 SS2022_PORT SS2022_METHOD SS2022_PASSWORD ENABLE_TUIC TUIC_PORT TUIC_UUID TUIC_PASSWORD ENABLE_MTPROTO MTPROTO_PORT MTPROTO_SECRET ENABLE_MASQUE MASQUE_PORT MASQUE_PASSWORD ENABLE_SHADOWTLS SHADOWTLS_PORT SHADOWTLS_DOMAIN SHADOWTLS_PASSWORD ENABLE_NAIVE NAIVE_PORT NAIVE_DOMAIN NAIVE_USER NAIVE_PASS ENABLE_WSTUNNEL WSTUNNEL_PORT WSTUNNEL_PREFIX WSTUNNEL_SECRET ENABLE_DNSTT DNSTT_PORT DNSTT_DOMAIN DNSTT_PUBKEY ENABLE_ZAPRET ZAPRET_QNUM ZAPRET_DESYNC ZAPRET_FOOLING ENABLE_MIERU MIERU_PORT_MODE MIERU_PORT MIERU_TRANSPORT MIERU_USER MIERU_PASS MIERU_MTU AUTO_SETUP_3XUI ENABLE_NODE_TOKEN NODE_TOKEN NODE_TOKEN_NAME TIME_LOCATION BLOCK_SMTP BLOCK_LAN WEB_LISTEN SUB_LISTEN AWG_HEADER_PROTECTION_KEY AWG_RANDOM_TRAILERS AWG_SUBNET_IP AWG_SUBNET_CIDR MTPROTO_FAKETLS_DOMAIN MTPROTO_ADTAG SHADOWTLS_SNI WSTUNNEL_DOMAIN" ;;
+        *) keys="PRIMARY_DOMAIN ALL_DOMAINS STEAL_PORTS_LIST CLASSIC_PORTS_LIST EXT_SNI_LIST ALL_EXT_SNIS ADD_WWW ENABLE_WEB_STACK ENABLE_STEAL STEAL_DOMAINS STEAL_PORT ENABLE_STEAL_COMPAT STEAL_COMPAT_PORT STEAL_COMPAT_DOMAIN ENABLE_CLASSIC CLASSIC_SNI CLASSIC_PORT REALITY_FINGERPRINT PANEL_PORT PANEL_PATH ADMIN_USERNAME ADMIN_PASSWORD SUB_PORT SUB_PATH SUB_CLASH_PATH SUB_TITLE XHTTP_STREAM_PORT XHTTP_STREAM_PATH ENABLE_HY2 HY2_PORT HY2_DOMAIN HY2_PORT_HOPPING HY2_PORT_HOPPING_RANGE ENABLE_AWG_V3 AWG_V3_PORT ENABLE_AWG_V2 AWG_V2_PORT ENABLE_AWG_STANDALONE AWG_STANDALONE_PORT AWG_SERVER_HOST AWG_PRIMARY_DNS AWG_SECONDARY_DNS ENABLE_AGH AGH_MODE AGH_DOMAIN AGH_USER AGH_PASS AGH_CLIENT_ID AGH_XRAY_DNS PORT_AGH_WEB PORT_AGH_DNS DIAG_PATH DIAG_TOKEN ENABLE_WARP WARP_LICENSE_KEY ENABLE_SS2022 SS2022_PORT SS2022_METHOD SS2022_PASSWORD ENABLE_TUIC TUIC_PORT TUIC_UUID TUIC_PASSWORD ENABLE_MTPROTO MTPROTO_PORT MTPROTO_SECRET ENABLE_MASQUE MASQUE_PORT MASQUE_PASSWORD ENABLE_SHADOWTLS SHADOWTLS_PORT SHADOWTLS_DOMAIN SHADOWTLS_PASSWORD ENABLE_NAIVE NAIVE_PORT NAIVE_DOMAIN NAIVE_USER NAIVE_PASS ENABLE_WSTUNNEL WSTUNNEL_PORT WSTUNNEL_PREFIX WSTUNNEL_SECRET ENABLE_DNSTT DNSTT_PORT DNSTT_DOMAIN DNSTT_PUBKEY ENABLE_ZAPRET ZAPRET_QNUM ZAPRET_DESYNC ZAPRET_FOOLING ENABLE_MIERU MIERU_PORT_MODE MIERU_PORT MIERU_TRANSPORT MIERU_USER MIERU_PASS MIERU_MTU AUTO_SETUP_3XUI ENABLE_NODE_TOKEN NODE_TOKEN NODE_TOKEN_NAME TIME_LOCATION BLOCK_SMTP BLOCK_LAN WEB_LISTEN SUB_LISTEN AWG_HEADER_PROTECTION_KEY AWG_RANDOM_TRAILERS AWG_SUBNET_IP AWG_SUBNET_CIDR MTPROTO_FAKETLS_DOMAIN MTPROTO_ADTAG SHADOWTLS_SNI WSTUNNEL_DOMAIN" ;;
     esac
     {
         printf '%s\0' "${SCRIPT_VERSION:-unknown}" "$id"
@@ -1027,7 +1027,7 @@ generate_config_template() {
     local target_file="${1:-server-setup.env.example}"
     cat << 'EOF_CONF' > "$target_file"
 # ==============================================================================
-# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v9.4.0 Universal)
+# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v9.5.0 Universal)
 # ==============================================================================
 # Данный файл позволяет выполнять полностью автоматическую установку:
 # ./setup.sh --config server-setup.env --non-interactive --force
@@ -1148,15 +1148,15 @@ AWG_SUBNET_CIDR="22"
 
 # --- 4.1. ПРОТОКОЛЫ 3X-UI (Shadowsocks 2022 / TUIC v5 / MTProxy) ---
 # Shadowsocks 2022 (L4 TCP/UDP, 2022-blake3-aes-256-gcm, инбаунд 3X-UI) [y/n]
-ENABLE_SS2022="y"
+ENABLE_SS2022="n"
 SS2022_PORT="8388"
 
 # TUIC v5 (QUIC 0-RTT, BBR Congestion Control, инбаунд 3X-UI) [y/n]
-ENABLE_TUIC="y"
+ENABLE_TUIC="n"
 TUIC_PORT="8448"
 
 # Telegram MTProxy FakeTLS (mtg-multi, инбаунд 3X-UI) [y/n]
-ENABLE_MTPROTO="y"
+ENABLE_MTPROTO="n"
 MTPROTO_PORT="8444"
 MTPROTO_FAKETLS_DOMAIN="gateway.icloud.com"
 # Спонсорский промо-тег канала от @MTProxybot (32 hex-символа, опционально)
@@ -1177,7 +1177,7 @@ ENABLE_NODE_TOKEN="y"
 # Название API-токена ноды (если не указано, формируется как <SERVER_PREFIX>-Node или Master-Node-Cluster)
 NODE_TOKEN_NAME=""
 
-# Автоматически обновлять ядро Xray-core до последней официальной версии с GitHub (v26.9.30+) [y/n]
+# Автоматически обновлять ядро Xray-core до последней официальной версии с GitHub (v26.10.21+) [y/n]
 UPDATE_XRAY_CORE="y"
 
 # --- 6.1. ТОНКИЕ НАСТРОЙКИ ПАНЕЛИ 3X-UI И РОУТИНГА XRAY ---
@@ -1816,8 +1816,23 @@ reconstruct_arrays_from_vars() {
             DOMAIN_TO_PORT["cdn.$PRIMARY_DOMAIN"]="${STEAL_PORTS_LIST[0]}"
             ALL_DOMAINS+=("cdn.$PRIMARY_DOMAIN")
         }
+
+        # Режим совместимости Steal (субдомен static.<домен>, порт 47443, flow: none)
+        local v_stl_compat="${ENABLE_STEAL_COMPAT:-n}"
+        if [[ "${v_stl_compat,,}" == "y" || "$v_stl_compat" == "1" ]] && [ -n "${PRIMARY_DOMAIN:-}" ]; then
+            STEAL_COMPAT_ENABLED=1
+            STEAL_COMPAT_PORT="${STEAL_COMPAT_PORT:-47443}"
+            STEAL_COMPAT_DOMAIN="${STEAL_COMPAT_DOMAIN:-static.${PRIMARY_DOMAIN:-}}"
+            DOMAIN_TO_PORT["$STEAL_COMPAT_DOMAIN"]="$STEAL_COMPAT_PORT"
+            [[ " ${ALL_DOMAINS[*]} " =~ " ${STEAL_COMPAT_DOMAIN} " ]] || ALL_DOMAINS+=("$STEAL_COMPAT_DOMAIN")
+            [[ " ${STEAL_DOMAINS[*]} " =~ " ${STEAL_COMPAT_DOMAIN} " ]] || STEAL_DOMAINS+=("$STEAL_COMPAT_DOMAIN")
+            STEAL_PORTS_LIST+=("$STEAL_COMPAT_PORT")
+        else
+            STEAL_COMPAT_ENABLED=0
+        fi
     else
         STEAL_ENABLED=0
+        STEAL_COMPAT_ENABLED=0
         STEAL_PORTS_LIST=()
     fi
 
@@ -1895,6 +1910,7 @@ reconstruct_arrays_from_vars() {
     _v="${ENABLE_WEB_STACK:-y}"; if is_true "$_v"; then ENABLE_WEB_STACK=1; else ENABLE_WEB_STACK=0; fi
     AWG_SERVER_HOST="${AWG_SERVER_HOST:-}"
     _v="${ENABLE_STEAL:-${STEAL_ENABLED:-y}}"; if is_true "$_v"; then ENABLE_STEAL="y"; STEAL_ENABLED=1; else ENABLE_STEAL="n"; STEAL_ENABLED=0; fi
+    _v="${ENABLE_STEAL_COMPAT:-${STEAL_COMPAT_ENABLED:-n}}"; if is_true "$_v"; then ENABLE_STEAL_COMPAT="y"; STEAL_COMPAT_ENABLED=1; else ENABLE_STEAL_COMPAT="n"; STEAL_COMPAT_ENABLED=0; fi
     _v="${ENABLE_CLASSIC:-${CLASSIC_ENABLED:-y}}"; if is_true "$_v"; then ENABLE_CLASSIC="y"; CLASSIC_ENABLED=1; else ENABLE_CLASSIC="n"; CLASSIC_ENABLED=0; fi
     _v="${ENABLE_HY2:-n}"
     if is_true "$_v"; then
@@ -2091,6 +2107,8 @@ save_session_state() {
     fi
     local steal_save="n"
     v="${ENABLE_STEAL:-${STEAL_ENABLED:-n}}"; is_true "$v" && steal_save="y"
+    local steal_compat_save="n"
+    v="${ENABLE_STEAL_COMPAT:-${STEAL_COMPAT_ENABLED:-n}}"; is_true "$v" && steal_compat_save="y"
     local classic_save="n"
     v="${ENABLE_CLASSIC:-${CLASSIC_ENABLED:-n}}"; is_true "$v" && classic_save="y"
     local hy2_save="n"
@@ -2183,6 +2201,10 @@ FORCE_DNS="${FORCE_DNS:-0}"
 ENABLE_STEAL="$steal_save"
 STEAL_PORT="${STEAL_PORTS_LIST[0]:-45443}"
 STEAL_DOMAINS="${STEAL_DOMAINS[*]:-}"
+
+ENABLE_STEAL_COMPAT="$steal_compat_save"
+STEAL_COMPAT_PORT="${STEAL_COMPAT_PORT:-47443}"
+STEAL_COMPAT_DOMAIN="${STEAL_COMPAT_DOMAIN:-static.${PRIMARY_DOMAIN:-}}"
 
 ENABLE_CLASSIC="$classic_save"
 CLASSIC_PORT="${CLASSIC_PORTS_LIST[0]:-46443}"
@@ -2712,11 +2734,39 @@ parse_manifest_field() {
         echo ""
         return
     fi
-    if command -v python3 >/dev/null 2>&1; then
-        python3 -c "import json, sys; d=json.load(open('$manifest')); print(d.get('$field', ''))" 2>/dev/null || true
-    else
-        grep "\"$field\":" "$manifest" 2>/dev/null | head -n1 | sed -E 's/.*:[[:space:]]*"?([^",]+)"?.*/\1/' || true
+    local val=""
+    if command -v jq >/dev/null 2>&1; then
+        val="$(jq -r ".${field} // empty" "$manifest" 2>/dev/null || true)"
     fi
+    if [ -z "$val" ] && python3 -c "import sys" >/dev/null 2>&1; then
+        val="$(python3 -c "import json, sys; d=json.load(open('$manifest')); print(d.get('$field', ''))" 2>/dev/null || true)"
+    fi
+    if [ -z "$val" ] && python -c "import sys" >/dev/null 2>&1; then
+        val="$(python -c "import json, sys; d=json.load(open('$manifest')); print(d.get('$field', ''))" 2>/dev/null || true)"
+    fi
+    if [ -z "$val" ]; then
+        val="$(grep "\"$field\":" "$manifest" 2>/dev/null | head -n1 | sed -E 's/.*:[[:space:]]*"?([^",]+)"?.*/\1/' || true)"
+    fi
+    echo "$val"
+}
+
+# Вспомогательная функция проверки наличия файла в архиве (с префиксом ./ или без)
+archive_has_entry() {
+    local arch="$1"
+    local entry="$2"
+    [ -f "$arch" ] || return 1
+    tar --force-local -tzf "$arch" 2>/dev/null | grep -Eq "^(\./)?${entry}$"
+}
+
+# Вспомогательная функция извлечения файла из архива
+archive_extract_member() {
+    local arch="$1"
+    local entry="$2"
+    local out_dir="$3"
+    [ -f "$arch" ] || return 1
+    tar --force-local -xzf "$arch" -C "$out_dir" "$entry" 2>/dev/null || \
+    tar --force-local -xzf "$arch" -C "$out_dir" "./${entry}" 2>/dev/null || \
+    tar --force-local -xzf "$arch" -C "$out_dir" --wildcards "*${entry}" 2>/dev/null
 }
 
 run_uninstall() {
@@ -2829,8 +2879,20 @@ run_uninstall() {
     for unit in "${units_to_remove[@]}"; do
         rm -f "$unit" 2>/dev/null || true
     done
-    if [ -d "${target_root}/etc/systemd/system/nginx.service.d" ]; then
-        rmdir "${target_root}/etc/systemd/system/nginx.service.d" 2>/dev/null || true
+    rm -rf "${target_root}/etc/systemd/system/x-ui.service.d" "${target_root}/etc/systemd/system/nginx.service.d" 2>/dev/null || true
+
+    # Восстановление статуса motd-news.timer, если он был включен в исходном состоянии
+    if [ "$has_snapshot" -eq 1 ] && archive_has_entry "$archive" "services_enabled.list"; then
+        tmp_extract="$(mktemp -d 2>/dev/null || echo "/tmp/svc_extract_$$")"
+        if archive_extract_member "$archive" "services_enabled.list" "$tmp_extract"; then
+            local svc_list=""
+            [ -f "$tmp_extract/services_enabled.list" ] && svc_list="$tmp_extract/services_enabled.list"
+            if [ -n "$svc_list" ] && grep -q "motd-news.timer" "$svc_list"; then
+                systemctl enable motd-news.timer 2>/dev/null || true
+                [ -f "${target_root}/etc/default/motd-news" ] && sed -i 's/ENABLED=0/ENABLED=1/' "${target_root}/etc/default/motd-news" 2>/dev/null || true
+            fi
+        fi
+        rm -rf "$tmp_extract" 2>/dev/null || true
     fi
 
     # Удаление cron-файлов и периодических задач
@@ -2859,7 +2921,25 @@ run_uninstall() {
     ok "Systemd units, cron-задачи и сетевые интерфейсы очищены."
 
     log "Шаг 3/8: Восстановление Firewall и очистка правил UFW..."
-    # Удаление правил port hopping и MSS clamping из UFW
+    local ufw_restored=0
+    local orig_ufw_active=0
+
+    # 1. Проверка исходного статуса активности UFW из снимка
+    if [ "$has_snapshot" -eq 1 ] && archive_has_entry "$archive" "firewall/ufw_status.txt"; then
+        local tmp_extract
+        tmp_extract="$(mktemp -d 2>/dev/null || echo "/tmp/ufw_stat_$$")"
+        if archive_extract_member "$archive" "firewall/ufw_status.txt" "$tmp_extract"; then
+            local stat_file=""
+            [ -f "$tmp_extract/firewall/ufw_status.txt" ] && stat_file="$tmp_extract/firewall/ufw_status.txt"
+            [ -f "$tmp_extract/ufw_status.txt" ] && stat_file="$tmp_extract/ufw_status.txt"
+            if [ -n "$stat_file" ] && grep -qi "Status: active" "$stat_file"; then
+                orig_ufw_active=1
+            fi
+        fi
+        rm -rf "$tmp_extract" 2>/dev/null || true
+    fi
+
+    # 2. Хирургическое удаление правил стека из before.rules и before6.rules
     for rule_file in "${target_root}/etc/ufw/before.rules" "${target_root}/etc/ufw/before6.rules"; do
         if [ -f "$rule_file" ]; then
             sed -i '/# Port Hopping for Hysteria 2/,/COMMIT/d' "$rule_file" 2>/dev/null || true
@@ -2867,29 +2947,139 @@ run_uninstall() {
             sed -i '/-A PREROUTING -p udp --dport .* -j REDIRECT/d' "$rule_file" 2>/dev/null || true
             sed -i '/# TCP MSS Clamping/,/COMMIT/d' "$rule_file" 2>/dev/null || true
             sed -i '/TCPMSS --clamp-mss-to-pmtu/d' "$rule_file" 2>/dev/null || true
+            sed -i 's/-A ufw-before-input -p icmp --icmp-type echo-request -j DROP/-A ufw-before-input -p icmp --icmp-type echo-request -j ACCEPT/g' "$rule_file" 2>/dev/null || true
         fi
     done
 
-    # Гарантируем, что активный порт SSH открыт в UFW во избежание lockout
-    if command -v ufw >/dev/null 2>&1; then
-        local current_ssh_port
-        current_ssh_port=$(command -v detect_active_ssh_port >/dev/null 2>&1 && detect_active_ssh_port || echo 22)
-        ufw allow "${current_ssh_port}/tcp" comment 'SSH (Active)' >/dev/null 2>&1 || true
-        [ -n "$orig_ssh_port" ] && ufw allow "${orig_ssh_port}/tcp" comment 'SSH (Restored)' >/dev/null 2>&1 || true
-        ufw reload >/dev/null 2>&1 || true
+    # 3. Хирургическое удаление правил стека по тегу [vpn-stack] из user.rules и user6.rules
+    for ufw_user_rules in "${target_root}/etc/ufw/user.rules" "${target_root}/etc/ufw/user6.rules"; do
+        if [ -f "$ufw_user_rules" ]; then
+            sed -i -E '/### tuple ###.*vpn-stack/d' "$ufw_user_rules" 2>/dev/null || true
+            sed -i -E '/-m comment --comment .*vpn-stack.*/d' "$ufw_user_rules" 2>/dev/null || true
+        fi
+    done
+
+    # 4. Хирургическое удаление правил стека из raw iptables / ip6tables (без глобального сброса iptables -F)
+    if command -v iptables >/dev/null 2>&1; then
+        while iptables -D INPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null; do :; done
+        while iptables -D INPUT -p tcp --dport 443 -j ACCEPT 2>/dev/null; do :; done
+        while iptables -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null; do :; done
+        while iptables -t mangle -D POSTROUTING -p tcp -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original -m mark ! --mark 0x40000000/0x40000000 -j NFQUEUE --queue-num 200 --queue-bypass 2>/dev/null; do :; done
+        while iptables -t nat -S PREROUTING 2>/dev/null | grep -E 'REDIRECT (--to-ports|-to-destination)' | grep -v 'DOCKER' | head -n1 | sed 's/^-A/-D/' | xargs -r -L1 iptables -t nat 2>/dev/null; do :; done
     fi
-    ok "Правила Firewall очищены (SSH-порты защищены)."
+    if command -v ip6tables >/dev/null 2>&1; then
+        while ip6tables -D INPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null; do :; done
+        while ip6tables -D INPUT -p tcp --dport 443 -j ACCEPT 2>/dev/null; do :; done
+        while ip6tables -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null; do :; done
+        while ip6tables -t mangle -D POSTROUTING -p tcp -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original -m mark ! --mark 0x40000000/0x40000000 -j NFQUEUE --queue-num 200 --queue-bypass 2>/dev/null; do :; done
+    fi
+
+    # 5. Проверка наличия Docker и сторонних пользовательских правил
+    local docker_present=0
+    if command -v iptables >/dev/null 2>&1; then
+        if iptables -t nat -n -L DOCKER >/dev/null 2>&1 || iptables -n -L DOCKER >/dev/null 2>&1; then
+            docker_present=1
+        fi
+    fi
+
+    local has_user_ufw_rules=0
+    for u_rules in "${target_root}/etc/ufw/user.rules" "${target_root}/etc/ufw/user6.rules"; do
+        if [ -f "$u_rules" ] && grep -q '^### tuple ###' "$u_rules"; then
+            local non_stack_tuples
+            non_stack_tuples="$(grep '^### tuple ###' "$u_rules" | grep -v 'vpn-stack' || true)"
+            if [ -n "$non_stack_tuples" ]; then
+                has_user_ufw_rules=1
+                break
+            fi
+        fi
+    done
+
+    # 6. Если в снимке есть архив UFW и пользователь не добавлял сторонних правил:
+    # восстанавливаем исходную конфигурацию UFW
+    if [ "$has_snapshot" -eq 1 ] && [ "$has_user_ufw_rules" -eq 0 ] && archive_has_entry "$archive" "firewall/ufw_config.tar.gz"; then
+        local tmp_extract
+        tmp_extract="$(mktemp -d 2>/dev/null || echo "/tmp/ufw_extract_$$")"
+        if archive_extract_member "$archive" "firewall/ufw_config.tar.gz" "$tmp_extract"; then
+            local ufw_tar=""
+            if [ -f "$tmp_extract/firewall/ufw_config.tar.gz" ]; then
+                ufw_tar="$tmp_extract/firewall/ufw_config.tar.gz"
+            elif [ -f "$tmp_extract/ufw_config.tar.gz" ]; then
+                ufw_tar="$tmp_extract/ufw_config.tar.gz"
+            fi
+            if [ -n "$ufw_tar" ]; then
+                tar --force-local -xzf "$ufw_tar" -C "${target_root}/etc" 2>/dev/null || true
+                ufw_restored=1
+                ok "Конфигурация UFW успешно восстановлена из исходного снимка."
+            fi
+        fi
+        rm -rf "$tmp_extract" 2>/dev/null || true
+    fi
+
+    # 7. Применение статуса активности и завершение настройки firewall
+    if [ "$has_snapshot" -eq 1 ] && [ "$orig_ufw_active" -eq 0 ] && [ "$has_user_ufw_rules" -eq 0 ] && [ "$docker_present" -eq 0 ]; then
+        if command -v ufw >/dev/null 2>&1; then
+            ufw --force disable >/dev/null 2>&1 || true
+        fi
+        # Восстановление сохраненных правил iptables из снимка
+        local tmp_extract
+        tmp_extract="$(mktemp -d 2>/dev/null || echo "/tmp/ipt_extract_$$")"
+        if archive_extract_member "$archive" "firewall/iptables.rules" "$tmp_extract"; then
+            local ipt_file=""
+            [ -f "$tmp_extract/firewall/iptables.rules" ] && ipt_file="$tmp_extract/firewall/iptables.rules"
+            [ -f "$tmp_extract/iptables.rules" ] && ipt_file="$tmp_extract/iptables.rules"
+            if [ -s "$ipt_file" ] && command -v iptables-restore >/dev/null 2>&1; then
+                iptables-restore < "$ipt_file" 2>/dev/null || true
+            fi
+        fi
+        if archive_extract_member "$archive" "firewall/ip6tables.rules" "$tmp_extract"; then
+            local ip6t_file=""
+            [ -f "$tmp_extract/firewall/ip6tables.rules" ] && ip6t_file="$tmp_extract/firewall/ip6tables.rules"
+            [ -f "$tmp_extract/ip6tables.rules" ] && ip6t_file="$tmp_extract/ip6tables.rules"
+            if [ -s "$ip6t_file" ] && command -v ip6tables-restore >/dev/null 2>&1; then
+                ip6tables-restore < "$ip6t_file" 2>/dev/null || true
+            fi
+        fi
+        rm -rf "$tmp_extract" 2>/dev/null || true
+
+        # Очистка правил стека [vpn-stack] из user.rules
+        for ufw_user_rules in "${target_root}/etc/ufw/user.rules" "${target_root}/etc/ufw/user6.rules"; do
+            if [ -f "$ufw_user_rules" ]; then
+                sed -i -E '/### tuple ###.*vpn-stack/d; /-m comment --comment .*vpn-stack.*/d' "$ufw_user_rules" 2>/dev/null || true
+            fi
+        done
+        ok "Состояние Firewall успешно возвращено к исходному (UFW отключен)."
+    else
+        # UFW был активен ИЛИ обнаружены правила пользователя/Docker:
+        if command -v ufw >/dev/null 2>&1; then
+            local current_ssh_port
+            current_ssh_port=$(command -v detect_active_ssh_port >/dev/null 2>&1 && detect_active_ssh_port || echo 22)
+            ufw allow "${current_ssh_port}/tcp" comment '[vpn-stack] SSH (Active)' >/dev/null 2>&1 || true
+            [ -n "$orig_ssh_port" ] && ufw allow "${orig_ssh_port}/tcp" comment '[vpn-stack] SSH (Restored)' >/dev/null 2>&1 || true
+            ufw reload >/dev/null 2>&1 || true
+        fi
+        if [ "$docker_present" -eq 1 ]; then
+            ok "Сетевые цепочки Docker защищены от сброса (хирургическая очистка правил стека завершена)."
+        elif [ "$has_user_ufw_rules" -eq 1 ]; then
+            ok "Пользовательские правила UFW сохранены, UFW оставлен активным."
+        else
+            ok "Правила Firewall очищены (SSH-порты защищены)."
+        fi
+    fi
 
     log "Шаг 4/8: Восстановление конфигурации SSH (Anti-Lockout)..."
     local ssh_restored=0
     local tmp_extract
     tmp_extract="$(mktemp -d 2>/dev/null || echo "/tmp/ssh_extract_$$")"
 
-    if [ "$has_snapshot" -eq 1 ] && tar --force-local -tzf "$archive" "ssh_config.tar.gz" >/dev/null 2>&1; then
-        tar --force-local -xzf "$archive" -C "$tmp_extract" "ssh_config.tar.gz" 2>/dev/null || true
+    if [ "$has_snapshot" -eq 1 ] && archive_has_entry "$archive" "ssh_config.tar.gz"; then
+        archive_extract_member "$archive" "ssh_config.tar.gz" "$tmp_extract" || true
+        local ssh_tar=""
         if [ -f "$tmp_extract/ssh_config.tar.gz" ]; then
+            ssh_tar="$tmp_extract/ssh_config.tar.gz"
+        fi
+        if [ -n "$ssh_tar" ]; then
             mkdir -p "$tmp_extract/ssh_root"
-            tar --force-local -xzf "$tmp_extract/ssh_config.tar.gz" -C "$tmp_extract/ssh_root" 2>/dev/null || true
+            tar --force-local -xzf "$ssh_tar" -C "$tmp_extract/ssh_root" 2>/dev/null || true
 
             # Проверка синтаксиса sshd перед применением
             local sshd_valid=1
@@ -2923,24 +3113,26 @@ run_uninstall() {
 
     log "Шаг 5/8: Удаление настроек ядра sysctl и limits..."
     rm -f "${target_root}/etc/sysctl.d/99-vless-tuning.conf" 2>/dev/null || true
+    rm -f "${target_root}/etc/modules-load.d/99-vless-conntrack.conf" 2>/dev/null || true
     rm -f "${target_root}/etc/security/limits.d/99-proxy-limits.conf" 2>/dev/null || true
     rm -f "${target_root}/etc/systemd/journald.conf.d/00-volatile.conf" 2>/dev/null || true
     command -v sysctl >/dev/null 2>&1 && sysctl --system >/dev/null 2>&1 || true
     ok "Сетевые параметры ядра возвращены к значениям по умолчанию."
 
-    log "Шаг 6/8: Очистка или восстановление Nginx..."
+    log "Шаг 6/8: Очистка или восстановление Nginx и Fail2ban..."
     if [ "$nginx_preexisted" -eq 1 ]; then
         # Nginx существовал до нас: восстанавливаем исходную конфигурацию
-        rm -f "${target_root}/etc/nginx/conf.d/01-main.conf" \
+        rm -f "${target_root}/etc/nginx/conf.d/00-acme.conf" \
+              "${target_root}/etc/nginx/conf.d/01-main.conf" \
               "${target_root}/etc/nginx/conf.d/02-"*.conf \
-              "${target_root}/etc/nginx/conf.d/03-adguard.conf \
-              ${target_root}/etc/nginx/conf.d/vpn_mask.conf" \
+              "${target_root}/etc/nginx/conf.d/03-adguard.conf" \
+              "${target_root}/etc/nginx/conf.d/vpn_mask.conf" \
               "${target_root}/etc/nginx/stream.d/00-stream.conf" \
               "${target_root}/etc/nginx/modules-enabled/50-mod-stream.conf" 2>/dev/null || true
         
         tmp_extract="$(mktemp -d 2>/dev/null || echo "/tmp/nginx_extract_$$")"
-        if [ "$has_snapshot" -eq 1 ] && tar --force-local -tzf "$archive" "nginx_config.tar.gz" >/dev/null 2>&1; then
-            tar --force-local -xzf "$archive" -C "$tmp_extract" "nginx_config.tar.gz" 2>/dev/null || true
+        if [ "$has_snapshot" -eq 1 ] && archive_has_entry "$archive" "nginx_config.tar.gz"; then
+            archive_extract_member "$archive" "nginx_config.tar.gz" "$tmp_extract" || true
             if [ -f "$tmp_extract/nginx_config.tar.gz" ]; then
                 tar --force-local -xzf "$tmp_extract/nginx_config.tar.gz" -C "${target_root}/etc" 2>/dev/null || true
                 ok "Исходная конфигурация Nginx восстановлена из снимка."
@@ -2949,17 +3141,64 @@ run_uninstall() {
         rm -rf "$tmp_extract" 2>/dev/null || true
         command -v systemctl >/dev/null 2>&1 && systemctl restart nginx 2>/dev/null || true
     else
-        # Nginx был установлен нами: удаляем его конфиги и кэш
-        rm -rf "${target_root}/etc/nginx/conf.d" \
-               "${target_root}/etc/nginx/stream.d" \
-               "${target_root}/etc/nginx/modules-enabled" \
-               "${target_root}/var/cache/nginx" 2>/dev/null || true
+        # Nginx был установлен нами: удаляем только файлы стека, сохраняя пользовательские конфиги
+        rm -f "${target_root}/etc/nginx/conf.d/00-acme.conf" \
+              "${target_root}/etc/nginx/conf.d/01-main.conf" \
+              "${target_root}/etc/nginx/conf.d/02-"*.conf \
+              "${target_root}/etc/nginx/conf.d/03-adguard.conf" \
+              "${target_root}/etc/nginx/conf.d/vpn_mask.conf" \
+              "${target_root}/etc/nginx/stream.d/00-stream.conf" \
+              "${target_root}/etc/nginx/modules-enabled/50-mod-stream.conf" 2>/dev/null || true
+        rm -rf "${target_root}/var/cache/nginx" 2>/dev/null || true
+        rmdir "${target_root}/etc/nginx/conf.d" 2>/dev/null || true
+        rmdir "${target_root}/etc/nginx/stream.d" 2>/dev/null || true
+        rmdir "${target_root}/etc/nginx/modules-enabled" 2>/dev/null || true
+        rmdir "${target_root}/etc/nginx" 2>/dev/null || true
         if [ "${UNINSTALL_PURGE_PKGS:-0}" -eq 1 ] && command -v apt-get >/dev/null 2>&1; then
             export DEBIAN_FRONTEND=noninteractive
-            apt-get purge -y nginx nginx-common nginx-core libnginx-mod-stream nginx-module-stream >/dev/null 2>&1 || true
+            local nginx_pkgs=()
+            for pkg_cand in nginx nginx-common nginx-core libnginx-mod-stream nginx-module-stream python3-certbot-nginx certbot python3-certbot; do
+                if dpkg-query -W -f='${Status}' "$pkg_cand" 2>/dev/null | grep -q "ok installed"; then
+                    nginx_pkgs+=("$pkg_cand")
+                fi
+            done
+            if [ ${#nginx_pkgs[@]} -gt 0 ]; then
+                apt-get purge -y "${nginx_pkgs[@]}" >/dev/null 2>&1 || true
+            fi
             rm -f "${target_root}/etc/apt/sources.list.d/nginx.list" "${target_root}/etc/apt/preferences.d/99nginx" 2>/dev/null || true
         fi
+        rm -f "${target_root}/etc/apt/sources.list.d/amnezia-ppa.sources" "${target_root}/etc/apt/keyrings/amnezia.gpg" 2>/dev/null || true
         ok "Конфигурация Nginx удалена."
+    fi
+
+    # Очистка и восстановление Fail2ban
+    rm -f "${target_root}/etc/fail2ban/jail.d/90-ssh-shield.local" 2>/dev/null || true
+    rmdir "${target_root}/etc/fail2ban/jail.d" 2>/dev/null || true
+    if [ "$fail2ban_preexisted" -eq 1 ]; then
+        tmp_extract="$(mktemp -d 2>/dev/null || echo "/tmp/f2b_extract_$$")"
+        if [ "$has_snapshot" -eq 1 ] && archive_has_entry "$archive" "fail2ban_config.tar.gz"; then
+            archive_extract_member "$archive" "fail2ban_config.tar.gz" "$tmp_extract" || true
+            if [ -f "$tmp_extract/fail2ban_config.tar.gz" ]; then
+                tar --force-local -xzf "$tmp_extract/fail2ban_config.tar.gz" -C "${target_root}/etc" 2>/dev/null || true
+                ok "Исходная конфигурация Fail2ban восстановлена из снимка."
+            fi
+        fi
+        rm -rf "$tmp_extract" 2>/dev/null || true
+        command -v systemctl >/dev/null 2>&1 && systemctl restart fail2ban 2>/dev/null || true
+    else
+        if [ "${UNINSTALL_PURGE_PKGS:-0}" -eq 1 ] && command -v apt-get >/dev/null 2>&1; then
+            export DEBIAN_FRONTEND=noninteractive
+            local f2b_pkgs=()
+            for pkg_cand in fail2ban python3-systemd; do
+                if dpkg-query -W -f='${Status}' "$pkg_cand" 2>/dev/null | grep -q "ok installed"; then
+                    f2b_pkgs+=("$pkg_cand")
+                fi
+            done
+            if [ ${#f2b_pkgs[@]} -gt 0 ]; then
+                apt-get purge -y "${f2b_pkgs[@]}" >/dev/null 2>&1 || true
+            fi
+        fi
+        rmdir "${target_root}/etc/fail2ban" 2>/dev/null || true
     fi
 
     log "Шаг 7/8: Очистка рабочих директорий и исполняемых файлов..."
@@ -2973,6 +3212,8 @@ run_uninstall() {
         "${target_root}/var/run/mita"
         "${target_root}/root/awg"
         "${target_root}/var/www/mirror"
+        "${target_root}/var/www/diagnostics"
+        "${target_root}/var/www/proxy_temp"
         "${target_root}/root/.server_setup"
     )
     [ "$agh_preexisted" -eq 0 ] && dirs_to_remove+=("${target_root}/opt/AdGuardHome")
@@ -2981,6 +3222,34 @@ run_uninstall() {
     for dir in "${dirs_to_remove[@]}"; do
         rm -rf "$dir" 2>/dev/null || true
     done
+
+    # Хирургическая очистка файлов веб-маскировки в /var/www/html (сохранение пользовательских сайтов и файлов)
+    if [ -d "${target_root}/var/www/html" ]; then
+        rm -rf "${target_root}/var/www/html/assets" \
+               "${target_root}/var/www/html/css" \
+               "${target_root}/var/www/html/js" \
+               "${target_root}/var/www/html/.well-known" \
+               "${target_root}/var/www/html/logo.webp" \
+               "${target_root}/var/www/html/favicon.svg" \
+               "${target_root}/var/www/html/favicon.ico" \
+               "${target_root}/var/www/html/404.html" 2>/dev/null || true
+
+        if [ -f "${target_root}/var/www/html/robots.txt" ]; then
+            if grep -q "Disallow: /" "${target_root}/var/www/html/robots.txt" 2>/dev/null && [ "$(wc -l < "${target_root}/var/www/html/robots.txt")" -le 4 ]; then
+                rm -f "${target_root}/var/www/html/robots.txt" 2>/dev/null || true
+            fi
+        fi
+
+        if [ -f "${target_root}/var/www/html/index.html" ]; then
+            if grep -Eqi "(DataSphere|Cosmos Cloud|cosmos_session|Welcome to Nginx Stream Mask|Welcome to nginx!)" "${target_root}/var/www/html/index.html" 2>/dev/null; then
+                rm -f "${target_root}/var/www/html/index.html" 2>/dev/null || true
+            fi
+        fi
+
+        # Если в /var/www/html не осталось пользовательских файлов — удаляем каталог безопасно через rmdir
+        rmdir "${target_root}/var/www/html" 2>/dev/null || true
+    fi
+    rmdir "${target_root}/var/www" 2>/dev/null || true
 
     # Удаление standalone бинарников
     local bins_to_remove=(
@@ -2994,6 +3263,7 @@ run_uninstall() {
         "${target_root}/usr/local/bin/mieru-cli"
         "${target_root}/usr/local/bin/awg-mgr"
         "${target_root}/usr/local/bin/manage-services"
+        "${target_root}/usr/local/bin/update-xray-geo.sh"
     )
     for b in "${bins_to_remove[@]}"; do
         rm -f "$b" 2>/dev/null || true
@@ -3003,10 +3273,19 @@ run_uninstall() {
     rm -f "${target_root}/root/vpn_credentials.txt" \
           "${target_root}/root/mieru-client"*.json \
           "${target_root}/etc/mita_server_config.json" \
+          "${target_root}/etc/server-setup.env" \
+          "${target_root}/etc/server-setup.env.state" \
+          "${target_root}/etc/cron.d/certbot" \
+          "${target_root}/etc/logrotate.d/certbot" \
           "${target_root}/run/3xui_unified_client.env" \
           "${target_root}/var/run/server_setup.checkpoint" \
           "${target_root}/var/run/server_setup.failed_step" \
           "${target_root}/var/run/server_setup_active_step.log" 2>/dev/null || true
+
+    # Удаление созданного при установке /etc/timezone (если отсутствовал в исходном снимке)
+    if [ "$has_snapshot" -eq 1 ] && ! archive_has_entry "$archive" "timezone"; then
+        rm -f "${target_root}/etc/timezone" 2>/dev/null || true
+    fi
 
     # SSL сертификаты (по умолчанию сохраняются, если не запрошена очистка)
     if [ "${UNINSTALL_KEEP_CERTS:-1}" -eq 0 ]; then
@@ -3022,21 +3301,36 @@ run_uninstall() {
 
     log "Шаг 8/8: Завершение отката..."
     if [ "${UNINSTALL_PURGE_PKGS:-0}" -eq 1 ] && [ "$has_snapshot" -eq 1 ] && command -v apt-get >/dev/null 2>&1; then
-        local snap_pkgs="$snap_dir/packages_installed.list"
-        if [ -f "$snap_pkgs" ]; then
+        local snap_pkgs=""
+        local tmp_extract=""
+        if [ -f "$snap_dir/packages_installed.list" ]; then
+            snap_pkgs="$snap_dir/packages_installed.list"
+        elif archive_has_entry "$archive" "packages_installed.list"; then
+            tmp_extract="$(mktemp -d 2>/dev/null || echo "/tmp/pkgs_ext_$$")"
+            if archive_extract_member "$archive" "packages_installed.list" "$tmp_extract"; then
+                [ -f "$tmp_extract/packages_installed.list" ] && snap_pkgs="$tmp_extract/packages_installed.list"
+                [ -f "$tmp_extract/./packages_installed.list" ] && snap_pkgs="$tmp_extract/./packages_installed.list"
+            fi
+        fi
+
+        if [ -n "$snap_pkgs" ] && [ -f "$snap_pkgs" ]; then
             log "Вычисление и удаление добавленных пакетов (--purge)..."
             local cur_pkgs
             cur_pkgs="$(mktemp 2>/dev/null || echo "/tmp/cur_pkgs_$$")"
             dpkg-query -f '${binary:Package}\n' -W > "$cur_pkgs" 2>/dev/null || true
             local diff_pkgs
-            diff_pkgs="$(comm -13 <(sort "$snap_pkgs") <(sort "$cur_pkgs") | grep -E '^(amneziawg|wireguard)' || true)"
+            # Удаляем ТОЛЬКО пакеты стека, добавленные установщиком (полная защита стороннего ПО: Docker, Dokploy, баз данных и утилит пользователя)
+            local stack_pkg_regex="^(nginx.*|libnginx.*|certbot|python3-certbot.*|fail2ban|python3-systemd|amneziawg.*|wireguard.*|libnetfilter-queue.*|apache2-utils|python3-bcrypt|mtr-tiny|socat)$"
+            diff_pkgs="$(comm -13 <(sort "$snap_pkgs") <(sort "$cur_pkgs") | grep -E "$stack_pkg_regex" || true)"
             if [ -n "$diff_pkgs" ]; then
                 export DEBIAN_FRONTEND=noninteractive
                 # shellcheck disable=SC2086
                 apt-get purge -y $diff_pkgs >/dev/null 2>&1 || true
             fi
+            apt-get autoremove --purge -y >/dev/null 2>&1 || true
             rm -f "$cur_pkgs" 2>/dev/null || true
         fi
+        [ -n "$tmp_extract" ] && rm -rf "$tmp_extract" 2>/dev/null || true
     fi
 
     echo -e "\n${BOLD}${GREEN}✔ Сервер успешно возвращен в исходное состояние!${NC}"
@@ -3049,7 +3343,7 @@ run_uninstall() {
 # ==============================================================================
 #  Provides easy multi-channel retrieval of installation and diagnostic logs:
 #    1. One-click SCP copy commands (formatted for Windows / macOS / Linux)
-#    2. Temporary one-time Web link (via Nginx or ephemeral Python server)
+#    2. Temporary one-time Web link (via Nginx webroot with automatic expiration)
 #    3. Sanitized upload to ephemeral pastebin (0x0.st / bashupload.com)
 #    4. Interactive tail preview in console
 # ==============================================================================
@@ -3060,13 +3354,28 @@ sanitize_debug_log() {
     local src_file="$1"
     local dst_file="$2"
     [ -f "$src_file" ] || return 1
-    # Маскирование чувствительных данных: паролей, токенов, UUID и приватных ключей
-    sed -E \
-        -e 's/(PASSWORD|PASS|SECRET|TOKEN|KEY|UUID|PRIVATE_KEY)=[^ ]+/\1=***MASKED***/gI' \
-        -e 's/(ADMIN_PASSWORD|AGH_PASS|NODE_TOKEN)=.*/\1=***MASKED***/gI' \
+
+    local tmp_dst
+    tmp_dst=$(mktemp "${TMPDIR:-/tmp}/sanitized.XXXXXX") || return 1
+
+    # Маскирование чувствительных данных: паролей, токенов, UUID, JWT, приватных ключей и JSON-полей
+    if sed -E \
+        -e 's/\x1b\[[0-9;]*m//g' \
+        -e '/-----BEGIN ([A-Z ]+)?PRIVATE KEY-----/,/-----END ([A-Z ]+)?PRIVATE KEY-----/c\***PRIVATE_KEY_BLOCK_MASKED***' \
+        -e 's/(PASSWORD|PASS|SECRET|TOKEN|KEY|UUID|PRIVATE_KEY)[[:space:]]*=[[:space:]]*[^ ]+/\1=***MASKED***/gI' \
+        -e 's/(ADMIN_PASSWORD|AGH_PASS|NODE_TOKEN)[[:space:]]*=.*/\1=***MASKED***/gI' \
+        -e 's/"(password|secret|token|privateKey|private_key)"[[:space:]]*:[[:space:]]*"[^"]+"/"\1":"***MASKED***"/gI' \
+        -e 's/(Пароль[^:]*|Password[^:]*)[[:space:]]*:[[:space:]]*[^ ]+/\1: ***MASKED***/gI' \
+        -e 's/(PrivateKey|PresharedKey)[[:space:]]*=[[:space:]]*[A-Za-z0-9+/=]{40,}/\1 = ***MASKED***/gI' \
         -e 's/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/***UUID***/gI' \
         -e 's/(ey[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{10,})/***JWT***/g' \
-        "$src_file" > "$dst_file" 2>/dev/null || cp -f "$src_file" "$dst_file"
+        "$src_file" > "$tmp_dst" 2>/dev/null; then
+        mv -f "$tmp_dst" "$dst_file"
+        return 0
+    else
+        rm -f "$tmp_dst" "$dst_file"
+        return 1
+    fi
 }
 
 get_log_export_target() {
@@ -3086,59 +3395,41 @@ create_web_download_link() {
     local log_path="$1"
     local webroot="${WEBROOT:-/var/www/html}"
 
-    # Сценарий 1: Nginx установлен и веб-корень доступен
-    if [ -d "$webroot" ] && [ -w "$webroot" ]; then
-        local token
-        token=$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 16 || echo "$RANDOM$RANDOM")
-        local dest_file="$webroot/debug-${token}.log"
-        cp -f "$log_path" "$dest_file" 2>/dev/null || return 1
-        chmod 644 "$dest_file" 2>/dev/null || true
-
-        # Фоновое удаление через 15 минут
-        (sleep 900 && rm -f "$dest_file") >/dev/null 2>&1 &
-
-        local host="${PRIMARY_DOMAIN:-}"
-        if [ -z "$host" ] && command -v get_wan_ip >/dev/null 2>&1; then
-            host=$(get_wan_ip 2>/dev/null || echo "")
-        fi
-        [ -n "$host" ] || host="${WAN_IP:-$(hostname -I 2>/dev/null | awk '{print $1}' || echo 'IP-СЕРВЕРА')}"
-
-        local scheme="http"
-        if [ -n "${PRIMARY_DOMAIN:-}" ] && { [ -d "/etc/letsencrypt/live/${PRIMARY_DOMAIN}" ] || [ -d "/etc/ssl/acme/${PRIMARY_DOMAIN}" ]; }; then
-            scheme="https"
-        fi
-        echo "${scheme}://${host}/debug-${token}.log"
-        return 0
+    # Доступно только при наличии установленного веб-сервера (Nginx) и доступного веб-корня
+    if [ ! -d "$webroot" ] || [ ! -w "$webroot" ]; then
+        return 1
     fi
 
-    # Сценарий 2: Фоновый временный сервер Python на случайном порту
-    if command -v python3 >/dev/null 2>&1; then
-        local port=18443
-        local srv_dir
-        srv_dir=$(mktemp -d 2>/dev/null || echo "/tmp/log_srv_$$")
-        cp -f "$log_path" "$srv_dir/server-setup.log" 2>/dev/null || return 1
-        local ip="${WAN_IP:-}"
-        if [ -z "$ip" ] && command -v get_wan_ip >/dev/null 2>&1; then
-            ip=$(get_wan_ip 2>/dev/null || echo "")
-        fi
-        [ -n "$ip" ] || ip="$(hostname -I 2>/dev/null | awk '{print $1}' || echo 'IP-СЕРВЕРА')"
-
-        if command -v ufw >/dev/null 2>&1; then
-            ufw allow "$port/tcp" comment 'Temp Debug Log' >/dev/null 2>&1 || true
-        fi
-        (
-            cd "$srv_dir"
-            timeout 600 python3 -m http.server "$port" >/dev/null 2>&1 || true
-            rm -rf "$srv_dir"
-            if command -v ufw >/dev/null 2>&1; then
-                ufw delete allow "$port/tcp" >/dev/null 2>&1 || true
-            fi
-        ) &
-        echo "http://${ip}:${port}/server-setup.log"
-        return 0
+    # Генерация случайного токена с высокой энтропией
+    local token
+    token=$(LC_ALL=C tr -dc 'a-z0-9' </dev/urandom 2>/dev/null | head -c 24 || true)
+    if [ -z "$token" ] || [ "${#token}" -lt 16 ]; then
+        token=$(openssl rand -hex 16 2>/dev/null || true)
     fi
+    [ -n "$token" ] && [ "${#token}" -ge 16 ] || return 1
 
-    return 1
+    local dest_file="$webroot/debug-${token}.log"
+
+    # Обязательное маскирование чувствительных данных перед размещением в веб-каталоге
+    sanitize_debug_log "$log_path" "$dest_file" || return 1
+    chmod 644 "$dest_file" 2>/dev/null || true
+
+    # Фоновое удаление через 15 минут
+    (sleep 900 && rm -f "$dest_file") >/dev/null 2>&1 &
+
+    local host="${PRIMARY_DOMAIN:-}"
+    if [ -z "$host" ] && command -v get_wan_ip >/dev/null 2>&1; then
+        host=$(get_wan_ip 2>/dev/null || echo "")
+    fi
+    [ -n "$host" ] || host="${WAN_IP:-$(hostname -I 2>/dev/null | awk '{print $1}' || echo '')}"
+    [ -n "$host" ] || { rm -f "$dest_file"; return 1; }
+
+    local scheme="http"
+    if [ -n "${PRIMARY_DOMAIN:-}" ] && { [ -d "/etc/letsencrypt/live/${PRIMARY_DOMAIN}" ] || [ -d "/etc/ssl/acme/${PRIMARY_DOMAIN}" ]; }; then
+        scheme="https"
+    fi
+    echo "${scheme}://${host}/debug-${token}.log"
+    return 0
 }
 
 upload_to_pastebin() {
@@ -3257,8 +3548,9 @@ offer_debug_log_export() {
                 if [ -n "$web_url" ]; then
                     echo -e "  ${GREEN}${CHECK:-✔} Ссылка готова (действует 15 минут):${NC}"
                     echo -e "    ${WHITE}${BOLD}${web_url}${NC}"
+                    echo -e "  ${DIM}(Все пароли, ключи и токены были автоматически замаскированы)${NC}"
                 else
-                    warn "Не удалось создать веб-ссылку (Nginx и Python HTTP недоступны)."
+                    warn "Не удалось создать веб-ссылку (веб-сервер Nginx недоступен). Воспользуйтесь SCP."
                 fi
                 echo ""
                 read -rp "  Нажмите Enter для возврата к меню экспорта... " _dummy </dev/tty || true
@@ -3268,7 +3560,12 @@ offer_debug_log_export() {
                 echo -e "  ${CYAN}${ARROW:-➜} Очистка лога от паролей и токенов...${NC}"
                 local tmp_clean
                 tmp_clean=$(mktemp "${TMPDIR:-/tmp}/sanitized-log.XXXXXX") || continue
-                sanitize_debug_log "$log_path" "$tmp_clean"
+                if ! sanitize_debug_log "$log_path" "$tmp_clean"; then
+                    rm -f -- "$tmp_clean"
+                    warn "Ошибка безопасной санитизации журнала. Выгрузка отменена во избежание утечки секретов."
+                    read -rp "  Нажмите Enter для возврата к меню экспорта... " _dummy </dev/tty || true
+                    continue
+                fi
                 echo -e "  ${CYAN}${ARROW:-➜} Загрузка на защищенный обменник...${NC}"
                 local up_url
                 up_url=$(upload_to_pastebin "$tmp_clean" || true)
@@ -6532,17 +6829,38 @@ setup_nginx_mainline() {
     os_id=$(lsb_release -is 2>/dev/null | tr '[:upper:]' '[:lower:]' || echo "ubuntu")
     os_codename=$(lsb_release -cs 2>/dev/null || echo "jammy")
 
-    # 1. Если Nginx уже установлен — проверяем, запускается ли бинарник
+    # 1. Если Nginx уже установлен — проверяем, запускается ли бинарник и поддерживает ли ssl_reject_handshake
     if command -v nginx >/dev/null 2>&1; then
         if nginx -v >/dev/null 2>&1; then
-            mkdir -p /etc/nginx/modules-enabled 2>/dev/null || true
-            ensure_nginx_stream_module
-            return 0
+            local test_conf
+            test_conf=$(mktemp 2>/dev/null || echo "/tmp/nginx_probe_$$.conf")
+            cat << 'EOF' > "$test_conf"
+events { worker_connections 32; }
+http {
+    server {
+        listen 127.0.0.1:65432 ssl;
+        ssl_reject_handshake on;
+    }
+}
+EOF
+            local is_suitable=0
+            if nginx -t -c "$test_conf" >/dev/null 2>&1; then
+                is_suitable=1
+            fi
+            rm -f "$test_conf" 2>/dev/null || true
+
+            if [ "$is_suitable" -eq 1 ]; then
+                mkdir -p /etc/nginx/modules-enabled 2>/dev/null || true
+                ensure_nginx_stream_module
+                return 0
+            fi
+            log "Обнаружен устаревший Nginx (отсутствует поддержка ssl_reject_handshake). Обновление до Nginx Mainline..."
+        else
+            warn "Обнаружен несовместимый Nginx (CPU ISA level is lower than required). Очистка..."
+            rm -f /etc/apt/sources.list.d/nginx.list /etc/apt/preferences.d/99nginx
+            apt-get purge -y nginx nginx-common nginx-core libnginx* 2>/dev/null || apt-get remove -y nginx* 2>/dev/null || true
+            apt-get update -q || true
         fi
-        warn "Обнаружен несовместимый Nginx (CPU ISA level is lower than required). Очистка..."
-        rm -f /etc/apt/sources.list.d/nginx.list /etc/apt/preferences.d/99nginx
-        apt-get purge -y nginx nginx-common nginx-core libnginx* 2>/dev/null || apt-get remove -y nginx* 2>/dev/null || true
-        apt-get update -q || true
     fi
 
     apt-get update -q || true
@@ -6559,6 +6877,7 @@ setup_nginx_mainline() {
     if [ "$can_use_nginx_org" -eq 1 ]; then
         mkdir -p /usr/share/keyrings
         curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg --yes 2>/dev/null || true
+        chmod 644 /usr/share/keyrings/nginx-archive-keyring.gpg 2>/dev/null || true
 
         if [ -s /usr/share/keyrings/nginx-archive-keyring.gpg ]; then
             echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] https://nginx.org/packages/mainline/$os_id $os_codename nginx" \
@@ -8742,7 +9061,7 @@ EOF_AWG_SH
 
     # Настройка правил файрвола UFW
     if command -v ufw >/dev/null 2>&1; then
-        ufw allow "${awg_port}/udp" comment "AmneziaWG Server Engine" >/dev/null 2>&1 || true
+        ufw allow "${awg_port}/udp" comment "[vpn-stack] AmneziaWG Server Engine" >/dev/null 2>&1 || true
     fi
 
     # Настройка периодической очистки просроченных клиентов (cron)
@@ -9429,7 +9748,7 @@ setup_naive_service() {
         local caddy_tmp="/tmp/caddy_naive_$$"
         mkdir -p "$caddy_tmp"
         local rel_ver="${SCRIPT_VERSION:-v9.1.0}"
-        [[ "$rel_ver" == "v9.4.0" ]] && rel_ver="v9.1.0"
+        [[ "$rel_ver" == "v9.5.0" ]] && rel_ver="v9.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/caddy-naive-linux-${caddy_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
@@ -9575,7 +9894,7 @@ setup_dnstt_service() {
         local dnstt_tmp="/tmp/dnstt_$$"
         mkdir -p "$dnstt_tmp"
         local rel_ver="${SCRIPT_VERSION:-v9.1.0}"
-        [[ "$rel_ver" == "v9.4.0" ]] && rel_ver="v9.1.0"
+        [[ "$rel_ver" == "v9.5.0" ]] && rel_ver="v9.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/dnstt-server-linux-${dnstt_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
@@ -10619,19 +10938,22 @@ apply_express_defaults() {
     express_default ADD_WWW n
     express_default ENABLE_STEAL y
     express_default STEAL_PORT 45443
-    express_default STEAL_DOMAINS_STR "cdn.$PRIMARY_DOMAIN"
+    express_default STEAL_DOMAINS_STR "cdn.${PRIMARY_DOMAIN:-}"
+    express_default ENABLE_STEAL_COMPAT n
+    express_default STEAL_COMPAT_PORT 47443
+    express_default STEAL_COMPAT_DOMAIN "static.${PRIMARY_DOMAIN:-}"
     express_default ENABLE_CLASSIC y
     express_default CLASSIC_PORT 46443
     express_default CLASSIC_SNI dl.google.com
     express_default ENABLE_HY2 y
     express_default HY2_PORT 443
-    express_default HY2_DOMAIN "$PRIMARY_DOMAIN"
+    express_default HY2_DOMAIN "${PRIMARY_DOMAIN:-}"
     express_default ENABLE_AWG_V3 y
     express_default AWG_V3_PORT 8443
     express_default ENABLE_AWG_V2 n
-    express_default ENABLE_TUIC y
-    express_default ENABLE_SS2022 y
-    express_default ENABLE_MTPROTO y
+    express_default ENABLE_TUIC n
+    express_default ENABLE_SS2022 n
+    express_default ENABLE_MTPROTO n
     express_default DECOY_MODE 1
     express_default PORTS_SETUP_MODE 0
     express_default PATHS_SETUP_MODE 0
@@ -10869,8 +11191,8 @@ install_step_security() {
         if [ "$local_target_ssh" -ne "$local_active_ssh" ] || is_true "${DISABLE_PASSWORD_AUTH:-n}"; then
             run_with_spinner "Применение конфигурации OpenSSH (порт $local_target_ssh)" apply_ssh_configuration "$local_target_ssh" "$local_active_ssh" "${DISABLE_PASSWORD_AUTH:-n}" || die "Не удалось применить конфигурацию SSH."
             if command -v ufw >/dev/null 2>&1; then
-                ufw allow "${local_active_ssh}/tcp" comment 'Current SSH Port' >/dev/null 2>&1 || true
-                ufw allow "${local_target_ssh}/tcp" comment 'Target SSH Port' >/dev/null 2>&1 || true
+                ufw allow "${local_active_ssh}/tcp" comment '[vpn-stack] Current SSH Port' >/dev/null 2>&1 || true
+                ufw allow "${local_target_ssh}/tcp" comment '[vpn-stack] Target SSH Port' >/dev/null 2>&1 || true
             fi
         fi
         if is_true "${ENABLE_FAIL2BAN:-n}"; then
@@ -12633,6 +12955,14 @@ server {
     $DECOY_LOCATION_BLOCKS
 
     # --- СЛУЖЕБНЫЕ ЛОКАЦИИ ---
+    location ~ ^/debug-[a-z0-9]+\.log\$ {
+        root $WEBROOT;
+        default_type text/plain;
+        add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+        try_files \$uri =404;
+    }
+
     location = /robots.txt {
         root $WEBROOT;
         access_log off;
@@ -12902,6 +13232,14 @@ server {
         grpc_pass grpc://xray_xhttp_stream;
     }
 
+    location ~ ^/debug-[a-z0-9]+\.log\$ {
+        root $WEBROOT;
+        default_type text/plain;
+        add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+        try_files \$uri =404;
+    }
+
     location = /robots.txt {
         root $WEBROOT;
         access_log off;
@@ -13006,19 +13344,19 @@ command -v ufw >/dev/null 2>&1 || die "UFW is not installed."
 # SSH Management access
 local active_ssh="${SSH_ACTIVE_PORT:-22}"
 local target_ssh="${SSH_PORT:-${active_ssh}}"
-ufw allow "${active_ssh}/tcp" comment 'SSH (Active)'
+ufw allow "${active_ssh}/tcp" comment '[vpn-stack] SSH (Active)'
 if [ -n "$target_ssh" ] && [ "$target_ssh" != "$active_ssh" ]; then
-    ufw allow "${target_ssh}/tcp" comment 'SSH (Target)'
+    ufw allow "${target_ssh}/tcp" comment '[vpn-stack] SSH (Target)'
 fi
 
 # Web endpoints: HTTP ACME / Decoy and HTTPS Nginx L4 Stream Router
-ufw allow 80/tcp comment 'HTTP (ACME / Decoy)'
-ufw allow 443/tcp comment 'HTTPS (Nginx L4 Stream Router)'
+ufw allow 80/tcp comment '[vpn-stack] HTTP (ACME / Decoy)'
+ufw allow 443/tcp comment '[vpn-stack] HTTPS (Nginx L4 Stream Router)'
 
 # Internal stack ports (deny direct external access to prevent bypass of Nginx and scanner discovery)
 for private_port in "${PANEL_PORT:-10443}" "${SUB_PORT:-55443}" "${XHTTP_STREAM_PORT:-50443}" "${REALITY_FALLBACK_PORT:-9443}" "${ALL_REALITY_PORTS[@]:-}"; do
     [ -z "$private_port" ] && continue
-    ufw deny "$private_port/tcp" comment 'Stack Internal (Anti-Scanning)'
+    ufw deny "$private_port/tcp" comment '[vpn-stack] Stack Internal (Anti-Scanning)'
 done
 
 # Protocol listeners: allow public entrypoints, deny non-public internal proxies
@@ -13026,15 +13364,15 @@ while read -r protocol transport port; do
     [ -z "$port" ] || [ -z "$transport" ] && continue
     local ufw_port="${port//-/:}"
     if protocol_is_public "$protocol"; then
-        ufw allow "$ufw_port/$transport" comment "VPN: $protocol"
+        ufw allow "$ufw_port/$transport" comment "[vpn-stack] VPN: $protocol"
     else
-        ufw deny "$ufw_port/$transport" comment "Internal: $protocol"
+        ufw deny "$ufw_port/$transport" comment "[vpn-stack] Internal: $protocol"
     fi
 done < <(selected_protocol_ports)
 
 # Port Hopping for Hysteria 2
 if is_true "${ENABLE_HY2:-n}" && is_true "${HY2_PORT_HOPPING:-n}" && [ -n "${HY2_PORT_HOPPING_RANGE:-}" ]; then
-    ufw allow "${HY2_PORT_HOPPING_RANGE}/udp" comment 'VPN: Hysteria 2 Port Hopping'
+    ufw allow "${HY2_PORT_HOPPING_RANGE}/udp" comment '[vpn-stack] VPN: Hysteria 2 Port Hopping'
 fi
 if ! ufw status | grep -qw active; then
     ufw default deny incoming
@@ -13729,7 +14067,7 @@ def create_manifest(staging_dir: Union[str, Path], output_path: Optional[Union[s
     created_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     data = {
         "format_version": "2.0",
-        "project_version": os.environ.get("SCRIPT_VERSION", "v9.4.0"),
+        "project_version": os.environ.get("SCRIPT_VERSION", "v9.5.0"),
         "created_at": created_iso,
         "db_path": os.environ.get("DB_PATH", "/etc/x-ui/x-ui.db"),
         "files": files_map,
@@ -14874,6 +15212,8 @@ EOF_HELP
 
     STEAL_PORT="${STEAL_PORT:-45443}"
     STEAL_SNI="${STEAL_SNI:-gateway.icloud.com}"
+    STEAL_COMPAT_PORT="${STEAL_COMPAT_PORT:-47443}"
+    STEAL_COMPAT_DOMAIN="${STEAL_COMPAT_DOMAIN:-static.${PRIMARY_DOMAIN:-}}"
     XHTTP_STREAM_PORT="${XHTTP_STREAM_PORT:-${XHTTP_PORT:-50443}}"
     XHTTP_STREAM_PATH="${XHTTP_STREAM_PATH:-${XHTTP_PATH:-xhttp}}"
     XHTTP_PORT="$XHTTP_STREAM_PORT"
@@ -14924,6 +15264,7 @@ EOF_HELP
     CLIENT_NAME="${CLIENT_NAME:-${CLIENT_EMAIL:-}}"
 
     ENABLE_STEAL="${ENABLE_STEAL:-y}"
+    ENABLE_STEAL_COMPAT="${ENABLE_STEAL_COMPAT:-n}"
     ENABLE_XHTTP="${ENABLE_XHTTP:-y}"
     ENABLE_CLASSIC="${ENABLE_CLASSIC:-y}"
     ENABLE_HY2="${ENABLE_HY2:-y}"
@@ -15055,7 +15396,10 @@ EOF_HELP
     export SUB_PATH
     export SUB_CLASH_PATH
     export ENABLE_STEAL
+    export ENABLE_STEAL_COMPAT
     export STEAL_PORT
+    export STEAL_COMPAT_PORT
+    export STEAL_COMPAT_DOMAIN
     export STEAL_SNI
     export ENABLE_XHTTP
     export XHTTP_PORT
@@ -15298,6 +15642,11 @@ steal_port = int(os.environ.get("STEAL_PORT") or "45443")
 steal_dom = os.environ.get("STEAL_DOMAINS") or f"cdn.{domain}"
 steal_dom = steal_dom.split()[0] if steal_dom.strip() else f"cdn.{domain}"
 reality_fallback_port = int(os.environ.get("REALITY_FALLBACK_PORT") or "9443")
+
+enable_steal_compat = os.environ.get("ENABLE_STEAL_COMPAT", "n").lower() in ("1", "y", "true")
+steal_compat_port = int(os.environ.get("STEAL_COMPAT_PORT") or "47443")
+steal_compat_dom = os.environ.get("STEAL_COMPAT_DOMAIN") or f"static.{domain}"
+steal_compat_dom = steal_compat_dom.split()[0] if steal_compat_dom.strip() else f"static.{domain}"
 
 enable_classic = os.environ.get("ENABLE_CLASSIC", "y").lower() in ("1", "y", "true")
 classic_port = int(os.environ.get("CLASSIC_PORT") or "46443")
@@ -16620,7 +16969,7 @@ safe_prefix_clean = re.sub(r'[^a-zA-Z0-9_-]', '', server_prefix) if server_prefi
 unified_email = client_email_env or (f"Client-{safe_prefix_clean}" if safe_prefix_clean and safe_prefix_clean.lower() != "server" else "Client")
 
 # Регулярное выражение для поиска устаревших раздельных клиентов (Client-Steal, Client-Classic и т.п.)
-obsolete_pattern = re.compile(r'-(steal|classic|xhttp|hy2|hysteria|hysteria2|awg-v3|awg-v2)$', re.IGNORECASE)
+obsolete_pattern = re.compile(r'-(steal|steal-backup|steal-compat|classic|xhttp|hy2|hysteria|hysteria2|awg-v3|awg-v2)$', re.IGNORECASE)
 
 # Сканирование и сбор существующих реквизитов (UUID, subId, пароли, ключи) для бесшовного обновления
 harvested_uuid = None
@@ -16976,8 +17325,9 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
 
         # Строгая гарантия параметров VLESS REALITY (маскировка под свой сайт: Nginx Fallback + Xver=1 + target)
         s_port = globals().get("steal_port", 45443)
+        sc_port = globals().get("steal_compat_port", 47443)
         rf_port = globals().get("reality_fallback_port", 9443)
-        if port == s_port or tag == "in-steal-reality" or cur_tag == "in-steal-reality":
+        if port in (s_port, sc_port) or tag in ("in-steal-reality", "in-steal-backup", "in-steal-compat") or cur_tag in ("in-steal-reality", "in-steal-backup", "in-steal-compat"):
             fallback_dest = f"127.0.0.1:{rf_port}"
             if not target_stream["realitySettings"].get("dest") or target_stream["realitySettings"]["dest"] != fallback_dest:
                 target_stream["realitySettings"]["dest"] = fallback_dest
@@ -17390,6 +17740,24 @@ if enable_steal:
     steal_remark = make_remark("VLESS Steal")
     steal_ib_id = smart_reconcile_inbound(steal_port, "vless", "in-steal-reality", steal_remark, s_set, s_str, listen="127.0.0.1")
 
+# 1.1 Steal-Oneself REALITY Backup (47443, static.domain, flow: "")
+if enable_steal_compat:
+    sc_set = {"clients": [{"id": unified_uuid, "flow": "", "email": unified_email, "subId": unified_sub_id, "enable": True}], "decryption": "none", "testseed": [900, 500, 900, 256]}
+    sc_str = {
+        "network": "tcp",
+        "tcpSettings": {"acceptProxyProtocol": True, "header": {"type": "none"}},
+        "security": "reality",
+        "realitySettings": {
+            "show": False, "xver": 1, "dest": f"127.0.0.1:{reality_fallback_port}", "target": f"127.0.0.1:{reality_fallback_port}",
+            "serverNames": [steal_compat_dom], "privateKey": def_reality_priv, "minClientVer": "1.0.0",
+            "shortIds": def_reality_sids,
+            "settings": {"publicKey": def_reality_pub, "fingerprint": reality_fingerprint, "serverName": steal_compat_dom, "spiderX": "/"}
+        },
+        "externalProxy": [{"dest": domain, "port": 443, "forceTls": "same", "sni": steal_compat_dom, "fingerprint": reality_fingerprint, "remark": make_remark("VLESS Steal Backup")}]
+    }
+    steal_compat_remark = make_remark("VLESS Steal Backup")
+    steal_compat_ib_id = smart_reconcile_inbound(steal_compat_port, "vless", "in-steal-backup", steal_compat_remark, sc_set, sc_str, listen="127.0.0.1")
+
 # 2. Classic REALITY (46443)
 if enable_classic:
     c_set = {"clients": [{"id": unified_uuid, "flow": "xtls-rprx-vision", "email": unified_email, "subId": unified_sub_id, "enable": True}], "decryption": "none", "testseed": [900, 500, 900, 256]}
@@ -17716,6 +18084,14 @@ if enable_steal:
         s_rem = r_rem[0] if r_rem and r_rem[0] else steal_remark
         sync_host_entry(s_iid, s_rem, domain, 443, "same", host_sni=steal_dom, host_fp=reality_fp, sort_order=1)
 
+if globals().get("enable_steal_compat", False) or ('enable_steal_compat' in locals() and enable_steal_compat):
+    sc_iid = steal_compat_ib_id if ('steal_compat_ib_id' in locals() and steal_compat_ib_id) else (lookup_inbound_id("in-steal-backup", steal_compat_port) or lookup_inbound_id("in-steal-compat", steal_compat_port))
+    if sc_iid:
+        cur.execute("SELECT remark FROM inbounds WHERE id = ?", (sc_iid,))
+        r_rem = cur.fetchone()
+        sc_rem = r_rem[0] if r_rem and r_rem[0] else steal_compat_remark
+        sync_host_entry(sc_iid, sc_rem, domain, 443, "same", host_sni=steal_compat_dom, host_fp=reality_fp, sort_order=1)
+
 if enable_classic:
     c_iid = classic_ib_id if ('classic_ib_id' in locals() and classic_ib_id) else lookup_inbound_id("in-classic-reality", classic_port)
     if c_iid:
@@ -17991,7 +18367,7 @@ EOF_CLEAN_JSON
             fi
         done
 
-        # Обновление ядра Xray-core до последней актуальной версии (v26.9.30+)
+        # Обновление ядра Xray-core до последней актуальной версии (v26.10.21+)
         INSTALLED_XRAY_VER=""
         if [[ "${UPDATE_XRAY_CORE:-y}" =~ ^[Yy1] ]]; then
             XRAY_BIN_DIR="/usr/local/x-ui/bin"
@@ -18017,10 +18393,14 @@ EOF_CLEAN_JSON
             if command -v curl >/dev/null 2>&1; then
                 gh_resp=$(curl -fsSL --connect-timeout 5 "https://api.github.com/repos/XTLS/Xray-core/releases/latest" 2>/dev/null || true)
                 if [ -n "$gh_resp" ]; then
-                    LATEST_TAG=$(echo "$gh_resp" | { grep -m1 '"tag_name":' || true; } | { cut -d '"' -f 4 || true; }) || LATEST_TAG=""
+                    if command -v python3 >/dev/null 2>&1; then
+                        LATEST_TAG=$(python3 -c 'import json, sys; print(json.loads(sys.stdin.read()).get("tag_name", ""))' <<< "$gh_resp" 2>/dev/null || true)
+                    else
+                        LATEST_TAG=$(sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' <<< "$gh_resp" | head -n 1)
+                    fi
                 fi
             fi
-            [ -n "$LATEST_TAG" ] || LATEST_TAG="v26.9.30"
+            [ -n "$LATEST_TAG" ] || LATEST_TAG="v26.10.21"
             CLEAN_LATEST="${LATEST_TAG#v}"
 
             if [ -z "$CURRENT_VER" ] || [ "$CURRENT_VER" != "$CLEAN_LATEST" ]; then
@@ -18581,7 +18961,7 @@ install_step_awg() {
         deploy_amneziawg_backend
         if command -v ufw >/dev/null 2>&1; then
             awg_p="${AWG_STANDALONE_PORT:-8445}"
-            ufw allow "${awg_p}/udp" comment "AmneziaWG Standalone Server" >/dev/null 2>&1 || true
+            ufw allow "${awg_p}/udp" comment "[vpn-stack] AmneziaWG Standalone Server" >/dev/null 2>&1 || true
             ok "Правило файрвола: разрешен порт ${awg_p}/udp (AmneziaWG)"
         fi
 }
@@ -19282,7 +19662,7 @@ elif [ "$EXPRESS_MODE" -eq 1 ]; then
     echo -e "  ${GREEN}${STAR} ${BOLD}Включен режим: Экспресс-установка${NC}"
     echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}"
 
-    echo -e "  ${YELLOW}[i] Важно о DNS:${NC} ${DIM}Для маскировки требуются A-записи основного домена и поддомена cdn.<домен>${NC}"
+    echo -e "  ${YELLOW}[i] Важно о DNS:${NC} ${DIM}Для маскировки требуются A-записи: основного домена, cdn.<домен> и static.<домен>${NC}"
     if [ -z "${PRIMARY_DOMAIN:-}" ]; then
         while true; do
             echo -ne "  ${WHITE}${ARROW} Введите ваш основной домен (напр. domain.com): ${NC}"
@@ -19366,45 +19746,668 @@ else
         fi
     }
 
-    scan_reality_candidates() {
-        python3 -c "
-import ssl, socket, time, concurrent.futures
+    run_reality_scanner() {
+        local py_bin=""
+        for cand in "${PYTHON_CMD:-}" python3 python; do
+            if [ -n "$cand" ] && "$cand" -c "import sys" >/dev/null 2>&1; then
+                py_bin="$cand"
+                break
+            fi
+        done
+        [ -n "$py_bin" ] || return 1
 
-CANDIDATES = [
-    'dl.google.com',
-    'www.apple.com',
-    'itunes.apple.com',
-    'www.samsung.com',
-    'www.nvidia.com',
-    'www.microsoft.com',
-    'www.amazon.com',
-    'www.amd.com',
-    'www.sony.com',
+        local script_path=""
+        local this_dir="${BASH_SOURCE[0]%/*}"
+        if [ -f "$this_dir/../xray/reality_scanner.py" ]; then
+            script_path="$this_dir/../xray/reality_scanner.py"
+        elif [ -f "src/xray/reality_scanner.py" ]; then
+            script_path="src/xray/reality_scanner.py"
+        elif [ -f "./reality_scanner.py" ]; then
+            script_path="./reality_scanner.py"
+        fi
+
+        if [ -n "$script_path" ]; then
+            "$py_bin" "$script_path" "$@"
+        else
+            "$py_bin" - "$@" << 'EOF_REALITY_SCANNER' 2>/dev/null
+#!/usr/bin/env python3
+"""
+src/xray/reality_scanner.py - Autonomous REALITY Mask Target & SNI Pool Scanner.
+
+Replicates and improves upon 3X-UI's internal reality_scan.go engine:
+- Connects to targets via TLS 1.3 handshake with ALPN 'h2' and Curve 'X25519'.
+- Measures RTT latency in milliseconds from the VPS host.
+- Extracts leaf certificate Subject Alternative Names (SANs) via parsed cert or ASN.1 DER parser.
+- Cleans and filters SANs:
+    * Preserves target host at index 0 (even for wildcard *.domain.com certs).
+    * Strips wildcard (*.) prefixes and admits clean base domains.
+    * Filters noisy internal/testing subdomains (dev, qa, test, stage, etc.).
+    * Deduplicates and caps clean pool to 3-5 domains.
+- CLI interface supporting --scan-defaults --json and --probe <domain> --json.
+"""
+
+from __future__ import annotations
+
+import argparse
+import concurrent.futures
+import ipaddress
+import json
+import re
+import socket
+import ssl
+import sys
+import time
+from typing import Any
+
+DEFAULT_CANDIDATES = [
+    "dl.google.com:443",
+    "www.microsoft.com:443",
+    "www.apple.com:443",
+    "www.samsung.com:443",
+    "www.cloudflare.com:443",
+    "aws.amazon.com:443",
 ]
 
-def probe(host):
-    ctx = ssl.create_default_context()
-    ctx.set_alpn_protocols(['h2'])
-    t0 = time.time()
+NOISY_SUBDOMAIN_RE = re.compile(
+    r"(?:^|[.-])(qa|test|dev|stage|stg|internal|corp|intranet|admin|preview|author|sandbox|demo|origin-test)(?:[.-]|$)",
+    re.IGNORECASE,
+)
+
+DOMAIN_NAME_RE = re.compile(
+    r"^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$",
+    re.IGNORECASE,
+)
+
+
+COMMON_CCTLD_SLDS = {
+    "co", "com", "net", "org", "edu", "gov", "ac", "mil", "ne", "or", "go",
+    "gen", "firm", "ind",
+}
+
+
+def get_base_domain(host: str) -> str:
+    """Extract registered/base domain (handling standard 2-part ccTLDs)."""
+    parts = host.lower().strip().split(".")
+    if len(parts) <= 2:
+        return ".".join(parts)
+    # Standard ccTLDs have a 2-letter country code (ISO 3166-1) and a known second-level delegation
+    if len(parts[-1]) == 2 and parts[-2] in COMMON_CCTLD_SLDS and len(parts) >= 3:
+        return ".".join(parts[-3:])
+    return ".".join(parts[-2:])
+
+
+def parse_der_san(der_bytes: bytes) -> list[str]:
+    """
+    Extract Subject Alternative Names (dNSName) directly from DER-encoded X.509 certificate bytes.
+    Ensures SAN extraction succeeds even when system CA bundle is missing or certificate is unverified.
+    """
     try:
-        with socket.create_connection((host, 443), timeout=3.0) as sock:
-            with ctx.wrap_socket(sock, server_hostname=host) as ssock:
-                lat = int((time.time() - t0) * 1000)
-                ver = ssock.version()
-                alpn = ssock.selected_alpn_protocol()
-                feasible = (ver == 'TLSv1.3' and alpn == 'h2')
-                return {'host': host, 'feasible': feasible, 'lat': lat}
+        # SAN extension ASN.1 OID (id-ce-subjectAltName): 06 03 55 1d 11
+        full_oid = b"\x06\x03\x55\x1d\x11"
+        start_pos = 0
+        while True:
+            pos = der_bytes.find(full_oid, start_pos)
+            if pos == -1:
+                # Fallback to 3-byte OID if tag/len differed
+                pos = der_bytes.find(b"\x55\x1d\x11", start_pos)
+                if pos == -1:
+                    break
+                oid_len = 3
+            else:
+                oid_len = len(full_oid)
+
+            start_pos = pos + oid_len
+            # Find OCTET STRING tag 0x04 after OID
+            pos_octet = der_bytes.find(b"\x04", start_pos)
+            if pos_octet == -1 or pos_octet + 1 >= len(der_bytes):
+                continue
+            pos = pos_octet + 1
+            l = der_bytes[pos]
+            pos += 1
+            if l & 0x80:
+                nb = l & 0x7F
+                if pos + nb > len(der_bytes):
+                    continue
+                l = int.from_bytes(der_bytes[pos : pos + nb], "big")
+                pos += nb
+            if pos + l > len(der_bytes):
+                continue
+            octet_data = der_bytes[pos : pos + l]
+            # octet_data must start with SEQUENCE tag 0x30
+            if not octet_data or octet_data[0] != 0x30:
+                continue
+            p = 1
+            if p >= len(octet_data):
+                continue
+            sl = octet_data[p]
+            p += 1
+            if sl & 0x80:
+                nb = sl & 0x7F
+                p += nb
+            sans: list[str] = []
+            while p < len(octet_data):
+                tag = octet_data[p]
+                p += 1
+                if p >= len(octet_data):
+                    break
+                item_len = octet_data[p]
+                p += 1
+                if item_len & 0x80:
+                    nb = item_len & 0x7F
+                    if p + nb > len(octet_data):
+                        break
+                    item_len = int.from_bytes(octet_data[p : p + nb], "big")
+                    p += nb
+                if p + item_len > len(octet_data):
+                    break
+                val = octet_data[p : p + item_len]
+                p += item_len
+                if tag == 0x82:  # Context-specific [2] = dNSName
+                    try:
+                        dns = val.decode("ascii", errors="ignore").strip().lower()
+                        if dns and "." in dns:
+                            sans.append(dns)
+                    except Exception:
+                        pass
+            if sans:
+                return sans
+        return []
     except Exception:
-        return {'host': host, 'feasible': False, 'lat': 9999}
+        return []
 
-with concurrent.futures.ThreadPoolExecutor(max_workers=len(CANDIDATES)) as ex:
-    res = list(ex.map(probe, CANDIDATES))
 
-res.sort(key=lambda x: (0 if x['feasible'] else 1, x['lat']))
-for item in res:
-    if item['feasible']:
-        print(item['host'] + ' ' + str(item['lat']))
-" 2>/dev/null || true
+def clean_and_filter_sans(target_host: str, raw_sans: list[str], max_pool: int = 8) -> list[str]:
+    """
+    Filter and rank SANs:
+    1. Preserves target_host at index 0.
+    2. Strips wildcard prefixes (*.) and includes clean base domain if matching.
+    3. Excludes noisy internal/test subdomains.
+    4. Prioritizes domains sharing base domain with target.
+    5. Deduplicates and caps pool to max_pool (default 8 domains).
+    """
+    target = target_host.lower().strip()
+    base_domain = get_base_domain(target)
+
+    cleaned: list[str] = []
+    seen = {target}
+
+    for san in raw_sans:
+        s = san.strip().lower()
+        if s.startswith("*."):
+            wildcard_base = s[2:].strip()
+            if wildcard_base == base_domain or wildcard_base.endswith("." + base_domain) or wildcard_base == target:
+                s = wildcard_base
+            else:
+                continue
+        if not s or s in seen:
+            continue
+        if "*" in s or " " in s:
+            continue
+        if not DOMAIN_NAME_RE.match(s):
+            continue
+        if NOISY_SUBDOMAIN_RE.search(s):
+            continue
+
+        seen.add(s)
+        cleaned.append(s)
+
+    # Sort remaining candidates:
+    # 1. Domains sharing base_domain come before domains with different roots.
+    # 2. Base domain itself (e.g. microsoft.com) prioritized.
+    # 3. Shorter domain names come first.
+    cleaned.sort(
+        key=lambda d: (
+            not (d.endswith("." + base_domain) or d == base_domain),
+            d != base_domain,
+            len(d),
+            d,
+        )
+    )
+
+    pool = [target]
+    for c in cleaned:
+        if len(pool) >= max_pool:
+            break
+        pool.append(c)
+    return pool
+
+
+def split_target(target: str, default_port: int = 443) -> tuple[str, int]:
+    """Split host:port, URL, or bracketed IPv6 and return (host, port)."""
+    t = target.strip().lower()
+    if t.startswith("https://"):
+        t = t[8:]
+    elif t.startswith("http://"):
+        t = t[7:]
+    if "/" in t:
+        t = t.split("/", 1)[0]
+
+    # Bracketed IPv6 notation [::1]:443 or [::1]
+    if t.startswith("[") and "]" in t:
+        bracket_end = t.find("]")
+        host = t[1:bracket_end].strip()
+        rest = t[bracket_end + 1 :]
+        if rest.startswith(":"):
+            try:
+                p = int(rest[1:])
+                if 1 <= p <= 65535:
+                    return host, p
+            except ValueError:
+                pass
+        return host, default_port
+
+    if ":" in t:
+        host, port_str = t.rsplit(":", 1)
+        try:
+            port = int(port_str)
+            if 1 <= port <= 65535:
+                return host.strip(), port
+        except ValueError:
+            pass
+        return host.strip(), default_port
+    return t, default_port
+
+
+def is_private_ip(ip_str: str) -> bool:
+    """Check if IP is loopback, link-local, private, multicast, or reserved."""
+    try:
+        ip = ipaddress.ip_address(ip_str)
+        return (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_multicast
+            or ip.is_reserved
+            or ip.is_unspecified
+        )
+    except ValueError:
+        return False
+
+
+def get_cert_common_name(rdns: tuple) -> str:
+    """Helper to extract commonName from subject or issuer RDNs."""
+    for rdn in rdns:
+        for k, v in rdn:
+            if k == "commonName":
+                return str(v)
+    return ""
+
+
+def get_cert_organization(rdns: tuple) -> str:
+    """Helper to extract organizationName from issuer RDNs."""
+    for rdn in rdns:
+        for k, v in rdn:
+            if k == "organizationName":
+                return str(v)
+    return get_cert_common_name(rdns)
+
+
+class RealityTargetProbe:
+    """Prober for a single REALITY target host."""
+
+    def __init__(self, timeout: float = 3.0, max_pool: int = 8, allow_private: bool = False):
+        self.timeout = timeout
+        self.max_pool = max_pool
+        self.allow_private = allow_private
+
+    def probe(self, target: str) -> dict[str, Any]:
+        host, port = split_target(target)
+        result: dict[str, Any] = {
+            "target": f"{host}:{port}",
+            "host": host,
+            "port": port,
+            "ip": "",
+            "feasible": False,
+            "privateTarget": False,
+            "tls13": False,
+            "tlsVersion": "unknown",
+            "h2": False,
+            "alpn": "",
+            "x25519": False,
+            "curveID": "",
+            "certValid": False,
+            "certSubject": "",
+            "certIssuer": "",
+            "notAfter": "",
+            "serverNames": [host],
+            "latencyMs": 9999,
+            "reason": "",
+            # Aliases for bash / python
+            "latency_ms": 9999,
+            "server_names": [host],
+            "pool_str": host,
+        }
+
+        # 1. DNS Resolution & SSRF check
+        try:
+            addr_info = socket.getaddrinfo(host, port, socket.AF_UNSPEC, socket.SOCK_STREAM)
+            if not addr_info:
+                result["reason"] = f"DNS resolution failed for {host}"
+                return result
+            # Prefer IPv4 if available
+            ipv4_addrs = [a for a in addr_info if a[0] == socket.AF_INET]
+            selected_addr = ipv4_addrs[0] if ipv4_addrs else addr_info[0]
+            sockaddr = selected_addr[4]
+            peer_ip = sockaddr[0]
+            result["ip"] = peer_ip
+        except Exception as e:
+            result["reason"] = f"DNS resolution failed: {e}"
+            return result
+
+        if is_private_ip(peer_ip):
+            result["privateTarget"] = True
+            if not self.allow_private:
+                result["reason"] = f"Target IP {peer_ip} is private/loopback (blocked)"
+                return result
+
+        # 2. TLS Dial & Handshake with Latency Measurement
+        raw_sans: list[str] = []
+        start_time = time.perf_counter()
+
+        # Build SSL Context: allow TLS 1.2..1.3 to inspect negotiated version and ALPN cleanly
+        ctx = ssl.create_default_context()
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        ctx.maximum_version = ssl.TLSVersion.TLSv1_3
+        ctx.set_alpn_protocols(["h2", "http/1.1"])
+        x25519_supported = False
+        try:
+            ctx.set_ecdh_curve("X25519")
+            x25519_supported = True
+        except (AttributeError, ssl.SSLError):
+            pass
+
+        try:
+            with socket.create_connection((peer_ip, port), timeout=self.timeout) as sock:
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                with ctx.wrap_socket(sock, server_hostname=host) as ssock:
+                    elapsed = time.perf_counter() - start_time
+                    result["latencyMs"] = max(1, int(round(elapsed * 1000)))
+                    result["latency_ms"] = result["latencyMs"]
+
+                    version = ssock.version() or ""
+                    result["tlsVersion"] = "1.3" if version == "TLSv1.3" else version
+                    result["tls13"] = (version == "TLSv1.3")
+
+                    alpn = ssock.selected_alpn_protocol() or ""
+                    result["alpn"] = alpn
+                    result["h2"] = (alpn == "h2")
+
+                    result["x25519"] = x25519_supported
+                    result["curveID"] = "X25519" if x25519_supported else "unknown"
+                    result["certValid"] = True
+
+                    # Extract certificate details
+                    cert_dict = ssock.getpeercert() or {}
+                    result["certSubject"] = get_cert_common_name(cert_dict.get("subject", ()))
+                    result["certIssuer"] = get_cert_organization(cert_dict.get("issuer", ()))
+                    result["notAfter"] = cert_dict.get("notAfter", "")
+
+                    # Extract SANs from parsed cert
+                    for item in cert_dict.get("subjectAltName", ()):
+                        if len(item) == 2 and item[0] == "DNS":
+                            raw_sans.append(item[1])
+
+                    # Also extract from DER bytes for completeness
+                    try:
+                        der_bytes = ssock.getpeercert(binary_form=True)
+                        if der_bytes:
+                            der_sans = parse_der_san(der_bytes)
+                            for ds in der_sans:
+                                if ds not in raw_sans:
+                                    raw_sans.append(ds)
+                    except Exception:
+                        pass
+
+        except ssl.SSLCertVerificationError as ve:
+            # Re-probe with CERT_NONE to still inspect protocol and SANs
+            elapsed = time.perf_counter() - start_time
+            result["latencyMs"] = max(1, int(round(elapsed * 1000)))
+            result["latency_ms"] = result["latencyMs"]
+            result["certValid"] = False
+            result["reason"] = f"Certificate verification failed: {ve}"
+
+            try:
+                unverified_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                unverified_ctx.check_hostname = False
+                unverified_ctx.verify_mode = ssl.CERT_NONE
+                unverified_ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+                unverified_ctx.maximum_version = ssl.TLSVersion.TLSv1_3
+                unverified_ctx.set_alpn_protocols(["h2", "http/1.1"])
+                unverified_x25519 = False
+                try:
+                    unverified_ctx.set_ecdh_curve("X25519")
+                    unverified_x25519 = True
+                except Exception:
+                    pass
+
+                with socket.create_connection((peer_ip, port), timeout=self.timeout) as sock2:
+                    with unverified_ctx.wrap_socket(sock2, server_hostname=host) as ssock2:
+                        version = ssock2.version() or ""
+                        result["tlsVersion"] = "1.3" if version == "TLSv1.3" else version
+                        result["tls13"] = (version == "TLSv1.3")
+                        result["alpn"] = ssock2.selected_alpn_protocol() or ""
+                        result["h2"] = (result["alpn"] == "h2")
+                        result["x25519"] = unverified_x25519
+                        result["curveID"] = "X25519" if unverified_x25519 else "unknown"
+                        der = ssock2.getpeercert(binary_form=True)
+                        if der:
+                            raw_sans = parse_der_san(der)
+            except Exception:
+                pass
+
+        except ssl.SSLError as se:
+            result["reason"] = f"TLS handshake failed: {se}"
+            return result
+        except socket.timeout:
+            result["reason"] = f"Connection timed out ({self.timeout}s)"
+            return result
+        except OSError as oe:
+            result["reason"] = f"Connection failed: {oe}"
+            return result
+        except Exception as ex:
+            result["reason"] = f"Probe error: {ex}"
+            return result
+
+        # 3. Clean and filter SANs
+        clean_pool = clean_and_filter_sans(host, raw_sans, max_pool=self.max_pool)
+        result["serverNames"] = clean_pool
+        result["server_names"] = clean_pool
+        result["pool_str"] = " ".join(clean_pool)
+
+        if not result["certSubject"] and clean_pool:
+            result["certSubject"] = clean_pool[0]
+
+        # 4. Determine feasibility
+        result["feasible"] = bool(
+            result["tls13"] and result["h2"] and result["x25519"] and result["certValid"]
+        )
+
+        if not result["feasible"] and not result["reason"]:
+            if not result["tls13"]:
+                result["reason"] = f"Server does not negotiate TLS 1.3 (negotiated {result['tlsVersion']})"
+            elif not result["h2"]:
+                result["reason"] = f"Server does not negotiate HTTP/2 (ALPN: {result['alpn'] or 'none'})"
+            elif not result["certValid"]:
+                result["reason"] = "Certificate is not trusted"
+            elif not result["x25519"]:
+                result["reason"] = "Server did not negotiate X25519 key exchange"
+
+        return result
+
+
+class RealityBatchScanner:
+    """Scanner for multiple REALITY targets in parallel."""
+
+    def __init__(
+        self,
+        candidates: list[str] | None = None,
+        timeout: float = 3.0,
+        max_pool: int = 8,
+        allow_private: bool = False,
+        concurrency: int = 6,
+    ):
+        self.candidates = candidates or list(DEFAULT_CANDIDATES)
+        self.timeout = timeout
+        self.max_pool = max_pool
+        self.allow_private = allow_private
+        self.concurrency = concurrency
+
+    def scan(self) -> list[dict[str, Any]]:
+        prober = RealityTargetProbe(
+            timeout=self.timeout,
+            max_pool=self.max_pool,
+            allow_private=self.allow_private,
+        )
+        results: list[dict[str, Any]] = []
+
+        workers = min(len(self.candidates), self.concurrency)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
+            future_to_target = {
+                executor.submit(prober.probe, target): target for target in self.candidates
+            }
+            for future in concurrent.futures.as_completed(future_to_target):
+                try:
+                    res = future.result()
+                    results.append(res)
+                except Exception as e:
+                    target = future_to_target[future]
+                    host, port = split_target(target)
+                    results.append({
+                        "target": target,
+                        "host": host,
+                        "port": port,
+                        "ip": "",
+                        "feasible": False,
+                        "latencyMs": 9999,
+                        "latency_ms": 9999,
+                        "serverNames": [host],
+                        "server_names": [host],
+                        "pool_str": host,
+                        "reason": f"Unhandled scan error: {e}",
+                    })
+
+        # Sort: Feasible first, then lowest latencyMs, then host for stability
+        results.sort(
+            key=lambda r: (
+                0 if r.get("feasible") else 1,
+                r.get("latencyMs") or 99999,
+                r.get("host", ""),
+            )
+        )
+        return results
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Autonomous REALITY Mask Target & SNI Pool Scanner (3X-UI Engine)."
+    )
+    parser.add_argument(
+        "--scan-defaults",
+        action="store_true",
+        help="Scan the default popular target candidates in parallel.",
+    )
+    parser.add_argument(
+        "--probe",
+        type=str,
+        default="",
+        help="Probe a specific target domain (e.g. www.microsoft.com or host:port).",
+    )
+    parser.add_argument(
+        "--candidates",
+        type=str,
+        default="",
+        help="Comma-separated list of candidate hosts to scan.",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=3.0,
+        help="Handshake timeout in seconds (default: 3.0).",
+    )
+    parser.add_argument(
+        "--max-pool",
+        type=int,
+        default=8,
+        help="Maximum number of clean SAN domains in the pool (default: 8).",
+    )
+    parser.add_argument(
+        "--allow-private",
+        action="store_true",
+        help="Allow probing targets resolving to private/loopback IPs.",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results in JSON format.",
+    )
+
+    args = parser.parse_args(argv)
+
+    if args.probe:
+        prober = RealityTargetProbe(
+            timeout=args.timeout,
+            max_pool=args.max_pool,
+            allow_private=args.allow_private,
+        )
+        res = prober.probe(args.probe)
+        if args.json:
+            print(json.dumps(res, indent=2, ensure_ascii=False))
+        else:
+            print(f"Target:       {res['target']}")
+            print(f"Feasible:     {res['feasible']}")
+            print(f"Latency:      {res['latencyMs']} ms")
+            print(f"TLS Version:  {res['tlsVersion']}")
+            print(f"ALPN:         {res['alpn']}")
+            print(f"Key Exchange: {res['curveID']}")
+            print(f"Cert Valid:   {res['certValid']}")
+            print(f"Cert Subject: {res['certSubject']}")
+            print(f"Cert Issuer:  {res['certIssuer']}")
+            print(f"ServerNames:  {', '.join(res['serverNames'])}")
+            if res["reason"]:
+                print(f"Reason:       {res['reason']}")
+        return 0 if res.get("feasible") else 1
+
+    # Default action or --scan-defaults
+    candidates = DEFAULT_CANDIDATES
+    if args.candidates:
+        candidates = [c.strip() for c in args.candidates.split(",") if c.strip()]
+
+    scanner = RealityBatchScanner(
+        candidates=candidates,
+        timeout=args.timeout,
+        max_pool=args.max_pool,
+        allow_private=args.allow_private,
+    )
+    results = scanner.scan()
+
+    # Safe stdout encoding for Windows legacy consoles
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(errors="replace")
+        except Exception:
+            pass
+
+    if args.json:
+        print(json.dumps(results, indent=2, ensure_ascii=False))
+    else:
+        print(f"{'Target':<26} {'Status':<10} {'Latency':<9} {'ALPN':<6} {'Pool (serverNames)'}")
+        print("-" * 85)
+        for i, r in enumerate(results):
+            prefix = "* " if (i == 0 and r.get("feasible")) else "  "
+            status = "FEASIBLE" if r.get("feasible") else "REJECTED"
+            lat_str = f"{r.get('latencyMs', 9999)} ms" if r.get("feasible") else "FAIL"
+            alpn = r.get("alpn", "") or "-"
+            pool_preview = ", ".join(r.get("serverNames", []))
+            target_str = f"{prefix}{r.get('target', '')}"
+            print(f"{target_str:<26} {status:<10} {lat_str:<9} {alpn:<6} {pool_preview}")
+
+    return 0 if any(r.get("feasible") for r in results) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+EOF_REALITY_SCANNER
+        fi
     }
 
     run_non_interactive_setup() {
@@ -19428,7 +20431,7 @@ for item in res:
             STEAL_ENABLED=1
             local s_port="${STEAL_PORT:-45443}"
             STEAL_PORTS_LIST+=("$s_port")
-            local default_steal_dom="cdn.$PRIMARY_DOMAIN"
+            local default_steal_dom="cdn.${PRIMARY_DOMAIN:-}"
             local steal_dom_list="${STEAL_DOMAINS[*]:-$default_steal_dom}"
             STEAL_DOMAINS=()
             for s_dom in $steal_dom_list; do
@@ -19439,6 +20442,20 @@ for item in res:
             done
         else
             STEAL_ENABLED=0
+        fi
+
+        # Steal-Oneself Backup (отдельный резервный узел)
+        if [[ "${ENABLE_STEAL_COMPAT,,}" == "y" || "${ENABLE_STEAL_COMPAT:-}" == "1" ]]; then
+            STEAL_COMPAT_ENABLED=1
+            local sc_port="${STEAL_COMPAT_PORT:-47443}"
+            local sc_dom="${STEAL_COMPAT_DOMAIN:-static.${PRIMARY_DOMAIN:-}}"
+            DOMAIN_TO_PORT["$sc_dom"]="$sc_port"
+            [[ " ${ALL_DOMAINS[*]} " =~ " ${sc_dom} " ]] || ALL_DOMAINS+=("$sc_dom")
+            [[ " ${STEAL_DOMAINS[*]} " =~ " ${sc_dom} " ]] || STEAL_DOMAINS+=("$sc_dom")
+            STEAL_PORTS_LIST+=("$sc_port")
+            ok "    Резервный узел $sc_dom привязан к инбаунд-порту $sc_port"
+        else
+            STEAL_COMPAT_ENABLED=0
         fi
 
         # Classic REALITY
@@ -19771,10 +20788,10 @@ for item in res:
             CLASSIC_PORTS_LIST+=("$CLASSIC_PORT")
         fi
 
-        local pool_google="dl.google.com www.google.com"
-        local pool_microsoft="www.microsoft.com wwwqa.microsoft.com staticview.microsoft.com"
-        local pool_apple="www.apple.com icloud.com"
-        local pool_samsung="www.samsung.com"
+        local pool_google="dl.google.com google.com www.google.com"
+        local pool_microsoft="www.microsoft.com microsoft.com wwwqa.microsoft.com staticview.microsoft.com"
+        local pool_apple="www.apple.com images.apple.com"
+        local pool_samsung="www.samsung.com samsung.com"
 
         if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
             local fp_keys=("firefox" "chrome" "safari" "ios" "android" "edge" "randomized")
@@ -19789,62 +20806,221 @@ for item in res:
             )
             prompt_select "  Выберите uTLS TLS Fingerprint для REALITY" REALITY_FINGERPRINT "${REALITY_FINGERPRINT:-firefox}" fp_keys fp_labels || return $?
 
-            local sni_preset_keys=("google" "microsoft" "apple" "samsung" "custom")
-            local sni_preset_labels=(
-                "Google пул (по умолчанию)"
-                "Microsoft пул"
-                "Apple пул"
-                "Samsung"
-                "Свой SNI или пул доменов вручную"
+            local scan_tmp
+            scan_tmp=$(mktemp 2>/dev/null || echo "/tmp/reality_scan_$$.json")
+            local scan_success=0
+
+            scan_defaults_task() {
+                run_reality_scanner --scan-defaults --json > "$1" 2>/dev/null
+            }
+
+            if command -v run_with_spinner >/dev/null 2>&1; then
+                run_with_spinner "Тестирование TLS 1.3 серверов маскировки (REALITY Scan)" scan_defaults_task "$scan_tmp" || true
+            else
+                scan_defaults_task "$scan_tmp" || true
+            fi
+
+            if [ -s "$scan_tmp" ]; then
+                scan_success=1
+            fi
+
+            local sni_preset_keys=()
+            local sni_preset_labels=()
+            declare -A sni_preset_pools=()
+            local default_choice="google"
+
+            if [ "$scan_success" -eq 1 ]; then
+                local py_bin=""
+                for cand in "${PYTHON_CMD:-}" python3 python; do
+                    if [ -n "$cand" ] && "$cand" -c "import sys" >/dev/null 2>&1; then
+                        py_bin="$cand"
+                        break
+                    fi
+                done
+                if [ -n "$py_bin" ]; then
+                    local parsed_lines
+                    parsed_lines=$("$py_bin" - "$scan_tmp" << 'EOF_PARSE_SCAN' 2>/dev/null || true
+import json, sys
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as f:
+        data = json.load(f)
+    feasible = [d for d in data if d.get("feasible")]
+    if not feasible:
+        sys.exit(1)
+    fastest = feasible[0]
+    f_host = fastest["host"]
+    f_lat = fastest.get("latencyMs", "?")
+    f_pool = fastest.get("pool_str", f_host)
+    f_cnt = len(fastest.get("serverNames", []))
+    print(f"fastest|★ Самый быстрый ({f_host}, {f_lat} ms, {f_cnt} SANs)|{f_pool}")
+    for item in feasible[1:]:
+        h = item["host"]
+        lat = item.get("latencyMs", "?")
+        pool = item.get("pool_str", h)
+        cnt = len(item.get("serverNames", []))
+        print(f"{h}|{h} ({lat} ms, {cnt} SANs)|{pool}")
+except Exception:
+    sys.exit(1)
+EOF_PARSE_SCAN
+)
+                    if [ -n "$parsed_lines" ]; then
+                        while IFS='|' read -r k_id k_lbl k_pool || [ -n "$k_id" ]; do
+                            [ -n "$k_id" ] || continue
+                            sni_preset_keys+=("$k_id")
+                            sni_preset_labels+=("$k_lbl")
+                            sni_preset_pools["$k_id"]="$k_pool"
+                        done <<< "$parsed_lines"
+                    fi
+                fi
+            fi
+            rm -f "$scan_tmp" 2>/dev/null || true
+
+            if [ ${#sni_preset_keys[@]} -gt 0 ]; then
+                default_choice="fastest"
+            else
+                sni_preset_keys=("google" "microsoft" "apple" "samsung")
+                sni_preset_labels=(
+                    "Google пул (dl.google.com, по умолчанию)"
+                    "Microsoft пул (www.microsoft.com)"
+                    "Apple пул (www.apple.com images.apple.com)"
+                    "Samsung пул (www.samsung.com)"
+                )
+                sni_preset_pools["google"]="$pool_google"
+                sni_preset_pools["microsoft"]="$pool_microsoft"
+                sni_preset_pools["apple"]="$pool_apple"
+                sni_preset_pools["samsung"]="$pool_samsung"
+                default_choice="google"
+            fi
+
+            sni_preset_keys+=("probe" "custom")
+            sni_preset_labels+=(
+                "🔍 Проверить и протестировать свой домен"
+                "✏️ Ввести SNI или пул доменов вручную"
             )
-            local current_sni="${CLASSIC_SNI:-$pool_google}"
-            local matched_preset="custom"
-            case "$current_sni" in
-                "$pool_google"|"dl.google.com")
-                    matched_preset="google"
-                    ;;
-                "$pool_microsoft"|"www.microsoft.com")
-                    matched_preset="microsoft"
-                    ;;
-                "$pool_apple"|"www.apple.com")
-                    matched_preset="apple"
-                    ;;
-                "$pool_samsung")
-                    matched_preset="samsung"
-                    ;;
-                "google"|"microsoft"|"apple"|"samsung"|"custom")
-                    matched_preset="$current_sni"
-                    ;;
-                "")
-                    matched_preset="google"
-                    ;;
-                *)
-                    matched_preset="custom"
-                    ;;
-            esac
+
+            # Match currently set CLASSIC_SNI if any
+            if [ -n "${CLASSIC_SNI:-}" ]; then
+                for k in "${sni_preset_keys[@]}"; do
+                    if [ "${sni_preset_pools[$k]:-}" = "$CLASSIC_SNI" ] || [ "$k" = "$CLASSIC_SNI" ]; then
+                        default_choice="$k"
+                        break
+                    fi
+                done
+            fi
 
             local chosen_sni_preset=""
-            prompt_select "  Выберите SNI для маскировки REALITY (или свой пул)" chosen_sni_preset "$matched_preset" sni_preset_keys sni_preset_labels || return $?
+            while true; do
+                prompt_select "  Выберите SNI для маскировки REALITY (или свой пул)" chosen_sni_preset "$default_choice" sni_preset_keys sni_preset_labels || return $?
 
-            case "$chosen_sni_preset" in
-                google)
-                    CLASSIC_SNI="$pool_google"
-                    ;;
-                microsoft)
-                    CLASSIC_SNI="$pool_microsoft"
-                    ;;
-                apple)
-                    CLASSIC_SNI="$pool_apple"
-                    ;;
-                samsung)
-                    CLASSIC_SNI="$pool_samsung"
-                    ;;
-                custom)
-                    local custom_sni_input=""
-                    prompt_default "  Введите внешний SNI или пул доменов через пробел/запятую" "${CLASSIC_SNI:-dl.google.com}" custom_sni_input || return $?
-                    CLASSIC_SNI="$custom_sni_input"
-                    ;;
-            esac
+                case "$chosen_sni_preset" in
+                    probe)
+                        local custom_probe_dom=""
+                        prompt_default "  Введите домен для проверки REALITY" "${CLASSIC_SNI:-speed.cloudflare.com}" custom_probe_dom || return $?
+                        custom_probe_dom=$(echo "$custom_probe_dom" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+                        [ -n "$custom_probe_dom" ] || continue
+                        log "  Проверка домена $custom_probe_dom (TLS 1.3 / ALPN h2 / задержка)..."
+                        local probe_json
+                        probe_json=$(run_reality_scanner --probe "$custom_probe_dom" --json 2>/dev/null || true)
+                        local p_feasible="false"
+                        local p_pool="$custom_probe_dom"
+                        local p_lat="?"
+                        local p_reason=""
+                        local py_bin=""
+                        for cand in "${PYTHON_CMD:-}" python3 python; do
+                            if [ -n "$cand" ] && "$cand" -c "import sys" >/dev/null 2>&1; then
+                                py_bin="$cand"
+                                break
+                            fi
+                        done
+                        if [ -n "$probe_json" ] && [ -n "$py_bin" ]; then
+                            local parsed_probe
+                            parsed_probe=$("$py_bin" - "$probe_json" << 'EOF_PARSE_PROBE' 2>/dev/null || true
+import json, sys
+try:
+    d = json.loads(sys.argv[1])
+    feas = "true" if d.get("feasible") else "false"
+    pool = str(d.get("pool_str") or d.get("host") or "").strip()
+    lat = str(d.get("latencyMs", "?"))
+    reason = str(d.get("reason", "")).replace("\n", " ").strip()
+    print(feas)
+    print(pool)
+    print(lat)
+    print(reason)
+except Exception:
+    pass
+EOF_PARSE_PROBE
+)
+                            if [ -n "$parsed_probe" ]; then
+                                {
+                                    read -r p_feasible || true
+                                    read -r p_pool || true
+                                    read -r p_lat || true
+                                    read -r p_reason || true
+                                } <<< "$parsed_probe"
+                            fi
+                        fi
+                        [ -n "$p_pool" ] || p_pool="$custom_probe_dom"
+                        if [ "$p_feasible" = "true" ]; then
+                            ok "  ✓ Домен $custom_probe_dom подходит для REALITY (задержка ${p_lat} ms)!"
+                            ok "  Сформированный пул SAN: $p_pool"
+                            local use_probed="y"
+                            prompt_yes_no "  Использовать проверенный пул ($custom_probe_dom)?" "y" use_probed || return $?
+                            if is_true "$use_probed"; then
+                                CLASSIC_SNI="$p_pool"
+                                break
+                            fi
+
+                            # Пользователь решил не применять домен сразу: добавляем его в список и возвращаемся в меню
+                            local already_in_keys=0
+                            for k in "${sni_preset_keys[@]}"; do
+                                if [ "$k" = "$custom_probe_dom" ]; then
+                                    already_in_keys=1
+                                    break
+                                fi
+                            done
+                            if [ "$already_in_keys" -eq 0 ]; then
+                                local new_keys=()
+                                local new_labels=()
+                                for i in "${!sni_preset_keys[@]}"; do
+                                    if [ "${sni_preset_keys[$i]}" = "probe" ]; then
+                                        new_keys+=("$custom_probe_dom")
+                                        new_labels+=("✓ Проверенный: $custom_probe_dom (${p_lat} ms)")
+                                    fi
+                                    new_keys+=("${sni_preset_keys[$i]}")
+                                    new_labels+=("${sni_preset_labels[$i]}")
+                                done
+                                sni_preset_keys=("${new_keys[@]}")
+                                sni_preset_labels=("${new_labels[@]}")
+                                sni_preset_pools["$custom_probe_dom"]="$p_pool"
+                            fi
+                            default_choice="$custom_probe_dom"
+                            info "  Возврат к выбору из списка..."
+                            continue
+                        else
+                            warn "  ⚠ Внимание: $custom_probe_dom может не подойти: ${p_reason:-ошибка подключения}"
+                            local use_anyway="n"
+                            prompt_yes_no "  Всё равно использовать домен $custom_probe_dom?" "n" use_anyway || return $?
+                            if is_true "$use_anyway"; then
+                                CLASSIC_SNI="${p_pool:-$custom_probe_dom}"
+                                break
+                            else
+                                info "  Возврат к выбору из списка..."
+                                continue
+                            fi
+                        fi
+                        ;;
+                    custom)
+                        local custom_sni_input=""
+                        prompt_default "  Введите внешний SNI или пул доменов через пробел/запятую" "${CLASSIC_SNI:-dl.google.com}" custom_sni_input || return $?
+                        CLASSIC_SNI="$custom_sni_input"
+                        break
+                        ;;
+                    *)
+                        CLASSIC_SNI="${sni_preset_pools[$chosen_sni_preset]:-$pool_google}"
+                        break
+                        ;;
+                esac
+            done
         else
             REALITY_FINGERPRINT="${REALITY_FINGERPRINT:-firefox}"
             CLASSIC_SNI="${CLASSIC_SNI:-$pool_google}"
@@ -19877,14 +21053,18 @@ for item in res:
         echo -e "${YELLOW}━━━ Шаг 2/11: Выбор протоколов и транспортов (VPN / Прокси) ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Выберите протоколы подключения, которые будут развернуты на сервере."
-            echo -e "     • ${GREEN}VLESS REALITY (свой сайт)${NC}: маскировка под собственный поддомен (напр. cdn.$PRIMARY_DOMAIN)."
+            echo -e "     ${BOLD}Базовые протоколы (включены по умолчанию):${NC}"
+            echo -e "     • ${GREEN}VLESS REALITY (свой сайт)${NC}: маскировка под свой домен (cdn.${PRIMARY_DOMAIN:-домен})."
             echo -e "     • ${GREEN}VLESS REALITY (внешний)${NC}: маскировка под популярные сервисы (Apple, Microsoft, dl.google.com)."
             echo -e "     • ${GREEN}Hysteria 2${NC}: сверхбыстрый QUIC/UDP протокол с BBR Brutal для стриминга и мобильного интернета."
             echo -e "     • ${GREEN}AmneziaWG v3.1${NC}: защита от блокировок ТСПУ/DPI с обфускацией пакетов (Junk packets, S1-S4, H1-H4)."
+            echo
+            echo -e "     ${BOLD}Дополнительные протоколы (включаются при необходимости):${NC}"
+            echo -e "     • ${GREEN}VLESS REALITY Backup${NC}: резервный универсальный канал (static.${PRIMARY_DOMAIN:-домен}, без Vision)."
             echo -e "     • ${GREEN}AmneziaWG v2.0${NC}: совместимость со старыми роутерами (Keenetic, OpenWrt)."
-            echo -e "     • ${GREEN}TUIC v5${NC}: 0-RTT рукопожатие на чистом QUIC для мгновенного отклика."
-            echo -e "     • ${GREEN}Shadowsocks 2022${NC}: устойчивый к зондированию шифрованный протокол."
-            echo -e "     • ${GREEN}Telegram MTProxy${NC}: прямой доступ для клиентов Telegram без дополнительных VPN-приложений."
+            echo -e "     • ${GREEN}TUIC v5${NC}: высокоскоростной 0-RTT протокол на чистом QUIC (порт ${TUIC_PORT:-8448}/udp)."
+            echo -e "     • ${GREEN}Shadowsocks 2022${NC}: современный шифрованный протокол TCP/UDP (2022-blake3-aes-256-gcm, порт ${SS2022_PORT:-8388})."
+            echo -e "     • ${GREEN}Telegram MTProxy${NC}: встроенный FakeTLS прокси для работы Telegram без включения сторонних VPN."
             echo -e "     • ${GREEN}Автономный AmneziaWG${NC}: независимый сервис ядра Linux (awg-quick@awg0, утилита awg-mgr)."
             echo -e "     • ${GREEN}MASQUE (RFC 9484)${NC}: стандартизированный IETF CONNECT-UDP/IP прокси поверх HTTP/3 QUIC."
             echo -e "     • ${GREEN}ShadowTLS v4${NC}: идеальная маскировка под Apple gateway.icloud.com через Nginx Stream L4."
@@ -19896,17 +21076,18 @@ for item in res:
             echo
         fi
 
-        # Базовые протоколы: основные включены по умолчанию, v2.0 для старых роутеров отключен
+        # Базовые протоколы: основные включены по умолчанию
         ENABLE_STEAL="${ENABLE_STEAL:-y}"
         ENABLE_CLASSIC="${ENABLE_CLASSIC:-y}"
         ENABLE_HY2="${ENABLE_HY2:-y}"
         ENABLE_AWG_V3="${ENABLE_AWG_V3:-y}"
-        ENABLE_AWG_V2="${ENABLE_AWG_V2:-n}"
-        ENABLE_TUIC="${ENABLE_TUIC:-y}"
-        ENABLE_SS2022="${ENABLE_SS2022:-y}"
-        ENABLE_MTPROTO="${ENABLE_MTPROTO:-y}"
 
         # Дополнительные протоколы по умолчанию отключены (пользователь отмечает при необходимости)
+        ENABLE_STEAL_COMPAT="${ENABLE_STEAL_COMPAT:-n}"
+        ENABLE_AWG_V2="${ENABLE_AWG_V2:-n}"
+        ENABLE_TUIC="${ENABLE_TUIC:-n}"
+        ENABLE_SS2022="${ENABLE_SS2022:-n}"
+        ENABLE_MTPROTO="${ENABLE_MTPROTO:-n}"
         ENABLE_AWG_STANDALONE="${ENABLE_AWG_STANDALONE:-n}"
         ENABLE_MASQUE="${ENABLE_MASQUE:-n}"
         ENABLE_SHADOWTLS="${ENABLE_SHADOWTLS:-n}"
@@ -19921,6 +21102,7 @@ for item in res:
             "ENABLE_CLASSIC"
             "ENABLE_HY2"
             "ENABLE_AWG_V3"
+            "ENABLE_STEAL_COMPAT"
             "ENABLE_AWG_V2"
             "ENABLE_TUIC"
             "ENABLE_SS2022"
@@ -19939,10 +21121,11 @@ for item in res:
             "VLESS REALITY (маскировка под популярные сервисы, :${CLASSIC_PORT:-46443})"
             "Hysteria 2 (UDP/QUIC Brutal CC, :${HY2_PORT:-443})"
             "AmneziaWG v3.1 (продвинутая обфускация WireGuard, :${AWG_V3_PORT:-8443}/udp)"
+            "VLESS REALITY Backup (резервный универсальный канал, :${STEAL_COMPAT_PORT:-47443})"
             "AmneziaWG v2.0 (совместимость с роутерами Keenetic / OpenWrt, :${AWG_V2_PORT:-8444}/udp)"
-            "TUIC v5 (высокоскоростной QUIC 0-RTT, :${TUIC_PORT:-8448}/udp)"
-            "Shadowsocks 2022 (современный шифрованный протокол TCP/UDP, :${SS2022_PORT:-8388})"
-            "Telegram MTProxy (прямой доступ для клиентов Telegram с FakeTLS, :${MTPROTO_PORT:-8444}/tcp)"
+            "TUIC v5 (высокоскоростной 0-RTT на чистом QUIC, :${TUIC_PORT:-8448}/udp)"
+            "Shadowsocks 2022 (TCP/UDP 2022-blake3-aes-256-gcm, :${SS2022_PORT:-8388})"
+            "Telegram MTProxy (встроенный FakeTLS прокси для Telegram, :${MTPROTO_PORT:-8444}/tcp)"
             "Автономный сервер AmneziaWG (системная служба с CLI awg-mgr, :${AWG_STANDALONE_PORT:-8445}/udp)"
             "MASQUE (RFC 9484 / HTTP/3 IP-проксирование, :${MASQUE_PORT:-8449}/udp)"
             "ShadowTLS v4 + SS-2022 (маскировка под доверенный TLS SNI)"
@@ -19996,6 +21179,24 @@ for item in res:
             STEAL_ENABLED=0
             STEAL_PORTS_LIST=()
             STEAL_DOMAINS=()
+        fi
+
+        # Настройки VLESS REALITY Backup (резервный универсальный канал)
+        if is_true "$ENABLE_STEAL_COMPAT"; then
+            STEAL_COMPAT_ENABLED=1
+            STEAL_COMPAT_PORT="${STEAL_COMPAT_PORT:-47443}"
+            STEAL_COMPAT_DOMAIN="${STEAL_COMPAT_DOMAIN:-static.${PRIMARY_DOMAIN:-}}"
+            if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
+                prompt_default "  Локальный порт Xray для REALITY Backup" "$STEAL_COMPAT_PORT" STEAL_COMPAT_PORT || return $?
+                prompt_default "  Субдомен для REALITY Backup" "$STEAL_COMPAT_DOMAIN" STEAL_COMPAT_DOMAIN || return $?
+            fi
+            DOMAIN_TO_PORT["$STEAL_COMPAT_DOMAIN"]="$STEAL_COMPAT_PORT"
+            [[ " ${ALL_DOMAINS[*]} " =~ " ${STEAL_COMPAT_DOMAIN} " ]] || ALL_DOMAINS+=("$STEAL_COMPAT_DOMAIN")
+            [[ " ${STEAL_DOMAINS[*]} " =~ " ${STEAL_COMPAT_DOMAIN} " ]] || STEAL_DOMAINS+=("$STEAL_COMPAT_DOMAIN")
+            STEAL_PORTS_LIST+=("$STEAL_COMPAT_PORT")
+            ok "  Резервный узел $STEAL_COMPAT_DOMAIN привязан к инбаунд-порту $STEAL_COMPAT_PORT"
+        else
+            STEAL_COMPAT_ENABLED=0
         fi
 
         # Настройки VLESS REALITY (внешние сервисы)
@@ -20734,7 +21935,10 @@ for item in res:
         echo -e "${CYAN}║${NC}             ${WHITE}${BOLD}📋 ПРОВЕРКА КОНФИГУРАЦИИ ПЕРЕД УСТАНОВКОЙ (REVIEW)${NC}                 ${CYAN}║${NC}"
         echo -e "${CYAN}╚════════════════════════════════════════════════════════════════════════════════╝${NC}"
         echo
-        echo -e "  ${CYAN}[1]${NC} ${BOLD}Основной домен:${NC}       ${WHITE}$PRIMARY_DOMAIN${NC} (Префикс клиентов: ${GREEN}$SERVER_PREFIX${NC}, www: ${ADD_WWW})"
+        local dom_disp="${PRIMARY_DOMAIN:-не настроен}"
+        local srv_pref="${SERVER_PREFIX:-Server}"
+        local add_w="${ADD_WWW:-n}"
+        echo -e "  ${CYAN}[1]${NC} ${BOLD}Основной домен:${NC}       ${WHITE}$dom_disp${NC} (Префикс клиентов: ${GREEN}$srv_pref${NC}, www: ${add_w})"
 
         local port_mode_str="Автоматический (по умолчанию)"
         [ "${PORTS_SETUP_MODE:-0}" = "1" ] && port_mode_str="Ручной (все порты)"
@@ -20745,6 +21949,13 @@ for item in res:
             steal_status="${GREEN}Включен${NC} (${WHITE}${STEAL_DOMAINS[*]}${NC} -> 127.0.0.1:${STEAL_PORTS_LIST[*]})"
         fi
         echo -e "      ${DIM}• REALITY (свой сайт):${NC}    $steal_status"
+
+        local steal_compat_status="${RED}Отключен${NC}"
+        if is_true "${STEAL_COMPAT_ENABLED:-0}"; then
+            local sc_dom_disp="${STEAL_COMPAT_DOMAIN:-static.${PRIMARY_DOMAIN:-домен}}"
+            steal_compat_status="${GREEN}Включен${NC} (${WHITE}${sc_dom_disp}${NC} -> 127.0.0.1:${STEAL_COMPAT_PORT:-47443})"
+        fi
+        echo -e "      ${DIM}• REALITY Backup:${NC}         $steal_compat_status"
 
         local classic_status="${RED}Отключен${NC}"
         if is_true "${CLASSIC_ENABLED:-0}"; then

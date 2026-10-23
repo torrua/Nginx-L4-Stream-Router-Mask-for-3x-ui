@@ -143,8 +143,23 @@ reconstruct_arrays_from_vars() {
             DOMAIN_TO_PORT["cdn.$PRIMARY_DOMAIN"]="${STEAL_PORTS_LIST[0]}"
             ALL_DOMAINS+=("cdn.$PRIMARY_DOMAIN")
         }
+
+        # Режим совместимости Steal (субдомен static.<домен>, порт 47443, flow: none)
+        local v_stl_compat="${ENABLE_STEAL_COMPAT:-n}"
+        if [[ "${v_stl_compat,,}" == "y" || "$v_stl_compat" == "1" ]] && [ -n "${PRIMARY_DOMAIN:-}" ]; then
+            STEAL_COMPAT_ENABLED=1
+            STEAL_COMPAT_PORT="${STEAL_COMPAT_PORT:-47443}"
+            STEAL_COMPAT_DOMAIN="${STEAL_COMPAT_DOMAIN:-static.${PRIMARY_DOMAIN:-}}"
+            DOMAIN_TO_PORT["$STEAL_COMPAT_DOMAIN"]="$STEAL_COMPAT_PORT"
+            [[ " ${ALL_DOMAINS[*]} " =~ " ${STEAL_COMPAT_DOMAIN} " ]] || ALL_DOMAINS+=("$STEAL_COMPAT_DOMAIN")
+            [[ " ${STEAL_DOMAINS[*]} " =~ " ${STEAL_COMPAT_DOMAIN} " ]] || STEAL_DOMAINS+=("$STEAL_COMPAT_DOMAIN")
+            STEAL_PORTS_LIST+=("$STEAL_COMPAT_PORT")
+        else
+            STEAL_COMPAT_ENABLED=0
+        fi
     else
         STEAL_ENABLED=0
+        STEAL_COMPAT_ENABLED=0
         STEAL_PORTS_LIST=()
     fi
 
@@ -222,6 +237,7 @@ reconstruct_arrays_from_vars() {
     _v="${ENABLE_WEB_STACK:-y}"; if is_true "$_v"; then ENABLE_WEB_STACK=1; else ENABLE_WEB_STACK=0; fi
     AWG_SERVER_HOST="${AWG_SERVER_HOST:-}"
     _v="${ENABLE_STEAL:-${STEAL_ENABLED:-y}}"; if is_true "$_v"; then ENABLE_STEAL="y"; STEAL_ENABLED=1; else ENABLE_STEAL="n"; STEAL_ENABLED=0; fi
+    _v="${ENABLE_STEAL_COMPAT:-${STEAL_COMPAT_ENABLED:-n}}"; if is_true "$_v"; then ENABLE_STEAL_COMPAT="y"; STEAL_COMPAT_ENABLED=1; else ENABLE_STEAL_COMPAT="n"; STEAL_COMPAT_ENABLED=0; fi
     _v="${ENABLE_CLASSIC:-${CLASSIC_ENABLED:-y}}"; if is_true "$_v"; then ENABLE_CLASSIC="y"; CLASSIC_ENABLED=1; else ENABLE_CLASSIC="n"; CLASSIC_ENABLED=0; fi
     _v="${ENABLE_HY2:-n}"
     if is_true "$_v"; then
@@ -418,6 +434,8 @@ save_session_state() {
     fi
     local steal_save="n"
     v="${ENABLE_STEAL:-${STEAL_ENABLED:-n}}"; is_true "$v" && steal_save="y"
+    local steal_compat_save="n"
+    v="${ENABLE_STEAL_COMPAT:-${STEAL_COMPAT_ENABLED:-n}}"; is_true "$v" && steal_compat_save="y"
     local classic_save="n"
     v="${ENABLE_CLASSIC:-${CLASSIC_ENABLED:-n}}"; is_true "$v" && classic_save="y"
     local hy2_save="n"
@@ -510,6 +528,10 @@ FORCE_DNS="${FORCE_DNS:-0}"
 ENABLE_STEAL="$steal_save"
 STEAL_PORT="${STEAL_PORTS_LIST[0]:-45443}"
 STEAL_DOMAINS="${STEAL_DOMAINS[*]:-}"
+
+ENABLE_STEAL_COMPAT="$steal_compat_save"
+STEAL_COMPAT_PORT="${STEAL_COMPAT_PORT:-47443}"
+STEAL_COMPAT_DOMAIN="${STEAL_COMPAT_DOMAIN:-static.${PRIMARY_DOMAIN:-}}"
 
 ENABLE_CLASSIC="$classic_save"
 CLASSIC_PORT="${CLASSIC_PORTS_LIST[0]:-46443}"

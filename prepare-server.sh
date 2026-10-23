@@ -920,18 +920,18 @@ ufw default allow outgoing
 echo "Настраиваем порты (только IPv4)..."
 
 # SSH
-ufw allow "$SSH_PORT"/tcp comment 'SSH'
+ufw allow "$SSH_PORT"/tcp comment '[vpn-stack] SSH'
 
 # Дополнительные TCP порты
-ufw allow 80/tcp comment 'HTTP'
-ufw allow 443/tcp comment 'HTTPS'
-ufw allow 8443/tcp comment 'AmneziaWG Web'
-ufw allow 10443/tcp comment '3X-UI Panel'
+ufw allow 80/tcp comment '[vpn-stack] HTTP'
+ufw allow 443/tcp comment '[vpn-stack] HTTPS'
+ufw allow 8443/tcp comment '[vpn-stack] AmneziaWG Web'
+ufw allow 10443/tcp comment '[vpn-stack] 3X-UI Panel'
 
 # Дополнительные UDP порты
-ufw allow 443/udp comment 'Hysteria 2 / QUIC'
-ufw allow 8443/udp comment 'AmneziaWG v3'
-ufw allow 8444/udp comment 'AmneziaWG v2'
+ufw allow 443/udp comment '[vpn-stack] Hysteria 2 / QUIC'
+ufw allow 8443/udp comment '[vpn-stack] AmneziaWG v3'
+ufw allow 8444/udp comment '[vpn-stack] AmneziaWG v2'
 
 # Опциональная блокировка Ping (ICMP)
 if prompt_yes_no "Блокировать входящие ICMP (Ping) запросы?"; then

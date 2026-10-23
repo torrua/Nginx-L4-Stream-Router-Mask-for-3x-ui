@@ -172,6 +172,8 @@ EOF_HELP
 
     STEAL_PORT="${STEAL_PORT:-45443}"
     STEAL_SNI="${STEAL_SNI:-gateway.icloud.com}"
+    STEAL_COMPAT_PORT="${STEAL_COMPAT_PORT:-47443}"
+    STEAL_COMPAT_DOMAIN="${STEAL_COMPAT_DOMAIN:-static.${PRIMARY_DOMAIN:-}}"
     XHTTP_STREAM_PORT="${XHTTP_STREAM_PORT:-${XHTTP_PORT:-50443}}"
     XHTTP_STREAM_PATH="${XHTTP_STREAM_PATH:-${XHTTP_PATH:-xhttp}}"
     XHTTP_PORT="$XHTTP_STREAM_PORT"
@@ -222,6 +224,7 @@ EOF_HELP
     CLIENT_NAME="${CLIENT_NAME:-${CLIENT_EMAIL:-}}"
 
     ENABLE_STEAL="${ENABLE_STEAL:-y}"
+    ENABLE_STEAL_COMPAT="${ENABLE_STEAL_COMPAT:-n}"
     ENABLE_XHTTP="${ENABLE_XHTTP:-y}"
     ENABLE_CLASSIC="${ENABLE_CLASSIC:-y}"
     ENABLE_HY2="${ENABLE_HY2:-y}"
@@ -353,7 +356,10 @@ EOF_HELP
     export SUB_PATH
     export SUB_CLASH_PATH
     export ENABLE_STEAL
+    export ENABLE_STEAL_COMPAT
     export STEAL_PORT
+    export STEAL_COMPAT_PORT
+    export STEAL_COMPAT_DOMAIN
     export STEAL_SNI
     export ENABLE_XHTTP
     export XHTTP_PORT
@@ -528,7 +534,7 @@ EOF_CLEAN_JSON
             fi
         done
 
-        # Обновление ядра Xray-core до последней актуальной версии (v26.9.30+)
+        # Обновление ядра Xray-core до последней актуальной версии (v26.10.21+)
         INSTALLED_XRAY_VER=""
         if [[ "${UPDATE_XRAY_CORE:-y}" =~ ^[Yy1] ]]; then
             XRAY_BIN_DIR="/usr/local/x-ui/bin"
@@ -554,10 +560,14 @@ EOF_CLEAN_JSON
             if command -v curl >/dev/null 2>&1; then
                 gh_resp=$(curl -fsSL --connect-timeout 5 "https://api.github.com/repos/XTLS/Xray-core/releases/latest" 2>/dev/null || true)
                 if [ -n "$gh_resp" ]; then
-                    LATEST_TAG=$(echo "$gh_resp" | { grep -m1 '"tag_name":' || true; } | { cut -d '"' -f 4 || true; }) || LATEST_TAG=""
+                    if command -v python3 >/dev/null 2>&1; then
+                        LATEST_TAG=$(python3 -c 'import json, sys; print(json.loads(sys.stdin.read()).get("tag_name", ""))' <<< "$gh_resp" 2>/dev/null || true)
+                    else
+                        LATEST_TAG=$(sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' <<< "$gh_resp" | head -n 1)
+                    fi
                 fi
             fi
-            [ -n "$LATEST_TAG" ] || LATEST_TAG="v26.9.30"
+            [ -n "$LATEST_TAG" ] || LATEST_TAG="v26.10.21"
             CLEAN_LATEST="${LATEST_TAG#v}"
 
             if [ -z "$CURRENT_VER" ] || [ "$CURRENT_VER" != "$CLEAN_LATEST" ]; then

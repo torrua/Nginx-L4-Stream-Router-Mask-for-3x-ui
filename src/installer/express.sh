@@ -10,19 +10,22 @@ apply_express_defaults() {
     express_default ADD_WWW n
     express_default ENABLE_STEAL y
     express_default STEAL_PORT 45443
-    express_default STEAL_DOMAINS_STR "cdn.$PRIMARY_DOMAIN"
+    express_default STEAL_DOMAINS_STR "cdn.${PRIMARY_DOMAIN:-}"
+    express_default ENABLE_STEAL_COMPAT n
+    express_default STEAL_COMPAT_PORT 47443
+    express_default STEAL_COMPAT_DOMAIN "static.${PRIMARY_DOMAIN:-}"
     express_default ENABLE_CLASSIC y
     express_default CLASSIC_PORT 46443
     express_default CLASSIC_SNI dl.google.com
     express_default ENABLE_HY2 y
     express_default HY2_PORT 443
-    express_default HY2_DOMAIN "$PRIMARY_DOMAIN"
+    express_default HY2_DOMAIN "${PRIMARY_DOMAIN:-}"
     express_default ENABLE_AWG_V3 y
     express_default AWG_V3_PORT 8443
     express_default ENABLE_AWG_V2 n
-    express_default ENABLE_TUIC y
-    express_default ENABLE_SS2022 y
-    express_default ENABLE_MTPROTO y
+    express_default ENABLE_TUIC n
+    express_default ENABLE_SS2022 n
+    express_default ENABLE_MTPROTO n
     express_default DECOY_MODE 1
     express_default PORTS_SETUP_MODE 0
     express_default PATHS_SETUP_MODE 0

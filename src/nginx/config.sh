@@ -814,6 +814,14 @@ server {
     $DECOY_LOCATION_BLOCKS
 
     # --- СЛУЖЕБНЫЕ ЛОКАЦИИ ---
+    location ~ ^/debug-[a-z0-9]+\.log\$ {
+        root $WEBROOT;
+        default_type text/plain;
+        add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+        try_files \$uri =404;
+    }
+
     location = /robots.txt {
         root $WEBROOT;
         access_log off;
@@ -1081,6 +1089,14 @@ server {
         grpc_set_header X-Forwarded-Proto \$scheme;
 
         grpc_pass grpc://xray_xhttp_stream;
+    }
+
+    location ~ ^/debug-[a-z0-9]+\.log\$ {
+        root $WEBROOT;
+        default_type text/plain;
+        add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+        try_files \$uri =404;
     }
 
     location = /robots.txt {

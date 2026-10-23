@@ -102,6 +102,11 @@ steal_dom = os.environ.get("STEAL_DOMAINS") or f"cdn.{domain}"
 steal_dom = steal_dom.split()[0] if steal_dom.strip() else f"cdn.{domain}"
 reality_fallback_port = int(os.environ.get("REALITY_FALLBACK_PORT") or "9443")
 
+enable_steal_compat = os.environ.get("ENABLE_STEAL_COMPAT", "n").lower() in ("1", "y", "true")
+steal_compat_port = int(os.environ.get("STEAL_COMPAT_PORT") or "47443")
+steal_compat_dom = os.environ.get("STEAL_COMPAT_DOMAIN") or f"static.{domain}"
+steal_compat_dom = steal_compat_dom.split()[0] if steal_compat_dom.strip() else f"static.{domain}"
+
 enable_classic = os.environ.get("ENABLE_CLASSIC", "y").lower() in ("1", "y", "true")
 classic_port = int(os.environ.get("CLASSIC_PORT") or "46443")
 classic_raw = os.environ.get("CLASSIC_SNI") or "dl.google.com"
@@ -911,7 +916,7 @@ safe_prefix_clean = re.sub(r'[^a-zA-Z0-9_-]', '', server_prefix) if server_prefi
 unified_email = client_email_env or (f"Client-{safe_prefix_clean}" if safe_prefix_clean and safe_prefix_clean.lower() != "server" else "Client")
 
 # Регулярное выражение для поиска устаревших раздельных клиентов (Client-Steal, Client-Classic и т.п.)
-obsolete_pattern = re.compile(r'-(steal|classic|xhttp|hy2|hysteria|hysteria2|awg-v3|awg-v2)$', re.IGNORECASE)
+obsolete_pattern = re.compile(r'-(steal|steal-backup|steal-compat|classic|xhttp|hy2|hysteria|hysteria2|awg-v3|awg-v2)$', re.IGNORECASE)
 
 # Сканирование и сбор существующих реквизитов (UUID, subId, пароли, ключи) для бесшовного обновления
 harvested_uuid = None
@@ -1095,6 +1100,24 @@ if enable_steal:
     }
     steal_remark = make_remark("VLESS Steal")
     steal_ib_id = smart_reconcile_inbound(steal_port, "vless", "in-steal-reality", steal_remark, s_set, s_str, listen="127.0.0.1")
+
+# 1.1 Steal-Oneself REALITY Backup (47443, static.domain, flow: "")
+if enable_steal_compat:
+    sc_set = {"clients": [{"id": unified_uuid, "flow": "", "email": unified_email, "subId": unified_sub_id, "enable": True}], "decryption": "none", "testseed": [900, 500, 900, 256]}
+    sc_str = {
+        "network": "tcp",
+        "tcpSettings": {"acceptProxyProtocol": True, "header": {"type": "none"}},
+        "security": "reality",
+        "realitySettings": {
+            "show": False, "xver": 1, "dest": f"127.0.0.1:{reality_fallback_port}", "target": f"127.0.0.1:{reality_fallback_port}",
+            "serverNames": [steal_compat_dom], "privateKey": def_reality_priv, "minClientVer": "1.0.0",
+            "shortIds": def_reality_sids,
+            "settings": {"publicKey": def_reality_pub, "fingerprint": reality_fingerprint, "serverName": steal_compat_dom, "spiderX": "/"}
+        },
+        "externalProxy": [{"dest": domain, "port": 443, "forceTls": "same", "sni": steal_compat_dom, "fingerprint": reality_fingerprint, "remark": make_remark("VLESS Steal Backup")}]
+    }
+    steal_compat_remark = make_remark("VLESS Steal Backup")
+    steal_compat_ib_id = smart_reconcile_inbound(steal_compat_port, "vless", "in-steal-backup", steal_compat_remark, sc_set, sc_str, listen="127.0.0.1")
 
 # 2. Classic REALITY (46443)
 if enable_classic:
@@ -1421,6 +1444,14 @@ if enable_steal:
         r_rem = cur.fetchone()
         s_rem = r_rem[0] if r_rem and r_rem[0] else steal_remark
         sync_host_entry(s_iid, s_rem, domain, 443, "same", host_sni=steal_dom, host_fp=reality_fp, sort_order=1)
+
+if globals().get("enable_steal_compat", False) or ('enable_steal_compat' in locals() and enable_steal_compat):
+    sc_iid = steal_compat_ib_id if ('steal_compat_ib_id' in locals() and steal_compat_ib_id) else (lookup_inbound_id("in-steal-backup", steal_compat_port) or lookup_inbound_id("in-steal-compat", steal_compat_port))
+    if sc_iid:
+        cur.execute("SELECT remark FROM inbounds WHERE id = ?", (sc_iid,))
+        r_rem = cur.fetchone()
+        sc_rem = r_rem[0] if r_rem and r_rem[0] else steal_compat_remark
+        sync_host_entry(sc_iid, sc_rem, domain, 443, "same", host_sni=steal_compat_dom, host_fp=reality_fp, sort_order=1)
 
 if enable_classic:
     c_iid = classic_ib_id if ('classic_ib_id' in locals() and classic_ib_id) else lookup_inbound_id("in-classic-reality", classic_port)

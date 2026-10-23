@@ -1777,6 +1777,42 @@ rm -f "$cache_file"
             if os.path.exists(temp_db):
                 os.unlink(temp_db)
 
+    def test_steal_compat_inbound_and_host_reconcile(self):
+        """Verify that in-steal-backup is reconciled with flow='' for legacy compatibility."""
+        reconcile = self.ns["smart_reconcile_inbound"]
+        uid = str(uuid.uuid4())
+        compat_set = {
+            "clients": [{"id": uid, "flow": "", "email": "Client", "subId": "sub123", "enable": True}],
+            "decryption": "none"
+        }
+        compat_str = {
+            "network": "tcp",
+            "tcpSettings": {"acceptProxyProtocol": True, "header": {"type": "none"}},
+            "security": "reality",
+            "realitySettings": {
+                "show": False, "xver": 1, "dest": "127.0.0.1:9443", "target": "127.0.0.1:9443",
+                "serverNames": ["static.example.com"], "privateKey": "priv1", "minClientVer": "1.0.0",
+                "shortIds": ["abcd"],
+                "settings": {"publicKey": "pub1", "fingerprint": "firefox", "serverName": "static.example.com", "spiderX": "/"}
+            },
+            "externalProxy": [{"dest": "example.com", "port": 443, "forceTls": "same", "sni": "static.example.com", "fingerprint": "firefox", "remark": "Test (VLESS Steal Backup)"}]
+        }
+        res_id = reconcile(47443, "vless", "in-steal-backup", "Test (VLESS Steal Backup)", compat_set, compat_str, listen="127.0.0.1")
+        self.assertIsNotNone(res_id)
+
+        self.cur.execute("SELECT stream_settings, settings FROM inbounds WHERE id = ?", (res_id,))
+        row = self.cur.fetchone()
+        self.assertIsNotNone(row)
+        st = json.loads(row[0])
+        se = json.loads(row[1])
+
+        # Verify flow is empty for legacy compatibility
+        self.assertEqual(se["clients"][0]["flow"], "", "VLESS Steal Compat client flow MUST be empty")
+        # Verify xver is 1 and dest points to fallback port
+        self.assertEqual(st["realitySettings"]["xver"], 1)
+        self.assertEqual(st["realitySettings"]["dest"], "127.0.0.1:9443")
+        self.assertEqual(st["realitySettings"]["serverNames"], ["static.example.com"])
+
 
 
 class TestBashScopeRegressions(unittest.TestCase):
@@ -2016,6 +2052,17 @@ echo "AGH_CLIENT_ID=$AGH_CLIENT_ID"
         # Check review screen shows both
         self.assertIn("Режим портов:", wizard_sh)
         self.assertIn("Режим путей:", wizard_sh)
+
+    def test_steal_compat_env_and_checkpoint_keys(self):
+        """Verify that Steal Compat variables and checkpoint keys are properly registered."""
+        env_sh = (ROOT / "src/system/env.sh").read_text(encoding="utf-8")
+        chk_sh = (ROOT / "src/common/checkpoint.sh").read_text(encoding="utf-8")
+        self.assertIn("ENABLE_STEAL_COMPAT", env_sh)
+        self.assertIn("STEAL_COMPAT_PORT", env_sh)
+        self.assertIn("STEAL_COMPAT_DOMAIN", env_sh)
+        self.assertIn("ENABLE_STEAL_COMPAT", chk_sh)
+        self.assertIn("STEAL_COMPAT_PORT", chk_sh)
+        self.assertIn("STEAL_COMPAT_DOMAIN", chk_sh)
 
 
 

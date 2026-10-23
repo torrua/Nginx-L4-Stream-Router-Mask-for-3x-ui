@@ -150,7 +150,7 @@ EOF_AWG_SH
 
     # Настройка правил файрвола UFW
     if command -v ufw >/dev/null 2>&1; then
-        ufw allow "${awg_port}/udp" comment "AmneziaWG Server Engine" >/dev/null 2>&1 || true
+        ufw allow "${awg_port}/udp" comment "[vpn-stack] AmneziaWG Server Engine" >/dev/null 2>&1 || true
     fi
 
     # Настройка периодической очистки просроченных клиентов (cron)

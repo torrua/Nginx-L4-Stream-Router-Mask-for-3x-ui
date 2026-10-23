@@ -117,17 +117,38 @@ setup_nginx_mainline() {
     os_id=$(lsb_release -is 2>/dev/null | tr '[:upper:]' '[:lower:]' || echo "ubuntu")
     os_codename=$(lsb_release -cs 2>/dev/null || echo "jammy")
 
-    # 1. Если Nginx уже установлен — проверяем, запускается ли бинарник
+    # 1. Если Nginx уже установлен — проверяем, запускается ли бинарник и поддерживает ли ssl_reject_handshake
     if command -v nginx >/dev/null 2>&1; then
         if nginx -v >/dev/null 2>&1; then
-            mkdir -p /etc/nginx/modules-enabled 2>/dev/null || true
-            ensure_nginx_stream_module
-            return 0
+            local test_conf
+            test_conf=$(mktemp 2>/dev/null || echo "/tmp/nginx_probe_$$.conf")
+            cat << 'EOF' > "$test_conf"
+events { worker_connections 32; }
+http {
+    server {
+        listen 127.0.0.1:65432 ssl;
+        ssl_reject_handshake on;
+    }
+}
+EOF
+            local is_suitable=0
+            if nginx -t -c "$test_conf" >/dev/null 2>&1; then
+                is_suitable=1
+            fi
+            rm -f "$test_conf" 2>/dev/null || true
+
+            if [ "$is_suitable" -eq 1 ]; then
+                mkdir -p /etc/nginx/modules-enabled 2>/dev/null || true
+                ensure_nginx_stream_module
+                return 0
+            fi
+            log "Обнаружен устаревший Nginx (отсутствует поддержка ssl_reject_handshake). Обновление до Nginx Mainline..."
+        else
+            warn "Обнаружен несовместимый Nginx (CPU ISA level is lower than required). Очистка..."
+            rm -f /etc/apt/sources.list.d/nginx.list /etc/apt/preferences.d/99nginx
+            apt-get purge -y nginx nginx-common nginx-core libnginx* 2>/dev/null || apt-get remove -y nginx* 2>/dev/null || true
+            apt-get update -q || true
         fi
-        warn "Обнаружен несовместимый Nginx (CPU ISA level is lower than required). Очистка..."
-        rm -f /etc/apt/sources.list.d/nginx.list /etc/apt/preferences.d/99nginx
-        apt-get purge -y nginx nginx-common nginx-core libnginx* 2>/dev/null || apt-get remove -y nginx* 2>/dev/null || true
-        apt-get update -q || true
     fi
 
     apt-get update -q || true
@@ -144,6 +165,7 @@ setup_nginx_mainline() {
     if [ "$can_use_nginx_org" -eq 1 ]; then
         mkdir -p /usr/share/keyrings
         curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --dearmor -o /usr/share/keyrings/nginx-archive-keyring.gpg --yes 2>/dev/null || true
+        chmod 644 /usr/share/keyrings/nginx-archive-keyring.gpg 2>/dev/null || true
 
         if [ -s /usr/share/keyrings/nginx-archive-keyring.gpg ]; then
             echo "deb [signed-by=/usr/share/keyrings/nginx-archive-keyring.gpg] https://nginx.org/packages/mainline/$os_id $os_codename nginx" \

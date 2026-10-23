@@ -252,7 +252,7 @@ elif [ "$EXPRESS_MODE" -eq 1 ]; then
     echo -e "  ${GREEN}${STAR} ${BOLD}Включен режим: Экспресс-установка${NC}"
     echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}"
 
-    echo -e "  ${YELLOW}[i] Важно о DNS:${NC} ${DIM}Для маскировки требуются A-записи основного домена и поддомена cdn.<домен>${NC}"
+    echo -e "  ${YELLOW}[i] Важно о DNS:${NC} ${DIM}Для маскировки требуются A-записи: основного домена, cdn.<домен> и static.<домен>${NC}"
     if [ -z "${PRIMARY_DOMAIN:-}" ]; then
         while true; do
             echo -ne "  ${WHITE}${ARROW} Введите ваш основной домен (напр. domain.com): ${NC}"
@@ -336,45 +336,33 @@ else
         fi
     }
 
-    scan_reality_candidates() {
-        python3 -c "
-import ssl, socket, time, concurrent.futures
+    run_reality_scanner() {
+        local py_bin=""
+        for cand in "${PYTHON_CMD:-}" python3 python; do
+            if [ -n "$cand" ] && "$cand" -c "import sys" >/dev/null 2>&1; then
+                py_bin="$cand"
+                break
+            fi
+        done
+        [ -n "$py_bin" ] || return 1
 
-CANDIDATES = [
-    'dl.google.com',
-    'www.apple.com',
-    'itunes.apple.com',
-    'www.samsung.com',
-    'www.nvidia.com',
-    'www.microsoft.com',
-    'www.amazon.com',
-    'www.amd.com',
-    'www.sony.com',
-]
+        local script_path=""
+        local this_dir="${BASH_SOURCE[0]%/*}"
+        if [ -f "$this_dir/../xray/reality_scanner.py" ]; then
+            script_path="$this_dir/../xray/reality_scanner.py"
+        elif [ -f "src/xray/reality_scanner.py" ]; then
+            script_path="src/xray/reality_scanner.py"
+        elif [ -f "./reality_scanner.py" ]; then
+            script_path="./reality_scanner.py"
+        fi
 
-def probe(host):
-    ctx = ssl.create_default_context()
-    ctx.set_alpn_protocols(['h2'])
-    t0 = time.time()
-    try:
-        with socket.create_connection((host, 443), timeout=3.0) as sock:
-            with ctx.wrap_socket(sock, server_hostname=host) as ssock:
-                lat = int((time.time() - t0) * 1000)
-                ver = ssock.version()
-                alpn = ssock.selected_alpn_protocol()
-                feasible = (ver == 'TLSv1.3' and alpn == 'h2')
-                return {'host': host, 'feasible': feasible, 'lat': lat}
-    except Exception:
-        return {'host': host, 'feasible': False, 'lat': 9999}
-
-with concurrent.futures.ThreadPoolExecutor(max_workers=len(CANDIDATES)) as ex:
-    res = list(ex.map(probe, CANDIDATES))
-
-res.sort(key=lambda x: (0 if x['feasible'] else 1, x['lat']))
-for item in res:
-    if item['feasible']:
-        print(item['host'] + ' ' + str(item['lat']))
-" 2>/dev/null || true
+        if [ -n "$script_path" ]; then
+            "$py_bin" "$script_path" "$@"
+        else
+            "$py_bin" - "$@" << 'EOF_REALITY_SCANNER' 2>/dev/null
+# @include "xray/reality_scanner.py"
+EOF_REALITY_SCANNER
+        fi
     }
 
     run_non_interactive_setup() {
@@ -398,7 +386,7 @@ for item in res:
             STEAL_ENABLED=1
             local s_port="${STEAL_PORT:-45443}"
             STEAL_PORTS_LIST+=("$s_port")
-            local default_steal_dom="cdn.$PRIMARY_DOMAIN"
+            local default_steal_dom="cdn.${PRIMARY_DOMAIN:-}"
             local steal_dom_list="${STEAL_DOMAINS[*]:-$default_steal_dom}"
             STEAL_DOMAINS=()
             for s_dom in $steal_dom_list; do
@@ -409,6 +397,20 @@ for item in res:
             done
         else
             STEAL_ENABLED=0
+        fi
+
+        # Steal-Oneself Backup (отдельный резервный узел)
+        if [[ "${ENABLE_STEAL_COMPAT,,}" == "y" || "${ENABLE_STEAL_COMPAT:-}" == "1" ]]; then
+            STEAL_COMPAT_ENABLED=1
+            local sc_port="${STEAL_COMPAT_PORT:-47443}"
+            local sc_dom="${STEAL_COMPAT_DOMAIN:-static.${PRIMARY_DOMAIN:-}}"
+            DOMAIN_TO_PORT["$sc_dom"]="$sc_port"
+            [[ " ${ALL_DOMAINS[*]} " =~ " ${sc_dom} " ]] || ALL_DOMAINS+=("$sc_dom")
+            [[ " ${STEAL_DOMAINS[*]} " =~ " ${sc_dom} " ]] || STEAL_DOMAINS+=("$sc_dom")
+            STEAL_PORTS_LIST+=("$sc_port")
+            ok "    Резервный узел $sc_dom привязан к инбаунд-порту $sc_port"
+        else
+            STEAL_COMPAT_ENABLED=0
         fi
 
         # Classic REALITY
@@ -741,10 +743,10 @@ for item in res:
             CLASSIC_PORTS_LIST+=("$CLASSIC_PORT")
         fi
 
-        local pool_google="dl.google.com www.google.com"
-        local pool_microsoft="www.microsoft.com wwwqa.microsoft.com staticview.microsoft.com"
-        local pool_apple="www.apple.com icloud.com"
-        local pool_samsung="www.samsung.com"
+        local pool_google="dl.google.com google.com www.google.com"
+        local pool_microsoft="www.microsoft.com microsoft.com wwwqa.microsoft.com staticview.microsoft.com"
+        local pool_apple="www.apple.com images.apple.com"
+        local pool_samsung="www.samsung.com samsung.com"
 
         if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
             local fp_keys=("firefox" "chrome" "safari" "ios" "android" "edge" "randomized")
@@ -759,62 +761,221 @@ for item in res:
             )
             prompt_select "  Выберите uTLS TLS Fingerprint для REALITY" REALITY_FINGERPRINT "${REALITY_FINGERPRINT:-firefox}" fp_keys fp_labels || return $?
 
-            local sni_preset_keys=("google" "microsoft" "apple" "samsung" "custom")
-            local sni_preset_labels=(
-                "Google пул (по умолчанию)"
-                "Microsoft пул"
-                "Apple пул"
-                "Samsung"
-                "Свой SNI или пул доменов вручную"
+            local scan_tmp
+            scan_tmp=$(mktemp 2>/dev/null || echo "/tmp/reality_scan_$$.json")
+            local scan_success=0
+
+            scan_defaults_task() {
+                run_reality_scanner --scan-defaults --json > "$1" 2>/dev/null
+            }
+
+            if command -v run_with_spinner >/dev/null 2>&1; then
+                run_with_spinner "Тестирование TLS 1.3 серверов маскировки (REALITY Scan)" scan_defaults_task "$scan_tmp" || true
+            else
+                scan_defaults_task "$scan_tmp" || true
+            fi
+
+            if [ -s "$scan_tmp" ]; then
+                scan_success=1
+            fi
+
+            local sni_preset_keys=()
+            local sni_preset_labels=()
+            declare -A sni_preset_pools=()
+            local default_choice="google"
+
+            if [ "$scan_success" -eq 1 ]; then
+                local py_bin=""
+                for cand in "${PYTHON_CMD:-}" python3 python; do
+                    if [ -n "$cand" ] && "$cand" -c "import sys" >/dev/null 2>&1; then
+                        py_bin="$cand"
+                        break
+                    fi
+                done
+                if [ -n "$py_bin" ]; then
+                    local parsed_lines
+                    parsed_lines=$("$py_bin" - "$scan_tmp" << 'EOF_PARSE_SCAN' 2>/dev/null || true
+import json, sys
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as f:
+        data = json.load(f)
+    feasible = [d for d in data if d.get("feasible")]
+    if not feasible:
+        sys.exit(1)
+    fastest = feasible[0]
+    f_host = fastest["host"]
+    f_lat = fastest.get("latencyMs", "?")
+    f_pool = fastest.get("pool_str", f_host)
+    f_cnt = len(fastest.get("serverNames", []))
+    print(f"fastest|★ Самый быстрый ({f_host}, {f_lat} ms, {f_cnt} SANs)|{f_pool}")
+    for item in feasible[1:]:
+        h = item["host"]
+        lat = item.get("latencyMs", "?")
+        pool = item.get("pool_str", h)
+        cnt = len(item.get("serverNames", []))
+        print(f"{h}|{h} ({lat} ms, {cnt} SANs)|{pool}")
+except Exception:
+    sys.exit(1)
+EOF_PARSE_SCAN
+)
+                    if [ -n "$parsed_lines" ]; then
+                        while IFS='|' read -r k_id k_lbl k_pool || [ -n "$k_id" ]; do
+                            [ -n "$k_id" ] || continue
+                            sni_preset_keys+=("$k_id")
+                            sni_preset_labels+=("$k_lbl")
+                            sni_preset_pools["$k_id"]="$k_pool"
+                        done <<< "$parsed_lines"
+                    fi
+                fi
+            fi
+            rm -f "$scan_tmp" 2>/dev/null || true
+
+            if [ ${#sni_preset_keys[@]} -gt 0 ]; then
+                default_choice="fastest"
+            else
+                sni_preset_keys=("google" "microsoft" "apple" "samsung")
+                sni_preset_labels=(
+                    "Google пул (dl.google.com, по умолчанию)"
+                    "Microsoft пул (www.microsoft.com)"
+                    "Apple пул (www.apple.com images.apple.com)"
+                    "Samsung пул (www.samsung.com)"
+                )
+                sni_preset_pools["google"]="$pool_google"
+                sni_preset_pools["microsoft"]="$pool_microsoft"
+                sni_preset_pools["apple"]="$pool_apple"
+                sni_preset_pools["samsung"]="$pool_samsung"
+                default_choice="google"
+            fi
+
+            sni_preset_keys+=("probe" "custom")
+            sni_preset_labels+=(
+                "🔍 Проверить и протестировать свой домен"
+                "✏️ Ввести SNI или пул доменов вручную"
             )
-            local current_sni="${CLASSIC_SNI:-$pool_google}"
-            local matched_preset="custom"
-            case "$current_sni" in
-                "$pool_google"|"dl.google.com")
-                    matched_preset="google"
-                    ;;
-                "$pool_microsoft"|"www.microsoft.com")
-                    matched_preset="microsoft"
-                    ;;
-                "$pool_apple"|"www.apple.com")
-                    matched_preset="apple"
-                    ;;
-                "$pool_samsung")
-                    matched_preset="samsung"
-                    ;;
-                "google"|"microsoft"|"apple"|"samsung"|"custom")
-                    matched_preset="$current_sni"
-                    ;;
-                "")
-                    matched_preset="google"
-                    ;;
-                *)
-                    matched_preset="custom"
-                    ;;
-            esac
+
+            # Match currently set CLASSIC_SNI if any
+            if [ -n "${CLASSIC_SNI:-}" ]; then
+                for k in "${sni_preset_keys[@]}"; do
+                    if [ "${sni_preset_pools[$k]:-}" = "$CLASSIC_SNI" ] || [ "$k" = "$CLASSIC_SNI" ]; then
+                        default_choice="$k"
+                        break
+                    fi
+                done
+            fi
 
             local chosen_sni_preset=""
-            prompt_select "  Выберите SNI для маскировки REALITY (или свой пул)" chosen_sni_preset "$matched_preset" sni_preset_keys sni_preset_labels || return $?
+            while true; do
+                prompt_select "  Выберите SNI для маскировки REALITY (или свой пул)" chosen_sni_preset "$default_choice" sni_preset_keys sni_preset_labels || return $?
 
-            case "$chosen_sni_preset" in
-                google)
-                    CLASSIC_SNI="$pool_google"
-                    ;;
-                microsoft)
-                    CLASSIC_SNI="$pool_microsoft"
-                    ;;
-                apple)
-                    CLASSIC_SNI="$pool_apple"
-                    ;;
-                samsung)
-                    CLASSIC_SNI="$pool_samsung"
-                    ;;
-                custom)
-                    local custom_sni_input=""
-                    prompt_default "  Введите внешний SNI или пул доменов через пробел/запятую" "${CLASSIC_SNI:-dl.google.com}" custom_sni_input || return $?
-                    CLASSIC_SNI="$custom_sni_input"
-                    ;;
-            esac
+                case "$chosen_sni_preset" in
+                    probe)
+                        local custom_probe_dom=""
+                        prompt_default "  Введите домен для проверки REALITY" "${CLASSIC_SNI:-speed.cloudflare.com}" custom_probe_dom || return $?
+                        custom_probe_dom=$(echo "$custom_probe_dom" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+                        [ -n "$custom_probe_dom" ] || continue
+                        log "  Проверка домена $custom_probe_dom (TLS 1.3 / ALPN h2 / задержка)..."
+                        local probe_json
+                        probe_json=$(run_reality_scanner --probe "$custom_probe_dom" --json 2>/dev/null || true)
+                        local p_feasible="false"
+                        local p_pool="$custom_probe_dom"
+                        local p_lat="?"
+                        local p_reason=""
+                        local py_bin=""
+                        for cand in "${PYTHON_CMD:-}" python3 python; do
+                            if [ -n "$cand" ] && "$cand" -c "import sys" >/dev/null 2>&1; then
+                                py_bin="$cand"
+                                break
+                            fi
+                        done
+                        if [ -n "$probe_json" ] && [ -n "$py_bin" ]; then
+                            local parsed_probe
+                            parsed_probe=$("$py_bin" - "$probe_json" << 'EOF_PARSE_PROBE' 2>/dev/null || true
+import json, sys
+try:
+    d = json.loads(sys.argv[1])
+    feas = "true" if d.get("feasible") else "false"
+    pool = str(d.get("pool_str") or d.get("host") or "").strip()
+    lat = str(d.get("latencyMs", "?"))
+    reason = str(d.get("reason", "")).replace("\n", " ").strip()
+    print(feas)
+    print(pool)
+    print(lat)
+    print(reason)
+except Exception:
+    pass
+EOF_PARSE_PROBE
+)
+                            if [ -n "$parsed_probe" ]; then
+                                {
+                                    read -r p_feasible || true
+                                    read -r p_pool || true
+                                    read -r p_lat || true
+                                    read -r p_reason || true
+                                } <<< "$parsed_probe"
+                            fi
+                        fi
+                        [ -n "$p_pool" ] || p_pool="$custom_probe_dom"
+                        if [ "$p_feasible" = "true" ]; then
+                            ok "  ✓ Домен $custom_probe_dom подходит для REALITY (задержка ${p_lat} ms)!"
+                            ok "  Сформированный пул SAN: $p_pool"
+                            local use_probed="y"
+                            prompt_yes_no "  Использовать проверенный пул ($custom_probe_dom)?" "y" use_probed || return $?
+                            if is_true "$use_probed"; then
+                                CLASSIC_SNI="$p_pool"
+                                break
+                            fi
+
+                            # Пользователь решил не применять домен сразу: добавляем его в список и возвращаемся в меню
+                            local already_in_keys=0
+                            for k in "${sni_preset_keys[@]}"; do
+                                if [ "$k" = "$custom_probe_dom" ]; then
+                                    already_in_keys=1
+                                    break
+                                fi
+                            done
+                            if [ "$already_in_keys" -eq 0 ]; then
+                                local new_keys=()
+                                local new_labels=()
+                                for i in "${!sni_preset_keys[@]}"; do
+                                    if [ "${sni_preset_keys[$i]}" = "probe" ]; then
+                                        new_keys+=("$custom_probe_dom")
+                                        new_labels+=("✓ Проверенный: $custom_probe_dom (${p_lat} ms)")
+                                    fi
+                                    new_keys+=("${sni_preset_keys[$i]}")
+                                    new_labels+=("${sni_preset_labels[$i]}")
+                                done
+                                sni_preset_keys=("${new_keys[@]}")
+                                sni_preset_labels=("${new_labels[@]}")
+                                sni_preset_pools["$custom_probe_dom"]="$p_pool"
+                            fi
+                            default_choice="$custom_probe_dom"
+                            info "  Возврат к выбору из списка..."
+                            continue
+                        else
+                            warn "  ⚠ Внимание: $custom_probe_dom может не подойти: ${p_reason:-ошибка подключения}"
+                            local use_anyway="n"
+                            prompt_yes_no "  Всё равно использовать домен $custom_probe_dom?" "n" use_anyway || return $?
+                            if is_true "$use_anyway"; then
+                                CLASSIC_SNI="${p_pool:-$custom_probe_dom}"
+                                break
+                            else
+                                info "  Возврат к выбору из списка..."
+                                continue
+                            fi
+                        fi
+                        ;;
+                    custom)
+                        local custom_sni_input=""
+                        prompt_default "  Введите внешний SNI или пул доменов через пробел/запятую" "${CLASSIC_SNI:-dl.google.com}" custom_sni_input || return $?
+                        CLASSIC_SNI="$custom_sni_input"
+                        break
+                        ;;
+                    *)
+                        CLASSIC_SNI="${sni_preset_pools[$chosen_sni_preset]:-$pool_google}"
+                        break
+                        ;;
+                esac
+            done
         else
             REALITY_FINGERPRINT="${REALITY_FINGERPRINT:-firefox}"
             CLASSIC_SNI="${CLASSIC_SNI:-$pool_google}"
@@ -847,14 +1008,18 @@ for item in res:
         echo -e "${YELLOW}━━━ Шаг 2/11: Выбор протоколов и транспортов (VPN / Прокси) ━━━${NC}"
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Выберите протоколы подключения, которые будут развернуты на сервере."
-            echo -e "     • ${GREEN}VLESS REALITY (свой сайт)${NC}: маскировка под собственный поддомен (напр. cdn.$PRIMARY_DOMAIN)."
+            echo -e "     ${BOLD}Базовые протоколы (включены по умолчанию):${NC}"
+            echo -e "     • ${GREEN}VLESS REALITY (свой сайт)${NC}: маскировка под свой домен (cdn.${PRIMARY_DOMAIN:-домен})."
             echo -e "     • ${GREEN}VLESS REALITY (внешний)${NC}: маскировка под популярные сервисы (Apple, Microsoft, dl.google.com)."
             echo -e "     • ${GREEN}Hysteria 2${NC}: сверхбыстрый QUIC/UDP протокол с BBR Brutal для стриминга и мобильного интернета."
             echo -e "     • ${GREEN}AmneziaWG v3.1${NC}: защита от блокировок ТСПУ/DPI с обфускацией пакетов (Junk packets, S1-S4, H1-H4)."
+            echo
+            echo -e "     ${BOLD}Дополнительные протоколы (включаются при необходимости):${NC}"
+            echo -e "     • ${GREEN}VLESS REALITY Backup${NC}: резервный универсальный канал (static.${PRIMARY_DOMAIN:-домен}, без Vision)."
             echo -e "     • ${GREEN}AmneziaWG v2.0${NC}: совместимость со старыми роутерами (Keenetic, OpenWrt)."
-            echo -e "     • ${GREEN}TUIC v5${NC}: 0-RTT рукопожатие на чистом QUIC для мгновенного отклика."
-            echo -e "     • ${GREEN}Shadowsocks 2022${NC}: устойчивый к зондированию шифрованный протокол."
-            echo -e "     • ${GREEN}Telegram MTProxy${NC}: прямой доступ для клиентов Telegram без дополнительных VPN-приложений."
+            echo -e "     • ${GREEN}TUIC v5${NC}: высокоскоростной 0-RTT протокол на чистом QUIC (порт ${TUIC_PORT:-8448}/udp)."
+            echo -e "     • ${GREEN}Shadowsocks 2022${NC}: современный шифрованный протокол TCP/UDP (2022-blake3-aes-256-gcm, порт ${SS2022_PORT:-8388})."
+            echo -e "     • ${GREEN}Telegram MTProxy${NC}: встроенный FakeTLS прокси для работы Telegram без включения сторонних VPN."
             echo -e "     • ${GREEN}Автономный AmneziaWG${NC}: независимый сервис ядра Linux (awg-quick@awg0, утилита awg-mgr)."
             echo -e "     • ${GREEN}MASQUE (RFC 9484)${NC}: стандартизированный IETF CONNECT-UDP/IP прокси поверх HTTP/3 QUIC."
             echo -e "     • ${GREEN}ShadowTLS v4${NC}: идеальная маскировка под Apple gateway.icloud.com через Nginx Stream L4."
@@ -866,17 +1031,18 @@ for item in res:
             echo
         fi
 
-        # Базовые протоколы: основные включены по умолчанию, v2.0 для старых роутеров отключен
+        # Базовые протоколы: основные включены по умолчанию
         ENABLE_STEAL="${ENABLE_STEAL:-y}"
         ENABLE_CLASSIC="${ENABLE_CLASSIC:-y}"
         ENABLE_HY2="${ENABLE_HY2:-y}"
         ENABLE_AWG_V3="${ENABLE_AWG_V3:-y}"
-        ENABLE_AWG_V2="${ENABLE_AWG_V2:-n}"
-        ENABLE_TUIC="${ENABLE_TUIC:-y}"
-        ENABLE_SS2022="${ENABLE_SS2022:-y}"
-        ENABLE_MTPROTO="${ENABLE_MTPROTO:-y}"
 
         # Дополнительные протоколы по умолчанию отключены (пользователь отмечает при необходимости)
+        ENABLE_STEAL_COMPAT="${ENABLE_STEAL_COMPAT:-n}"
+        ENABLE_AWG_V2="${ENABLE_AWG_V2:-n}"
+        ENABLE_TUIC="${ENABLE_TUIC:-n}"
+        ENABLE_SS2022="${ENABLE_SS2022:-n}"
+        ENABLE_MTPROTO="${ENABLE_MTPROTO:-n}"
         ENABLE_AWG_STANDALONE="${ENABLE_AWG_STANDALONE:-n}"
         ENABLE_MASQUE="${ENABLE_MASQUE:-n}"
         ENABLE_SHADOWTLS="${ENABLE_SHADOWTLS:-n}"
@@ -891,6 +1057,7 @@ for item in res:
             "ENABLE_CLASSIC"
             "ENABLE_HY2"
             "ENABLE_AWG_V3"
+            "ENABLE_STEAL_COMPAT"
             "ENABLE_AWG_V2"
             "ENABLE_TUIC"
             "ENABLE_SS2022"
@@ -909,10 +1076,11 @@ for item in res:
             "VLESS REALITY (маскировка под популярные сервисы, :${CLASSIC_PORT:-46443})"
             "Hysteria 2 (UDP/QUIC Brutal CC, :${HY2_PORT:-443})"
             "AmneziaWG v3.1 (продвинутая обфускация WireGuard, :${AWG_V3_PORT:-8443}/udp)"
+            "VLESS REALITY Backup (резервный универсальный канал, :${STEAL_COMPAT_PORT:-47443})"
             "AmneziaWG v2.0 (совместимость с роутерами Keenetic / OpenWrt, :${AWG_V2_PORT:-8444}/udp)"
-            "TUIC v5 (высокоскоростной QUIC 0-RTT, :${TUIC_PORT:-8448}/udp)"
-            "Shadowsocks 2022 (современный шифрованный протокол TCP/UDP, :${SS2022_PORT:-8388})"
-            "Telegram MTProxy (прямой доступ для клиентов Telegram с FakeTLS, :${MTPROTO_PORT:-8444}/tcp)"
+            "TUIC v5 (высокоскоростной 0-RTT на чистом QUIC, :${TUIC_PORT:-8448}/udp)"
+            "Shadowsocks 2022 (TCP/UDP 2022-blake3-aes-256-gcm, :${SS2022_PORT:-8388})"
+            "Telegram MTProxy (встроенный FakeTLS прокси для Telegram, :${MTPROTO_PORT:-8444}/tcp)"
             "Автономный сервер AmneziaWG (системная служба с CLI awg-mgr, :${AWG_STANDALONE_PORT:-8445}/udp)"
             "MASQUE (RFC 9484 / HTTP/3 IP-проксирование, :${MASQUE_PORT:-8449}/udp)"
             "ShadowTLS v4 + SS-2022 (маскировка под доверенный TLS SNI)"
@@ -966,6 +1134,24 @@ for item in res:
             STEAL_ENABLED=0
             STEAL_PORTS_LIST=()
             STEAL_DOMAINS=()
+        fi
+
+        # Настройки VLESS REALITY Backup (резервный универсальный канал)
+        if is_true "$ENABLE_STEAL_COMPAT"; then
+            STEAL_COMPAT_ENABLED=1
+            STEAL_COMPAT_PORT="${STEAL_COMPAT_PORT:-47443}"
+            STEAL_COMPAT_DOMAIN="${STEAL_COMPAT_DOMAIN:-static.${PRIMARY_DOMAIN:-}}"
+            if [ "${PORTS_SETUP_MODE:-0}" != "0" ]; then
+                prompt_default "  Локальный порт Xray для REALITY Backup" "$STEAL_COMPAT_PORT" STEAL_COMPAT_PORT || return $?
+                prompt_default "  Субдомен для REALITY Backup" "$STEAL_COMPAT_DOMAIN" STEAL_COMPAT_DOMAIN || return $?
+            fi
+            DOMAIN_TO_PORT["$STEAL_COMPAT_DOMAIN"]="$STEAL_COMPAT_PORT"
+            [[ " ${ALL_DOMAINS[*]} " =~ " ${STEAL_COMPAT_DOMAIN} " ]] || ALL_DOMAINS+=("$STEAL_COMPAT_DOMAIN")
+            [[ " ${STEAL_DOMAINS[*]} " =~ " ${STEAL_COMPAT_DOMAIN} " ]] || STEAL_DOMAINS+=("$STEAL_COMPAT_DOMAIN")
+            STEAL_PORTS_LIST+=("$STEAL_COMPAT_PORT")
+            ok "  Резервный узел $STEAL_COMPAT_DOMAIN привязан к инбаунд-порту $STEAL_COMPAT_PORT"
+        else
+            STEAL_COMPAT_ENABLED=0
         fi
 
         # Настройки VLESS REALITY (внешние сервисы)
@@ -1704,7 +1890,10 @@ for item in res:
         echo -e "${CYAN}║${NC}             ${WHITE}${BOLD}📋 ПРОВЕРКА КОНФИГУРАЦИИ ПЕРЕД УСТАНОВКОЙ (REVIEW)${NC}                 ${CYAN}║${NC}"
         echo -e "${CYAN}╚════════════════════════════════════════════════════════════════════════════════╝${NC}"
         echo
-        echo -e "  ${CYAN}[1]${NC} ${BOLD}Основной домен:${NC}       ${WHITE}$PRIMARY_DOMAIN${NC} (Префикс клиентов: ${GREEN}$SERVER_PREFIX${NC}, www: ${ADD_WWW})"
+        local dom_disp="${PRIMARY_DOMAIN:-не настроен}"
+        local srv_pref="${SERVER_PREFIX:-Server}"
+        local add_w="${ADD_WWW:-n}"
+        echo -e "  ${CYAN}[1]${NC} ${BOLD}Основной домен:${NC}       ${WHITE}$dom_disp${NC} (Префикс клиентов: ${GREEN}$srv_pref${NC}, www: ${add_w})"
 
         local port_mode_str="Автоматический (по умолчанию)"
         [ "${PORTS_SETUP_MODE:-0}" = "1" ] && port_mode_str="Ручной (все порты)"
@@ -1715,6 +1904,13 @@ for item in res:
             steal_status="${GREEN}Включен${NC} (${WHITE}${STEAL_DOMAINS[*]}${NC} -> 127.0.0.1:${STEAL_PORTS_LIST[*]})"
         fi
         echo -e "      ${DIM}• REALITY (свой сайт):${NC}    $steal_status"
+
+        local steal_compat_status="${RED}Отключен${NC}"
+        if is_true "${STEAL_COMPAT_ENABLED:-0}"; then
+            local sc_dom_disp="${STEAL_COMPAT_DOMAIN:-static.${PRIMARY_DOMAIN:-домен}}"
+            steal_compat_status="${GREEN}Включен${NC} (${WHITE}${sc_dom_disp}${NC} -> 127.0.0.1:${STEAL_COMPAT_PORT:-47443})"
+        fi
+        echo -e "      ${DIM}• REALITY Backup:${NC}         $steal_compat_status"
 
         local classic_status="${RED}Отключен${NC}"
         if is_true "${CLASSIC_ENABLED:-0}"; then

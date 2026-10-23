@@ -209,15 +209,15 @@ AWG_SUBNET_CIDR="22"
 
 # --- 4.1. ПРОТОКОЛЫ 3X-UI (Shadowsocks 2022 / TUIC v5 / MTProxy) ---
 # Shadowsocks 2022 (L4 TCP/UDP, 2022-blake3-aes-256-gcm, инбаунд 3X-UI) [y/n]
-ENABLE_SS2022="y"
+ENABLE_SS2022="n"
 SS2022_PORT="8388"
 
 # TUIC v5 (QUIC 0-RTT, BBR Congestion Control, инбаунд 3X-UI) [y/n]
-ENABLE_TUIC="y"
+ENABLE_TUIC="n"
 TUIC_PORT="8448"
 
 # Telegram MTProxy FakeTLS (mtg-multi, инбаунд 3X-UI) [y/n]
-ENABLE_MTPROTO="y"
+ENABLE_MTPROTO="n"
 MTPROTO_PORT="8444"
 MTPROTO_FAKETLS_DOMAIN="gateway.icloud.com"
 # Спонсорский промо-тег канала от @MTProxybot (32 hex-символа, опционально)
@@ -238,7 +238,7 @@ ENABLE_NODE_TOKEN="y"
 # Название API-токена ноды (если не указано, формируется как <SERVER_PREFIX>-Node или Master-Node-Cluster)
 NODE_TOKEN_NAME=""
 
-# Автоматически обновлять ядро Xray-core до последней официальной версии с GitHub (v26.9.30+) [y/n]
+# Автоматически обновлять ядро Xray-core до последней официальной версии с GitHub (v26.10.21+) [y/n]
 UPDATE_XRAY_CORE="y"
 
 # --- 6.1. ТОНКИЕ НАСТРОЙКИ ПАНЕЛИ 3X-UI И РОУТИНГА XRAY ---

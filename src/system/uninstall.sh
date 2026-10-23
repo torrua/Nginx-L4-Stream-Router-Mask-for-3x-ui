@@ -22,11 +22,39 @@ parse_manifest_field() {
         echo ""
         return
     fi
-    if command -v python3 >/dev/null 2>&1; then
-        python3 -c "import json, sys; d=json.load(open('$manifest')); print(d.get('$field', ''))" 2>/dev/null || true
-    else
-        grep "\"$field\":" "$manifest" 2>/dev/null | head -n1 | sed -E 's/.*:[[:space:]]*"?([^",]+)"?.*/\1/' || true
+    local val=""
+    if command -v jq >/dev/null 2>&1; then
+        val="$(jq -r ".${field} // empty" "$manifest" 2>/dev/null || true)"
     fi
+    if [ -z "$val" ] && python3 -c "import sys" >/dev/null 2>&1; then
+        val="$(python3 -c "import json, sys; d=json.load(open('$manifest')); print(d.get('$field', ''))" 2>/dev/null || true)"
+    fi
+    if [ -z "$val" ] && python -c "import sys" >/dev/null 2>&1; then
+        val="$(python -c "import json, sys; d=json.load(open('$manifest')); print(d.get('$field', ''))" 2>/dev/null || true)"
+    fi
+    if [ -z "$val" ]; then
+        val="$(grep "\"$field\":" "$manifest" 2>/dev/null | head -n1 | sed -E 's/.*:[[:space:]]*"?([^",]+)"?.*/\1/' || true)"
+    fi
+    echo "$val"
+}
+
+# Вспомогательная функция проверки наличия файла в архиве (с префиксом ./ или без)
+archive_has_entry() {
+    local arch="$1"
+    local entry="$2"
+    [ -f "$arch" ] || return 1
+    tar --force-local -tzf "$arch" 2>/dev/null | grep -Eq "^(\./)?${entry}$"
+}
+
+# Вспомогательная функция извлечения файла из архива
+archive_extract_member() {
+    local arch="$1"
+    local entry="$2"
+    local out_dir="$3"
+    [ -f "$arch" ] || return 1
+    tar --force-local -xzf "$arch" -C "$out_dir" "$entry" 2>/dev/null || \
+    tar --force-local -xzf "$arch" -C "$out_dir" "./${entry}" 2>/dev/null || \
+    tar --force-local -xzf "$arch" -C "$out_dir" --wildcards "*${entry}" 2>/dev/null
 }
 
 run_uninstall() {
@@ -139,8 +167,20 @@ run_uninstall() {
     for unit in "${units_to_remove[@]}"; do
         rm -f "$unit" 2>/dev/null || true
     done
-    if [ -d "${target_root}/etc/systemd/system/nginx.service.d" ]; then
-        rmdir "${target_root}/etc/systemd/system/nginx.service.d" 2>/dev/null || true
+    rm -rf "${target_root}/etc/systemd/system/x-ui.service.d" "${target_root}/etc/systemd/system/nginx.service.d" 2>/dev/null || true
+
+    # Восстановление статуса motd-news.timer, если он был включен в исходном состоянии
+    if [ "$has_snapshot" -eq 1 ] && archive_has_entry "$archive" "services_enabled.list"; then
+        tmp_extract="$(mktemp -d 2>/dev/null || echo "/tmp/svc_extract_$$")"
+        if archive_extract_member "$archive" "services_enabled.list" "$tmp_extract"; then
+            local svc_list=""
+            [ -f "$tmp_extract/services_enabled.list" ] && svc_list="$tmp_extract/services_enabled.list"
+            if [ -n "$svc_list" ] && grep -q "motd-news.timer" "$svc_list"; then
+                systemctl enable motd-news.timer 2>/dev/null || true
+                [ -f "${target_root}/etc/default/motd-news" ] && sed -i 's/ENABLED=0/ENABLED=1/' "${target_root}/etc/default/motd-news" 2>/dev/null || true
+            fi
+        fi
+        rm -rf "$tmp_extract" 2>/dev/null || true
     fi
 
     # Удаление cron-файлов и периодических задач
@@ -169,7 +209,25 @@ run_uninstall() {
     ok "Systemd units, cron-задачи и сетевые интерфейсы очищены."
 
     log "Шаг 3/8: Восстановление Firewall и очистка правил UFW..."
-    # Удаление правил port hopping и MSS clamping из UFW
+    local ufw_restored=0
+    local orig_ufw_active=0
+
+    # 1. Проверка исходного статуса активности UFW из снимка
+    if [ "$has_snapshot" -eq 1 ] && archive_has_entry "$archive" "firewall/ufw_status.txt"; then
+        local tmp_extract
+        tmp_extract="$(mktemp -d 2>/dev/null || echo "/tmp/ufw_stat_$$")"
+        if archive_extract_member "$archive" "firewall/ufw_status.txt" "$tmp_extract"; then
+            local stat_file=""
+            [ -f "$tmp_extract/firewall/ufw_status.txt" ] && stat_file="$tmp_extract/firewall/ufw_status.txt"
+            [ -f "$tmp_extract/ufw_status.txt" ] && stat_file="$tmp_extract/ufw_status.txt"
+            if [ -n "$stat_file" ] && grep -qi "Status: active" "$stat_file"; then
+                orig_ufw_active=1
+            fi
+        fi
+        rm -rf "$tmp_extract" 2>/dev/null || true
+    fi
+
+    # 2. Хирургическое удаление правил стека из before.rules и before6.rules
     for rule_file in "${target_root}/etc/ufw/before.rules" "${target_root}/etc/ufw/before6.rules"; do
         if [ -f "$rule_file" ]; then
             sed -i '/# Port Hopping for Hysteria 2/,/COMMIT/d' "$rule_file" 2>/dev/null || true
@@ -177,29 +235,139 @@ run_uninstall() {
             sed -i '/-A PREROUTING -p udp --dport .* -j REDIRECT/d' "$rule_file" 2>/dev/null || true
             sed -i '/# TCP MSS Clamping/,/COMMIT/d' "$rule_file" 2>/dev/null || true
             sed -i '/TCPMSS --clamp-mss-to-pmtu/d' "$rule_file" 2>/dev/null || true
+            sed -i 's/-A ufw-before-input -p icmp --icmp-type echo-request -j DROP/-A ufw-before-input -p icmp --icmp-type echo-request -j ACCEPT/g' "$rule_file" 2>/dev/null || true
         fi
     done
 
-    # Гарантируем, что активный порт SSH открыт в UFW во избежание lockout
-    if command -v ufw >/dev/null 2>&1; then
-        local current_ssh_port
-        current_ssh_port=$(command -v detect_active_ssh_port >/dev/null 2>&1 && detect_active_ssh_port || echo 22)
-        ufw allow "${current_ssh_port}/tcp" comment 'SSH (Active)' >/dev/null 2>&1 || true
-        [ -n "$orig_ssh_port" ] && ufw allow "${orig_ssh_port}/tcp" comment 'SSH (Restored)' >/dev/null 2>&1 || true
-        ufw reload >/dev/null 2>&1 || true
+    # 3. Хирургическое удаление правил стека по тегу [vpn-stack] из user.rules и user6.rules
+    for ufw_user_rules in "${target_root}/etc/ufw/user.rules" "${target_root}/etc/ufw/user6.rules"; do
+        if [ -f "$ufw_user_rules" ]; then
+            sed -i -E '/### tuple ###.*vpn-stack/d' "$ufw_user_rules" 2>/dev/null || true
+            sed -i -E '/-m comment --comment .*vpn-stack.*/d' "$ufw_user_rules" 2>/dev/null || true
+        fi
+    done
+
+    # 4. Хирургическое удаление правил стека из raw iptables / ip6tables (без глобального сброса iptables -F)
+    if command -v iptables >/dev/null 2>&1; then
+        while iptables -D INPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null; do :; done
+        while iptables -D INPUT -p tcp --dport 443 -j ACCEPT 2>/dev/null; do :; done
+        while iptables -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null; do :; done
+        while iptables -t mangle -D POSTROUTING -p tcp -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original -m mark ! --mark 0x40000000/0x40000000 -j NFQUEUE --queue-num 200 --queue-bypass 2>/dev/null; do :; done
+        while iptables -t nat -S PREROUTING 2>/dev/null | grep -E 'REDIRECT (--to-ports|-to-destination)' | grep -v 'DOCKER' | head -n1 | sed 's/^-A/-D/' | xargs -r -L1 iptables -t nat 2>/dev/null; do :; done
     fi
-    ok "Правила Firewall очищены (SSH-порты защищены)."
+    if command -v ip6tables >/dev/null 2>&1; then
+        while ip6tables -D INPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null; do :; done
+        while ip6tables -D INPUT -p tcp --dport 443 -j ACCEPT 2>/dev/null; do :; done
+        while ip6tables -t mangle -D FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null; do :; done
+        while ip6tables -t mangle -D POSTROUTING -p tcp -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original -m mark ! --mark 0x40000000/0x40000000 -j NFQUEUE --queue-num 200 --queue-bypass 2>/dev/null; do :; done
+    fi
+
+    # 5. Проверка наличия Docker и сторонних пользовательских правил
+    local docker_present=0
+    if command -v iptables >/dev/null 2>&1; then
+        if iptables -t nat -n -L DOCKER >/dev/null 2>&1 || iptables -n -L DOCKER >/dev/null 2>&1; then
+            docker_present=1
+        fi
+    fi
+
+    local has_user_ufw_rules=0
+    for u_rules in "${target_root}/etc/ufw/user.rules" "${target_root}/etc/ufw/user6.rules"; do
+        if [ -f "$u_rules" ] && grep -q '^### tuple ###' "$u_rules"; then
+            local non_stack_tuples
+            non_stack_tuples="$(grep '^### tuple ###' "$u_rules" | grep -v 'vpn-stack' || true)"
+            if [ -n "$non_stack_tuples" ]; then
+                has_user_ufw_rules=1
+                break
+            fi
+        fi
+    done
+
+    # 6. Если в снимке есть архив UFW и пользователь не добавлял сторонних правил:
+    # восстанавливаем исходную конфигурацию UFW
+    if [ "$has_snapshot" -eq 1 ] && [ "$has_user_ufw_rules" -eq 0 ] && archive_has_entry "$archive" "firewall/ufw_config.tar.gz"; then
+        local tmp_extract
+        tmp_extract="$(mktemp -d 2>/dev/null || echo "/tmp/ufw_extract_$$")"
+        if archive_extract_member "$archive" "firewall/ufw_config.tar.gz" "$tmp_extract"; then
+            local ufw_tar=""
+            if [ -f "$tmp_extract/firewall/ufw_config.tar.gz" ]; then
+                ufw_tar="$tmp_extract/firewall/ufw_config.tar.gz"
+            elif [ -f "$tmp_extract/ufw_config.tar.gz" ]; then
+                ufw_tar="$tmp_extract/ufw_config.tar.gz"
+            fi
+            if [ -n "$ufw_tar" ]; then
+                tar --force-local -xzf "$ufw_tar" -C "${target_root}/etc" 2>/dev/null || true
+                ufw_restored=1
+                ok "Конфигурация UFW успешно восстановлена из исходного снимка."
+            fi
+        fi
+        rm -rf "$tmp_extract" 2>/dev/null || true
+    fi
+
+    # 7. Применение статуса активности и завершение настройки firewall
+    if [ "$has_snapshot" -eq 1 ] && [ "$orig_ufw_active" -eq 0 ] && [ "$has_user_ufw_rules" -eq 0 ] && [ "$docker_present" -eq 0 ]; then
+        if command -v ufw >/dev/null 2>&1; then
+            ufw --force disable >/dev/null 2>&1 || true
+        fi
+        # Восстановление сохраненных правил iptables из снимка
+        local tmp_extract
+        tmp_extract="$(mktemp -d 2>/dev/null || echo "/tmp/ipt_extract_$$")"
+        if archive_extract_member "$archive" "firewall/iptables.rules" "$tmp_extract"; then
+            local ipt_file=""
+            [ -f "$tmp_extract/firewall/iptables.rules" ] && ipt_file="$tmp_extract/firewall/iptables.rules"
+            [ -f "$tmp_extract/iptables.rules" ] && ipt_file="$tmp_extract/iptables.rules"
+            if [ -s "$ipt_file" ] && command -v iptables-restore >/dev/null 2>&1; then
+                iptables-restore < "$ipt_file" 2>/dev/null || true
+            fi
+        fi
+        if archive_extract_member "$archive" "firewall/ip6tables.rules" "$tmp_extract"; then
+            local ip6t_file=""
+            [ -f "$tmp_extract/firewall/ip6tables.rules" ] && ip6t_file="$tmp_extract/firewall/ip6tables.rules"
+            [ -f "$tmp_extract/ip6tables.rules" ] && ip6t_file="$tmp_extract/ip6tables.rules"
+            if [ -s "$ip6t_file" ] && command -v ip6tables-restore >/dev/null 2>&1; then
+                ip6tables-restore < "$ip6t_file" 2>/dev/null || true
+            fi
+        fi
+        rm -rf "$tmp_extract" 2>/dev/null || true
+
+        # Очистка правил стека [vpn-stack] из user.rules
+        for ufw_user_rules in "${target_root}/etc/ufw/user.rules" "${target_root}/etc/ufw/user6.rules"; do
+            if [ -f "$ufw_user_rules" ]; then
+                sed -i -E '/### tuple ###.*vpn-stack/d; /-m comment --comment .*vpn-stack.*/d' "$ufw_user_rules" 2>/dev/null || true
+            fi
+        done
+        ok "Состояние Firewall успешно возвращено к исходному (UFW отключен)."
+    else
+        # UFW был активен ИЛИ обнаружены правила пользователя/Docker:
+        if command -v ufw >/dev/null 2>&1; then
+            local current_ssh_port
+            current_ssh_port=$(command -v detect_active_ssh_port >/dev/null 2>&1 && detect_active_ssh_port || echo 22)
+            ufw allow "${current_ssh_port}/tcp" comment '[vpn-stack] SSH (Active)' >/dev/null 2>&1 || true
+            [ -n "$orig_ssh_port" ] && ufw allow "${orig_ssh_port}/tcp" comment '[vpn-stack] SSH (Restored)' >/dev/null 2>&1 || true
+            ufw reload >/dev/null 2>&1 || true
+        fi
+        if [ "$docker_present" -eq 1 ]; then
+            ok "Сетевые цепочки Docker защищены от сброса (хирургическая очистка правил стека завершена)."
+        elif [ "$has_user_ufw_rules" -eq 1 ]; then
+            ok "Пользовательские правила UFW сохранены, UFW оставлен активным."
+        else
+            ok "Правила Firewall очищены (SSH-порты защищены)."
+        fi
+    fi
 
     log "Шаг 4/8: Восстановление конфигурации SSH (Anti-Lockout)..."
     local ssh_restored=0
     local tmp_extract
     tmp_extract="$(mktemp -d 2>/dev/null || echo "/tmp/ssh_extract_$$")"
 
-    if [ "$has_snapshot" -eq 1 ] && tar --force-local -tzf "$archive" "ssh_config.tar.gz" >/dev/null 2>&1; then
-        tar --force-local -xzf "$archive" -C "$tmp_extract" "ssh_config.tar.gz" 2>/dev/null || true
+    if [ "$has_snapshot" -eq 1 ] && archive_has_entry "$archive" "ssh_config.tar.gz"; then
+        archive_extract_member "$archive" "ssh_config.tar.gz" "$tmp_extract" || true
+        local ssh_tar=""
         if [ -f "$tmp_extract/ssh_config.tar.gz" ]; then
+            ssh_tar="$tmp_extract/ssh_config.tar.gz"
+        fi
+        if [ -n "$ssh_tar" ]; then
             mkdir -p "$tmp_extract/ssh_root"
-            tar --force-local -xzf "$tmp_extract/ssh_config.tar.gz" -C "$tmp_extract/ssh_root" 2>/dev/null || true
+            tar --force-local -xzf "$ssh_tar" -C "$tmp_extract/ssh_root" 2>/dev/null || true
 
             # Проверка синтаксиса sshd перед применением
             local sshd_valid=1
@@ -233,24 +401,26 @@ run_uninstall() {
 
     log "Шаг 5/8: Удаление настроек ядра sysctl и limits..."
     rm -f "${target_root}/etc/sysctl.d/99-vless-tuning.conf" 2>/dev/null || true
+    rm -f "${target_root}/etc/modules-load.d/99-vless-conntrack.conf" 2>/dev/null || true
     rm -f "${target_root}/etc/security/limits.d/99-proxy-limits.conf" 2>/dev/null || true
     rm -f "${target_root}/etc/systemd/journald.conf.d/00-volatile.conf" 2>/dev/null || true
     command -v sysctl >/dev/null 2>&1 && sysctl --system >/dev/null 2>&1 || true
     ok "Сетевые параметры ядра возвращены к значениям по умолчанию."
 
-    log "Шаг 6/8: Очистка или восстановление Nginx..."
+    log "Шаг 6/8: Очистка или восстановление Nginx и Fail2ban..."
     if [ "$nginx_preexisted" -eq 1 ]; then
         # Nginx существовал до нас: восстанавливаем исходную конфигурацию
-        rm -f "${target_root}/etc/nginx/conf.d/01-main.conf" \
+        rm -f "${target_root}/etc/nginx/conf.d/00-acme.conf" \
+              "${target_root}/etc/nginx/conf.d/01-main.conf" \
               "${target_root}/etc/nginx/conf.d/02-"*.conf \
-              "${target_root}/etc/nginx/conf.d/03-adguard.conf \
-              ${target_root}/etc/nginx/conf.d/vpn_mask.conf" \
+              "${target_root}/etc/nginx/conf.d/03-adguard.conf" \
+              "${target_root}/etc/nginx/conf.d/vpn_mask.conf" \
               "${target_root}/etc/nginx/stream.d/00-stream.conf" \
               "${target_root}/etc/nginx/modules-enabled/50-mod-stream.conf" 2>/dev/null || true
         
         tmp_extract="$(mktemp -d 2>/dev/null || echo "/tmp/nginx_extract_$$")"
-        if [ "$has_snapshot" -eq 1 ] && tar --force-local -tzf "$archive" "nginx_config.tar.gz" >/dev/null 2>&1; then
-            tar --force-local -xzf "$archive" -C "$tmp_extract" "nginx_config.tar.gz" 2>/dev/null || true
+        if [ "$has_snapshot" -eq 1 ] && archive_has_entry "$archive" "nginx_config.tar.gz"; then
+            archive_extract_member "$archive" "nginx_config.tar.gz" "$tmp_extract" || true
             if [ -f "$tmp_extract/nginx_config.tar.gz" ]; then
                 tar --force-local -xzf "$tmp_extract/nginx_config.tar.gz" -C "${target_root}/etc" 2>/dev/null || true
                 ok "Исходная конфигурация Nginx восстановлена из снимка."
@@ -259,17 +429,64 @@ run_uninstall() {
         rm -rf "$tmp_extract" 2>/dev/null || true
         command -v systemctl >/dev/null 2>&1 && systemctl restart nginx 2>/dev/null || true
     else
-        # Nginx был установлен нами: удаляем его конфиги и кэш
-        rm -rf "${target_root}/etc/nginx/conf.d" \
-               "${target_root}/etc/nginx/stream.d" \
-               "${target_root}/etc/nginx/modules-enabled" \
-               "${target_root}/var/cache/nginx" 2>/dev/null || true
+        # Nginx был установлен нами: удаляем только файлы стека, сохраняя пользовательские конфиги
+        rm -f "${target_root}/etc/nginx/conf.d/00-acme.conf" \
+              "${target_root}/etc/nginx/conf.d/01-main.conf" \
+              "${target_root}/etc/nginx/conf.d/02-"*.conf \
+              "${target_root}/etc/nginx/conf.d/03-adguard.conf" \
+              "${target_root}/etc/nginx/conf.d/vpn_mask.conf" \
+              "${target_root}/etc/nginx/stream.d/00-stream.conf" \
+              "${target_root}/etc/nginx/modules-enabled/50-mod-stream.conf" 2>/dev/null || true
+        rm -rf "${target_root}/var/cache/nginx" 2>/dev/null || true
+        rmdir "${target_root}/etc/nginx/conf.d" 2>/dev/null || true
+        rmdir "${target_root}/etc/nginx/stream.d" 2>/dev/null || true
+        rmdir "${target_root}/etc/nginx/modules-enabled" 2>/dev/null || true
+        rmdir "${target_root}/etc/nginx" 2>/dev/null || true
         if [ "${UNINSTALL_PURGE_PKGS:-0}" -eq 1 ] && command -v apt-get >/dev/null 2>&1; then
             export DEBIAN_FRONTEND=noninteractive
-            apt-get purge -y nginx nginx-common nginx-core libnginx-mod-stream nginx-module-stream >/dev/null 2>&1 || true
+            local nginx_pkgs=()
+            for pkg_cand in nginx nginx-common nginx-core libnginx-mod-stream nginx-module-stream python3-certbot-nginx certbot python3-certbot; do
+                if dpkg-query -W -f='${Status}' "$pkg_cand" 2>/dev/null | grep -q "ok installed"; then
+                    nginx_pkgs+=("$pkg_cand")
+                fi
+            done
+            if [ ${#nginx_pkgs[@]} -gt 0 ]; then
+                apt-get purge -y "${nginx_pkgs[@]}" >/dev/null 2>&1 || true
+            fi
             rm -f "${target_root}/etc/apt/sources.list.d/nginx.list" "${target_root}/etc/apt/preferences.d/99nginx" 2>/dev/null || true
         fi
+        rm -f "${target_root}/etc/apt/sources.list.d/amnezia-ppa.sources" "${target_root}/etc/apt/keyrings/amnezia.gpg" 2>/dev/null || true
         ok "Конфигурация Nginx удалена."
+    fi
+
+    # Очистка и восстановление Fail2ban
+    rm -f "${target_root}/etc/fail2ban/jail.d/90-ssh-shield.local" 2>/dev/null || true
+    rmdir "${target_root}/etc/fail2ban/jail.d" 2>/dev/null || true
+    if [ "$fail2ban_preexisted" -eq 1 ]; then
+        tmp_extract="$(mktemp -d 2>/dev/null || echo "/tmp/f2b_extract_$$")"
+        if [ "$has_snapshot" -eq 1 ] && archive_has_entry "$archive" "fail2ban_config.tar.gz"; then
+            archive_extract_member "$archive" "fail2ban_config.tar.gz" "$tmp_extract" || true
+            if [ -f "$tmp_extract/fail2ban_config.tar.gz" ]; then
+                tar --force-local -xzf "$tmp_extract/fail2ban_config.tar.gz" -C "${target_root}/etc" 2>/dev/null || true
+                ok "Исходная конфигурация Fail2ban восстановлена из снимка."
+            fi
+        fi
+        rm -rf "$tmp_extract" 2>/dev/null || true
+        command -v systemctl >/dev/null 2>&1 && systemctl restart fail2ban 2>/dev/null || true
+    else
+        if [ "${UNINSTALL_PURGE_PKGS:-0}" -eq 1 ] && command -v apt-get >/dev/null 2>&1; then
+            export DEBIAN_FRONTEND=noninteractive
+            local f2b_pkgs=()
+            for pkg_cand in fail2ban python3-systemd; do
+                if dpkg-query -W -f='${Status}' "$pkg_cand" 2>/dev/null | grep -q "ok installed"; then
+                    f2b_pkgs+=("$pkg_cand")
+                fi
+            done
+            if [ ${#f2b_pkgs[@]} -gt 0 ]; then
+                apt-get purge -y "${f2b_pkgs[@]}" >/dev/null 2>&1 || true
+            fi
+        fi
+        rmdir "${target_root}/etc/fail2ban" 2>/dev/null || true
     fi
 
     log "Шаг 7/8: Очистка рабочих директорий и исполняемых файлов..."
@@ -283,6 +500,8 @@ run_uninstall() {
         "${target_root}/var/run/mita"
         "${target_root}/root/awg"
         "${target_root}/var/www/mirror"
+        "${target_root}/var/www/diagnostics"
+        "${target_root}/var/www/proxy_temp"
         "${target_root}/root/.server_setup"
     )
     [ "$agh_preexisted" -eq 0 ] && dirs_to_remove+=("${target_root}/opt/AdGuardHome")
@@ -291,6 +510,34 @@ run_uninstall() {
     for dir in "${dirs_to_remove[@]}"; do
         rm -rf "$dir" 2>/dev/null || true
     done
+
+    # Хирургическая очистка файлов веб-маскировки в /var/www/html (сохранение пользовательских сайтов и файлов)
+    if [ -d "${target_root}/var/www/html" ]; then
+        rm -rf "${target_root}/var/www/html/assets" \
+               "${target_root}/var/www/html/css" \
+               "${target_root}/var/www/html/js" \
+               "${target_root}/var/www/html/.well-known" \
+               "${target_root}/var/www/html/logo.webp" \
+               "${target_root}/var/www/html/favicon.svg" \
+               "${target_root}/var/www/html/favicon.ico" \
+               "${target_root}/var/www/html/404.html" 2>/dev/null || true
+
+        if [ -f "${target_root}/var/www/html/robots.txt" ]; then
+            if grep -q "Disallow: /" "${target_root}/var/www/html/robots.txt" 2>/dev/null && [ "$(wc -l < "${target_root}/var/www/html/robots.txt")" -le 4 ]; then
+                rm -f "${target_root}/var/www/html/robots.txt" 2>/dev/null || true
+            fi
+        fi
+
+        if [ -f "${target_root}/var/www/html/index.html" ]; then
+            if grep -Eqi "(DataSphere|Cosmos Cloud|cosmos_session|Welcome to Nginx Stream Mask|Welcome to nginx!)" "${target_root}/var/www/html/index.html" 2>/dev/null; then
+                rm -f "${target_root}/var/www/html/index.html" 2>/dev/null || true
+            fi
+        fi
+
+        # Если в /var/www/html не осталось пользовательских файлов — удаляем каталог безопасно через rmdir
+        rmdir "${target_root}/var/www/html" 2>/dev/null || true
+    fi
+    rmdir "${target_root}/var/www" 2>/dev/null || true
 
     # Удаление standalone бинарников
     local bins_to_remove=(
@@ -304,6 +551,7 @@ run_uninstall() {
         "${target_root}/usr/local/bin/mieru-cli"
         "${target_root}/usr/local/bin/awg-mgr"
         "${target_root}/usr/local/bin/manage-services"
+        "${target_root}/usr/local/bin/update-xray-geo.sh"
     )
     for b in "${bins_to_remove[@]}"; do
         rm -f "$b" 2>/dev/null || true
@@ -313,10 +561,19 @@ run_uninstall() {
     rm -f "${target_root}/root/vpn_credentials.txt" \
           "${target_root}/root/mieru-client"*.json \
           "${target_root}/etc/mita_server_config.json" \
+          "${target_root}/etc/server-setup.env" \
+          "${target_root}/etc/server-setup.env.state" \
+          "${target_root}/etc/cron.d/certbot" \
+          "${target_root}/etc/logrotate.d/certbot" \
           "${target_root}/run/3xui_unified_client.env" \
           "${target_root}/var/run/server_setup.checkpoint" \
           "${target_root}/var/run/server_setup.failed_step" \
           "${target_root}/var/run/server_setup_active_step.log" 2>/dev/null || true
+
+    # Удаление созданного при установке /etc/timezone (если отсутствовал в исходном снимке)
+    if [ "$has_snapshot" -eq 1 ] && ! archive_has_entry "$archive" "timezone"; then
+        rm -f "${target_root}/etc/timezone" 2>/dev/null || true
+    fi
 
     # SSL сертификаты (по умолчанию сохраняются, если не запрошена очистка)
     if [ "${UNINSTALL_KEEP_CERTS:-1}" -eq 0 ]; then
@@ -332,21 +589,36 @@ run_uninstall() {
 
     log "Шаг 8/8: Завершение отката..."
     if [ "${UNINSTALL_PURGE_PKGS:-0}" -eq 1 ] && [ "$has_snapshot" -eq 1 ] && command -v apt-get >/dev/null 2>&1; then
-        local snap_pkgs="$snap_dir/packages_installed.list"
-        if [ -f "$snap_pkgs" ]; then
+        local snap_pkgs=""
+        local tmp_extract=""
+        if [ -f "$snap_dir/packages_installed.list" ]; then
+            snap_pkgs="$snap_dir/packages_installed.list"
+        elif archive_has_entry "$archive" "packages_installed.list"; then
+            tmp_extract="$(mktemp -d 2>/dev/null || echo "/tmp/pkgs_ext_$$")"
+            if archive_extract_member "$archive" "packages_installed.list" "$tmp_extract"; then
+                [ -f "$tmp_extract/packages_installed.list" ] && snap_pkgs="$tmp_extract/packages_installed.list"
+                [ -f "$tmp_extract/./packages_installed.list" ] && snap_pkgs="$tmp_extract/./packages_installed.list"
+            fi
+        fi
+
+        if [ -n "$snap_pkgs" ] && [ -f "$snap_pkgs" ]; then
             log "Вычисление и удаление добавленных пакетов (--purge)..."
             local cur_pkgs
             cur_pkgs="$(mktemp 2>/dev/null || echo "/tmp/cur_pkgs_$$")"
             dpkg-query -f '${binary:Package}\n' -W > "$cur_pkgs" 2>/dev/null || true
             local diff_pkgs
-            diff_pkgs="$(comm -13 <(sort "$snap_pkgs") <(sort "$cur_pkgs") | grep -E '^(amneziawg|wireguard)' || true)"
+            # Удаляем ТОЛЬКО пакеты стека, добавленные установщиком (полная защита стороннего ПО: Docker, Dokploy, баз данных и утилит пользователя)
+            local stack_pkg_regex="^(nginx.*|libnginx.*|certbot|python3-certbot.*|fail2ban|python3-systemd|amneziawg.*|wireguard.*|libnetfilter-queue.*|apache2-utils|python3-bcrypt|mtr-tiny|socat)$"
+            diff_pkgs="$(comm -13 <(sort "$snap_pkgs") <(sort "$cur_pkgs") | grep -E "$stack_pkg_regex" || true)"
             if [ -n "$diff_pkgs" ]; then
                 export DEBIAN_FRONTEND=noninteractive
                 # shellcheck disable=SC2086
                 apt-get purge -y $diff_pkgs >/dev/null 2>&1 || true
             fi
+            apt-get autoremove --purge -y >/dev/null 2>&1 || true
             rm -f "$cur_pkgs" 2>/dev/null || true
         fi
+        [ -n "$tmp_extract" ] && rm -rf "$tmp_extract" 2>/dev/null || true
     fi
 
     echo -e "\n${BOLD}${GREEN}✔ Сервер успешно возвращен в исходное состояние!${NC}"

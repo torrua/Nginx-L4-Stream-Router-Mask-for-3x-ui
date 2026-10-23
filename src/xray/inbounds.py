@@ -192,8 +192,9 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
 
         # Строгая гарантия параметров VLESS REALITY (маскировка под свой сайт: Nginx Fallback + Xver=1 + target)
         s_port = globals().get("steal_port", 45443)
+        sc_port = globals().get("steal_compat_port", 47443)
         rf_port = globals().get("reality_fallback_port", 9443)
-        if port == s_port or tag == "in-steal-reality" or cur_tag == "in-steal-reality":
+        if port in (s_port, sc_port) or tag in ("in-steal-reality", "in-steal-backup", "in-steal-compat") or cur_tag in ("in-steal-reality", "in-steal-backup", "in-steal-compat"):
             fallback_dest = f"127.0.0.1:{rf_port}"
             if not target_stream["realitySettings"].get("dest") or target_stream["realitySettings"]["dest"] != fallback_dest:
                 target_stream["realitySettings"]["dest"] = fallback_dest

@@ -571,7 +571,7 @@ setup_unattended_upgrades() {
 
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -y >/dev/null 2>&1 || true
-    apt-get install -y -q unattended-upgrades update-notifier-common >/dev/null 2>&1 || true
+    apt-get install -y -q unattended-upgrades >/dev/null 2>&1 || true
 
     mkdir -p /etc/apt/apt.conf.d 2>/dev/null || true
     cat << 'EOF_UPG' > /etc/apt/apt.conf.d/50unattended-upgrades
@@ -599,7 +599,7 @@ APT::Periodic::Unattended-Upgrade "1";
 APT::Periodic::AutocleanInterval "7";
 EOF_AUTOS
 
-    systemctl restart unattended-upgrades 2>/dev/null || true
+    systemctl enable unattended-upgrades 2>/dev/null || true
     ok "Автоматические ночные обновления безопасности настроены (ребут при необходимости в 04:38)."
 }
 

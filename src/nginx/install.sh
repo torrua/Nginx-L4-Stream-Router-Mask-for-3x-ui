@@ -86,8 +86,8 @@ EOF
     # 7. Fail-safe fallback: если Nginx по-прежнему не распознает stream (например, бинарник несовместим с модулем),
     # выполняем чистую переустановку дистрибутивного Nginx с libnginx-mod-stream
     if command -v apt-get >/dev/null 2>&1; then
-        local os_id
-        os_id=$(lsb_release -is 2>/dev/null | tr '[:upper:]' '[:lower:]' || echo "ubuntu")
+        local os_id="${ID:-ubuntu}"
+        if [ -f /etc/os-release ]; then . /etc/os-release; os_id="${ID:-ubuntu}"; fi
         warn "Сбой загрузки модуля Stream в текущей версии Nginx. Экстренное восстановление системного Nginx..."
         rm -f /etc/apt/sources.list.d/nginx.list /etc/apt/preferences.d/99nginx
         apt-get purge -y nginx nginx-common nginx-core libnginx* 2>/dev/null || apt-get remove -y nginx* 2>/dev/null || true
@@ -113,9 +113,12 @@ EOF
 
 setup_nginx_mainline() {
     export DEBIAN_FRONTEND=noninteractive
-    local os_id os_codename
-    os_id=$(lsb_release -is 2>/dev/null | tr '[:upper:]' '[:lower:]' || echo "ubuntu")
-    os_codename=$(lsb_release -cs 2>/dev/null || echo "jammy")
+    local os_id="${ID:-ubuntu}" os_codename="${VERSION_CODENAME:-${UBUNTU_CODENAME:-jammy}}"
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        os_id="${ID:-ubuntu}"
+        os_codename="${VERSION_CODENAME:-${UBUNTU_CODENAME:-jammy}}"
+    fi
 
     # 1. Если Nginx уже установлен — проверяем, запускается ли бинарник и поддерживает ли ssl_reject_handshake
     if command -v nginx >/dev/null 2>&1; then

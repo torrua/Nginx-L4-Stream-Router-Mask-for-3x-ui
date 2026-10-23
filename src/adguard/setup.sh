@@ -20,22 +20,19 @@
             rm -rf "$agh_tmp"
         fi
 
-        # 3. Генерация bcrypt-хэша пароля через htpasswd
-        which htpasswd >/dev/null 2>&1 || apt-get install -y -q apache2-utils >/dev/null 2>&1
-        agh_pass_hash=""
-        if command -v htpasswd >/dev/null 2>&1; then
-            agh_pass_hash=$(htpasswd -b -n -B -C 10 "" "$AGH_PASS" 2>/dev/null | tr -d '\n' | cut -d: -f2)
-        fi
-        if [ -z "$agh_pass_hash" ]; then
-            agh_pass_hash=$(python3 -c "
+        # 3. Генерация bcrypt-хэша пароля через Python3 (без сторонних пакетов Apache)
+        agh_pass_hash=$(python3 -c "
 import sys
 try:
     import bcrypt
-    print(bcrypt.hashpw(sys.argv[1].encode(), bcrypt.gensalt(10)).decode())
+    print(bcrypt.hashpw(sys.argv[1].encode('utf-8'), bcrypt.gensalt(10)).decode('utf-8'))
 except Exception:
     pass
 " "$AGH_PASS" 2>/dev/null || true)
+        if [ -z "$agh_pass_hash" ] && command -v htpasswd >/dev/null 2>&1; then
+            agh_pass_hash=$(htpasswd -b -n -B -C 10 "" "$AGH_PASS" 2>/dev/null | tr -d '\n' | cut -d: -f2)
         fi
+        [ -n "$agh_pass_hash" ] || die "Не удалось сгенерировать bcrypt-хэш пароля для AdGuard Home."
 
         # 4. Создание конфигурации AdGuardHome.yaml
         mkdir -p /opt/AdGuardHome

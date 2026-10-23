@@ -6,7 +6,15 @@ normalize_node_token_config() {
     case "${AUTO_SETUP_3XUI:-y}" in n|0|false) ENABLE_NODE_TOKEN=n; return 0 ;; esac
     if [ -z "$NODE_TOKEN_NAME" ]; then
         local prefix="${SERVER_PREFIX-Server}"
-        case "${prefix,,}" in ''|-|none|off|no) NODE_TOKEN_NAME=Master-Node-Cluster ;; *) NODE_TOKEN_NAME="${prefix}-Node" ;; esac
+        case "${prefix,,}" in
+            ''|-|none|off|no) NODE_TOKEN_NAME=Master-Node-Cluster ;;
+            *)
+                local clean_p
+                clean_p=$(printf '%s' "$prefix" | tr -cd 'a-zA-Z0-9_-')
+                [ -n "$clean_p" ] || clean_p="Server"
+                NODE_TOKEN_NAME="${clean_p}-Node"
+                ;;
+        esac
     fi
 }
 

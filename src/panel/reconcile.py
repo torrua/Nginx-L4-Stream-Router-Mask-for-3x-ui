@@ -183,6 +183,16 @@ admin_pass = os.environ.get("ADMIN_PASSWORD", "").strip()
 server_prefix = os.environ.get("SERVER_PREFIX", "").strip()
 if server_prefix.lower() in ("-", "none", "off", "no"):
     server_prefix = ""
+elif server_prefix.lower() == "auto":
+    _cache_p = "/run/setup_mask_server_prefix" if os.path.isdir("/run") else "/tmp/setup_mask_server_prefix"
+    _resolved = ""
+    try:
+        if os.path.exists(_cache_p):
+            with open(_cache_p, "r", encoding="utf-8") as _f:
+                _resolved = _f.read().strip()
+    except Exception:
+        pass
+    server_prefix = _resolved if _resolved else "Server"
 
 def make_remark(method):
     if server_prefix:

@@ -246,6 +246,7 @@ run_uninstall
         mock_bin = self.work / "bin"
         mock_bin.mkdir(parents=True, exist_ok=True)
         (mock_bin / "nginx").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        (mock_bin / "sshd").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
 
         etc_ufw = self.target_root / "etc/ufw"
         etc_ufw.mkdir(parents=True, exist_ok=True)
@@ -269,7 +270,7 @@ if command -v cygpath >/dev/null 2>&1; then
 else
     export PATH="{mock_bin.as_posix()}:$PATH"
 fi
-chmod +x "{mock_bin.as_posix()}/nginx" || true
+chmod +x "{mock_bin.as_posix()}/nginx" "{mock_bin.as_posix()}/sshd" || true
 TARGET_ROOT="{self.target_root.as_posix()}"
 SNAPSHOT_DIR="{snap_dir.as_posix()}"
 SNAPSHOT_ARCHIVE="{snap_dir.as_posix()}/initial_state.tar.gz"
@@ -298,6 +299,7 @@ if command -v cygpath >/dev/null 2>&1; then
 else
     export PATH="{mock_bin.as_posix()}:$PATH"
 fi
+chmod +x "{mock_bin.as_posix()}/nginx" "{mock_bin.as_posix()}/sshd" || true
 TARGET_ROOT="{self.target_root.as_posix()}"
 SNAPSHOT_DIR="{snap_dir.as_posix()}"
 SNAPSHOT_ARCHIVE="{snap_dir.as_posix()}/initial_state.tar.gz"

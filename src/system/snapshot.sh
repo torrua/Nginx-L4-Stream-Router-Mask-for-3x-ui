@@ -120,9 +120,12 @@ create_initial_state_snapshot() {
     # 10. Формирование манифеста
     local ts
     ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%d %H:%M:%S")"
-    local os_id os_codename k_rel
-    os_id="$(lsb_release -is 2>/dev/null | tr '[:upper:]' '[:lower:]' || echo "linux")"
-    os_codename="$(lsb_release -cs 2>/dev/null || echo "generic")"
+    local os_id="${ID:-linux}" os_codename="${VERSION_CODENAME:-${UBUNTU_CODENAME:-generic}}" k_rel
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        os_id="${ID:-linux}"
+        os_codename="${VERSION_CODENAME:-${UBUNTU_CODENAME:-generic}}"
+    fi
     k_rel="$(uname -r 2>/dev/null || echo "unknown")"
 
     cat << EOF > "$SNAPSHOT_MANIFEST"

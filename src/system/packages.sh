@@ -32,10 +32,7 @@ install_prerequisites() {
         [systemctl]="systemd"
         [openssl]="openssl"
         [awk]="gawk"
-        [lsb_release]="lsb-release"
         [gpg]="gnupg"
-        [dig]="dnsutils"
-        [socat]="socat"
         [cron]="cron"
         [ufw]="ufw"
         [python3]="python3"
@@ -58,7 +55,7 @@ install_prerequisites() {
             echo "  [DEBUG] Требуется установка: ${missing_pkgs[*]}"
         fi
         export DEBIAN_FRONTEND=noninteractive
-        local apt_flags=("-o" "Acquire::Retries=3" "-o" "Acquire::http::Timeout=15")
+        local apt_flags=("-o" "Acquire::Retries=3" "-o" "Acquire::http::Timeout=15" "-o" "DPkg::Lock::Timeout=60")
         if [ "${DEBUG_MODE:-0}" -eq 1 ]; then
             apt-get update "${apt_flags[@]}" 2>/dev/null || apt-get update || true
             apt-get install -y --no-install-recommends "${apt_flags[@]}" "${missing_pkgs[@]}"

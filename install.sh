@@ -3,7 +3,7 @@
 #!/usr/bin/env bash
 #
 # ==============================================================================
-# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v9.5.0 Universal
+# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v9.6.0 Universal
 # Nginx L4 Stream + 3X-UI + Unix Sockets + Native proxy_http_version 2 + 3 Decoys
 # ==============================================================================
 # Архитектура:
@@ -29,7 +29,7 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="v9.5.0"
+SCRIPT_VERSION="v9.6.0"
 
 
 # Checkpoints use stable step IDs and input signatures, independent of UI numbering.
@@ -196,7 +196,7 @@ record_step_completed() {
 
 checkpoint_artifact_valid() {
     case "$1" in
-        packages) command -v curl >/dev/null && command -v socat >/dev/null ;;
+        packages) command -v curl >/dev/null && command -v openssl >/dev/null ;;
         kernel) sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null | grep -qx bbr ;;
         nginx) command -v nginx >/dev/null ;;
         certificates)
@@ -1027,7 +1027,7 @@ generate_config_template() {
     local target_file="${1:-server-setup.env.example}"
     cat << 'EOF_CONF' > "$target_file"
 # ==============================================================================
-# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v9.5.0 Universal)
+# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v9.6.0 Universal)
 # ==============================================================================
 # Данный файл позволяет выполнять полностью автоматическую установку:
 # ./setup.sh --config server-setup.env --non-interactive --force
@@ -1383,10 +1383,7 @@ install_prerequisites() {
         [systemctl]="systemd"
         [openssl]="openssl"
         [awk]="gawk"
-        [lsb_release]="lsb-release"
         [gpg]="gnupg"
-        [dig]="dnsutils"
-        [socat]="socat"
         [cron]="cron"
         [ufw]="ufw"
         [python3]="python3"
@@ -1409,7 +1406,7 @@ install_prerequisites() {
             echo "  [DEBUG] Требуется установка: ${missing_pkgs[*]}"
         fi
         export DEBIAN_FRONTEND=noninteractive
-        local apt_flags=("-o" "Acquire::Retries=3" "-o" "Acquire::http::Timeout=15")
+        local apt_flags=("-o" "Acquire::Retries=3" "-o" "Acquire::http::Timeout=15" "-o" "DPkg::Lock::Timeout=60")
         if [ "${DEBUG_MODE:-0}" -eq 1 ]; then
             apt-get update "${apt_flags[@]}" 2>/dev/null || apt-get update || true
             apt-get install -y --no-install-recommends "${apt_flags[@]}" "${missing_pkgs[@]}"
@@ -1648,6 +1645,110 @@ resolve_ssl_cert_paths() {
     declare -g "$key_var=$base_dir/$domain/privkey.pem" 2>/dev/null || true
     return 0
 }
+
+detect_server_location_prefix() {
+    local cache_file="/run/setup_mask_server_prefix"
+    if [ ! -d /run ] || ! touch /run/.test_w 2>/dev/null; then
+        cache_file="/tmp/setup_mask_server_prefix"
+    else
+        rm -f /run/.test_w 2>/dev/null || true
+    fi
+
+    if [ -f "$cache_file" ]; then
+        local cached
+        cached="$(cat "$cache_file" 2>/dev/null | tr -d '\r\n')"
+        if [ -n "$cached" ]; then
+            printf '%s\n' "$cached"
+            return 0
+        fi
+    fi
+
+    local py_cmd="${PYTHON_CMD:-python3}"
+    command -v "$py_cmd" >/dev/null 2>&1 || py_cmd="python"
+
+    local detected=""
+    if command -v "$py_cmd" >/dev/null 2>&1; then
+        detected=$("$py_cmd" - << 'EOF_GEO_PY' 2>/dev/null || true
+import json, re, sys, urllib.request
+
+def country_to_flag(code):
+    if not code or len(code) != 2:
+        return ''
+    return ''.join(chr(127397 + ord(c.upper())) for c in code if 'A' <= c.upper() <= 'Z')
+
+loc = ''
+colo = ''
+
+# 1. Cloudflare trace (native Anycast, directly returns loc=ISO and colo=IATA)
+try:
+    req = urllib.request.Request('https://1.1.1.1/cdn-cgi/trace', headers={'User-Agent': 'curl/7.68.0'})
+    with urllib.request.urlopen(req, timeout=2) as resp:
+        text = resp.read().decode('utf-8', errors='ignore')
+        m_loc = re.search(r'^loc=([A-Za-z]{2})$', text, re.MULTILINE)
+        m_colo = re.search(r'^colo=([A-Za-z]{3})$', text, re.MULTILINE)
+        if m_loc:
+            loc = m_loc.group(1).upper()
+        if m_colo:
+            colo = m_colo.group(1).upper()
+except Exception:
+    pass
+
+# 2. Fallback to ipinfo.io if Cloudflare trace is unreachable
+if not loc:
+    try:
+        req = urllib.request.Request('https://ipinfo.io/json', headers={'User-Agent': 'curl/7.68.0'})
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read().decode('utf-8', errors='ignore'))
+            loc = data.get('country', '').strip().upper()
+            city = data.get('city', '').strip()
+            clean_city = re.sub(r'[^a-zA-Z]', '', city)
+            if len(clean_city) >= 3 and not colo:
+                colo = clean_city[:3].upper()
+    except Exception:
+        pass
+
+flag = country_to_flag(loc)
+if loc and colo:
+    out = f"{flag} {loc}-{colo}".strip()
+elif loc:
+    out = f"{flag} {loc}".strip()
+else:
+    out = ""
+
+if out:
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+    print(out)
+EOF_GEO_PY
+)
+    fi
+
+    # Secondary fallback to curl + Cloudflare trace if python is unavailable
+    if [ -z "$detected" ] && command -v curl >/dev/null 2>&1; then
+        local trace_out
+        trace_out=$(curl -s4 --connect-timeout 2 --max-time 3 https://1.1.1.1/cdn-cgi/trace 2>/dev/null || true)
+        local loc_c colo_c
+        loc_c=$(printf '%s\n' "$trace_out" | awk -F= '$1=="loc"{print $2; exit}' | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')
+        colo_c=$(printf '%s\n' "$trace_out" | awk -F= '$1=="colo"{print $2; exit}' | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')
+        if [[ "$loc_c" =~ ^[A-Z]{2}$ ]]; then
+            if [ -n "$colo_c" ] && [[ "$colo_c" =~ ^[A-Z]{3}$ ]]; then
+                detected="$loc_c-$colo_c"
+            else
+                detected="$loc_c"
+            fi
+        fi
+    fi
+
+    if [ -n "$detected" ]; then
+        printf '%s\n' "$detected" > "$cache_file" 2>/dev/null || true
+        printf '%s\n' "$detected"
+        return 0
+    fi
+    return 1
+}
+
 normalize_node_token_config() {
     local enabled="${CLI_ENABLE_NODE_TOKEN:-${ENABLE_NODE_TOKEN:-y}}"
     NODE_TOKEN="${NODE_TOKEN:-}"
@@ -1656,7 +1757,15 @@ normalize_node_token_config() {
     case "${AUTO_SETUP_3XUI:-y}" in n|0|false) ENABLE_NODE_TOKEN=n; return 0 ;; esac
     if [ -z "$NODE_TOKEN_NAME" ]; then
         local prefix="${SERVER_PREFIX-Server}"
-        case "${prefix,,}" in ''|-|none|off|no) NODE_TOKEN_NAME=Master-Node-Cluster ;; *) NODE_TOKEN_NAME="${prefix}-Node" ;; esac
+        case "${prefix,,}" in
+            ''|-|none|off|no) NODE_TOKEN_NAME=Master-Node-Cluster ;;
+            *)
+                local clean_p
+                clean_p=$(printf '%s' "$prefix" | tr -cd 'a-zA-Z0-9_-')
+                [ -n "$clean_p" ] || clean_p="Server"
+                NODE_TOKEN_NAME="${clean_p}-Node"
+                ;;
+        esac
     fi
 }
 
@@ -1897,6 +2006,9 @@ reconstruct_arrays_from_vars() {
     RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH%/}"
     XHTTP_STREAM_PATH="/${RAW_XHTTP_STREAM_PATH}/"
 
+    if [ -n "${SERVER_PREFIX:-}" ] && [ "${SERVER_PREFIX,,}" = "auto" ]; then
+        SERVER_PREFIX="$(detect_server_location_prefix 2>/dev/null || echo "Server")"
+    fi
     SERVER_PREFIX="${SERVER_PREFIX:-Server}"
     SUB_TITLE="${SUB_TITLE:-$SERVER_PREFIX}"
     ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
@@ -2175,6 +2287,10 @@ save_session_state() {
     _save_xhttp_path="${_save_xhttp_path%/}"
     if [ -z "$_save_xhttp_path" ] || [ "$_save_xhttp_path" = "Stream-One-Path" ] || [[ "$_save_xhttp_path" == vless-* ]]; then
         _save_xhttp_path="$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "xh${RANDOM}")"
+    fi
+
+    if [ -n "${SERVER_PREFIX:-}" ] && [ "${SERVER_PREFIX,,}" = "auto" ]; then
+        SERVER_PREFIX="$(detect_server_location_prefix 2>/dev/null || echo "Server")"
     fi
 
     local save_tmp
@@ -2481,9 +2597,12 @@ create_initial_state_snapshot() {
     # 10. Формирование манифеста
     local ts
     ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%d %H:%M:%S")"
-    local os_id os_codename k_rel
-    os_id="$(lsb_release -is 2>/dev/null | tr '[:upper:]' '[:lower:]' || echo "linux")"
-    os_codename="$(lsb_release -cs 2>/dev/null || echo "generic")"
+    local os_id="${ID:-linux}" os_codename="${VERSION_CODENAME:-${UBUNTU_CODENAME:-generic}}" k_rel
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        os_id="${ID:-linux}"
+        os_codename="${VERSION_CODENAME:-${UBUNTU_CODENAME:-generic}}"
+    fi
     k_rel="$(uname -r 2>/dev/null || echo "unknown")"
 
     cat << EOF > "$SNAPSHOT_MANIFEST"
@@ -2682,9 +2801,12 @@ create_initial_state_snapshot() {
     # 10. Формирование манифеста
     local ts
     ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%d %H:%M:%S")"
-    local os_id os_codename k_rel
-    os_id="$(lsb_release -is 2>/dev/null | tr '[:upper:]' '[:lower:]' || echo "linux")"
-    os_codename="$(lsb_release -cs 2>/dev/null || echo "generic")"
+    local os_id="${ID:-linux}" os_codename="${VERSION_CODENAME:-${UBUNTU_CODENAME:-generic}}" k_rel
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        os_id="${ID:-linux}"
+        os_codename="${VERSION_CODENAME:-${UBUNTU_CODENAME:-generic}}"
+    fi
     k_rel="$(uname -r 2>/dev/null || echo "unknown")"
 
     cat << EOF > "$SNAPSHOT_MANIFEST"
@@ -2846,7 +2968,7 @@ run_uninstall() {
     local services_to_stop=(
         "x-ui" "xray-geo-update.timer" "xray-geo-update.service"
         "awg-quick@awg0" "sing-box-masque" "shadow-tls" "wstunnel"
-        "dnstt" "caddy-naive" "zapret"
+        "dnstt" "caddy-naive" "zapret" "zapret-server" "mita" "mieru"
     )
     [ "$agh_preexisted" -eq 0 ] && services_to_stop+=("AdGuardHome")
     [ "$fail2ban_preexisted" -eq 0 ] && services_to_stop+=("fail2ban")
@@ -2858,6 +2980,8 @@ run_uninstall() {
             systemctl disable "$svc" 2>/dev/null || true
         fi
     done
+    pkill -9 -f "mita" 2>/dev/null || true
+    pkill -9 -f "nfqws" 2>/dev/null || true
     ok "Службы остановлены и отключены."
 
     log "Шаг 2/8: Удаление созданных systemd units и cron-задач..."
@@ -2871,7 +2995,9 @@ run_uninstall() {
         "${target_root}/etc/systemd/system/dnstt.service"
         "${target_root}/etc/systemd/system/caddy-naive.service"
         "${target_root}/etc/systemd/system/mita.service"
+        "${target_root}/etc/systemd/system/mieru.service"
         "${target_root}/etc/systemd/system/zapret.service"
+        "${target_root}/etc/systemd/system/zapret-server.service"
         "${target_root}/etc/systemd/system/nginx.service.d/override.conf"
     )
     [ "$agh_preexisted" -eq 0 ] && units_to_remove+=("${target_root}/etc/systemd/system/AdGuardHome.service")
@@ -3081,11 +3207,15 @@ run_uninstall() {
             mkdir -p "$tmp_extract/ssh_root"
             tar --force-local -xzf "$ssh_tar" -C "$tmp_extract/ssh_root" 2>/dev/null || true
 
-            # Проверка синтаксиса sshd перед применением
+            # Проверка синтаксиса sshd перед применением (Anti-Lockout)
             local sshd_valid=1
             if command -v sshd >/dev/null 2>&1 && [ -f "$tmp_extract/ssh_root/ssh/sshd_config" ]; then
-                if ! sshd -t -f "$tmp_extract/ssh_root/ssh/sshd_config" 2>/dev/null; then
-                    sshd_valid=0
+                # sshd -t требует прав root для чтения системных host-ключей. При запуске не под root (CI runner)
+                # системный sshd дает ложный отказ, поэтому проверяем только под root либо при мок-бинарнике
+                if [ "$(id -u)" -eq 0 ] || command -v sshd | grep -qv '/usr/sbin/sshd'; then
+                    if ! sshd -t -f "$tmp_extract/ssh_root/ssh/sshd_config" 2>/dev/null; then
+                        sshd_valid=0
+                    fi
                 fi
             fi
 
@@ -6630,7 +6760,7 @@ setup_unattended_upgrades() {
 
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -y >/dev/null 2>&1 || true
-    apt-get install -y -q unattended-upgrades update-notifier-common >/dev/null 2>&1 || true
+    apt-get install -y -q unattended-upgrades >/dev/null 2>&1 || true
 
     mkdir -p /etc/apt/apt.conf.d 2>/dev/null || true
     cat << 'EOF_UPG' > /etc/apt/apt.conf.d/50unattended-upgrades
@@ -6658,7 +6788,7 @@ APT::Periodic::Unattended-Upgrade "1";
 APT::Periodic::AutocleanInterval "7";
 EOF_AUTOS
 
-    systemctl restart unattended-upgrades 2>/dev/null || true
+    systemctl enable unattended-upgrades 2>/dev/null || true
     ok "Автоматические ночные обновления безопасности настроены (ребут при необходимости в 04:38)."
 }
 
@@ -6798,8 +6928,8 @@ EOF
     # 7. Fail-safe fallback: если Nginx по-прежнему не распознает stream (например, бинарник несовместим с модулем),
     # выполняем чистую переустановку дистрибутивного Nginx с libnginx-mod-stream
     if command -v apt-get >/dev/null 2>&1; then
-        local os_id
-        os_id=$(lsb_release -is 2>/dev/null | tr '[:upper:]' '[:lower:]' || echo "ubuntu")
+        local os_id="${ID:-ubuntu}"
+        if [ -f /etc/os-release ]; then . /etc/os-release; os_id="${ID:-ubuntu}"; fi
         warn "Сбой загрузки модуля Stream в текущей версии Nginx. Экстренное восстановление системного Nginx..."
         rm -f /etc/apt/sources.list.d/nginx.list /etc/apt/preferences.d/99nginx
         apt-get purge -y nginx nginx-common nginx-core libnginx* 2>/dev/null || apt-get remove -y nginx* 2>/dev/null || true
@@ -6825,9 +6955,12 @@ EOF
 
 setup_nginx_mainline() {
     export DEBIAN_FRONTEND=noninteractive
-    local os_id os_codename
-    os_id=$(lsb_release -is 2>/dev/null | tr '[:upper:]' '[:lower:]' || echo "ubuntu")
-    os_codename=$(lsb_release -cs 2>/dev/null || echo "jammy")
+    local os_id="${ID:-ubuntu}" os_codename="${VERSION_CODENAME:-${UBUNTU_CODENAME:-jammy}}"
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        os_id="${ID:-ubuntu}"
+        os_codename="${VERSION_CODENAME:-${UBUNTU_CODENAME:-jammy}}"
+    fi
 
     # 1. Если Nginx уже установлен — проверяем, запускается ли бинарник и поддерживает ли ssl_reject_handshake
     if command -v nginx >/dev/null 2>&1; then
@@ -6921,7 +7054,7 @@ install_certbot_package() {
 
     # 2. Приоритет: Нативный легкий certbot из официального apt репозитория
     apt-get update -q -y >/dev/null 2>&1 || true
-    if apt-get install -y -q certbot python3-certbot-nginx; then
+    if apt-get install -y -q certbot; then
         if command -v certbot >/dev/null 2>&1; then
             return 0
         fi
@@ -7340,6 +7473,26 @@ def get_conf_params():
             params[key] = m.group(1).strip()
     return params
 
+def load_env_defaults():
+    for p in ["/root/nginx_mask_setup/server-setup.env", "/root/server-setup.env", "/etc/server-setup.env"]:
+        try:
+            if safe_exists(p):
+                with open(p, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line.startswith("#") or "=" not in line:
+                            continue
+                        k, v = line.split("=", 1)
+                        k = k.strip()
+                        v = v.strip().strip("'\"")
+                        if k not in os.environ and v:
+                            os.environ[k] = v
+                break
+        except Exception:
+            pass
+
+load_env_defaults()
+
 CONF_PARAMS = get_conf_params()
 
 SERVER_HOST = os.environ.get("SERVER_PUBLIC_HOST", "") or os.environ.get("WAN_IP", "")
@@ -7717,12 +7870,12 @@ def parse_duration(duration_str: str) -> timedelta | datetime | None:
     return None
 
 def get_server_display_name() -> str:
-    srv_prefix = os.environ.get("SERVER_PREFIX", "").strip()
-    if srv_prefix and srv_prefix.lower() not in ("-", "none", "off", "no"):
-        return srv_prefix
     sub_title = os.environ.get("SUB_TITLE", "").strip()
-    if sub_title and sub_title.lower() not in ("-", "none", "off", "no"):
+    if sub_title and sub_title.lower() not in ("-", "none", "off", "no", "auto"):
         return sub_title
+    srv_prefix = os.environ.get("SERVER_PREFIX", "").strip()
+    if srv_prefix and srv_prefix.lower() not in ("-", "none", "off", "no", "auto"):
+        return srv_prefix
     if SERVER_HOST and SERVER_HOST not in ("127.0.0.1", "0.0.0.0", "localhost"):
         return SERVER_HOST
     return "Server"
@@ -9047,6 +9200,8 @@ AWG_DIR="\${AWG_DIR:-/root/awg}"
 PYTHON_BIN="\$(command -v python3 2>/dev/null || echo /usr/bin/python3)"
 [ -n "${awg_host}" ] && export SERVER_PUBLIC_HOST="\${SERVER_PUBLIC_HOST:-${awg_host}}"
 [ -n "${awg_port}" ] && export SERVER_PORT="\${SERVER_PORT:-${awg_port}}"
+[ -n "${SUB_TITLE:-}" ] && export SUB_TITLE="\${SUB_TITLE:-${SUB_TITLE}}"
+[ -n "${SERVER_PREFIX:-}" ] && export SERVER_PREFIX="\${SERVER_PREFIX:-${SERVER_PREFIX}}"
 exec "\$PYTHON_BIN" "\$AWG_DIR/manage_clients.py" "\$@"
 EOF_AWG_SH
     chmod 755 "$awg_dir/manage-clients.sh"
@@ -9748,7 +9903,7 @@ setup_naive_service() {
         local caddy_tmp="/tmp/caddy_naive_$$"
         mkdir -p "$caddy_tmp"
         local rel_ver="${SCRIPT_VERSION:-v9.1.0}"
-        [[ "$rel_ver" == "v9.5.0" ]] && rel_ver="v9.1.0"
+        [[ "$rel_ver" == "v9.6.0" ]] && rel_ver="v9.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/caddy-naive-linux-${caddy_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
@@ -9894,7 +10049,7 @@ setup_dnstt_service() {
         local dnstt_tmp="/tmp/dnstt_$$"
         mkdir -p "$dnstt_tmp"
         local rel_ver="${SCRIPT_VERSION:-v9.1.0}"
-        [[ "$rel_ver" == "v9.5.0" ]] && rel_ver="v9.1.0"
+        [[ "$rel_ver" == "v9.6.0" ]] && rel_ver="v9.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/dnstt-server-linux-${dnstt_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
@@ -13731,6 +13886,110 @@ resolve_ssl_cert_paths() {
     declare -g "$key_var=$base_dir/$domain/privkey.pem" 2>/dev/null || true
     return 0
 }
+
+detect_server_location_prefix() {
+    local cache_file="/run/setup_mask_server_prefix"
+    if [ ! -d /run ] || ! touch /run/.test_w 2>/dev/null; then
+        cache_file="/tmp/setup_mask_server_prefix"
+    else
+        rm -f /run/.test_w 2>/dev/null || true
+    fi
+
+    if [ -f "$cache_file" ]; then
+        local cached
+        cached="$(cat "$cache_file" 2>/dev/null | tr -d '\r\n')"
+        if [ -n "$cached" ]; then
+            printf '%s\n' "$cached"
+            return 0
+        fi
+    fi
+
+    local py_cmd="${PYTHON_CMD:-python3}"
+    command -v "$py_cmd" >/dev/null 2>&1 || py_cmd="python"
+
+    local detected=""
+    if command -v "$py_cmd" >/dev/null 2>&1; then
+        detected=$("$py_cmd" - << 'EOF_GEO_PY' 2>/dev/null || true
+import json, re, sys, urllib.request
+
+def country_to_flag(code):
+    if not code or len(code) != 2:
+        return ''
+    return ''.join(chr(127397 + ord(c.upper())) for c in code if 'A' <= c.upper() <= 'Z')
+
+loc = ''
+colo = ''
+
+# 1. Cloudflare trace (native Anycast, directly returns loc=ISO and colo=IATA)
+try:
+    req = urllib.request.Request('https://1.1.1.1/cdn-cgi/trace', headers={'User-Agent': 'curl/7.68.0'})
+    with urllib.request.urlopen(req, timeout=2) as resp:
+        text = resp.read().decode('utf-8', errors='ignore')
+        m_loc = re.search(r'^loc=([A-Za-z]{2})$', text, re.MULTILINE)
+        m_colo = re.search(r'^colo=([A-Za-z]{3})$', text, re.MULTILINE)
+        if m_loc:
+            loc = m_loc.group(1).upper()
+        if m_colo:
+            colo = m_colo.group(1).upper()
+except Exception:
+    pass
+
+# 2. Fallback to ipinfo.io if Cloudflare trace is unreachable
+if not loc:
+    try:
+        req = urllib.request.Request('https://ipinfo.io/json', headers={'User-Agent': 'curl/7.68.0'})
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read().decode('utf-8', errors='ignore'))
+            loc = data.get('country', '').strip().upper()
+            city = data.get('city', '').strip()
+            clean_city = re.sub(r'[^a-zA-Z]', '', city)
+            if len(clean_city) >= 3 and not colo:
+                colo = clean_city[:3].upper()
+    except Exception:
+        pass
+
+flag = country_to_flag(loc)
+if loc and colo:
+    out = f"{flag} {loc}-{colo}".strip()
+elif loc:
+    out = f"{flag} {loc}".strip()
+else:
+    out = ""
+
+if out:
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+    print(out)
+EOF_GEO_PY
+)
+    fi
+
+    # Secondary fallback to curl + Cloudflare trace if python is unavailable
+    if [ -z "$detected" ] && command -v curl >/dev/null 2>&1; then
+        local trace_out
+        trace_out=$(curl -s4 --connect-timeout 2 --max-time 3 https://1.1.1.1/cdn-cgi/trace 2>/dev/null || true)
+        local loc_c colo_c
+        loc_c=$(printf '%s\n' "$trace_out" | awk -F= '$1=="loc"{print $2; exit}' | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')
+        colo_c=$(printf '%s\n' "$trace_out" | awk -F= '$1=="colo"{print $2; exit}' | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')
+        if [[ "$loc_c" =~ ^[A-Z]{2}$ ]]; then
+            if [ -n "$colo_c" ] && [[ "$colo_c" =~ ^[A-Z]{3}$ ]]; then
+                detected="$loc_c-$colo_c"
+            else
+                detected="$loc_c"
+            fi
+        fi
+    fi
+
+    if [ -n "$detected" ]; then
+        printf '%s\n' "$detected" > "$cache_file" 2>/dev/null || true
+        printf '%s\n' "$detected"
+        return 0
+    fi
+    return 1
+}
+
 normalize_node_token_config() {
     local enabled="${CLI_ENABLE_NODE_TOKEN:-${ENABLE_NODE_TOKEN:-y}}"
     NODE_TOKEN="${NODE_TOKEN:-}"
@@ -13739,7 +13998,15 @@ normalize_node_token_config() {
     case "${AUTO_SETUP_3XUI:-y}" in n|0|false) ENABLE_NODE_TOKEN=n; return 0 ;; esac
     if [ -z "$NODE_TOKEN_NAME" ]; then
         local prefix="${SERVER_PREFIX-Server}"
-        case "${prefix,,}" in ''|-|none|off|no) NODE_TOKEN_NAME=Master-Node-Cluster ;; *) NODE_TOKEN_NAME="${prefix}-Node" ;; esac
+        case "${prefix,,}" in
+            ''|-|none|off|no) NODE_TOKEN_NAME=Master-Node-Cluster ;;
+            *)
+                local clean_p
+                clean_p=$(printf '%s' "$prefix" | tr -cd 'a-zA-Z0-9_-')
+                [ -n "$clean_p" ] || clean_p="Server"
+                NODE_TOKEN_NAME="${clean_p}-Node"
+                ;;
+        esac
     fi
 }
 
@@ -14067,7 +14334,7 @@ def create_manifest(staging_dir: Union[str, Path], output_path: Optional[Union[s
     created_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     data = {
         "format_version": "2.0",
-        "project_version": os.environ.get("SCRIPT_VERSION", "v9.5.0"),
+        "project_version": os.environ.get("SCRIPT_VERSION", "v9.6.0"),
         "created_at": created_iso,
         "db_path": os.environ.get("DB_PATH", "/etc/x-ui/x-ui.db"),
         "files": files_map,
@@ -15204,6 +15471,9 @@ EOF_HELP
     SUB_PORT="${SUB_PORT:-55443}"
     SUB_PATH="${SUB_PATH:-}"
     SUB_CLASH_PATH="${SUB_CLASH_PATH:-${SUB_PATH%/}/clash}"
+    if [ -n "${SERVER_PREFIX:-}" ] && [ "${SERVER_PREFIX,,}" = "auto" ]; then
+        SERVER_PREFIX="$(detect_server_location_prefix 2>/dev/null || echo "$PRIMARY_DOMAIN")"
+    fi
     SERVER_PREFIX="${SERVER_PREFIX:-$PRIMARY_DOMAIN}"
     ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
     ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
@@ -15724,6 +15994,16 @@ admin_pass = os.environ.get("ADMIN_PASSWORD", "").strip()
 server_prefix = os.environ.get("SERVER_PREFIX", "").strip()
 if server_prefix.lower() in ("-", "none", "off", "no"):
     server_prefix = ""
+elif server_prefix.lower() == "auto":
+    _cache_p = "/run/setup_mask_server_prefix" if os.path.isdir("/run") else "/tmp/setup_mask_server_prefix"
+    _resolved = ""
+    try:
+        if os.path.exists(_cache_p):
+            with open(_cache_p, "r", encoding="utf-8") as _f:
+                _resolved = _f.read().strip()
+    except Exception:
+        pass
+    server_prefix = _resolved if _resolved else "Server"
 
 def make_remark(method):
     if server_prefix:
@@ -18821,22 +19101,19 @@ install_step_adguard() {
             rm -rf "$agh_tmp"
         fi
 
-        # 3. Генерация bcrypt-хэша пароля через htpasswd
-        which htpasswd >/dev/null 2>&1 || apt-get install -y -q apache2-utils >/dev/null 2>&1
-        agh_pass_hash=""
-        if command -v htpasswd >/dev/null 2>&1; then
-            agh_pass_hash=$(htpasswd -b -n -B -C 10 "" "$AGH_PASS" 2>/dev/null | tr -d '\n' | cut -d: -f2)
-        fi
-        if [ -z "$agh_pass_hash" ]; then
-            agh_pass_hash=$(python3 -c "
+        # 3. Генерация bcrypt-хэша пароля через Python3 (без сторонних пакетов Apache)
+        agh_pass_hash=$(python3 -c "
 import sys
 try:
     import bcrypt
-    print(bcrypt.hashpw(sys.argv[1].encode(), bcrypt.gensalt(10)).decode())
+    print(bcrypt.hashpw(sys.argv[1].encode('utf-8'), bcrypt.gensalt(10)).decode('utf-8'))
 except Exception:
     pass
 " "$AGH_PASS" 2>/dev/null || true)
+        if [ -z "$agh_pass_hash" ] && command -v htpasswd >/dev/null 2>&1; then
+            agh_pass_hash=$(htpasswd -b -n -B -C 10 "" "$AGH_PASS" 2>/dev/null | tr -d '\n' | cut -d: -f2)
         fi
+        [ -n "$agh_pass_hash" ] || die "Не удалось сгенерировать bcrypt-хэш пароля для AdGuard Home."
 
         # 4. Создание конфигурации AdGuardHome.yaml
         mkdir -p /opt/AdGuardHome
@@ -20421,6 +20698,11 @@ EOF_REALITY_SCANNER
             ok "Хост подключения AmneziaWG (Endpoint): $AWG_SERVER_HOST"
         fi
 
+        if [ -n "${SERVER_PREFIX:-}" ] && [ "${SERVER_PREFIX,,}" = "auto" ]; then
+            local detected_pref
+            detected_pref="$(detect_server_location_prefix 2>/dev/null || echo "")"
+            SERVER_PREFIX="${detected_pref:-Server}"
+        fi
         SERVER_PREFIX="${SERVER_PREFIX:-$(hostname -s 2>/dev/null || echo "Server")}"
         [[ "$SERVER_PREFIX" =~ ^(localhost|ubuntu|debian|centos|vps.*)$ ]] && SERVER_PREFIX="Server"
 
@@ -20722,10 +21004,14 @@ EOF_REALITY_SCANNER
             PRIMARY_DOMAIN=""
         done
 
-        local def_srv="${SERVER_PREFIX:-$(hostname -s 2>/dev/null || echo "Server")}"
-        [[ "$def_srv" =~ ^(localhost|ubuntu|debian|centos|vps.*)$ ]] && def_srv="Server"
-        prompt_default "  Префикс названия сервера для клиентов (например: NL, Frankfurt, MyServer)" "$def_srv" SERVER_PREFIX || return $?
-        SERVER_PREFIX="${SERVER_PREFIX:-Server}"
+        local def_srv="${SERVER_PREFIX:-}"
+        if [[ -z "$def_srv" || "${def_srv,,}" == "auto" || "$def_srv" =~ ^(Server|localhost|ubuntu|debian|centos|vps.*)$ ]]; then
+            local detected_pref
+            detected_pref="$(detect_server_location_prefix 2>/dev/null || echo "")"
+            def_srv="${detected_pref:-Server}"
+        fi
+        prompt_default "  Префикс названия сервера для клиентов (например: 🇳🇱 NL-AMS, Frankfurt, MyServer)" "$def_srv" SERVER_PREFIX || return $?
+        SERVER_PREFIX="${SERVER_PREFIX:-$def_srv}"
 
         if [[ ! "$PRIMARY_DOMAIN" =~ ^www\. ]]; then
             [ "${SHOW_TIPS:-y}" = "y" ] && echo -e "  ${DIM}• Рекомендуется выпустить сертификат и для www.$PRIMARY_DOMAIN для защиты от ошибок SSL.${NC}"
@@ -22217,9 +22503,12 @@ if is_true "${ENABLE_WEB_STACK:-y}"; then
     if [ -n "$WAN_IP" ]; then
         valid_domains=()
         for dom in "${ALL_DOMAINS[@]}"; do
-            resolved_ip=$(dig +short "$dom" @1.1.1.1 2>/dev/null | tail -n1 || echo "")
+            resolved_ip=$(getent ahosts "$dom" 2>/dev/null | awk '{print $1}' | head -n1 || echo "")
             if [ -z "$resolved_ip" ]; then
-                resolved_ip=$(getent ahosts "$dom" 2>/dev/null | awk '{print $1}' | head -n1 || echo "")
+                resolved_ip=$(python3 -c "import socket; print(socket.gethostbyname('$dom'))" 2>/dev/null || echo "")
+            fi
+            if [ -z "$resolved_ip" ] && command -v dig >/dev/null 2>&1; then
+                resolved_ip=$(dig +short "$dom" @1.1.1.1 2>/dev/null | tail -n1 || echo "")
             fi
 
             local_dns_ok=0

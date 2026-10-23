@@ -134,7 +134,7 @@ run_uninstall() {
     local services_to_stop=(
         "x-ui" "xray-geo-update.timer" "xray-geo-update.service"
         "awg-quick@awg0" "sing-box-masque" "shadow-tls" "wstunnel"
-        "dnstt" "caddy-naive" "zapret"
+        "dnstt" "caddy-naive" "zapret" "zapret-server" "mita" "mieru"
     )
     [ "$agh_preexisted" -eq 0 ] && services_to_stop+=("AdGuardHome")
     [ "$fail2ban_preexisted" -eq 0 ] && services_to_stop+=("fail2ban")
@@ -146,6 +146,8 @@ run_uninstall() {
             systemctl disable "$svc" 2>/dev/null || true
         fi
     done
+    pkill -9 -f "mita" 2>/dev/null || true
+    pkill -9 -f "nfqws" 2>/dev/null || true
     ok "Службы остановлены и отключены."
 
     log "Шаг 2/8: Удаление созданных systemd units и cron-задач..."
@@ -159,7 +161,9 @@ run_uninstall() {
         "${target_root}/etc/systemd/system/dnstt.service"
         "${target_root}/etc/systemd/system/caddy-naive.service"
         "${target_root}/etc/systemd/system/mita.service"
+        "${target_root}/etc/systemd/system/mieru.service"
         "${target_root}/etc/systemd/system/zapret.service"
+        "${target_root}/etc/systemd/system/zapret-server.service"
         "${target_root}/etc/systemd/system/nginx.service.d/override.conf"
     )
     [ "$agh_preexisted" -eq 0 ] && units_to_remove+=("${target_root}/etc/systemd/system/AdGuardHome.service")
@@ -369,11 +373,15 @@ run_uninstall() {
             mkdir -p "$tmp_extract/ssh_root"
             tar --force-local -xzf "$ssh_tar" -C "$tmp_extract/ssh_root" 2>/dev/null || true
 
-            # Проверка синтаксиса sshd перед применением
+            # Проверка синтаксиса sshd перед применением (Anti-Lockout)
             local sshd_valid=1
             if command -v sshd >/dev/null 2>&1 && [ -f "$tmp_extract/ssh_root/ssh/sshd_config" ]; then
-                if ! sshd -t -f "$tmp_extract/ssh_root/ssh/sshd_config" 2>/dev/null; then
-                    sshd_valid=0
+                # sshd -t требует прав root для чтения системных host-ключей. При запуске не под root (CI runner)
+                # системный sshd дает ложный отказ, поэтому проверяем только под root либо при мок-бинарнике
+                if [ "$(id -u)" -eq 0 ] || command -v sshd | grep -qv '/usr/sbin/sshd'; then
+                    if ! sshd -t -f "$tmp_extract/ssh_root/ssh/sshd_config" 2>/dev/null; then
+                        sshd_valid=0
+                    fi
                 fi
             fi
 

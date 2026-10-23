@@ -224,6 +224,9 @@ reconstruct_arrays_from_vars() {
     RAW_XHTTP_STREAM_PATH="${RAW_XHTTP_STREAM_PATH%/}"
     XHTTP_STREAM_PATH="/${RAW_XHTTP_STREAM_PATH}/"
 
+    if [ -n "${SERVER_PREFIX:-}" ] && [ "${SERVER_PREFIX,,}" = "auto" ]; then
+        SERVER_PREFIX="$(detect_server_location_prefix 2>/dev/null || echo "Server")"
+    fi
     SERVER_PREFIX="${SERVER_PREFIX:-Server}"
     SUB_TITLE="${SUB_TITLE:-$SERVER_PREFIX}"
     ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
@@ -502,6 +505,10 @@ save_session_state() {
     _save_xhttp_path="${_save_xhttp_path%/}"
     if [ -z "$_save_xhttp_path" ] || [ "$_save_xhttp_path" = "Stream-One-Path" ] || [[ "$_save_xhttp_path" == vless-* ]]; then
         _save_xhttp_path="$(head /dev/urandom 2>/dev/null | tr -dc a-z0-9 | head -c 8 || echo "xh${RANDOM}")"
+    fi
+
+    if [ -n "${SERVER_PREFIX:-}" ] && [ "${SERVER_PREFIX,,}" = "auto" ]; then
+        SERVER_PREFIX="$(detect_server_location_prefix 2>/dev/null || echo "Server")"
     fi
 
     local save_tmp

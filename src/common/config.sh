@@ -155,3 +155,107 @@ resolve_ssl_cert_paths() {
     declare -g "$key_var=$base_dir/$domain/privkey.pem" 2>/dev/null || true
     return 0
 }
+
+detect_server_location_prefix() {
+    local cache_file="/run/setup_mask_server_prefix"
+    if [ ! -d /run ] || ! touch /run/.test_w 2>/dev/null; then
+        cache_file="/tmp/setup_mask_server_prefix"
+    else
+        rm -f /run/.test_w 2>/dev/null || true
+    fi
+
+    if [ -f "$cache_file" ]; then
+        local cached
+        cached="$(cat "$cache_file" 2>/dev/null | tr -d '\r\n')"
+        if [ -n "$cached" ]; then
+            printf '%s\n' "$cached"
+            return 0
+        fi
+    fi
+
+    local py_cmd="${PYTHON_CMD:-python3}"
+    command -v "$py_cmd" >/dev/null 2>&1 || py_cmd="python"
+
+    local detected=""
+    if command -v "$py_cmd" >/dev/null 2>&1; then
+        detected=$("$py_cmd" - << 'EOF_GEO_PY' 2>/dev/null || true
+import json, re, sys, urllib.request
+
+def country_to_flag(code):
+    if not code or len(code) != 2:
+        return ''
+    return ''.join(chr(127397 + ord(c.upper())) for c in code if 'A' <= c.upper() <= 'Z')
+
+loc = ''
+colo = ''
+
+# 1. Cloudflare trace (native Anycast, directly returns loc=ISO and colo=IATA)
+try:
+    req = urllib.request.Request('https://1.1.1.1/cdn-cgi/trace', headers={'User-Agent': 'curl/7.68.0'})
+    with urllib.request.urlopen(req, timeout=2) as resp:
+        text = resp.read().decode('utf-8', errors='ignore')
+        m_loc = re.search(r'^loc=([A-Za-z]{2})$', text, re.MULTILINE)
+        m_colo = re.search(r'^colo=([A-Za-z]{3})$', text, re.MULTILINE)
+        if m_loc:
+            loc = m_loc.group(1).upper()
+        if m_colo:
+            colo = m_colo.group(1).upper()
+except Exception:
+    pass
+
+# 2. Fallback to ipinfo.io if Cloudflare trace is unreachable
+if not loc:
+    try:
+        req = urllib.request.Request('https://ipinfo.io/json', headers={'User-Agent': 'curl/7.68.0'})
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read().decode('utf-8', errors='ignore'))
+            loc = data.get('country', '').strip().upper()
+            city = data.get('city', '').strip()
+            clean_city = re.sub(r'[^a-zA-Z]', '', city)
+            if len(clean_city) >= 3 and not colo:
+                colo = clean_city[:3].upper()
+    except Exception:
+        pass
+
+flag = country_to_flag(loc)
+if loc and colo:
+    out = f"{flag} {loc}-{colo}".strip()
+elif loc:
+    out = f"{flag} {loc}".strip()
+else:
+    out = ""
+
+if out:
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+    print(out)
+EOF_GEO_PY
+)
+    fi
+
+    # Secondary fallback to curl + Cloudflare trace if python is unavailable
+    if [ -z "$detected" ] && command -v curl >/dev/null 2>&1; then
+        local trace_out
+        trace_out=$(curl -s4 --connect-timeout 2 --max-time 3 https://1.1.1.1/cdn-cgi/trace 2>/dev/null || true)
+        local loc_c colo_c
+        loc_c=$(printf '%s\n' "$trace_out" | awk -F= '$1=="loc"{print $2; exit}' | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')
+        colo_c=$(printf '%s\n' "$trace_out" | awk -F= '$1=="colo"{print $2; exit}' | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')
+        if [[ "$loc_c" =~ ^[A-Z]{2}$ ]]; then
+            if [ -n "$colo_c" ] && [[ "$colo_c" =~ ^[A-Z]{3}$ ]]; then
+                detected="$loc_c-$colo_c"
+            else
+                detected="$loc_c"
+            fi
+        fi
+    fi
+
+    if [ -n "$detected" ]; then
+        printf '%s\n' "$detected" > "$cache_file" 2>/dev/null || true
+        printf '%s\n' "$detected"
+        return 0
+    fi
+    return 1
+}
+

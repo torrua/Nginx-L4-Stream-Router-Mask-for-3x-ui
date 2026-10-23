@@ -136,6 +136,8 @@ AWG_DIR="\${AWG_DIR:-/root/awg}"
 PYTHON_BIN="\$(command -v python3 2>/dev/null || echo /usr/bin/python3)"
 [ -n "${awg_host}" ] && export SERVER_PUBLIC_HOST="\${SERVER_PUBLIC_HOST:-${awg_host}}"
 [ -n "${awg_port}" ] && export SERVER_PORT="\${SERVER_PORT:-${awg_port}}"
+[ -n "${SUB_TITLE:-}" ] && export SUB_TITLE="\${SUB_TITLE:-${SUB_TITLE}}"
+[ -n "${SERVER_PREFIX:-}" ] && export SERVER_PREFIX="\${SERVER_PREFIX:-${SERVER_PREFIX}}"
 exec "\$PYTHON_BIN" "\$AWG_DIR/manage_clients.py" "\$@"
 EOF_AWG_SH
     chmod 755 "$awg_dir/manage-clients.sh"

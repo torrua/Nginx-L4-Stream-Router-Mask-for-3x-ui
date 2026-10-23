@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  UNINSTALL ENTRYPOINT (v9.5.0)
+#  UNINSTALL ENTRYPOINT (v9.6.0)
 # ==============================================================================
 #  Standalone tool to revert server to initial state using initial snapshot.
 # ==============================================================================
@@ -334,9 +334,12 @@ create_initial_state_snapshot() {
     # 10. Формирование манифеста
     local ts
     ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%d %H:%M:%S")"
-    local os_id os_codename k_rel
-    os_id="$(lsb_release -is 2>/dev/null | tr '[:upper:]' '[:lower:]' || echo "linux")"
-    os_codename="$(lsb_release -cs 2>/dev/null || echo "generic")"
+    local os_id="${ID:-linux}" os_codename="${VERSION_CODENAME:-${UBUNTU_CODENAME:-generic}}" k_rel
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        os_id="${ID:-linux}"
+        os_codename="${VERSION_CODENAME:-${UBUNTU_CODENAME:-generic}}"
+    fi
     k_rel="$(uname -r 2>/dev/null || echo "unknown")"
 
     cat << EOF > "$SNAPSHOT_MANIFEST"
@@ -535,9 +538,12 @@ create_initial_state_snapshot() {
     # 10. Формирование манифеста
     local ts
     ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%d %H:%M:%S")"
-    local os_id os_codename k_rel
-    os_id="$(lsb_release -is 2>/dev/null | tr '[:upper:]' '[:lower:]' || echo "linux")"
-    os_codename="$(lsb_release -cs 2>/dev/null || echo "generic")"
+    local os_id="${ID:-linux}" os_codename="${VERSION_CODENAME:-${UBUNTU_CODENAME:-generic}}" k_rel
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        os_id="${ID:-linux}"
+        os_codename="${VERSION_CODENAME:-${UBUNTU_CODENAME:-generic}}"
+    fi
     k_rel="$(uname -r 2>/dev/null || echo "unknown")"
 
     cat << EOF > "$SNAPSHOT_MANIFEST"
@@ -699,7 +705,7 @@ run_uninstall() {
     local services_to_stop=(
         "x-ui" "xray-geo-update.timer" "xray-geo-update.service"
         "awg-quick@awg0" "sing-box-masque" "shadow-tls" "wstunnel"
-        "dnstt" "caddy-naive" "zapret"
+        "dnstt" "caddy-naive" "zapret" "zapret-server" "mita" "mieru"
     )
     [ "$agh_preexisted" -eq 0 ] && services_to_stop+=("AdGuardHome")
     [ "$fail2ban_preexisted" -eq 0 ] && services_to_stop+=("fail2ban")
@@ -711,6 +717,8 @@ run_uninstall() {
             systemctl disable "$svc" 2>/dev/null || true
         fi
     done
+    pkill -9 -f "mita" 2>/dev/null || true
+    pkill -9 -f "nfqws" 2>/dev/null || true
     ok "Службы остановлены и отключены."
 
     log "Шаг 2/8: Удаление созданных systemd units и cron-задач..."
@@ -724,7 +732,9 @@ run_uninstall() {
         "${target_root}/etc/systemd/system/dnstt.service"
         "${target_root}/etc/systemd/system/caddy-naive.service"
         "${target_root}/etc/systemd/system/mita.service"
+        "${target_root}/etc/systemd/system/mieru.service"
         "${target_root}/etc/systemd/system/zapret.service"
+        "${target_root}/etc/systemd/system/zapret-server.service"
         "${target_root}/etc/systemd/system/nginx.service.d/override.conf"
     )
     [ "$agh_preexisted" -eq 0 ] && units_to_remove+=("${target_root}/etc/systemd/system/AdGuardHome.service")
@@ -934,11 +944,15 @@ run_uninstall() {
             mkdir -p "$tmp_extract/ssh_root"
             tar --force-local -xzf "$ssh_tar" -C "$tmp_extract/ssh_root" 2>/dev/null || true
 
-            # Проверка синтаксиса sshd перед применением
+            # Проверка синтаксиса sshd перед применением (Anti-Lockout)
             local sshd_valid=1
             if command -v sshd >/dev/null 2>&1 && [ -f "$tmp_extract/ssh_root/ssh/sshd_config" ]; then
-                if ! sshd -t -f "$tmp_extract/ssh_root/ssh/sshd_config" 2>/dev/null; then
-                    sshd_valid=0
+                # sshd -t требует прав root для чтения системных host-ключей. При запуске не под root (CI runner)
+                # системный sshd дает ложный отказ, поэтому проверяем только под root либо при мок-бинарнике
+                if [ "$(id -u)" -eq 0 ] || command -v sshd | grep -qv '/usr/sbin/sshd'; then
+                    if ! sshd -t -f "$tmp_extract/ssh_root/ssh/sshd_config" 2>/dev/null; then
+                        sshd_valid=0
+                    fi
                 fi
             fi
 
@@ -1234,7 +1248,7 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         -v|--version)
-            echo "uninstall.sh (Nginx L4 Stream Router Mask for 3X-UI) v9.5.0"
+            echo "uninstall.sh (Nginx L4 Stream Router Mask for 3X-UI) v9.6.0"
             exit 0
             ;;
         -h|--help)

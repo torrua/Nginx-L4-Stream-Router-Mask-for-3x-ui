@@ -162,7 +162,7 @@ record_step_completed() {
 
 checkpoint_artifact_valid() {
     case "$1" in
-        packages) command -v curl >/dev/null && command -v socat >/dev/null ;;
+        packages) command -v curl >/dev/null && command -v openssl >/dev/null ;;
         kernel) sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null | grep -qx bbr ;;
         nginx) command -v nginx >/dev/null ;;
         certificates)

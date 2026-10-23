@@ -8,7 +8,7 @@ install_certbot_package() {
 
     # 2. Приоритет: Нативный легкий certbot из официального apt репозитория
     apt-get update -q -y >/dev/null 2>&1 || true
-    if apt-get install -y -q certbot python3-certbot-nginx; then
+    if apt-get install -y -q certbot; then
         if command -v certbot >/dev/null 2>&1; then
             return 0
         fi

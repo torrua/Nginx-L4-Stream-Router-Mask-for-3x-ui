@@ -164,6 +164,9 @@ EOF_HELP
     SUB_PORT="${SUB_PORT:-55443}"
     SUB_PATH="${SUB_PATH:-}"
     SUB_CLASH_PATH="${SUB_CLASH_PATH:-${SUB_PATH%/}/clash}"
+    if [ -n "${SERVER_PREFIX:-}" ] && [ "${SERVER_PREFIX,,}" = "auto" ]; then
+        SERVER_PREFIX="$(detect_server_location_prefix 2>/dev/null || echo "$PRIMARY_DOMAIN")"
+    fi
     SERVER_PREFIX="${SERVER_PREFIX:-$PRIMARY_DOMAIN}"
     ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
     ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"

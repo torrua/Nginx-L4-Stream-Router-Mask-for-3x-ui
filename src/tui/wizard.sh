@@ -376,6 +376,11 @@ EOF_REALITY_SCANNER
             ok "Хост подключения AmneziaWG (Endpoint): $AWG_SERVER_HOST"
         fi
 
+        if [ -n "${SERVER_PREFIX:-}" ] && [ "${SERVER_PREFIX,,}" = "auto" ]; then
+            local detected_pref
+            detected_pref="$(detect_server_location_prefix 2>/dev/null || echo "")"
+            SERVER_PREFIX="${detected_pref:-Server}"
+        fi
         SERVER_PREFIX="${SERVER_PREFIX:-$(hostname -s 2>/dev/null || echo "Server")}"
         [[ "$SERVER_PREFIX" =~ ^(localhost|ubuntu|debian|centos|vps.*)$ ]] && SERVER_PREFIX="Server"
 
@@ -677,10 +682,14 @@ EOF_REALITY_SCANNER
             PRIMARY_DOMAIN=""
         done
 
-        local def_srv="${SERVER_PREFIX:-$(hostname -s 2>/dev/null || echo "Server")}"
-        [[ "$def_srv" =~ ^(localhost|ubuntu|debian|centos|vps.*)$ ]] && def_srv="Server"
-        prompt_default "  Префикс названия сервера для клиентов (например: NL, Frankfurt, MyServer)" "$def_srv" SERVER_PREFIX || return $?
-        SERVER_PREFIX="${SERVER_PREFIX:-Server}"
+        local def_srv="${SERVER_PREFIX:-}"
+        if [[ -z "$def_srv" || "${def_srv,,}" == "auto" || "$def_srv" =~ ^(Server|localhost|ubuntu|debian|centos|vps.*)$ ]]; then
+            local detected_pref
+            detected_pref="$(detect_server_location_prefix 2>/dev/null || echo "")"
+            def_srv="${detected_pref:-Server}"
+        fi
+        prompt_default "  Префикс названия сервера для клиентов (например: 🇳🇱 NL-AMS, Frankfurt, MyServer)" "$def_srv" SERVER_PREFIX || return $?
+        SERVER_PREFIX="${SERVER_PREFIX:-$def_srv}"
 
         if [[ ! "$PRIMARY_DOMAIN" =~ ^www\. ]]; then
             [ "${SHOW_TIPS:-y}" = "y" ] && echo -e "  ${DIM}• Рекомендуется выпустить сертификат и для www.$PRIMARY_DOMAIN для защиты от ошибок SSL.${NC}"
@@ -2172,9 +2181,12 @@ if is_true "${ENABLE_WEB_STACK:-y}"; then
     if [ -n "$WAN_IP" ]; then
         valid_domains=()
         for dom in "${ALL_DOMAINS[@]}"; do
-            resolved_ip=$(dig +short "$dom" @1.1.1.1 2>/dev/null | tail -n1 || echo "")
+            resolved_ip=$(getent ahosts "$dom" 2>/dev/null | awk '{print $1}' | head -n1 || echo "")
             if [ -z "$resolved_ip" ]; then
-                resolved_ip=$(getent ahosts "$dom" 2>/dev/null | awk '{print $1}' | head -n1 || echo "")
+                resolved_ip=$(python3 -c "import socket; print(socket.gethostbyname('$dom'))" 2>/dev/null || echo "")
+            fi
+            if [ -z "$resolved_ip" ] && command -v dig >/dev/null 2>&1; then
+                resolved_ip=$(dig +short "$dom" @1.1.1.1 2>/dev/null | tail -n1 || echo "")
             fi
 
             local_dns_ok=0

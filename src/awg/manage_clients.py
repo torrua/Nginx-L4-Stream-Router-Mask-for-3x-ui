@@ -205,6 +205,26 @@ def get_conf_params():
             params[key] = m.group(1).strip()
     return params
 
+def load_env_defaults():
+    for p in ["/root/nginx_mask_setup/server-setup.env", "/root/server-setup.env", "/etc/server-setup.env"]:
+        try:
+            if safe_exists(p):
+                with open(p, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line.startswith("#") or "=" not in line:
+                            continue
+                        k, v = line.split("=", 1)
+                        k = k.strip()
+                        v = v.strip().strip("'\"")
+                        if k not in os.environ and v:
+                            os.environ[k] = v
+                break
+        except Exception:
+            pass
+
+load_env_defaults()
+
 CONF_PARAMS = get_conf_params()
 
 SERVER_HOST = os.environ.get("SERVER_PUBLIC_HOST", "") or os.environ.get("WAN_IP", "")
@@ -428,12 +448,12 @@ def parse_duration(duration_str: str) -> timedelta | datetime | None:
     return None
 
 def get_server_display_name() -> str:
-    srv_prefix = os.environ.get("SERVER_PREFIX", "").strip()
-    if srv_prefix and srv_prefix.lower() not in ("-", "none", "off", "no"):
-        return srv_prefix
     sub_title = os.environ.get("SUB_TITLE", "").strip()
-    if sub_title and sub_title.lower() not in ("-", "none", "off", "no"):
+    if sub_title and sub_title.lower() not in ("-", "none", "off", "no", "auto"):
         return sub_title
+    srv_prefix = os.environ.get("SERVER_PREFIX", "").strip()
+    if srv_prefix and srv_prefix.lower() not in ("-", "none", "off", "no", "auto"):
+        return srv_prefix
     if SERVER_HOST and SERVER_HOST not in ("127.0.0.1", "0.0.0.0", "localhost"):
         return SERVER_HOST
     return "Server"

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+from concurrent.futures import ThreadPoolExecutor
 import os
 import re
 import shutil
@@ -181,8 +182,17 @@ def find_bash_executable() -> Path | None:
     return None
 
 
+_LINT_CACHE: dict[int, list[str]] = {}
+
+
 def lint_output(target_name: str, content: str) -> list[str]:
     """Validate bash syntax and embedded Python blocks."""
+    # Strip initial comments so identical entrypoints share validation results
+    stripped_key = hash(re.sub(r"^(#[^\n]*\n)+", "", content))
+    if stripped_key in _LINT_CACHE:
+        cached_errs = _LINT_CACHE[stripped_key]
+        return [re.sub(r"^\[.*?\]", f"[{target_name}]", err) for err in cached_errs]
+
     errors: list[str] = []
 
     # 1. Embedded Python AST validation
@@ -210,6 +220,7 @@ def lint_output(target_name: str, content: str) -> list[str]:
         if proc.returncode != 0:
             errors.append(f"[{target_name}] bash -n error:\n{proc.stderr.strip()}")
 
+    _LINT_CACHE[stripped_key] = list(errors)
     return errors
 
 

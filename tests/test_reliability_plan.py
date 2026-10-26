@@ -572,48 +572,67 @@ audit_restore_archive "{archive_file.as_posix()}"
     def test_t05_get_manifest_component_data(self):
         """Test get_manifest_component_data resolves metadata from manifest and fallback."""
         components = ["shadow-tls", "wstunnel", "sing-box", "zapret", "AdGuardHome", "acme.sh"]
+        script_lines = ["source src/common/download.sh"]
         for comp in components:
             arch = "all" if comp in ("zapret", "acme.sh") else "x86_64"
-            script = f"""
-source src/common/download.sh
-get_manifest_component_data "{comp}" "{arch}"
-"""
-            res = self.run_bash(script)
-            self.assertEqual(res.returncode, 0, f"Component {comp} failed: {res.stderr}")
-            parts = res.stdout.strip().split("|")
-            self.assertEqual(len(parts), 4, f"Unexpected parts for {comp}: {res.stdout}")
+            script_lines.append(f'printf "%s|" "{comp}"; get_manifest_component_data "{comp}" "{arch}"')
+        for alias in ("amd64", "arm64"):
+            script_lines.append(f'printf "alias_%s|" "{alias}"; get_manifest_component_data "wstunnel" "{alias}"')
+        res = self.run_bash("\n".join(script_lines) + "\n")
+        self.assertEqual(res.returncode, 0, f"Batch manifest fetch failed: {res.stderr}")
+
+        results = {}
+        for line in res.stdout.strip().splitlines():
+            if not line:
+                continue
+            tag, *parts = line.split("|")
+            results[tag] = parts
+
+        for comp in components:
+            self.assertIn(comp, results, f"Missing output for {comp}")
+            parts = results[comp]
+            self.assertEqual(len(parts), 4, f"Unexpected parts for {comp}: {parts}")
             url, sha256_h, max_sz, ver = parts
             self.assertTrue(url.startswith("https://"), f"Invalid url for {comp}: {url}")
             self.assertEqual(len(sha256_h), 64, f"Invalid sha256 for {comp}: {sha256_h}")
             self.assertGreater(int(max_sz), 0, f"Invalid size for {comp}: {max_sz}")
             self.assertTrue(bool(ver), f"Empty version for {comp}")
 
-        # Test arch alias normalization (amd64 -> x86_64, arm64 -> aarch64)
-        for alias, expected in [("amd64", "x86_64"), ("arm64", "aarch64")]:
-            script = f"""
-source src/common/download.sh
-get_manifest_component_data "wstunnel" "{alias}"
-"""
-            res = self.run_bash(script)
-            self.assertEqual(res.returncode, 0, f"Alias {alias} failed: {res.stderr}")
-            self.assertIn("wstunnel", res.stdout)
+        for alias in ("amd64", "arm64"):
+            tag = f"alias_{alias}"
+            self.assertIn(tag, results, f"Missing output for {tag}")
+            self.assertIn("wstunnel", "|".join(results[tag]))
 
     def test_t05_manifest_fallback_parity(self):
         """Test that FALLBACK embedded in download.sh matches components-manifest.json."""
         manifest_path = ROOT / "components-manifest.json"
         data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        script_lines = [
+            "source src/common/download.sh",
+            'export MANIFEST_FILE="/nonexistent/path/manifest.json"',
+        ]
+        expected_items = []
         for comp_name, comp_info in data["components"].items():
             artifacts = comp_info.get("artifacts", {})
             for arch, art in artifacts.items():
-                script = f"""
-source src/common/download.sh
-MANIFEST_FILE="/nonexistent/path/manifest.json" get_manifest_component_data "{comp_name}" "{arch}"
-"""
-                res = self.run_bash(script)
-                self.assertEqual(res.returncode, 0, f"Fallback failed for {comp_name}/{arch}: {res.stderr}")
-                parts = res.stdout.strip().split("|")
-                url, sha256_h, max_sz, ver = parts
-                self.assertEqual(sha256_h, art["sha256"], f"Fallback sha256 mismatch for {comp_name}/{arch}")
+                script_lines.append(f'printf "%s|%s|" "{comp_name}" "{arch}"; get_manifest_component_data "{comp_name}" "{arch}"')
+                expected_items.append((comp_name, arch, art["sha256"]))
+
+        res = self.run_bash("\n".join(script_lines) + "\n")
+        self.assertEqual(res.returncode, 0, f"Fallback batch failed: {res.stderr}")
+
+        results = {}
+        for line in res.stdout.strip().splitlines():
+            if not line:
+                continue
+            parts = line.split("|")
+            if len(parts) >= 6:
+                c_name, c_arch, c_url, c_sha, c_sz, c_ver = parts[:6]
+                results[(c_name, c_arch)] = c_sha
+
+        for comp_name, arch, expected_sha in expected_items:
+            self.assertIn((comp_name, arch), results, f"Missing result for {comp_name}/{arch}")
+            self.assertEqual(results[(comp_name, arch)], expected_sha, f"Fallback sha256 mismatch for {comp_name}/{arch}")
 
 
 if __name__ == "__main__":

@@ -14,6 +14,7 @@ set -euo pipefail
 
 # @include "common/lock.sh"
 # @include "common/download.sh"
+# @include "system/optimize.sh"
 
 DEFAULT_SSH_PORT=22
 MIN_SSH_PORT=22
@@ -37,6 +38,9 @@ if [ -f /etc/os-release ]; then
     OS_ID="${ID:-}"
     OS_LIKE="${ID_LIKE:-}"
 fi
+
+# Проверка и безопасное снятие cloud-init ограничений прямого входа root
+unlock_cloud_init_root
 
 #####################################
 # ФУНКЦИИ ВАЛИДАЦИИ И ПОДДЕРЖКИ
@@ -217,6 +221,11 @@ if prompt_yes_no "Выполнить полное обновление сист�
     echo ""
 else
     echo "Пропуск обновления пакетов."
+fi
+
+# Оптимизация дискового пространства, оперативной памяти (zRAM) и фоновых служб
+if prompt_yes_no "Выполнить глубокую оптимизацию VPS (очистка snapd/cloud-балласта, адаптивный zRAM, лимиты логов)?"; then
+    run_full_vps_optimization
 fi
 
 #####################################
@@ -594,7 +603,10 @@ if [[ "${ENABLE_ZAPRET:-n}" == "y" || "${ENABLE_ZAPRET:-0}" == "1" ]] || prompt_
         mkdir -p "$z_tmp"
         if download_manifest_component "zapret" "$z_tmp/zapret.tar.gz" "all"; then
             tar -zxf "$z_tmp/zapret.tar.gz" -C "$z_tmp" --strip-components=1 2>/dev/null || true
-            if [ -f "$z_tmp/binaries/${z_arch}/nfqws" ]; then
+            if [ -f "$z_tmp/binaries/linux-${z_arch}/nfqws" ]; then
+                cp "$z_tmp/binaries/linux-${z_arch}/nfqws" /usr/local/bin/nfqws
+                chmod +x /usr/local/bin/nfqws
+            elif [ -f "$z_tmp/binaries/${z_arch}/nfqws" ]; then
                 cp "$z_tmp/binaries/${z_arch}/nfqws" /usr/local/bin/nfqws
                 chmod +x /usr/local/bin/nfqws
             elif [ -n "$(find "$z_tmp" -name nfqws -type f 2>/dev/null)" ]; then
@@ -689,6 +701,8 @@ fi
 #####################################
 # ФИНАЛ
 #####################################
+setup_clean_motd
+
 echo
 echo "======================================"
 echo "✔ НАСТРОЙКА VPS ЗАВЕРШЕНА УСПЕШНО"

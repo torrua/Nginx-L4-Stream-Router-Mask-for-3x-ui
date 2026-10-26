@@ -22,84 +22,84 @@
       }
     },
     "wstunnel": {
-      "version": "10.1.7",
+      "version": "11.1.0",
       "status": "stable",
       "license": "BSD-3-Clause",
       "upstream": "https://github.com/erebe/wstunnel",
       "max_size_bytes": 26214400,
       "artifacts": {
         "x86_64": {
-          "url": "https://github.com/erebe/wstunnel/releases/download/v10.1.7/wstunnel_10.1.7_linux_amd64.tar.gz",
-          "sha256": "79c5beda18655d8ededd507995d9aebd524c35ddc7abfd0aa733b98b3fb895a4"
+          "url": "https://github.com/erebe/wstunnel/releases/download/v11.1.0/wstunnel_11.1.0_linux_amd64.tar.gz",
+          "sha256": "512edf4e7bb64fc133522220123514868fae75b5bae4124b53e396787276aa23"
         },
         "aarch64": {
-          "url": "https://github.com/erebe/wstunnel/releases/download/v10.1.7/wstunnel_10.1.7_linux_arm64.tar.gz",
-          "sha256": "0839c8ba6c812b60d8b3f57176a3c52268f1438daa814f985d492db6c5b41c8a"
+          "url": "https://github.com/erebe/wstunnel/releases/download/v11.1.0/wstunnel_11.1.0_linux_arm64.tar.gz",
+          "sha256": "148895f957a68be39e2b65d28c5f2065b9c58c4a0cfd48c560b2b3267f398464"
         }
       }
     },
     "sing-box": {
-      "version": "1.11.4",
+      "version": "1.14.4",
       "status": "stable",
       "license": "GPL-3.0-or-later",
       "upstream": "https://github.com/SagerNet/sing-box",
       "max_size_bytes": 52428800,
       "artifacts": {
         "x86_64": {
-          "url": "https://github.com/SagerNet/sing-box/releases/download/v1.11.4/sing-box-1.11.4-linux-amd64.tar.gz",
-          "sha256": "0bb762ef286b36c2016d9107fc1f089be7a75f6d579b33f067d31e696c05927e"
+          "url": "https://github.com/SagerNet/sing-box/releases/download/v1.14.4/sing-box-1.14.4-linux-amd64.tar.gz",
+          "sha256": "699a1b510aa4396b2176d32d1181920399ebf1e267835da6f3b598d0f7c24968"
         },
         "aarch64": {
-          "url": "https://github.com/SagerNet/sing-box/releases/download/v1.11.4/sing-box-1.11.4-linux-arm64.tar.gz",
-          "sha256": "4e687359db42b6a28ef93f9cd2cb9549c4b0079cc7e49bc5f6ecbf98257a2507"
+          "url": "https://github.com/SagerNet/sing-box/releases/download/v1.14.4/sing-box-1.14.4-linux-arm64.tar.gz",
+          "sha256": "436441f76ee2f7fe21b5b2d426d3cb261a480455a704865789ad533e4273ec26"
         }
       },
       "experimental": {
-        "version": "1.15.0-alpha.12",
+        "version": "1.15.0-alpha.13",
         "status": "alpha",
         "description": "Next-gen MASQUE QUIC protocol support"
       }
     },
     "zapret": {
-      "version": "70",
+      "version": "72.13",
       "status": "stable",
       "license": "MIT",
       "upstream": "https://github.com/bol-van/zapret",
       "max_size_bytes": 20971520,
       "artifacts": {
         "all": {
-          "url": "https://github.com/bol-van/zapret/releases/download/v70/zapret-v70.tar.gz",
-          "sha256": "142c38a0aa17839fa33c675a740d80aff9302817a71f11212274fbedf9f03015"
+          "url": "https://github.com/bol-van/zapret/releases/download/v72.13/zapret-v72.13.tar.gz",
+          "sha256": "25c74e6c5f48963fa244c2955e76694a07c39447245a0457e2efdc74b3317e68"
         }
       }
     },
     "AdGuardHome": {
-      "version": "0.107.56",
+      "version": "0.107.79",
       "status": "stable",
       "license": "GPL-3.0",
       "upstream": "https://github.com/AdguardTeam/AdGuardHome",
       "max_size_bytes": 41943040,
       "artifacts": {
         "x86_64": {
-          "url": "https://github.com/AdguardTeam/AdGuardHome/releases/download/v0.107.56/AdGuardHome_linux_amd64.tar.gz",
-          "sha256": "044a8fa378de2ee90c9f290efba18d67dddba650c239c577dc138795e40b5832"
+          "url": "https://github.com/AdguardTeam/AdGuardHome/releases/download/v0.107.79/AdGuardHome_linux_amd64.tar.gz",
+          "sha256": "c48f4a43000665484c5ec28177de11a004759b620dae8f77b2aabefc9ef3687f"
         },
         "aarch64": {
-          "url": "https://github.com/AdguardTeam/AdGuardHome/releases/download/v0.107.56/AdGuardHome_linux_arm64.tar.gz",
-          "sha256": "2718ad45db96769e2e24272847b140dbaa6b0c873af02cec14ebe27a1c434712"
+          "url": "https://github.com/AdguardTeam/AdGuardHome/releases/download/v0.107.79/AdGuardHome_linux_arm64.tar.gz",
+          "sha256": "3f7893c18e8aaadc456d0452839190561c306ca95175a2254958be80a769c1ae"
         }
       }
     },
     "acme.sh": {
-      "version": "3.0.8",
+      "version": "3.1.6",
       "status": "stable",
       "license": "GPL-3.0",
       "upstream": "https://github.com/acmesh-official/acme.sh",
       "max_size_bytes": 2097152,
       "artifacts": {
         "all": {
-          "url": "https://github.com/acmesh-official/acme.sh/archive/refs/tags/3.0.8.tar.gz",
-          "sha256": "51f4f9580e91b038a7dd0207631bf9b1be0aab6a0094d0a3cbb4b21cd86f71df"
+          "url": "https://github.com/acmesh-official/acme.sh/archive/refs/tags/3.1.6.tar.gz",
+          "sha256": "0d3f9000ac44a6331314742a88c475f79134e24fc991997883652adc59efc486"
         }
       }
     }

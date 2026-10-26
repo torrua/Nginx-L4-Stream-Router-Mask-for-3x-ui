@@ -46,6 +46,10 @@ FORBIDDEN_CONTENT_PATTERNS = [
     (re.compile(r"\b193\.180\.208\.\d{1,3}\b"), "Cluster DK Node IP Leak"),
     (re.compile(r"\b143\.246\.43\.\d{1,3}\b"), "Cluster BG Node IP Leak"),
     (re.compile(r"\b93\.177\.101\.\d{1,3}\b"), "Cluster TR Server IP Leak"),
+    (re.compile(r"\b193\.234\.38\.\d{1,3}\b"), "Cluster NO Node IP Leak"),
+    (re.compile(r"\b37\.114\.41\.\d{1,3}\b"), "Cluster DE Node IP Leak"),
+    (re.compile(r"affordablebytes", re.IGNORECASE), "Provider Hostname Leak (affordablebytes)"),
+    (re.compile(r"noackhosting", re.IGNORECASE), "Provider Hostname Leak (noackhosting)"),
 ]
 
 # 3. Permitted Public IP Whitelist (DNS, Documentation, Anycast CDN)

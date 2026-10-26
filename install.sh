@@ -3,7 +3,7 @@
 #!/usr/bin/env bash
 #
 # ==============================================================================
-# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v9.6.2 Universal
+# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v9.6.3 Universal
 # Nginx L4 Stream + 3X-UI + Unix Sockets + Native proxy_http_version 2 + 3 Decoys
 # ==============================================================================
 # Архитектура:
@@ -29,7 +29,7 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="v9.6.2"
+SCRIPT_VERSION="v9.6.3"
 
 
 # Checkpoints use stable step IDs and input signatures, independent of UI numbering.
@@ -545,22 +545,22 @@ FALLBACK = {
         'aarch64': ('https://github.com/ihciah/shadow-tls/releases/download/v0.2.25/shadow-tls-aarch64-unknown-linux-musl', '3295476b37f549a68906519d3eaecb74bf3b6eaf9094cebb16ee84f0151373c6', 15728640, '0.2.25')
     },
     'wstunnel': {
-        'x86_64': ('https://github.com/erebe/wstunnel/releases/download/v10.1.7/wstunnel_10.1.7_linux_amd64.tar.gz', '79c5beda18655d8ededd507995d9aebd524c35ddc7abfd0aa733b98b3fb895a4', 26214400, '10.1.7'),
-        'aarch64': ('https://github.com/erebe/wstunnel/releases/download/v10.1.7/wstunnel_10.1.7_linux_arm64.tar.gz', '0839c8ba6c812b60d8b3f57176a3c52268f1438daa814f985d492db6c5b41c8a', 26214400, '10.1.7')
+        'x86_64': ('https://github.com/erebe/wstunnel/releases/download/v11.1.0/wstunnel_11.1.0_linux_amd64.tar.gz', '512edf4e7bb64fc133522220123514868fae75b5bae4124b53e396787276aa23', 26214400, '11.1.0'),
+        'aarch64': ('https://github.com/erebe/wstunnel/releases/download/v11.1.0/wstunnel_11.1.0_linux_arm64.tar.gz', '148895f957a68be39e2b65d28c5f2065b9c58c4a0cfd48c560b2b3267f398464', 26214400, '11.1.0')
     },
     'sing-box': {
-        'x86_64': ('https://github.com/SagerNet/sing-box/releases/download/v1.11.4/sing-box-1.11.4-linux-amd64.tar.gz', '0bb762ef286b36c2016d9107fc1f089be7a75f6d579b33f067d31e696c05927e', 52428800, '1.11.4'),
-        'aarch64': ('https://github.com/SagerNet/sing-box/releases/download/v1.11.4/sing-box-1.11.4-linux-arm64.tar.gz', '4e687359db42b6a28ef93f9cd2cb9549c4b0079cc7e49bc5f6ecbf98257a2507', 52428800, '1.11.4')
+        'x86_64': ('https://github.com/SagerNet/sing-box/releases/download/v1.14.4/sing-box-1.14.4-linux-amd64.tar.gz', '699a1b510aa4396b2176d32d1181920399ebf1e267835da6f3b598d0f7c24968', 52428800, '1.14.4'),
+        'aarch64': ('https://github.com/SagerNet/sing-box/releases/download/v1.14.4/sing-box-1.14.4-linux-arm64.tar.gz', '436441f76ee2f7fe21b5b2d426d3cb261a480455a704865789ad533e4273ec26', 52428800, '1.14.4')
     },
     'zapret': {
-        'all': ('https://github.com/bol-van/zapret/releases/download/v70/zapret-v70.tar.gz', '142c38a0aa17839fa33c675a740d80aff9302817a71f11212274fbedf9f03015', 20971520, '70')
+        'all': ('https://github.com/bol-van/zapret/releases/download/v72.13/zapret-v72.13.tar.gz', '25c74e6c5f48963fa244c2955e76694a07c39447245a0457e2efdc74b3317e68', 20971520, '72.13')
     },
     'AdGuardHome': {
-        'x86_64': ('https://github.com/AdguardTeam/AdGuardHome/releases/download/v0.107.56/AdGuardHome_linux_amd64.tar.gz', '044a8fa378de2ee90c9f290efba18d67dddba650c239c577dc138795e40b5832', 41943040, '0.107.56'),
-        'aarch64': ('https://github.com/AdguardTeam/AdGuardHome/releases/download/v0.107.56/AdGuardHome_linux_arm64.tar.gz', '2718ad45db96769e2e24272847b140dbaa6b0c873af02cec14ebe27a1c434712', 41943040, '0.107.56')
+        'x86_64': ('https://github.com/AdguardTeam/AdGuardHome/releases/download/v0.107.79/AdGuardHome_linux_amd64.tar.gz', 'c48f4a43000665484c5ec28177de11a004759b620dae8f77b2aabefc9ef3687f', 41943040, '0.107.79'),
+        'aarch64': ('https://github.com/AdguardTeam/AdGuardHome/releases/download/v0.107.79/AdGuardHome_linux_arm64.tar.gz', '3f7893c18e8aaadc456d0452839190561c306ca95175a2254958be80a769c1ae', 41943040, '0.107.79')
     },
     'acme.sh': {
-        'all': ('https://github.com/acmesh-official/acme.sh/archive/refs/tags/3.0.8.tar.gz', '51f4f9580e91b038a7dd0207631bf9b1be0aab6a0094d0a3cbb4b21cd86f71df', 2097152, '3.0.8')
+        'all': ('https://github.com/acmesh-official/acme.sh/archive/refs/tags/3.1.6.tar.gz', '0d3f9000ac44a6331314742a88c475f79134e24fc991997883652adc59efc486', 2097152, '3.1.6')
     }
 }
 
@@ -1027,7 +1027,7 @@ generate_config_template() {
     local target_file="${1:-server-setup.env.example}"
     cat << 'EOF_CONF' > "$target_file"
 # ==============================================================================
-# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v9.6.2 Universal)
+# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v9.6.3 Universal)
 # ==============================================================================
 # Данный файл позволяет выполнять полностью автоматическую установку:
 # ./setup.sh --config server-setup.env --non-interactive --force
@@ -11676,7 +11676,7 @@ setup_masque_service() {
     local bin_dir="${LOCAL_BIN_DIR:-/usr/local/bin}"
     [ -d "$bin_dir" ] || mkdir -p "$bin_dir" 2>/dev/null || true
 
-    local sb_ver="1.15.0-alpha.12"
+    local sb_ver="1.15.0-alpha.13"
     if [ -x "${bin_dir}/sing-box" ]; then
         local cur_sb_ver="$("${bin_dir}/sing-box" version 2>/dev/null | head -n1 || echo "")"
         if [[ "$cur_sb_ver" == *"1.11"* ]] || [[ "$cur_sb_ver" == *"1.12"* ]] || [[ "$cur_sb_ver" == *"1.13"* ]] || [[ "$cur_sb_ver" == *"1.14"* ]]; then
@@ -11956,7 +11956,7 @@ setup_naive_service() {
         local caddy_tmp="/tmp/caddy_naive_$$"
         mkdir -p "$caddy_tmp"
         local rel_ver="${SCRIPT_VERSION:-v9.1.0}"
-        [[ "$rel_ver" == "v9.6.2" ]] && rel_ver="v9.1.0"
+        [[ "$rel_ver" == "v9.6.3" ]] && rel_ver="v9.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/caddy-naive-linux-${caddy_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
@@ -12102,7 +12102,7 @@ setup_dnstt_service() {
         local dnstt_tmp="/tmp/dnstt_$$"
         mkdir -p "$dnstt_tmp"
         local rel_ver="${SCRIPT_VERSION:-v9.1.0}"
-        [[ "$rel_ver" == "v9.6.2" ]] && rel_ver="v9.1.0"
+        [[ "$rel_ver" == "v9.6.3" ]] && rel_ver="v9.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/dnstt-server-linux-${dnstt_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
@@ -12386,7 +12386,7 @@ setup_mieru_service() {
     fi
 
     if [ ! -x "$mita_bin" ]; then
-        local mita_ver="3.38.1"
+        local mita_ver="3.39.0"
         local mita_tmp="/tmp/mita_${mita_ver}_$$"
         mkdir -p "$mita_tmp"
         local dl_url="https://github.com/enfein/mieru/releases/download/v${mita_ver}/mita_${mita_ver}_linux_${mita_arch}.tar.gz"
@@ -16409,7 +16409,7 @@ def create_manifest(staging_dir: Union[str, Path], output_path: Optional[Union[s
     created_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     data = {
         "format_version": "2.0",
-        "project_version": os.environ.get("SCRIPT_VERSION", "v9.6.2"),
+        "project_version": os.environ.get("SCRIPT_VERSION", "v9.6.3"),
         "created_at": created_iso,
         "db_path": os.environ.get("DB_PATH", "/etc/x-ui/x-ui.db"),
         "files": files_map,

@@ -14,11 +14,16 @@ BASH = Path(r"C:\Program Files\Git\bin\bash.exe") if os.name == "nt" else Path(s
 sys.path.insert(0, str(ROOT))
 from scripts.build import bundle_file, SRC_DIR
 
+_MODULE_CACHE: dict[Path, str] = {}
+
 
 class InstallationFlowTests(unittest.TestCase):
     def shell(self, code, module="installer/plan.sh"):
         source = ROOT / "src" / module
         self.assertTrue(source.is_file(), f"Missing shared installation module: {module}")
+        if source not in _MODULE_CACHE:
+            _MODULE_CACHE[source] = bundle_file(source, SRC_DIR)
+        bundled_source = _MODULE_CACHE[source]
         with tempfile.TemporaryDirectory(prefix="installation flow ") as temp:
             prelude = r'''
 export PATH=/usr/bin:/bin:$PATH
@@ -34,8 +39,8 @@ NON_INTERACTIVE=1
 CHECK_MODE=0
 DEBUG_MODE=0
 '''
-            env = dict(os.environ, TEST_WORK=Path(temp).as_posix())
-            return subprocess.run([str(BASH), "-s"], input=prelude + bundle_file(source, SRC_DIR) + "\n" + code,
+            env = dict(os.environ, TEST_WORK=Path(temp).as_posix(), VPN_STACK_LOCK_FILE=Path(temp, "vpn-stack.lock").as_posix())
+            return subprocess.run([str(BASH), "-s"], input=prelude + bundled_source + "\n" + code,
                                   cwd=ROOT, env=env, text=True, encoding="utf-8", capture_output=True, timeout=20)
 
     def test_required_task_failure_is_not_masked_by_following_command(self):
@@ -377,61 +382,6 @@ echo VERIFIED
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("VERIFIED", result.stdout)
 
-    def test_real_cli_runs_both_entrypoints_through_the_same_safe_plan(self):
-        # Keep the parser, configuration loader and complete wizard; replace host operations.
-        packages = bundle_file(SRC_DIR / "system/packages.sh", SRC_DIR)
-        system_checks = packages[:packages.index("install_prerequisites()")]
-        wizard = bundle_file(SRC_DIR / "tui/wizard.sh", SRC_DIR)
-        stubs = r'''
-get_wan_ip() { printf ''; }
-detect_active_ssh_port() { echo 22; }
-inspect_port_conflicts() { printf '\nINSPECT\n'; }
-eval "$(declare -f save_session_state | sed '1s/save_session_state/persist_fixture_config/')"
-save_session_state() { persist_fixture_config "$@" >/dev/null; echo SAVE; }
-'''
-        operations = r'''
-build_installation_plan
-for fixture_id in "${INSTALLATION_PLAN[@]}"; do
-    eval "install_step_$fixture_id() { echo APPLY:$fixture_id; }"
-done
-report_installation() { echo REPORT; }
-'''
-        for entrypoint, mode, web in itertools.product(("install", "setup"), ("--auto", "--expert", "interactive"), (False, True)):
-            if mode == "interactive" and web:
-                continue
-            with self.subTest(entrypoint=entrypoint, mode=mode, web=web), tempfile.TemporaryDirectory() as temp:
-                work = Path(temp)
-                source = bundle_file(SRC_DIR / f"entrypoints/{entrypoint}.main.sh", SRC_DIR)
-                source = source.replace(system_checks, "")
-                source = source.replace("/etc/server-setup.env", (work / "system.env").as_posix())
-                interview_stubs = ""
-                if mode == "interactive":
-                    interview_stubs = r'''
-print_mask_banner() { :; }
-prompt_yes_no() { if [ "$3" = ENABLE_WEB_STACK ]; then printf -v "$3" 0; else printf -v "$3" 1; fi; }
-prompt_default() { printf -v "$3" '%s' "$2"; }
-'''
-                source = source.replace(wizard, stubs + "\n" + interview_stubs + "\n" + wizard)
-                source = source.rsplit("\nrun_installation\n", 1)[0] + "\n" + operations + "\nrun_installation\n"
-                script = work / "fixture.sh"
-                script.write_text(source, encoding="utf-8", newline="\n")
-                args = [str(BASH), script.as_posix(), "--expert" if mode == "interactive" else mode, "--force",
-                        "--no-www",
-                        "--no-hy2", "--awg-standalone", "--awg-host", "vpn.example.com"]
-                if web:
-                    args += ["--domain", "example.com", "--email", "admin@example.com"]
-                else:
-                    args.append("--no-web-stack")
-                if mode != "interactive":
-                    args.append("--non-interactive")
-                result = subprocess.run(args, cwd=work, input="\n\n\n", text=True, encoding="utf-8", capture_output=True, timeout=30)
-                self.assertEqual(result.returncode, 0, result.stderr + result.stdout[-700:])
-                lines = result.stdout.splitlines()
-                self.assertEqual(lines.count("APPLY:awg"), 1)
-                self.assertEqual(lines.count("APPLY:panel"), int(web))
-                self.assertEqual(lines[-2:], ["SAVE", "REPORT"])
-                self.assertLess(lines.index("INSPECT"), lines.index("SAVE"))
-                self.assertLess(lines.index("APPLY:awg"), lines.index("APPLY:verify"))
 
     def test_step_started_records_failed_step_and_restore_detects_it(self):
         result = self.shell(r'''

@@ -28,6 +28,7 @@ class TestSnapshotAndUninstall(unittest.TestCase):
         script = self.work / "test_snippet.sh"
         script.write_text(snippet, encoding="utf-8", newline="\n")
         run_env = os.environ.copy()
+        run_env["VPN_STACK_LOCK_FILE"] = (self.work / "vpn-stack.lock").as_posix()
         if env:
             run_env.update(env)
         return subprocess.run(

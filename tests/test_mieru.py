@@ -464,7 +464,8 @@ set -euo pipefail
 log(){ :; }; ok(){ :; }; warn(){ echo "WARN:$*"; }; die(){ echo "DIE:$*"; exit 1; };
 is_true(){ [[ "${1:-0}" == "1" || "${1,,}" == "y" || "${1,,}" == "true" ]]; }
 
-MOCK_ROOT="$(pwd)/mock_mieru_$$"
+MOCK_ROOT=$(mktemp -d 2>/dev/null || mktemp -d -t 'mieru')
+trap 'rm -rf "$MOCK_ROOT"' EXIT
 mkdir -p "$MOCK_ROOT/etc/mita" "$MOCK_ROOT/var/lib/mita" "$MOCK_ROOT/var/run/mita" "$MOCK_ROOT/etc/systemd/system" "$MOCK_ROOT/usr/local/bin"
 printf '#!/bin/sh\nexit 0\n' > "$MOCK_ROOT/usr/local/bin/mita"
 chmod +x "$MOCK_ROOT/usr/local/bin/mita"

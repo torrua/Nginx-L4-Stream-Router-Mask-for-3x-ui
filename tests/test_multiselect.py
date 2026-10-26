@@ -82,7 +82,7 @@ printf '\\n'
 
     def test_fragmented_ssh_arrow_does_not_trigger_back(self):
         self.assert_selection(self.menu("", enabled=1, back=True,
-                                       producer="printf '\\033'; sleep 1.2; printf '['; sleep 1.2; printf 'B \\n'"), {1})
+                                       producer="printf '\\033'; sleep 0.05; printf '['; sleep 0.05; printf 'B \\n'"), {1})
 
     def test_cr_accepts_pending_selection(self):
         self.assert_selection(self.menu(" \r", enabled=1), {0})

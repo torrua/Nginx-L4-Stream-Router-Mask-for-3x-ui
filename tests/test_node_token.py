@@ -17,6 +17,13 @@ from scripts.build import bundle_file, SRC_DIR
 
 BASH = Path(r"C:\Program Files\Git\bin\bash.exe") if os.name == "nt" else Path(shutil.which("bash") or "bash")
 TOKEN = "fixture-node-key-" + "a" * 32
+_NODE_BUNDLE_CACHE: dict[Path, str] = {}
+
+
+def _get_bundle(path: Path) -> str:
+    if path not in _NODE_BUNDLE_CACHE:
+        _NODE_BUNDLE_CACHE[path] = bundle_file(path, SRC_DIR)
+    return _NODE_BUNDLE_CACHE[path]
 
 
 class NodeTokenTests(unittest.TestCase):
@@ -45,10 +52,10 @@ die() { warn "$*"; exit 1; }
                               cwd=ROOT, env=env, capture_output=True, text=True, encoding="utf-8", timeout=20)
 
     def environment(self):
-        return bundle_file(SRC_DIR / "system/env.sh", SRC_DIR)
+        return _get_bundle(SRC_DIR / "system/env.sh")
 
     def generation(self):
-        return bundle_file(SRC_DIR / "panel/node-token.sh", SRC_DIR)
+        return _get_bundle(SRC_DIR / "panel/node-token.sh")
 
     def create_table(self, token=None, name="Server-Node", expires=0):
         with closing(sqlite3.connect(self.db)) as conn, conn:
@@ -60,21 +67,25 @@ die() { warn "$*"; exit 1; }
                              (name, hashlib.sha256(token.encode()).hexdigest(), expires))
 
     def test_default_is_yes_in_both_profiles_and_explicit_no_is_preserved(self):
-        for profile, explicit in (("expert", ""), ("express", ""), ("express", "n")):
-            with self.subTest(profile=profile, explicit=explicit):
-                code = 'PRIMARY_DOMAIN=example.com\n'
-                if explicit:
-                    code += 'ENABLE_NODE_TOKEN=n\n'
-                code += 'reconstruct_arrays_from_vars\n'
-                if profile == "express":
-                    code += 'source src/installer/express.sh\napply_express_defaults\n'
-                code += 'finalize_installation_config\nprintf "%s|%s" "$ENABLE_NODE_TOKEN" "${NODE_TOKEN_NAME:-}"\n'
-                result = self.shell(code, self.environment())
-                self.assertEqual(result.returncode, 0, result.stderr)
-                if explicit:
-                    self.assertTrue(result.stdout.startswith("n|"), result.stdout)
-                else:
-                    self.assertEqual(result.stdout, "y|Server-Node")
+        cases = [("expert", ""), ("express", ""), ("express", "n")]
+        blocks = []
+        for profile, explicit in cases:
+            code = '(\nPRIMARY_DOMAIN=example.com\n'
+            if explicit:
+                code += 'ENABLE_NODE_TOKEN=n\n'
+            code += 'reconstruct_arrays_from_vars\n'
+            if profile == "express":
+                code += 'source src/installer/express.sh\napply_express_defaults\n'
+            code += 'finalize_installation_config\nprintf "%s|%s\\n" "$ENABLE_NODE_TOKEN" "${NODE_TOKEN_NAME:-}"\n)\n'
+            blocks.append(code)
+        batched = 'echo "---CASE---"\n'.join(blocks)
+        result = self.shell(batched, self.environment())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        parts = [p.strip() for p in result.stdout.split("---CASE---")]
+        self.assertEqual(len(parts), 3)
+        self.assertEqual(parts[0], "y|Server-Node")
+        self.assertEqual(parts[1], "y|Server-Node")
+        self.assertTrue(parts[2].startswith("n|"), parts[2])
 
     def test_wizard_accepts_yes_for_node_token_when_enter_is_used(self):
         wizard = (SRC_DIR / "tui/wizard.sh").read_text(encoding="utf-8")

@@ -315,7 +315,7 @@ is_true(){ [[ "${1:-0}" == "1" || "${1,,}" == "y" || "${1,,}" == "true" ]]; }
 
 MOCK_ROOT=$(mktemp -d)
 mkdir -p "$MOCK_ROOT/etc/sing-box" "$MOCK_ROOT/etc/systemd/system" "$MOCK_ROOT/usr/local/bin"
-printf '#!/bin/sh\necho "sing-box version 1.15.0-alpha.12"\n' > "$MOCK_ROOT/usr/local/bin/sing-box"
+printf '#!/bin/sh\necho "sing-box version 1.15.0-alpha.13"\n' > "$MOCK_ROOT/usr/local/bin/sing-box"
 chmod +x "$MOCK_ROOT/usr/local/bin/sing-box"
 export LOCAL_BIN_DIR="$MOCK_ROOT/usr/local/bin"
 

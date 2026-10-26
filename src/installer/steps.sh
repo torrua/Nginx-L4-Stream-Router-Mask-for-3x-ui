@@ -87,7 +87,7 @@ setup_masque_service() {
     local bin_dir="${LOCAL_BIN_DIR:-/usr/local/bin}"
     [ -d "$bin_dir" ] || mkdir -p "$bin_dir" 2>/dev/null || true
 
-    local sb_ver="1.15.0-alpha.12"
+    local sb_ver="1.15.0-alpha.13"
     if [ -x "${bin_dir}/sing-box" ]; then
         local cur_sb_ver="$("${bin_dir}/sing-box" version 2>/dev/null | head -n1 || echo "")"
         if [[ "$cur_sb_ver" == *"1.11"* ]] || [[ "$cur_sb_ver" == *"1.12"* ]] || [[ "$cur_sb_ver" == *"1.13"* ]] || [[ "$cur_sb_ver" == *"1.14"* ]]; then
@@ -643,7 +643,7 @@ setup_mieru_service() {
     fi
 
     if [ ! -x "$mita_bin" ]; then
-        local mita_ver="3.38.1"
+        local mita_ver="3.39.0"
         local mita_tmp="/tmp/mita_${mita_ver}_$$"
         mkdir -p "$mita_tmp"
         local dl_url="https://github.com/enfein/mieru/releases/download/v${mita_ver}/mita_${mita_ver}_linux_${mita_arch}.tar.gz"

@@ -71,12 +71,11 @@ find_config_file() {
     fi
     for directory in "${dirs[@]}"; do
         [ -d "$directory" ] || continue
-        for candidate in "$directory/server-setup.env" "$directory/setup_mask.env"; do
-            if [ -f "$candidate" ]; then
-                printf '%s\n' "$candidate"
-                return 0
-            fi
-        done
+        candidate="$directory/server-setup.env"
+        if [ -f "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
     done
     return 1
 }
@@ -1619,8 +1618,6 @@ init_server_setup_log() {
     fi
     local cand
     for cand in "${TARGET_ROOT:-}/var/log/server-setup.log" \
-                "${SETUP_MASK_LOG:-}" \
-                "${INSTALL_LOG:-}" \
                 "${TMPDIR:-/tmp}/server-setup.log"; do
         [ -n "$cand" ] || continue
         local pdir
@@ -1874,12 +1871,11 @@ find_config_file() {
     fi
     for directory in "${dirs[@]}"; do
         [ -d "$directory" ] || continue
-        for candidate in "$directory/server-setup.env" "$directory/setup_mask.env"; do
-            if [ -f "$candidate" ]; then
-                printf '%s\n' "$candidate"
-                return 0
-            fi
-        done
+        candidate="$directory/server-setup.env"
+        if [ -f "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
     done
     return 1
 }
@@ -3249,8 +3245,6 @@ init_server_setup_log() {
     fi
     local cand
     for cand in "${TARGET_ROOT:-}/var/log/server-setup.log" \
-                "${SETUP_MASK_LOG:-}" \
-                "${INSTALL_LOG:-}" \
                 "${TMPDIR:-/tmp}/server-setup.log"; do
         [ -n "$cand" ] || continue
         local pdir

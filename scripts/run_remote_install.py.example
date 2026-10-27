@@ -1,0 +1,186 @@
+#!/usr/bin/env python3
+"""
+scripts/run_remote_install.py.example — Шаблон для удалённой установки и тестирования по SSH.
+
+Назначение:
+    Позволяет автоматизировать запуск setup.sh на чистом удалённом сервере (VPS)
+    прямо с вашего локального компьютера через SSH.
+
+Использование:
+    1. Скопируйте этот шаблон в корень репозитория или рабочий каталог:
+       cp scripts/run_remote_install.py.example run_remote_install.py
+       (Имя run_remote_install.py уже добавлено в .gitignore и никогда не попадёт в Git).
+
+    2. Настройте переменные окружения или передайте параметры в командной строке:
+       python run_remote_install.py --host 192.0.2.1 --key ~/.ssh/id_ed25519 --mode auto
+
+    3. Опционально можно передать готовый конфигурационный файл:
+       python run_remote_install.py --host 192.0.2.1 --config server-setup.env
+"""
+
+import argparse
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+
+
+def build_ssh_command(args: argparse.Namespace, remote_command: str) -> list[str]:
+    """Формирует команду системного SSH-клиента с защитными параметрами."""
+    cmd = [
+        "ssh",
+        "-o", "BatchMode=yes",
+        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "ConnectTimeout=10",
+        "-p", str(args.port),
+    ]
+    if args.key:
+        cmd.extend(["-i", str(Path(args.key).expanduser())])
+    
+    cmd.append(f"{args.user}@{args.host}")
+    cmd.append(remote_command)
+    return cmd
+
+
+def upload_file(args: argparse.Namespace, local_file: Path, remote_path: str) -> bool:
+    """Загружает файл на удаленный сервер через SCP."""
+    print(f"[*] Загрузка {local_file.name} -> {args.host}:{remote_path}...")
+    scp_cmd = [
+        "scp",
+        "-o", "BatchMode=yes",
+        "-o", "StrictHostKeyChecking=accept-new",
+        "-P", str(args.port),
+    ]
+    if args.key:
+        scp_cmd.extend(["-i", str(Path(args.key).expanduser())])
+    scp_cmd.extend([str(local_file), f"{args.user}@{args.host}:{remote_path}"])
+
+    res = subprocess.run(scp_cmd)
+    return res.returncode == 0
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Удаленный запуск инсталлятора setup.sh через SSH.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--host",
+        default=os.environ.get("VPS_HOST", ""),
+        help="IP-адрес или хост удаленного сервера VPS (или env VPS_HOST)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.environ.get("VPS_PORT", "22")),
+        help="Порт SSH (или env VPS_PORT)",
+    )
+    parser.add_argument(
+        "--user",
+        default=os.environ.get("VPS_USER", "root"),
+        help="Пользователь SSH (или env VPS_USER)",
+    )
+    parser.add_argument(
+        "--key",
+        default=os.environ.get("SSH_KEY", ""),
+        help="Путь к приватному SSH-ключу (или env SSH_KEY)",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="Локальный файл конфигурации server-setup.env для загрузки на сервер",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["auto", "expert", "check", "doctor", "custom"],
+        default="auto",
+        help="Режим установки: auto (--auto), expert (--expert), check (--check), doctor (--doctor)",
+    )
+    parser.add_argument(
+        "--extra-args",
+        default="",
+        help="Дополнительные аргументы для передачи в setup.sh (в кавычках)",
+    )
+
+    args = parser.parse_args()
+
+    if not args.host:
+        parser.error("Не указан хост VPS (--host или переменная VPS_HOST).")
+
+    # 1. Проверка доступности локального setup.sh
+    setup_script = ROOT_DIR / "setup.sh"
+    if not setup_script.is_file():
+        print(f"[!] Ошибка: файл {setup_script} не найден. Запустите 'python scripts/build.py'.", file=sys.stderr)
+        return 1
+
+    # 2. Проверка доступности SSH соединения
+    print(f"[*] Проверка подключения к {args.user}@{args.host}:{args.port}...")
+    check_cmd = build_ssh_command(args, "uname -srm")
+    res = subprocess.run(check_cmd, capture_output=True, text=True)
+    if res.returncode != 0:
+        print(f"[-] Не удалось подключиться к серверу:\n{res.stderr}", file=sys.stderr)
+        return 1
+    print(f"[+] Сервер доступен: {res.stdout.strip()}")
+
+    # 3. Загрузка server-setup.env при наличии
+    remote_config_arg = ""
+    if args.config:
+        cfg_path = Path(args.config)
+        if not cfg_path.is_file():
+            print(f"[!] Указанный файл конфигурации {cfg_path} не найден.", file=sys.stderr)
+            return 1
+        if not upload_file(args, cfg_path, "/root/server-setup.env"):
+            print("[-] Ошибка загрузки server-setup.env на сервер.", file=sys.stderr)
+            return 1
+        remote_config_arg = "--config /root/server-setup.env"
+
+    # 4. Загрузка скрипта setup.sh на сервер
+    remote_setup_path = "/root/setup.sh"
+    if not upload_file(args, setup_script, remote_setup_path):
+        print("[-] Ошибка загрузки setup.sh на сервер.", file=sys.stderr)
+        return 1
+
+    # 5. Формирование команды запуска
+    mode_flag = ""
+    if args.mode == "auto":
+        mode_flag = "--auto"
+    elif args.mode == "expert":
+        mode_flag = "--expert"
+    elif args.mode == "check":
+        mode_flag = "--check"
+    elif args.mode == "doctor":
+        mode_flag = "--doctor"
+
+    setup_cmd_parts = [
+        "chmod +x /root/setup.sh &&",
+        "/root/setup.sh",
+        mode_flag,
+        remote_config_arg,
+        args.extra_args,
+    ]
+    remote_cmd = " ".join(filter(None, setup_cmd_parts))
+
+    print(f"[*] Запуск установки на {args.host}: {remote_cmd}")
+    run_cmd = build_ssh_command(args, remote_cmd)
+    run_res = subprocess.run(run_cmd)
+
+    # 6. Если успешно, проверяем наличие реквизитов доступа
+    if run_res.returncode == 0:
+        print("\n[+] Установка успешно завершена!")
+        cred_cmd = build_ssh_command(args, "test -f /root/vpn_credentials.txt && cat /root/vpn_credentials.txt || true")
+        cred_res = subprocess.run(cred_cmd, capture_output=True, text=True)
+        if cred_res.stdout.strip():
+            print("\n================= СОХРАНЁННЫЕ РЕКВИЗИТЫ =================")
+            print(cred_res.stdout.strip())
+            print("=========================================================")
+    else:
+        print(f"\n[-] Ошибка выполнения setup.sh (код возврата: {run_res.returncode})", file=sys.stderr)
+
+    return run_res.returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main())

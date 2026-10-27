@@ -71,15 +71,11 @@ class TestCliAutoFlow(unittest.TestCase):
         self.assertLess(lines.index("INSPECT"), lines.index("SAVE"))
         self.assertLess(lines.index("APPLY:awg"), lines.index("APPLY:verify"))
 
-    def test_install_auto_no_web(self):
-        res = run_cli_fixture("install", "--auto", web=False)
+    def test_setup_auto_no_web(self):
+        res = run_cli_fixture("setup", "--auto", web=False)
         self._assert_plan(res, web=False)
 
-    def test_install_auto_with_web(self):
-        res = run_cli_fixture("install", "--auto", web=True)
-        self._assert_plan(res, web=True)
-
-    def test_setup_auto_parity_with_web(self):
+    def test_setup_auto_with_web(self):
         res = run_cli_fixture("setup", "--auto", web=True)
         self._assert_plan(res, web=True)
 

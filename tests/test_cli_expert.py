@@ -79,16 +79,16 @@ class TestCliExpertFlow(unittest.TestCase):
         self.assertLess(lines.index("INSPECT"), lines.index("SAVE"))
         self.assertLess(lines.index("APPLY:awg"), lines.index("APPLY:verify"))
 
-    def test_install_expert_no_web(self):
-        res = run_cli_fixture("install", "--expert", web=False)
+    def test_setup_expert_no_web(self):
+        res = run_cli_fixture("setup", "--expert", web=False)
         self._assert_plan(res, web=False)
 
-    def test_install_expert_with_web(self):
-        res = run_cli_fixture("install", "--expert", web=True)
+    def test_setup_expert_with_web(self):
+        res = run_cli_fixture("setup", "--expert", web=True)
         self._assert_plan(res, web=True)
 
-    def test_install_interactive_no_web(self):
-        res = run_cli_fixture("install", "interactive", web=False)
+    def test_setup_interactive_no_web(self):
+        res = run_cli_fixture("setup", "interactive", web=False)
         self._assert_plan(res, web=False)
 
 

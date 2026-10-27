@@ -29,8 +29,6 @@ init_server_setup_log() {
     fi
     local cand
     for cand in "${TARGET_ROOT:-}/var/log/server-setup.log" \
-                "${SETUP_MASK_LOG:-}" \
-                "${INSTALL_LOG:-}" \
                 "${TMPDIR:-/tmp}/server-setup.log"; do
         [ -n "$cand" ] || continue
         local pdir

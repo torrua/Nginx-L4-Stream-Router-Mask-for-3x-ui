@@ -35,7 +35,6 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 SRC_DIR = ROOT_DIR / "src"
 
 ENTRYPOINTS: dict[str, str] = {
-    "install.sh": "entrypoints/install.main.sh",
     "setup.sh": "entrypoints/setup.main.sh",
     "uninstall.sh": "entrypoints/uninstall.main.sh",
     "configure-panel.sh": "entrypoints/configure-panel.main.sh",

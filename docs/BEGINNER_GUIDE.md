@@ -89,7 +89,7 @@
 Если вы хотите развернуть полностью настроенный сервер за 3 минуты без необходимости отвечать на десятки технических вопросов — запустите единый мастер:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/install.sh | sudo bash
+curl -sSL https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/setup.sh | sudo bash
 ```
 
 ### Как проходит процесс:

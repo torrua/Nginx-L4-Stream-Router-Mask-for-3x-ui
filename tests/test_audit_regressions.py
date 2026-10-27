@@ -2142,9 +2142,9 @@ echo "AGH_CLIENT_ID=$AGH_CLIENT_ID"
         self.assertIn('print(res["qr_ascii"])', mgr_py)
 
     def test_diagnostics_bundle_and_nginx_routing(self):
-        """Verify diagnostics assets bundling in install.sh and robust Nginx routing."""
+        """Verify diagnostics assets bundling in setup.sh and robust Nginx routing."""
         sec_sh = (ROOT / "src/system/security.sh").read_text(encoding="utf-8")
-        install_sh = (ROOT / "install.sh").read_text(encoding="utf-8")
+        setup_sh = (ROOT / "setup.sh").read_text(encoding="utf-8")
         nginx_sh = (ROOT / "src/nginx/config.sh").read_text(encoding="utf-8")
 
         # 1. Fallback embedding in security.sh
@@ -2154,11 +2154,11 @@ echo "AGH_CLIENT_ID=$AGH_CLIENT_ID"
         self.assertIn('EOF_DIAG_MTR', sec_sh)
         self.assertIn('EOF_DIAG_SVC', sec_sh)
 
-        # 2. Bundled assets in install.sh
-        self.assertIn('VPN Network Diagnostics', install_sh)
-        self.assertIn('Speedtest', install_sh)
-        self.assertIn('DiagnosticsHandler', install_sh)
-        self.assertIn('vpn-diagnostics.service', install_sh)
+        # 2. Bundled assets in setup.sh
+        self.assertIn('VPN Network Diagnostics', setup_sh)
+        self.assertIn('Speedtest', setup_sh)
+        self.assertIn('DiagnosticsHandler', setup_sh)
+        self.assertIn('vpn-diagnostics.service', setup_sh)
 
         # 3. Nginx auth map accepts both cookie and URL query token
         self.assertIn('map "\\$cookie_diag_key:\\$arg_token" \\$diag_auth', nginx_sh)

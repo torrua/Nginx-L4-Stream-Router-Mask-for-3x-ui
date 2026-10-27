@@ -159,12 +159,10 @@ run_installation
         self.assertEqual(applied.count("APPLY:panel"), 1)
         self.assertEqual(applied.count("APPLY:awg"), 1)
 
-    def test_entrypoints_share_the_same_installer(self):
-        install = bundle_file(SRC_DIR / "entrypoints/install.main.sh", SRC_DIR)
+    def test_setup_entrypoint_contains_unified_installer(self):
         setup = bundle_file(SRC_DIR / "entrypoints/setup.main.sh", SRC_DIR)
-        self.assertTrue("run_installation" in install, "Main entrypoint must use the shared engine")
-        self.assertEqual(install.count("run_installation\n"), 1)
-        self.assertTrue(setup.strip() in install, "Entrypoints must share the complete source body")
+        self.assertTrue("run_installation" in setup, "Main entrypoint must use the unified engine")
+        self.assertEqual(setup.count("run_installation\n"), 1)
 
     def test_wizard_never_starts_background_installation(self):
         wizard = (SRC_DIR / "tui/wizard.sh").read_text(encoding="utf-8")

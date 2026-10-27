@@ -48,10 +48,10 @@ class TestAuditV91Fixes(unittest.TestCase):
 
     def test_02_sso_diagnostics_routing_and_unauth_404(self):
         """[P1] Verify Nginx configuration sends /__diag_auth subrequest to ${PANEL_PATH}panel/ with X-Requested-With."""
-        install_content = (ROOT_DIR / "install.sh").read_text(encoding="utf-8")
+        setup_content = (ROOT_DIR / "setup.sh").read_text(encoding="utf-8")
         nginx_cfg = (ROOT_DIR / "src" / "nginx" / "config.sh").read_text(encoding="utf-8")
 
-        for content, filename in [(install_content, "install.sh"), (nginx_cfg, "src/nginx/config.sh")]:
+        for content, filename in [(setup_content, "setup.sh"), (nginx_cfg, "src/nginx/config.sh")]:
             # 1. proxy_pass must target panel/ subpath
             self.assertIn(
                 'proxy_pass http://127.0.0.1:$PANEL_PORT${PANEL_PATH}panel/;',
@@ -261,7 +261,7 @@ class TestAuditV91Fixes(unittest.TestCase):
         preflight_content = (ROOT_DIR / "src" / "common" / "preflight.sh").read_text(encoding="utf-8")
         adguard_content = (ROOT_DIR / "src" / "adguard" / "setup.sh").read_text(encoding="utf-8")
         reconcile_content = (ROOT_DIR / "src" / "panel" / "reconcile.py").read_text(encoding="utf-8")
-        install_content = (ROOT_DIR / "install.sh").read_text(encoding="utf-8")
+        setup_content = (ROOT_DIR / "setup.sh").read_text(encoding="utf-8")
 
         # 1. Protocol registry uses PORT_AGH_DNS
         self.assertIn('local agh_dns_p="${PORT_AGH_DNS:-10053}"', protocols_content)
@@ -279,9 +279,9 @@ class TestAuditV91Fixes(unittest.TestCase):
         self.assertIn('agh_dns_port = int(os.environ.get("PORT_AGH_DNS") or "10053")', reconcile_content)
         self.assertIn('target_servers = [{"address": "127.0.0.1", "port": agh_dns_port}]', reconcile_content)
 
-        # 5. Compiled install.sh has all these unified
-        self.assertIn('port: ${PORT_AGH_DNS:-10053}', install_content)
-        self.assertIn('check_required_port udp "$agh_dns_check"', install_content)
+        # 5. Compiled setup.sh has all these unified
+        self.assertIn('port: ${PORT_AGH_DNS:-10053}', setup_content)
+        self.assertIn('check_required_port udp "$agh_dns_check"', setup_content)
 
     def test_08_diagnostics_endpoint_contract_parity(self):
         """[P1] Verify contract parity for speedtest endpoints (down/download, up/upload, getip/getIP)."""
@@ -334,8 +334,8 @@ class TestAuditV91Fixes(unittest.TestCase):
 
         # 3. Nginx: config.sh must declare locations for both short and long names
         nginx_cfg = (ROOT_DIR / "src" / "nginx" / "config.sh").read_text(encoding="utf-8")
-        install_sh = (ROOT_DIR / "install.sh").read_text(encoding="utf-8")
-        for content, name in [(nginx_cfg, "config.sh"), (install_sh, "install.sh")]:
+        setup_sh = (ROOT_DIR / "setup.sh").read_text(encoding="utf-8")
+        for content, name in [(nginx_cfg, "config.sh"), (setup_sh, "setup.sh")]:
             self.assertIn("${DIAG_PATH}api/st/getIP", content, f"{name} missing getIP location")
             self.assertIn("${DIAG_PATH}api/st/getip", content, f"{name} missing getip location")
             self.assertIn("${DIAG_PATH}api/st/download", content, f"{name} missing download location")
@@ -376,9 +376,9 @@ class TestAuditV91Fixes(unittest.TestCase):
     def test_11_mtr_prerequisite_in_packages(self):
         """[P2] Verify mtr-tiny is declared in pkg_map of packages.sh."""
         packages_sh = (ROOT_DIR / "src" / "system" / "packages.sh").read_text(encoding="utf-8")
-        install_sh = (ROOT_DIR / "install.sh").read_text(encoding="utf-8")
+        setup_sh = (ROOT_DIR / "setup.sh").read_text(encoding="utf-8")
 
-        for content, name in [(packages_sh, "packages.sh"), (install_sh, "install.sh")]:
+        for content, name in [(packages_sh, "packages.sh"), (setup_sh, "setup.sh")]:
             self.assertIn('[mtr]="mtr-tiny"', content, f"{name} missing [mtr]='mtr-tiny' in prerequisites")
 
     def test_12_rollback_aborts_when_xui_stop_fails(self):

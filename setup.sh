@@ -709,8 +709,6 @@ init_server_setup_log() {
     fi
     local cand
     for cand in "${TARGET_ROOT:-}/var/log/server-setup.log" \
-                "${SETUP_MASK_LOG:-}" \
-                "${INSTALL_LOG:-}" \
                 "${TMPDIR:-/tmp}/server-setup.log"; do
         [ -n "$cand" ] || continue
         local pdir
@@ -1025,7 +1023,7 @@ generate_config_template() {
     local target_file="${1:-server-setup.env.example}"
     cat << 'EOF_CONF' > "$target_file"
 # ==============================================================================
-# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP_MASK.SH (v9.6.3 Universal)
+# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP.SH (v9.6.3 Universal)
 # ==============================================================================
 # Данный файл позволяет выполнять полностью автоматическую установку:
 # ./setup.sh --config server-setup.env --non-interactive --force
@@ -1512,12 +1510,11 @@ find_config_file() {
     fi
     for directory in "${dirs[@]}"; do
         [ -d "$directory" ] || continue
-        for candidate in "$directory/server-setup.env" "$directory/setup_mask.env"; do
-            if [ -f "$candidate" ]; then
-                printf '%s\n' "$candidate"
-                return 0
-            fi
-        done
+        candidate="$directory/server-setup.env"
+        if [ -f "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
     done
     return 1
 }
@@ -15827,12 +15824,11 @@ find_config_file() {
     fi
     for directory in "${dirs[@]}"; do
         [ -d "$directory" ] || continue
-        for candidate in "$directory/server-setup.env" "$directory/setup_mask.env"; do
-            if [ -f "$candidate" ]; then
-                printf '%s\n' "$candidate"
-                return 0
-            fi
-        done
+        candidate="$directory/server-setup.env"
+        if [ -f "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
     done
     return 1
 }
@@ -17202,8 +17198,6 @@ init_server_setup_log() {
     fi
     local cand
     for cand in "${TARGET_ROOT:-}/var/log/server-setup.log" \
-                "${SETUP_MASK_LOG:-}" \
-                "${INSTALL_LOG:-}" \
                 "${TMPDIR:-/tmp}/server-setup.log"; do
         [ -n "$cand" ] || continue
         local pdir

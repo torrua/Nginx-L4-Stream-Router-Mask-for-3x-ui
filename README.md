@@ -22,11 +22,11 @@
 Подключитесь к VPS по SSH под пользователем `root` и запустите единый установщик:
 
 ```bash
-curl -sSL "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/install.sh?v=$(date +%s)" | sudo bash
+curl -sSL "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/setup.sh?v=$(date +%s)" | sudo bash
 ```
 
 > **Нужно продолжить после сбоя или перезагрузки?**  
-> Выполните `bash install.sh -r` — мастер автоматически продолжит установку с сохранёнными параметрами с последнего незавершённого шага.
+> Выполните `bash setup.sh -r` — мастер автоматически продолжит установку с сохранёнными параметрами с последнего незавершённого шага.
 
 ---
 
@@ -181,8 +181,7 @@ flowchart TD
 
 | Файл | Назначение |
 | :--- | :--- |
-| [`install.sh`](install.sh) | Основной установщик: запуск Express или пошаговой настройки. |
-| [`setup.sh`](setup.sh) | Пошаговая настройка сервера, диагностика и продолжение установки. |
+| [`setup.sh`](setup.sh) | Единый установщик: Express/Expert настройка, проверка, продолжение и аудит. |
 | [`uninstall.sh`](uninstall.sh) | Полное удаление стека и возврат сервера к исходному состоянию из снимка. |
 | [`configure-panel.sh`](configure-panel.sh) | Настройка подключений и параметров панели. |
 | [`maintain.sh`](maintain.sh) | Обслуживание, аудит (`--dry-run`), транзакционный бэкап/восстановление и откат. |
@@ -202,11 +201,11 @@ flowchart TD
 
 Подробно: [порядок установки, ошибки и возобновление](docs/INSTALLATION_FLOW.md).
 
-### Бесшовный интерактивный запуск (`install.sh`)
+### Бесшовный интерактивный запуск (`setup.sh`)
 Подключитесь к серверу по SSH под пользователем `root` и запустите единый мастер:
 
 ```bash
-curl -sSL "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/install.sh?v=$(date +%s)" | sudo bash
+curl -sSL "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/setup.sh?v=$(date +%s)" | sudo bash
 ```
 
 > **Что произойдет автоматически:**
@@ -297,10 +296,10 @@ curl -sSL "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-
 Чтобы передать ключи командной строки скрипту, запускаемому через `curl | sudo bash`, используйте разделитель Bash `-s --`:
 ```bash
 # Запуск установки с подробной отладкой (--debug):
-curl -sSL "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/install.sh" | sudo bash -s -- --debug
+curl -sSL "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/setup.sh" | sudo bash -s -- --debug
 
 # Экспресс-диагностика сервера одной строкой без установки (--check):
-curl -sSL "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/install.sh" | sudo bash -s -- --check
+curl -sSL "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/setup.sh" | sudo bash -s -- --check
 
 # Холостой аудит базы 3X-UI и конфигов Nginx без записи изменений (--dry-run):
 curl -sSL "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/maintain.sh" | sudo bash -s -- --dry-run

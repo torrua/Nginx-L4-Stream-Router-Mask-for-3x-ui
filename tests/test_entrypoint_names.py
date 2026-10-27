@@ -11,7 +11,6 @@ import unittest
 ROOT = Path(__file__).resolve().parent.parent
 BASH = Path(r"C:\Program Files\Git\bin\bash.exe") if os.name == "nt" else Path(shutil.which("bash") or "bash")
 CANONICAL_ENTRYPOINTS = [
-    "install.sh",
     "setup.sh",
     "uninstall.sh",
     "configure-panel.sh",
@@ -20,6 +19,7 @@ CANONICAL_ENTRYPOINTS = [
     "manage-services.sh",
 ]
 LEGACY_NAMES = [
+    "install.sh",
     "setup_mask.sh",
     "configure_3xui.sh",
     "update_repair.sh",
@@ -48,23 +48,17 @@ class EntrypointNamesTests(unittest.TestCase):
             self.assertIn("PANEL_PATH=", generated.read_text(encoding="utf-8"))
             self.assertNotIn("setup_mask", generated.read_text(encoding="utf-8"))
 
-    def test_config_discovery_preserves_legacy_files_and_prefers_new_name(self):
+    def test_config_discovery_finds_canonical_config(self):
         helper = ROOT / "src/common/config.sh"
-        self.assertTrue(helper.is_file(), "Shared config discovery must cover new and legacy names")
+        self.assertTrue(helper.is_file(), "Shared config discovery must exist")
         with tempfile.TemporaryDirectory() as temp:
             work = Path(temp)
-            legacy = work / "setup_mask.env"
             canonical = work / "server-setup.env"
-            legacy.write_text('PRIMARY_DOMAIN="example.com"\n', encoding="utf-8")
-            code = "source " + shlex.quote(helper.as_posix()) + "\nfind_config_file " + shlex.quote(work.as_posix())
-            def discover():
-                return subprocess.run([str(BASH), "-c", code], cwd=ROOT, capture_output=True,
-                                      text=True, encoding="utf-8", timeout=10)
-            result = discover()
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(result.stdout.strip(), legacy.as_posix())
             canonical.write_text('PRIMARY_DOMAIN="new.example"\n', encoding="utf-8")
-            result = discover()
+            code = "source " + shlex.quote(helper.as_posix()) + "\nfind_config_file " + shlex.quote(work.as_posix())
+            result = subprocess.run([str(BASH), "-c", code], cwd=ROOT, capture_output=True,
+                                  text=True, encoding="utf-8", timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.strip(), canonical.as_posix())
 
     def test_client_launcher_uses_neutral_python_filename(self):

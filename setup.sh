@@ -22215,8 +22215,9 @@ EOF_CLEAN_JSON
         if [ -n "${DNSTT_CLI:-}" ]; then
             echo -e "  - ${BOLD}DNSTT DoH Tunnel:${NC}    ${CYAN}${DNSTT_CLI}${NC}"
         fi
-        if [[ "${ENABLE_NODE_TOKEN,,}" == "y" || "${ENABLE_NODE_TOKEN:-}" == "1" ]] && [ -n "${NODE_TOKEN:-}" ]; then
-            echo -e "  - ${BOLD}3X-UI Node API:${NC}         ${GREEN}${NODE_TOKEN_NAME}${NC} (Host: ${CYAN}${PRIMARY_DOMAIN}:443${NC}, Path: ${CYAN}/${PANEL_PATH#/}/${NC})"
+        local _node_tok_en="${ENABLE_NODE_TOKEN:-n}"
+        if [[ "${_node_tok_en,,}" == "y" || "${_node_tok_en}" == "1" ]] && [ -n "${NODE_TOKEN:-}" ]; then
+            echo -e "  - ${BOLD}3X-UI Node API:${NC}         ${GREEN}${NODE_TOKEN_NAME:-Node}${NC} (Host: ${CYAN}${PRIMARY_DOMAIN}:443${NC}, Path: ${CYAN}/${PANEL_PATH#/}/${NC})"
             echo -e "  - ${BOLD}API Bearer Token:${NC}       ${YELLOW}${NODE_TOKEN}${NC}"
         fi
     fi
@@ -22759,10 +22760,10 @@ fi
 echo -e "  Канал подписок:              ${GREEN}https://${PRIMARY_DOMAIN}${SUB_PATH}${NC}"
 echo -e "  Канал подписок (JSON):       ${GREEN}https://${PRIMARY_DOMAIN}${SUB_JSON_PATH}${NC}"
 echo -e "  Канал подписок (Clash):      ${GREEN}https://${PRIMARY_DOMAIN}${SUB_CLASH_PATH}${NC}"
-if [[ "${ENABLE_WARP,,}" == "y" || "${ENABLE_WARP:-}" == "1" ]]; then
+if is_true "${ENABLE_WARP:-n}"; then
     echo -e "  Cloudflare WARP Outbound:    ${GREEN}АКТИВИРОВАН (Google, Gemini, ChatGPT / MTU 1280)${NC}"
 fi
-if [[ "${ENABLE_AGH,,}" == "y" || "${ENABLE_AGH:-}" == "1" ]]; then
+if is_true "${ENABLE_AGH:-n}"; then
     if [ "${AGH_MODE:-1}" = "2" ] && [ -n "${AGH_DOMAIN:-}" ]; then
         echo -e "  Панель AdGuard Home:         ${CYAN}https://${AGH_DOMAIN}/${NC}"
         echo -e "  Приватный DoH для роутера:   ${GREEN}https://${AGH_DOMAIN}/dns-query/${AGH_CLIENT_ID}${NC}"
@@ -22771,8 +22772,8 @@ if [[ "${ENABLE_AGH,,}" == "y" || "${ENABLE_AGH:-}" == "1" ]]; then
         echo -e "  Приватный DoH для роутера:   ${GREEN}https://${PRIMARY_DOMAIN}/dns-query/${AGH_CLIENT_ID}${NC}"
     fi
 fi
-if [[ "${ENABLE_NODE_TOKEN,,}" == "y" || "${ENABLE_NODE_TOKEN:-}" == "1" ]]; then
-    echo -e "  3X-UI Node API Token:        ${GREEN}${NODE_TOKEN:-Не получен}${NC} (${WHITE}${NODE_TOKEN_NAME}${NC})"
+if is_true "${ENABLE_NODE_TOKEN:-n}"; then
+    echo -e "  3X-UI Node API Token:        ${GREEN}${NODE_TOKEN:-Не получен}${NC} (${WHITE}${NODE_TOKEN_NAME:-Node}${NC})"
 fi
 
 # Сохранение учетных данных в защищенный файл
@@ -22795,7 +22796,7 @@ $([ -n "${DIAG_TOKEN:-}" ] && echo "Токен диагностики:         $
 Ссылка на подписку (JSON): https://${PRIMARY_DOMAIN}${SUB_JSON_PATH}
 Ссылка на подписку (Clash): https://${PRIMARY_DOMAIN}${SUB_CLASH_PATH}
 EOF_CRED
-    if [[ "${ENABLE_AGH,,}" == "y" || "${ENABLE_AGH:-}" == "1" ]]; then
+    if is_true "${ENABLE_AGH:-n}"; then
         cat << EOF_AGH_CRED >> "$CRED_FILE"
 =====================================================================
 ПРИВАТНЫЙ ADGUARD HOME DOH
@@ -22804,7 +22805,7 @@ EOF_CRED
 URL DoH для роутера:   $([ "${AGH_MODE:-1}" = "2" ] && echo "https://${AGH_DOMAIN}/dns-query/${AGH_CLIENT_ID}" || echo "https://${PRIMARY_DOMAIN}/dns-query/${AGH_CLIENT_ID}")
 EOF_AGH_CRED
     fi
-    if [[ "${ENABLE_NODE_TOKEN,,}" == "y" || "${ENABLE_NODE_TOKEN:-}" == "1" ]]; then
+    if is_true "${ENABLE_NODE_TOKEN:-n}"; then
         cat << EOF_NODE_CRED >> "$CRED_FILE"
 =====================================================================
 ПОДКЛЮЧЕНИЕ СЕРВЕРА КАК УЗЛА (3X-UI NODE)
@@ -22988,10 +22989,10 @@ fi
         echo -e "    2. Custom URL: ${CYAN}${local_agh_doh_url}${NC}"
     fi
 
-    if [[ "${ENABLE_NODE_TOKEN,,}" == "y" || "${ENABLE_NODE_TOKEN:-}" == "1" ]]; then
+    if is_true "${ENABLE_NODE_TOKEN:-n}"; then
         echo
         echo -e "${YELLOW}ПОДКЛЮЧЕНИЕ СЕРВЕРА КАК УЗЛА (3X-UI NODE):${NC}"
-        echo -e "  - ${YELLOW}Имя узла (Node Name):${NC}       ${GREEN}${NODE_TOKEN_NAME}${NC}"
+        echo -e "  - ${YELLOW}Имя узла (Node Name):${NC}       ${GREEN}${NODE_TOKEN_NAME:-Node}${NC}"
         echo -e "  - ${YELLOW}Адрес хоста (Host):${NC}         ${CYAN}${PRIMARY_DOMAIN}${NC}"
         echo -e "  - ${YELLOW}Порт (Port):${NC}                ${GREEN}443${NC} (HTTPS через Nginx L4/L7 маскировку)"
         echo -e "  - ${YELLOW}Базовый путь (Base Path):${NC}   ${CYAN}${PANEL_PATH}${NC}"

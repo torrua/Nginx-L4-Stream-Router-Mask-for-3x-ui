@@ -51,6 +51,29 @@ try:
 except Exception as e:
     print(f"[!] Предупреждение: ошибка чтения таблицы settings: {e}")
 
+# Глобальная санитизация externalProxy во всех существующих инбаундах базы данных
+try:
+    cur.execute("SELECT id, remark, stream_settings FROM inbounds")
+    for _g_id, _g_rem, _g_st_raw in cur.fetchall():
+        if not _g_st_raw:
+            continue
+        try:
+            _g_st = json.loads(_g_st_raw)
+        except Exception:
+            continue
+        _g_ext = _g_st.get("externalProxy")
+        if isinstance(_g_ext, list) and len(_g_ext) > 0:
+            _g_modified = False
+            for _g_ep in _g_ext:
+                if isinstance(_g_ep, dict) and "alpn" in _g_ep and isinstance(_g_ep["alpn"], str):
+                    _g_ep["alpn"] = [_g_ep["alpn"]] if _g_ep["alpn"] else []
+                    _g_modified = True
+            if _g_modified and not dry_run:
+                cur.execute("UPDATE inbounds SET stream_settings = ? WHERE id = ?", (json.dumps(_g_st, ensure_ascii=False), _g_id))
+                print(f"  [ИСПРАВЛЕНО] Инбаунд #{_g_id} ({_g_rem}): тип alpn в externalProxy исправлен со строки на массив")
+except Exception as _e_ext_scan:
+    pass
+
 domain = os.environ.get("PRIMARY_DOMAIN") or existing_settings.get("subDomain") or "localhost"
 panel_port = os.environ.get("PANEL_PORT") or existing_settings.get("webPort") or "10443"
 # @include "xray/paths.py"
@@ -246,6 +269,47 @@ def get_table_columns(tbl):
 client_traffics_cols = get_table_columns("client_traffics")
 clients_cols = get_table_columns("clients")
 client_inbounds_cols = get_table_columns("client_inbounds")
+inbounds_cols = get_table_columns("inbounds")
+
+if "inbounds" in all_tables:
+    if "traffic_reset" not in inbounds_cols and "trafficReset" not in inbounds_cols:
+        try:
+            cur.execute("ALTER TABLE inbounds ADD COLUMN traffic_reset TEXT DEFAULT 'never'")
+            inbounds_cols.add("traffic_reset")
+        except Exception:
+            pass
+    if "traffic_reset_day" not in inbounds_cols and "trafficResetDay" not in inbounds_cols:
+        try:
+            cur.execute("ALTER TABLE inbounds ADD COLUMN traffic_reset_day INTEGER DEFAULT 1")
+            inbounds_cols.add("traffic_reset_day")
+        except Exception:
+            pass
+    if "last_traffic_reset_time" not in inbounds_cols and "lastTrafficResetTime" not in inbounds_cols:
+        try:
+            cur.execute("ALTER TABLE inbounds ADD COLUMN last_traffic_reset_time INTEGER DEFAULT 0")
+            inbounds_cols.add("last_traffic_reset_time")
+        except Exception:
+            pass
+
+inbound_traffic_reset = os.environ.get("INBOUND_TRAFFIC_RESET", "monthly").strip().lower() or "monthly"
+try:
+    inbound_traffic_reset_day = int(os.environ.get("INBOUND_TRAFFIC_RESET_DAY", "1").strip() or "1")
+except (ValueError, TypeError):
+    inbound_traffic_reset_day = 1
+
+# Глобальная настройка ежемесячного сброса трафика для всех существующих инбаундов
+try:
+    _tr_col = "traffic_reset" if "traffic_reset" in inbounds_cols else ("trafficReset" if "trafficReset" in inbounds_cols else None)
+    _trd_col = "traffic_reset_day" if "traffic_reset_day" in inbounds_cols else ("trafficResetDay" if "trafficResetDay" in inbounds_cols else None)
+    if _tr_col and not dry_run:
+        if _trd_col:
+            cur.execute(f"UPDATE inbounds SET {_tr_col} = ?, {_trd_col} = ? WHERE {_tr_col} IS NULL OR {_tr_col} = '' OR {_tr_col} = 'never'", (inbound_traffic_reset, inbound_traffic_reset_day))
+        else:
+            cur.execute(f"UPDATE inbounds SET {_tr_col} = ? WHERE {_tr_col} IS NULL OR {_tr_col} = '' OR {_tr_col} = 'never'", (inbound_traffic_reset,))
+        if cur.rowcount > 0:
+            print(f"  [ОБНОВЛЕНО] Сброс трафика ({inbound_traffic_reset}, день {inbound_traffic_reset_day} в 00:00) активирован для {cur.rowcount} инбаунд(ов).")
+except Exception as _e_tr:
+    pass
 
 # @include "xray/clients.py"
 
@@ -1185,7 +1249,7 @@ x_str = {
         }
     },
     "security": "none",
-    "externalProxy": [{"dest": domain, "port": 443, "forceTls": "tls", "sni": domain, "fingerprint": reality_fingerprint, "alpn": "h2", "remark": make_remark("VLESS xHTTP")}]
+    "externalProxy": [{"dest": domain, "port": 443, "forceTls": "tls", "sni": domain, "fingerprint": reality_fingerprint, "alpn": ["h2"], "remark": make_remark("VLESS xHTTP")}]
 }
 xhttp_remark = make_remark("VLESS xHTTP")
 xhttp_ib_id = smart_reconcile_inbound(xhttp_port, "vless", "in-xhttp-stream", xhttp_remark, x_set, x_str, listen="127.0.0.1")
@@ -1231,7 +1295,8 @@ if enable_awg_v3:
     a3_set = {
         "clients": [{
             "privateKey": def_wg_c_priv, "publicKey": def_wg_c_pub,
-            "allowedIPs": ["10.8.1.2/32"], "email": unified_email, "subId": unified_sub_id, "enable": True
+            "allowedIPs": ["10.8.1.2/32"], "email": unified_email, "subId": unified_sub_id, "enable": True,
+            "keepAlive": "15-25"
         }],
         "server": {
             "h1": "1", "h2": "2", "h3": "3", "h4": "4",
@@ -1261,7 +1326,8 @@ if enable_awg_v2:
     a2_set = {
         "clients": [{
             "privateKey": def_wg_c_priv, "publicKey": def_wg_c_pub,
-            "allowedIPs": ["10.8.2.2/32"], "email": unified_email, "subId": unified_sub_id, "enable": True
+            "allowedIPs": ["10.8.2.2/32"], "email": unified_email, "subId": unified_sub_id, "enable": True,
+            "keepAlive": "15-25"
         }],
         "server": {
             "h1": "149419586", "h2": "878791997", "h3": "1251051976", "h4": "1657628296",
@@ -1381,7 +1447,8 @@ cur.execute("""
         sockopt_params TEXT DEFAULT '',
         final_mask TEXT DEFAULT '',
         exclude_from_sub_types TEXT DEFAULT '',
-        shuffle_host INTEGER DEFAULT 0
+        shuffle_host INTEGER DEFAULT 0,
+        mihomo_x25519 INTEGER DEFAULT 0
     )
 """)
 cur.execute("PRAGMA table_info(hosts)")
@@ -1392,12 +1459,19 @@ if "shuffle_host" not in active_host_cols and "shuffleHost" not in active_host_c
         active_host_cols.add("shuffle_host")
     except Exception:
         pass
+if "mihomo_x25519" not in active_host_cols and "mihomoX25519" not in active_host_cols:
+    try:
+        cur.execute("ALTER TABLE hosts ADD COLUMN mihomo_x25519 INTEGER DEFAULT 0")
+        active_host_cols.add("mihomo_x25519")
+    except Exception:
+        pass
 
 inbound_col = "inboundId" if "inboundId" in active_host_cols else "inbound_id"
 sort_col = "sortOrder" if "sortOrder" in active_host_cols else "sort_order"
 shuffle_col = "shuffleHost" if "shuffleHost" in active_host_cols else "shuffle_host"
+mihomo_col = "mihomoX25519" if "mihomoX25519" in active_host_cols else "mihomo_x25519"
 
-def insert_host_entry(ib_id, host_remark, addr, host_port, sec, host_sni="", host_path="", host_alpn="", host_fp="firefox", sort_order=0, shuffle_host=0):
+def insert_host_entry(ib_id, host_remark, addr, host_port, sec, host_sni="", host_path="", host_alpn="", host_fp="firefox", sort_order=0, shuffle_host=0, mihomo_x25519=0):
     if ib_id is None or dry_run:
         return
     gid = str(uuid.uuid4())
@@ -1411,7 +1485,8 @@ def insert_host_entry(ib_id, host_remark, addr, host_port, sec, host_sni="", hos
         "is_disabled": 0, "isDisabled": 0, "is_hidden": 0, "isHidden": 0,
         "tags": "", "ech_config_list": "", "mux_params": "", "sockopt_params": "",
         "final_mask": "", "exclude_from_sub_types": "",
-        "shuffle_host": shuffle_host, "shuffleHost": shuffle_host
+        "shuffle_host": shuffle_host, "shuffleHost": shuffle_host,
+        "mihomo_x25519": mihomo_x25519, "mihomoX25519": mihomo_x25519
     }
     insert_data = {k: v for k, v in col_candidates.items() if k in active_host_cols}
     keys = list(insert_data.keys())
@@ -1419,7 +1494,7 @@ def insert_host_entry(ib_id, host_remark, addr, host_port, sec, host_sni="", hos
     placeholders = ",".join(["?"] * len(keys))
     cur.execute(f"INSERT INTO hosts ({','.join(keys)}) VALUES ({placeholders})", vals)
 
-def sync_host_entry(ib_id, host_remark, addr, host_port, sec, host_sni="", host_path="", host_alpn="", host_fp="firefox", sort_order=0, shuffle_host=0):
+def sync_host_entry(ib_id, host_remark, addr, host_port, sec, host_sni="", host_path="", host_alpn="", host_fp="firefox", sort_order=0, shuffle_host=0, mihomo_x25519=0):
     if ib_id is None:
         return
     cur.execute(f"SELECT id, remark FROM hosts WHERE {inbound_col} = ?", (ib_id,))
@@ -1436,10 +1511,13 @@ def sync_host_entry(ib_id, host_remark, addr, host_port, sec, host_sni="", host_
             if shuffle_col in active_host_cols:
                 update_fields.append(f"{shuffle_col} = ?")
                 update_vals.append(shuffle_host)
+            if mihomo_col in active_host_cols:
+                update_fields.append(f"{mihomo_col} = ?")
+                update_vals.append(mihomo_x25519)
             update_vals.append(h_id)
             cur.execute(f"UPDATE hosts SET {', '.join(update_fields)} WHERE id = ?", tuple(update_vals))
     else:
-        insert_host_entry(ib_id, host_remark, addr, host_port, sec, host_sni=host_sni, host_path=host_path, host_alpn=host_alpn, host_fp=host_fp, sort_order=sort_order, shuffle_host=shuffle_host)
+        insert_host_entry(ib_id, host_remark, addr, host_port, sec, host_sni=host_sni, host_path=host_path, host_alpn=host_alpn, host_fp=host_fp, sort_order=sort_order, shuffle_host=shuffle_host, mihomo_x25519=mihomo_x25519)
 
 def lookup_inbound_id(tag_val, port_val):
     cur.execute("SELECT id FROM inbounds WHERE tag = ? OR port = ?", (tag_val, port_val))
@@ -1453,7 +1531,7 @@ if enable_steal:
         cur.execute("SELECT remark FROM inbounds WHERE id = ?", (s_iid,))
         r_rem = cur.fetchone()
         s_rem = r_rem[0] if r_rem and r_rem[0] else steal_remark
-        sync_host_entry(s_iid, s_rem, domain, 443, "same", host_sni=steal_dom, host_fp=reality_fp, sort_order=1)
+        sync_host_entry(s_iid, s_rem, domain, 443, "same", host_sni=steal_dom, host_fp=reality_fp, sort_order=1, mihomo_x25519=1)
 
 if globals().get("enable_steal_compat", False) or ('enable_steal_compat' in locals() and enable_steal_compat):
     sc_iid = steal_compat_ib_id if ('steal_compat_ib_id' in locals() and steal_compat_ib_id) else (lookup_inbound_id("in-steal-backup", steal_compat_port) or lookup_inbound_id("in-steal-compat", steal_compat_port))
@@ -1461,7 +1539,7 @@ if globals().get("enable_steal_compat", False) or ('enable_steal_compat' in loca
         cur.execute("SELECT remark FROM inbounds WHERE id = ?", (sc_iid,))
         r_rem = cur.fetchone()
         sc_rem = r_rem[0] if r_rem and r_rem[0] else steal_compat_remark
-        sync_host_entry(sc_iid, sc_rem, domain, 443, "same", host_sni=steal_compat_dom, host_fp=reality_fp, sort_order=1)
+        sync_host_entry(sc_iid, sc_rem, domain, 443, "same", host_sni=steal_compat_dom, host_fp=reality_fp, sort_order=1, mihomo_x25519=1)
 
 if enable_classic:
     c_iid = classic_ib_id if ('classic_ib_id' in locals() and classic_ib_id) else lookup_inbound_id("in-classic-reality", classic_port)
@@ -1473,7 +1551,7 @@ if enable_classic:
             cur.execute(f"DELETE FROM hosts WHERE {inbound_col} = ?", (c_iid,))
         for idx, csni in enumerate(classic_snis, start=1):
             h_remark = f"{c_rem} ({csni})" if len(classic_snis) > 1 else c_rem
-            insert_host_entry(c_iid, h_remark, domain, 443, "same", host_sni=csni, host_fp=reality_fp, sort_order=idx, shuffle_host=1)
+            insert_host_entry(c_iid, h_remark, domain, 443, "same", host_sni=csni, host_fp=reality_fp, sort_order=idx, shuffle_host=1, mihomo_x25519=1)
 
 x_iid = xhttp_ib_id if ('xhttp_ib_id' in locals() and xhttp_ib_id) else lookup_inbound_id("in-xhttp-stream", xhttp_port)
 if x_iid:

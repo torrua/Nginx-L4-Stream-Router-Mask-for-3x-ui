@@ -126,7 +126,7 @@ printf 'RESULT=%s' "$NODE_TOKEN"
         self.assertRegex(token, r"^[0-9a-f]{64}$")
         with closing(sqlite3.connect(self.db)) as conn, conn:
             stored = conn.execute("SELECT token,enabled,scope FROM api_tokens WHERE name=?", ("Server/O'Brien",)).fetchone()
-        self.assertEqual(stored, (hashlib.sha256(token.encode()).hexdigest(), 1, "admin"))
+        self.assertEqual(stored, (hashlib.sha256(token.encode()).hexdigest(), 1, "node-admin"))
         self.assertIn(token, self.config.read_text(encoding="utf-8"))
         self.assertIn(token, (self.work / "node.env").read_text(encoding="utf-8"))
         if os.name != "nt":

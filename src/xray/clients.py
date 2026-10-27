@@ -23,6 +23,16 @@ def sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_s
         if "enable" not in client:
             client["enable"] = True
             
+        # 4. Расписание сброса трафика клиента (ежемесячно 1-го числа в 00:00)
+        c_tr = globals().get("inbound_traffic_reset", "monthly")
+        c_tr_day = globals().get("inbound_traffic_reset_day", 1)
+        if "trafficReset" not in client or client.get("trafficReset") in ("", "never", None):
+            client["trafficReset"] = c_tr
+        if "trafficResetDay" not in client or not client.get("trafficResetDay"):
+            client["trafficResetDay"] = c_tr_day
+        if "resetDay" not in client or not client.get("resetDay"):
+            client["resetDay"] = c_tr_day
+            
         client_flow = client.get("flow", "")
         client_secret = client.get("secret", "")
         client_adtag = client.get("adTag") or client.get("ad_tag") or ""
@@ -64,6 +74,9 @@ def sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_s
                 for opt_col in ["uuid", "sub_id", "subId"]:
                     if opt_col in client_traffics_cols:
                         ct_data[opt_col] = client_uuid if opt_col == "uuid" else sub_id
+                for r_col in ["reset_day", "resetDay"]:
+                    if r_col in client_traffics_cols:
+                        ct_data[r_col] = c_tr_day
                 valid_ct = {k: v for k, v in ct_data.items() if k in client_traffics_cols}
                 if valid_ct:
                     cols = ", ".join(valid_ct.keys())
@@ -77,6 +90,9 @@ def sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_s
                     if opt_col in client_traffics_cols:
                         val = client_uuid if opt_col == "uuid" else sub_id
                         if val: ct_updates[opt_col] = val
+                for r_col in ["reset_day", "resetDay"]:
+                    if r_col in client_traffics_cols:
+                        ct_updates[r_col] = c_tr_day
                 valid_ct_up = {k: v for k, v in ct_updates.items() if k in client_traffics_cols}
                 if valid_ct_up:
                     set_ct = ", ".join(f"{k} = ?" for k in valid_ct_up.keys())
@@ -94,6 +110,10 @@ def sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_s
                     "created_at": now_ms,
                     "updated_at": now_ms
                 }
+                for tr_c in ["traffic_reset", "trafficReset"]:
+                    if tr_c in clients_cols: c_data[tr_c] = c_tr
+                for trd_c in ["traffic_reset_day", "trafficResetDay", "reset_day", "resetDay"]:
+                    if trd_c in clients_cols: c_data[trd_c] = c_tr_day
                 if "sub_id" in clients_cols and sub_id: c_data["sub_id"] = sub_id
                 if "subId" in clients_cols and sub_id: c_data["subId"] = sub_id
                 if "uuid" in clients_cols and client_uuid: c_data["uuid"] = client_uuid
@@ -112,6 +132,13 @@ def sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_s
                     if "wg_allowed_ips" in clients_cols and client.get("allowedIPs"):
                         ips = client.get("allowedIPs")
                         c_data["wg_allowed_ips"] = ", ".join(ips) if isinstance(ips, list) else str(ips).strip("[]'\"")
+                    if "wg_keep_alive_range" in clients_cols:
+                        c_data["wg_keep_alive_range"] = str(client.get("keepAlive") or "15-25")
+                    elif "wg_keep_alive" in clients_cols and client.get("keepAlive"):
+                        try:
+                            c_data["wg_keep_alive"] = int(str(client.get("keepAlive")).split("-")[0])
+                        except (ValueError, TypeError):
+                            pass
                 valid_c = {k: v for k, v in c_data.items() if k in clients_cols}
                 if valid_c:
                     cols = ", ".join(valid_c.keys())
@@ -125,6 +152,10 @@ def sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_s
                     c_updates["updated_at"] = now_ms
                 if "enable" in client and "enable" in clients_cols:
                     c_updates["enable"] = 1 if client["enable"] else 0
+                for tr_c in ["traffic_reset", "trafficReset"]:
+                    if tr_c in clients_cols: c_updates[tr_c] = c_tr
+                for trd_c in ["traffic_reset_day", "trafficResetDay", "reset_day", "resetDay"]:
+                    if trd_c in clients_cols: c_updates[trd_c] = c_tr_day
                 if "sub_id" in clients_cols and sub_id: c_updates["sub_id"] = sub_id
                 if "uuid" in clients_cols and client_uuid: c_updates["uuid"] = client_uuid
                 if "password" in clients_cols and client_pass and protocol != "hysteria": c_updates["password"] = client_pass
@@ -148,6 +179,13 @@ def sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_s
                         curr_wg_ip = curr_wg_ip_row[0] if curr_wg_ip_row and curr_wg_ip_row[0] else ""
                         if not is_legacy_v2 or not curr_wg_ip or curr_wg_ip.startswith("["):
                             c_updates["wg_allowed_ips"] = clean_ip
+                    if "wg_keep_alive_range" in clients_cols:
+                        c_updates["wg_keep_alive_range"] = str(client.get("keepAlive") or "15-25")
+                    elif "wg_keep_alive" in clients_cols and client.get("keepAlive"):
+                        try:
+                            c_updates["wg_keep_alive"] = int(str(client.get("keepAlive")).split("-")[0])
+                        except (ValueError, TypeError):
+                            pass
                 valid_c_up = {k: v for k, v in c_updates.items() if k in clients_cols}
                 if valid_c_up:
                     set_clause = ", ".join(f"{k} = ?" for k in valid_c_up.keys())

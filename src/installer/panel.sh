@@ -35,6 +35,8 @@ install_step_panel() {
             export ENABLE_WARP
             export WARP_LICENSE_KEY
             export TIME_LOCATION
+            export INBOUND_TRAFFIC_RESET="${INBOUND_TRAFFIC_RESET:-monthly}"
+            export INBOUND_TRAFFIC_RESET_DAY="${INBOUND_TRAFFIC_RESET_DAY:-1}"
             export SUB_UPDATES
             export SUB_ENCRYPT
             export SUB_CLASH_PATH

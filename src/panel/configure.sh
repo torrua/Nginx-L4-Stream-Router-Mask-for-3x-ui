@@ -453,6 +453,8 @@ EOF_HELP
     export PORT_AGH_DNS
     export AGH_XRAY_DNS
     export FORCE_REMARKS
+    export INBOUND_TRAFFIC_RESET="${INBOUND_TRAFFIC_RESET:-monthly}"
+    export INBOUND_TRAFFIC_RESET_DAY="${INBOUND_TRAFFIC_RESET_DAY:-1}"
 
     # Приостановка службы x-ui на время реальной транзакции во избежание блокировок SQLite
     WAS_ACTIVE=0

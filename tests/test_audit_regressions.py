@@ -1370,6 +1370,49 @@ rm -f "$cache_file"
         self.assertEqual(st["realitySettings"]["settings"]["fingerprint"], "chrome", "settings.fingerprint must be updated to chrome")
         self.assertEqual(st["externalProxy"][0]["fingerprint"], "chrome", "externalProxy[0].fingerprint must be updated to chrome")
 
+    def test_smart_reconcile_external_proxy_alpn_array(self):
+        """Verify externalProxy alpn is strictly an array (e.g. ['h2']) to prevent 3X-UI validation error."""
+        reconcile = self.ns["smart_reconcile_inbound"]
+
+        # Case 1: Fresh creation where default_stream mistakenly has alpn as a string "h2"
+        xh_settings = {
+            "clients": [{"id": str(uuid.uuid4()), "flow": "", "email": "Client", "subId": "12345678", "enable": True}],
+            "decryption": "none"
+        }
+        xh_stream_str_alpn = {
+            "network": "xhttp",
+            "security": "none",
+            "xhttpSettings": {"path": "/xhttp/", "host": "test.example.com", "mode": "stream-one"},
+            "externalProxy": [{"dest": "test.example.com", "port": 443, "forceTls": "tls", "sni": "test.example.com", "fingerprint": "firefox", "alpn": "h2", "remark": "VLESS xHTTP"}]
+        }
+        ib_id = reconcile(50443, "vless", "in-xhttp-stream", "VLESS xHTTP", xh_settings, xh_stream_str_alpn, listen="127.0.0.1")
+        self.cur.execute("SELECT stream_settings FROM inbounds WHERE id = ?", (ib_id,))
+        st = json.loads(self.cur.fetchone()[0])
+        self.assertIsInstance(st["externalProxy"][0]["alpn"], list, "externalProxy[0].alpn must be array, never string")
+        self.assertEqual(st["externalProxy"][0]["alpn"], ["h2"])
+
+        # Case 2: Existing inbound in DB had alpn as string "h2" (regression from previous version)
+        # Reconcile must repair string alpn -> array ["h2"]
+        raw_st_corrupted = json.dumps({
+            "network": "xhttp",
+            "security": "none",
+            "xhttpSettings": {"path": "/xhttp/", "host": "test.example.com", "mode": "stream-one"},
+            "externalProxy": [{"dest": "test.example.com", "port": 443, "forceTls": "tls", "sni": "test.example.com", "fingerprint": "firefox", "alpn": "h2", "remark": "VLESS xHTTP"}]
+        })
+        self.cur.execute("UPDATE inbounds SET stream_settings = ? WHERE id = ?", (raw_st_corrupted, ib_id))
+
+        default_stream_fixed = {
+            "network": "xhttp",
+            "security": "none",
+            "xhttpSettings": {"path": "/xhttp/", "host": "test.example.com", "mode": "stream-one"},
+            "externalProxy": [{"dest": "test.example.com", "port": 443, "forceTls": "tls", "sni": "test.example.com", "fingerprint": "firefox", "alpn": ["h2"], "remark": "VLESS xHTTP"}]
+        }
+        reconcile(50443, "vless", "in-xhttp-stream", "VLESS xHTTP", xh_settings, default_stream_fixed, listen="127.0.0.1")
+        self.cur.execute("SELECT stream_settings FROM inbounds WHERE id = ?", (ib_id,))
+        st2 = json.loads(self.cur.fetchone()[0])
+        self.assertIsInstance(st2["externalProxy"][0]["alpn"], list, "reconcile must convert existing string alpn to array")
+        self.assertEqual(st2["externalProxy"][0]["alpn"], ["h2"])
+
     def test_reconcile_hosts_table_multiple_snis_and_shuffle_host(self):
         """Verify hosts table synchronization deletes prior hosts and inserts rows with shuffle_host=1 across schemas."""
         reconcile_src = (ROOT / "src/panel/reconcile.py").read_text(encoding="utf-8")

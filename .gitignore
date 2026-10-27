@@ -24,6 +24,7 @@ tokens.json
 credentials.json
 client_secrets.json
 passwords.txt
+*.txt
 *.token
 *.tokens
 *.secret

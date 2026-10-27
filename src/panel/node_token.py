@@ -44,7 +44,7 @@ def create(path, name):
             raise ValueError("Unsupported 3X-UI API-token schema")
         token = secrets.token_hex(32)
         values = {"name": name, "token": hashlib.sha256(token.encode()).hexdigest(), "enabled": 1}
-        for column, value in (("scope", "admin"), ("created_at", int(time.time())), ("expires_at", 0)):
+        for column, value in (("scope", "node-admin"), ("created_at", int(time.time())), ("expires_at", 0)):
             if column in columns:
                 values[column] = value
         if conn.execute("SELECT 1 FROM api_tokens WHERE name=?", (name,)).fetchone():

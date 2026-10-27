@@ -433,6 +433,24 @@ do_restore_rollback "{rb_dir.as_posix()}"
             self.assertEqual(db.read_text(encoding="utf-8"), "LIVE_DB", "Database was overwritten!")
             self.assertEqual(wal.read_text(encoding="utf-8"), "LIVE_WAL", "WAL was deleted when stop failed!")
 
+    def test_13_v311_compat_mihomo_x25519_and_awg_keepalive(self):
+        """[P1] Verify 3X-UI v3.11.0 compatibility: mihomo_x25519 in hosts and randomized AWG keepalive."""
+        reconcile_py = (ROOT_DIR / "src" / "panel" / "reconcile.py").read_text(encoding="utf-8")
+        manage_clients_py = (ROOT_DIR / "src" / "awg" / "manage_clients.py").read_text(encoding="utf-8")
+        node_token_py = (ROOT_DIR / "src" / "panel" / "node_token.py").read_text(encoding="utf-8")
+
+        # 1. mihomo_x25519 column and REALITY sync
+        self.assertIn("mihomo_x25519 INTEGER DEFAULT 0", reconcile_py)
+        self.assertIn("sync_host_entry(s_iid, s_rem, domain, 443, \"same\", host_sni=steal_dom, host_fp=reality_fp, sort_order=1, mihomo_x25519=1)", reconcile_py)
+        self.assertIn("insert_host_entry(c_iid, h_remark, domain, 443, \"same\", host_sni=csni, host_fp=reality_fp, sort_order=idx, shuffle_host=1, mihomo_x25519=1)", reconcile_py)
+
+        # 2. AWG keepalive randomized range default (15-25)
+        self.assertIn('CONF_PARAMS.get("PersistentKeepalive", "15-25")', manage_clients_py)
+        self.assertIn(r"PersistentKeepalive\s*=\s*([0-9\-]+)", manage_clients_py)
+
+        # 3. Node token scope node-admin
+        self.assertIn('("scope", "node-admin")', node_token_py)
+
 
 if __name__ == "__main__":
     unittest.main()

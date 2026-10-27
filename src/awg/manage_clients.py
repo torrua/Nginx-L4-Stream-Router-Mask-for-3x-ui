@@ -312,7 +312,7 @@ REKEY_TIMEOUT = os.environ.get("AWG_REKEY_TIMEOUT") or CONF_PARAMS.get("RekeyTim
 REJECT_AFTER_TIME = os.environ.get("AWG_REJECT_AFTER_TIME") or CONF_PARAMS.get("RejectAfterTime", "")
 KEEPALIVE_TIMEOUT = os.environ.get("AWG_KEEPALIVE_TIMEOUT") or CONF_PARAMS.get("KeepaliveTimeout", "")
 MAX_HANDSHAKE_ATTEMPTS = os.environ.get("AWG_MAX_HANDSHAKE_ATTEMPTS") or CONF_PARAMS.get("MaxHandshakeAttempts", "")
-PERSISTENT_KEEPALIVE = os.environ.get("AWG_PERSISTENT_KEEPALIVE") or CONF_PARAMS.get("PersistentKeepalive", "25")
+PERSISTENT_KEEPALIVE = os.environ.get("AWG_PERSISTENT_KEEPALIVE") or CONF_PARAMS.get("PersistentKeepalive", "15-25")
 ALLOWED_IPS = os.environ.get("AWG_ALLOWED_IPS", "0.0.0.0/0")
 CPA = os.environ.get("AWG_CPA") or os.environ.get("AWG_CONTENT_PADDING_ADDITION") or CONF_PARAMS.get("ContentPaddingAddition") or CONF_PARAMS.get("CPA", "")
 
@@ -559,7 +559,7 @@ PersistentKeepalive = {PERSISTENT_KEEPALIVE}
         if m_mtu:
             cur_mtu = m_mtu.group(1).strip()
 
-        m_ka = re.search(r"^\s*PersistentKeepalive\s*=\s*(\d+)", internal_config, re.MULTILINE | re.IGNORECASE)
+        m_ka = re.search(r"^\s*PersistentKeepalive\s*=\s*([0-9\-]+)", internal_config, re.MULTILINE | re.IGNORECASE)
         if m_ka:
             cur_keepalive = m_ka.group(1).strip()
 

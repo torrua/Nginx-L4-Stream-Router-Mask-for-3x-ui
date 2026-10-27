@@ -1,4 +1,19 @@
 def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, default_stream, listen="127.0.0.1"):
+    inb_cols = globals().get("inbounds_cols")
+    if inb_cols is None:
+        try:
+            cur.execute("PRAGMA table_info(inbounds)")
+            inb_cols = set(r[1] for r in cur.fetchall())
+        except Exception:
+            inb_cols = set()
+
+    tr_col = "traffic_reset" if "traffic_reset" in inb_cols else ("trafficReset" if "trafficReset" in inb_cols else None)
+    trd_col = "traffic_reset_day" if "traffic_reset_day" in inb_cols else ("trafficResetDay" if "trafficResetDay" in inb_cols else None)
+    ltrt_col = "last_traffic_reset_time" if "last_traffic_reset_time" in inb_cols else ("lastTrafficResetTime" if "lastTrafficResetTime" in inb_cols else None)
+
+    target_tr = globals().get("inbound_traffic_reset", "monthly")
+    target_tr_day = globals().get("inbound_traffic_reset_day", 1)
+
     cur.execute("SELECT id, settings, stream_settings, protocol, tag, remark, listen, enable FROM inbounds WHERE port = ? OR tag = ?", (port, tag))
     row = cur.fetchone()
     
@@ -16,18 +31,45 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
                     ep["forceTls"] = "same"
                 elif "forceTls" not in ep:
                     ep["forceTls"] = "tls"
+                if "alpn" in ep and isinstance(ep["alpn"], str):
+                    ep["alpn"] = [ep["alpn"]] if ep["alpn"] else []
 
         settings_json = json.dumps(target_settings, ensure_ascii=False)
         stream_json = json.dumps(target_stream, ensure_ascii=False)
         sniffing_json = json.dumps({"enabled": True, "destOverride": ["http", "tls", "quic", "fakedns"]})
         new_inbound_id = None
         if not dry_run:
-            cur.execute("""
-                INSERT INTO inbounds (
-                    user_id, up, down, total, remark, enable, expiry_time,
-                    listen, port, protocol, settings, stream_settings, tag, sniffing
-                ) VALUES (?, 0, 0, 0, ?, 1, 0, ?, ?, ?, ?, ?, ?, ?)
-            """, (admin_id, remark, listen, port, protocol, settings_json, stream_json, tag, sniffing_json))
+            ib_data = {
+                "user_id": admin_id,
+                "up": 0,
+                "down": 0,
+                "total": 0,
+                "remark": remark,
+                "enable": 1,
+                "expiry_time": 0,
+                "listen": listen,
+                "port": port,
+                "protocol": protocol,
+                "settings": settings_json,
+                "stream_settings": stream_json,
+                "tag": tag,
+                "sniffing": sniffing_json,
+            }
+            if tr_col:
+                ib_data[tr_col] = target_tr
+            if trd_col:
+                ib_data[trd_col] = target_tr_day
+            if ltrt_col:
+                ib_data[ltrt_col] = 0
+
+            if inb_cols:
+                valid_ib = {k: v for k, v in ib_data.items() if k in inb_cols}
+            else:
+                valid_ib = {k: v for k, v in ib_data.items() if not k.startswith("traffic") and not k.startswith("last_traffic")}
+
+            cols_str = ", ".join(valid_ib.keys())
+            placeholders = ", ".join(["?"] * len(valid_ib))
+            cur.execute(f"INSERT INTO inbounds ({cols_str}) VALUES ({placeholders})", list(valid_ib.values()))
             new_inbound_id = cur.lastrowid
             if "sync_inbound_clients" in globals():
                 sync_inbound_clients(new_inbound_id, protocol, remark, target_settings, target_stream)
@@ -62,6 +104,32 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
         if final_remark != remark:
             preserved.append(f"пользовательское название '{final_remark}'")
 
+    # Расписание сброса трафика инбаунда
+    final_tr = target_tr
+    final_tr_day = target_tr_day
+    if tr_col:
+        cur_tr = None
+        cur_tr_day = 1
+        try:
+            sel_cols = f"{tr_col}, {trd_col}" if trd_col else tr_col
+            cur.execute(f"SELECT {sel_cols} FROM inbounds WHERE id = ?", (inbound_id,))
+            tr_row = cur.fetchone()
+            if tr_row:
+                cur_tr = tr_row[0]
+                if trd_col and len(tr_row) > 1 and tr_row[1] is not None:
+                    cur_tr_day = tr_row[1]
+        except Exception:
+            pass
+
+        if cur_tr and cur_tr not in ("never", ""):
+            final_tr = cur_tr
+            final_tr_day = cur_tr_day
+            preserved.append(f"расписание сброса трафика '{cur_tr}' (день {cur_tr_day})")
+        else:
+            final_tr = target_tr
+            final_tr_day = target_tr_day
+            repairs.append(f"настроен ежемесячный сброс трафика (1-го числа в 00:00)")
+
     # А. Сохранение и консолидация клиентов (единый реестр)
     existing_clients = cur_settings.get("clients", [])
     if "unified_email" in globals() and globals().get("unified_email"):
@@ -75,9 +143,15 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             if ec_email == u_email:
                 if not has_unified and default_client:
                     merged_c = json.loads(json.dumps(default_client))
-                    for limit_field in ["totalGB", "expiryTime", "limitIp", "tgId", "reset", "resetDay", "resetMax", "enable"]:
+                    for limit_field in ["totalGB", "expiryTime", "limitIp", "tgId", "reset", "resetDay", "resetMax", "trafficReset", "trafficResetDay", "enable"]:
                         if limit_field in ec:
                             merged_c[limit_field] = ec[limit_field]
+                    if "trafficReset" not in merged_c or merged_c.get("trafficReset") in ("", "never", None):
+                        merged_c["trafficReset"] = target_tr
+                    if "trafficResetDay" not in merged_c or not merged_c.get("trafficResetDay"):
+                        merged_c["trafficResetDay"] = target_tr_day
+                    if "resetDay" not in merged_c or not merged_c.get("resetDay"):
+                        merged_c["resetDay"] = target_tr_day
                     if protocol == "shadowsocks" and ec.get("password"):
                         if "validate_ss2022_key" in globals() and validate_ss2022_key(ec["password"], target_settings.get("method", "2022-blake3-aes-256-gcm")):
                             merged_c["password"] = ec["password"]
@@ -117,6 +191,13 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
         target_settings["clients"] = consolidated_clients
     else:
         if existing_clients and len(existing_clients) > 0:
+            for ec in existing_clients:
+                if "trafficReset" not in ec or ec.get("trafficReset") in ("", "never", None):
+                    ec["trafficReset"] = target_tr
+                if "trafficResetDay" not in ec or not ec.get("trafficResetDay"):
+                    ec["trafficResetDay"] = target_tr_day
+                if "resetDay" not in ec or not ec.get("resetDay"):
+                    ec["resetDay"] = target_tr_day
             target_settings["clients"] = existing_clients
             preserved.append(f"клиенты ({len(existing_clients)} польз.)")
         else:
@@ -512,6 +593,8 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
                 entry["dest"] = target_dest
             entry["port"] = expected_ext_port
             entry["forceTls"] = force_tls_val
+            if "alpn" in entry and isinstance(entry["alpn"], str):
+                entry["alpn"] = [entry["alpn"]] if entry["alpn"] else []
             updated_ext.append(entry)
         target_stream["externalProxy"] = updated_ext
         if cur_ext != updated_ext:
@@ -540,10 +623,25 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             if def_ext[0].get("fingerprint"):
                 ext_entry["fingerprint"] = def_ext[0]["fingerprint"]
             if def_ext[0].get("alpn"):
-                ext_entry["alpn"] = def_ext[0]["alpn"]
+                ext_alpn = def_ext[0]["alpn"]
+                if isinstance(ext_alpn, str):
+                    ext_alpn = [ext_alpn] if ext_alpn else []
+                ext_entry["alpn"] = ext_alpn
 
         def_fp = def_ext[0].get("fingerprint") if (def_ext and isinstance(def_ext, list) and len(def_ext) > 0) else None
         cur_fp_single = cur_ext[0].get("fingerprint") if (cur_ext and isinstance(cur_ext, list) and len(cur_ext) > 0) else None
+
+        def_alpn = def_ext[0].get("alpn") if (def_ext and isinstance(def_ext, list) and len(def_ext) > 0) else None
+        if isinstance(def_alpn, str):
+            def_alpn = [def_alpn] if def_alpn else []
+        cur_alpn = cur_ext[0].get("alpn") if (cur_ext and isinstance(cur_ext, list) and len(cur_ext) > 0) else None
+
+        alpn_needs_repair = False
+        if isinstance(cur_alpn, str):
+            alpn_needs_repair = True
+        elif def_alpn is not None and cur_alpn != def_alpn:
+            alpn_needs_repair = True
+
         needs_ext_repair = (
             not cur_ext
             or cur_ext[0].get("port") != expected_ext_port
@@ -552,6 +650,7 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             or cur_ext[0].get("forceTls") != force_tls_val
             or (target_sni and cur_ext[0].get("sni") != target_sni)
             or (def_fp and cur_fp_single != def_fp)
+            or alpn_needs_repair
         )
 
         if needs_ext_repair:
@@ -559,8 +658,18 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             sni_desc = f", sni: {target_sni}" if target_sni else ""
             repairs.append(f"исправлен externalProxy -> {target_dest}:{expected_ext_port}{sni_desc}")
         else:
+            for ep in cur_ext:
+                if isinstance(ep, dict) and "alpn" in ep and isinstance(ep["alpn"], str):
+                    ep["alpn"] = [ep["alpn"]] if ep["alpn"] else []
+                    repairs.append("исправлен тип alpn в externalProxy (string -> array)")
             target_stream["externalProxy"] = cur_ext
             preserved.append(f"externalProxy :{expected_ext_port}")
+
+    # В 3X-UI externalProxy[].alpn обязан быть массивом (array), строка вызывает ошибку валидации формы
+    if "externalProxy" in target_stream and isinstance(target_stream["externalProxy"], list):
+        for ep in target_stream["externalProxy"]:
+            if isinstance(ep, dict) and "alpn" in ep and isinstance(ep["alpn"], str):
+                ep["alpn"] = [ep["alpn"]] if ep["alpn"] else []
 
     # Синхронизация клиентов в реестре (client_traffics, clients, client_inbounds)
     if "sync_inbound_clients" in globals():
@@ -572,11 +681,19 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
     sniffing_json = json.dumps({"enabled": True, "destOverride": ["http", "tls", "quic", "fakedns"]})
 
     if not dry_run:
-        cur.execute("""
-            UPDATE inbounds
-            SET protocol = ?, tag = ?, remark = ?, settings = ?, stream_settings = ?, listen = ?, sniffing = ?, enable = ?
-            WHERE id = ?
-        """, (protocol, tag, final_remark, settings_json, stream_json, listen, sniffing_json, cur_enable, inbound_id))
+        update_fields = [
+            "protocol = ?", "tag = ?", "remark = ?", "settings = ?",
+            "stream_settings = ?", "listen = ?", "sniffing = ?", "enable = ?"
+        ]
+        update_vals = [protocol, tag, final_remark, settings_json, stream_json, listen, sniffing_json, cur_enable]
+        if tr_col and tr_col in inb_cols:
+            update_fields.append(f"{tr_col} = ?")
+            update_vals.append(final_tr)
+        if trd_col and trd_col in inb_cols:
+            update_fields.append(f"{trd_col} = ?")
+            update_vals.append(final_tr_day)
+        update_vals.append(inbound_id)
+        cur.execute(f"UPDATE inbounds SET {', '.join(update_fields)} WHERE id = ?", tuple(update_vals))
 
     status_str = f"  [ОБНОВЛЕН] {final_remark} (порт {port}):"
     if repairs:

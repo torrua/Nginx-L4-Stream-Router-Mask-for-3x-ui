@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # ==============================================================================
-# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v9.6.3 Universal
+# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v9.6.4 Universal
 # Nginx L4 Stream + 3X-UI + Unix Sockets + Native proxy_http_version 2 + 3 Decoys
 # ==============================================================================
 # Архитектура:
@@ -27,7 +27,7 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="v9.6.3"
+SCRIPT_VERSION="v9.6.4"
 
 
 # Checkpoints use stable step IDs and input signatures, independent of UI numbering.
@@ -78,7 +78,7 @@ checkpoint_signature() {
         certificates) keys="PRIMARY_DOMAIN ALL_DOMAINS SSL_ENGINE_CHOICE CF_AUTH_METHOD CF_Token CF_Account_ID CF_Email CF_Key" ;;
         decoy) keys="PRIMARY_DOMAIN DECOY_MODE" ;;
         security) keys="SSH_PORT SSH_PUBLIC_KEY ENABLE_HOST_SECURITY ENABLE_FAIL2BAN DISABLE_PASSWORD_AUTH" ;;
-        *) keys="PRIMARY_DOMAIN ALL_DOMAINS STEAL_PORTS_LIST CLASSIC_PORTS_LIST EXT_SNI_LIST ALL_EXT_SNIS ADD_WWW ENABLE_WEB_STACK ENABLE_STEAL STEAL_DOMAINS STEAL_PORT ENABLE_STEAL_COMPAT STEAL_COMPAT_PORT STEAL_COMPAT_DOMAIN ENABLE_CLASSIC CLASSIC_SNI CLASSIC_PORT REALITY_FINGERPRINT PORTS_SETUP_MODE PATHS_SETUP_MODE CREDS_SETUP_MODE PANEL_PORT PANEL_PATH ADMIN_USERNAME ADMIN_PASSWORD SUB_PORT SUB_PATH SUB_CLASH_PATH SUB_TITLE XHTTP_STREAM_PORT XHTTP_STREAM_PATH ENABLE_HY2 HY2_PORT HY2_DOMAIN HY2_PORT_HOPPING HY2_PORT_HOPPING_RANGE ENABLE_AWG_V3 AWG_V3_PORT ENABLE_AWG_V2 AWG_V2_PORT ENABLE_AWG_STANDALONE AWG_STANDALONE_PORT AWG_SERVER_HOST AWG_PRIMARY_DNS AWG_SECONDARY_DNS ENABLE_AGH AGH_MODE AGH_DOMAIN AGH_USER AGH_PASS AGH_CLIENT_ID AGH_XRAY_DNS PORT_AGH_WEB PORT_AGH_DNS DIAG_PATH DIAG_TOKEN ENABLE_WARP WARP_LICENSE_KEY ENABLE_SS2022 SS2022_PORT SS2022_METHOD SS2022_PASSWORD ENABLE_TUIC TUIC_PORT TUIC_UUID TUIC_PASSWORD ENABLE_MTPROTO MTPROTO_PORT MTPROTO_SECRET ENABLE_MASQUE MASQUE_PORT MASQUE_PASSWORD ENABLE_SHADOWTLS SHADOWTLS_PORT SHADOWTLS_DOMAIN SHADOWTLS_PASSWORD ENABLE_NAIVE NAIVE_PORT NAIVE_DOMAIN NAIVE_USER NAIVE_PASS ENABLE_WSTUNNEL WSTUNNEL_PORT WSTUNNEL_PREFIX WSTUNNEL_SECRET ENABLE_DNSTT DNSTT_PORT DNSTT_DOMAIN DNSTT_PUBKEY ENABLE_ZAPRET ZAPRET_QNUM ZAPRET_DESYNC ZAPRET_FOOLING ENABLE_MIERU MIERU_PORT_MODE MIERU_PORT MIERU_TRANSPORT MIERU_USER MIERU_PASS MIERU_MTU AUTO_SETUP_3XUI ENABLE_NODE_TOKEN NODE_TOKEN NODE_TOKEN_NAME TIME_LOCATION BLOCK_SMTP BLOCK_LAN WEB_LISTEN SUB_LISTEN AWG_HEADER_PROTECTION_KEY AWG_RANDOM_TRAILERS AWG_SUBNET_IP AWG_SUBNET_CIDR MTPROTO_FAKETLS_DOMAIN MTPROTO_ADTAG SHADOWTLS_SNI WSTUNNEL_DOMAIN" ;;
+        *) keys="PRIMARY_DOMAIN ALL_DOMAINS STEAL_PORTS_LIST CLASSIC_PORTS_LIST EXT_SNI_LIST ALL_EXT_SNIS ADD_WWW ENABLE_WEB_STACK ENABLE_STEAL STEAL_DOMAINS STEAL_PORT ENABLE_STEAL_COMPAT STEAL_COMPAT_PORT STEAL_COMPAT_DOMAIN ENABLE_CLASSIC CLASSIC_SNI CLASSIC_PORT REALITY_FINGERPRINT PORTS_SETUP_MODE PATHS_SETUP_MODE CREDS_SETUP_MODE PANEL_PORT PANEL_PATH ADMIN_USERNAME ADMIN_PASSWORD SUB_PORT SUB_PATH SUB_CLASH_PATH SUB_TITLE XHTTP_STREAM_PORT XHTTP_STREAM_PATH ENABLE_HY2 HY2_PORT HY2_DOMAIN HY2_PORT_HOPPING HY2_PORT_HOPPING_RANGE ENABLE_AWG_V3 AWG_V3_PORT ENABLE_AWG_V2 AWG_V2_PORT ENABLE_AWG_STANDALONE AWG_STANDALONE_PORT AWG_SERVER_HOST AWG_PRIMARY_DNS AWG_SECONDARY_DNS ENABLE_AGH AGH_MODE AGH_DOMAIN AGH_USER AGH_PASS AGH_CLIENT_ID AGH_XRAY_DNS PORT_AGH_WEB PORT_AGH_DNS DIAG_PATH DIAG_TOKEN ENABLE_WARP WARP_LICENSE_KEY ENABLE_SS2022 SS2022_PORT SS2022_METHOD SS2022_PASSWORD ENABLE_TUIC TUIC_PORT TUIC_UUID TUIC_PASSWORD ENABLE_MTPROTO MTPROTO_PORT MTPROTO_SECRET ENABLE_MASQUE MASQUE_PORT MASQUE_PASSWORD ENABLE_SHADOWTLS SHADOWTLS_PORT SHADOWTLS_DOMAIN SHADOWTLS_PASSWORD ENABLE_NAIVE NAIVE_PORT NAIVE_DOMAIN NAIVE_USER NAIVE_PASS ENABLE_WSTUNNEL WSTUNNEL_PORT WSTUNNEL_PREFIX WSTUNNEL_SECRET ENABLE_DNSTT DNSTT_PORT DNSTT_DOMAIN DNSTT_PUBKEY ENABLE_ZAPRET ZAPRET_QNUM ZAPRET_DESYNC ZAPRET_FOOLING ENABLE_MIERU MIERU_PORT_MODE MIERU_PORT MIERU_TRANSPORT MIERU_USER MIERU_PASS MIERU_MTU AUTO_SETUP_3XUI ENABLE_NODE_TOKEN NODE_TOKEN NODE_TOKEN_NAME TIME_LOCATION INBOUND_TRAFFIC_RESET INBOUND_TRAFFIC_RESET_DAY BLOCK_SMTP BLOCK_LAN WEB_LISTEN SUB_LISTEN AWG_HEADER_PROTECTION_KEY AWG_RANDOM_TRAILERS AWG_SUBNET_IP AWG_SUBNET_CIDR MTPROTO_FAKETLS_DOMAIN MTPROTO_ADTAG SHADOWTLS_SNI WSTUNNEL_DOMAIN" ;;
     esac
     {
         printf '%s\0' "${SCRIPT_VERSION:-unknown}" "$id"
@@ -1023,7 +1023,7 @@ generate_config_template() {
     local target_file="${1:-server-setup.env.example}"
     cat << 'EOF_CONF' > "$target_file"
 # ==============================================================================
-# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP.SH (v9.6.3 Universal)
+# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP.SH (v9.6.4 Universal)
 # ==============================================================================
 # Данный файл позволяет выполнять полностью автоматическую установку:
 # ./setup.sh --config server-setup.env --non-interactive --force
@@ -10434,7 +10434,7 @@ REKEY_TIMEOUT = os.environ.get("AWG_REKEY_TIMEOUT") or CONF_PARAMS.get("RekeyTim
 REJECT_AFTER_TIME = os.environ.get("AWG_REJECT_AFTER_TIME") or CONF_PARAMS.get("RejectAfterTime", "")
 KEEPALIVE_TIMEOUT = os.environ.get("AWG_KEEPALIVE_TIMEOUT") or CONF_PARAMS.get("KeepaliveTimeout", "")
 MAX_HANDSHAKE_ATTEMPTS = os.environ.get("AWG_MAX_HANDSHAKE_ATTEMPTS") or CONF_PARAMS.get("MaxHandshakeAttempts", "")
-PERSISTENT_KEEPALIVE = os.environ.get("AWG_PERSISTENT_KEEPALIVE") or CONF_PARAMS.get("PersistentKeepalive", "25")
+PERSISTENT_KEEPALIVE = os.environ.get("AWG_PERSISTENT_KEEPALIVE") or CONF_PARAMS.get("PersistentKeepalive", "15-25")
 ALLOWED_IPS = os.environ.get("AWG_ALLOWED_IPS", "0.0.0.0/0")
 CPA = os.environ.get("AWG_CPA") or os.environ.get("AWG_CONTENT_PADDING_ADDITION") or CONF_PARAMS.get("ContentPaddingAddition") or CONF_PARAMS.get("CPA", "")
 
@@ -10835,7 +10835,7 @@ PersistentKeepalive = {PERSISTENT_KEEPALIVE}
         if m_mtu:
             cur_mtu = m_mtu.group(1).strip()
 
-        m_ka = re.search(r"^\s*PersistentKeepalive\s*=\s*(\d+)", internal_config, re.MULTILINE | re.IGNORECASE)
+        m_ka = re.search(r"^\s*PersistentKeepalive\s*=\s*([0-9\-]+)", internal_config, re.MULTILINE | re.IGNORECASE)
         if m_ka:
             cur_keepalive = m_ka.group(1).strip()
 
@@ -12937,7 +12937,7 @@ setup_naive_service() {
         local caddy_tmp="/tmp/caddy_naive_$$"
         mkdir -p "$caddy_tmp"
         local rel_ver="${SCRIPT_VERSION:-v9.1.0}"
-        [[ "$rel_ver" == "v9.6.3" ]] && rel_ver="v9.1.0"
+        [[ "$rel_ver" == "v9.6.4" ]] && rel_ver="v9.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/caddy-naive-linux-${caddy_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
@@ -13107,7 +13107,7 @@ setup_dnstt_service() {
         local dnstt_tmp="/tmp/dnstt_$$"
         mkdir -p "$dnstt_tmp"
         local rel_ver="${SCRIPT_VERSION:-v9.1.0}"
-        [[ "$rel_ver" == "v9.6.3" ]] && rel_ver="v9.1.0"
+        [[ "$rel_ver" == "v9.6.4" ]] && rel_ver="v9.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/dnstt-server-linux-${dnstt_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
@@ -17216,7 +17216,7 @@ def create(path, name):
             raise ValueError("Unsupported 3X-UI API-token schema")
         token = secrets.token_hex(32)
         values = {"name": name, "token": hashlib.sha256(token.encode()).hexdigest(), "enabled": 1}
-        for column, value in (("scope", "admin"), ("created_at", int(time.time())), ("expires_at", 0)):
+        for column, value in (("scope", "node-admin"), ("created_at", int(time.time())), ("expires_at", 0)):
             if column in columns:
                 values[column] = value
         if conn.execute("SELECT 1 FROM api_tokens WHERE name=?", (name,)).fetchone():
@@ -17471,7 +17471,7 @@ def create_manifest(staging_dir: Union[str, Path], output_path: Optional[Union[s
     created_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     data = {
         "format_version": "2.0",
-        "project_version": os.environ.get("SCRIPT_VERSION", "v9.6.3"),
+        "project_version": os.environ.get("SCRIPT_VERSION", "v9.6.4"),
         "created_at": created_iso,
         "db_path": os.environ.get("DB_PATH", "/etc/x-ui/x-ui.db"),
         "files": files_map,
@@ -18895,6 +18895,8 @@ EOF_HELP
     export PORT_AGH_DNS
     export AGH_XRAY_DNS
     export FORCE_REMARKS
+    export INBOUND_TRAFFIC_RESET="${INBOUND_TRAFFIC_RESET:-monthly}"
+    export INBOUND_TRAFFIC_RESET_DAY="${INBOUND_TRAFFIC_RESET_DAY:-1}"
 
     # Приостановка службы x-ui на время реальной транзакции во избежание блокировок SQLite
     WAS_ACTIVE=0
@@ -18969,6 +18971,29 @@ try:
         existing_settings[k] = v
 except Exception as e:
     print(f"[!] Предупреждение: ошибка чтения таблицы settings: {e}")
+
+# Глобальная санитизация externalProxy во всех существующих инбаундах базы данных
+try:
+    cur.execute("SELECT id, remark, stream_settings FROM inbounds")
+    for _g_id, _g_rem, _g_st_raw in cur.fetchall():
+        if not _g_st_raw:
+            continue
+        try:
+            _g_st = json.loads(_g_st_raw)
+        except Exception:
+            continue
+        _g_ext = _g_st.get("externalProxy")
+        if isinstance(_g_ext, list) and len(_g_ext) > 0:
+            _g_modified = False
+            for _g_ep in _g_ext:
+                if isinstance(_g_ep, dict) and "alpn" in _g_ep and isinstance(_g_ep["alpn"], str):
+                    _g_ep["alpn"] = [_g_ep["alpn"]] if _g_ep["alpn"] else []
+                    _g_modified = True
+            if _g_modified and not dry_run:
+                cur.execute("UPDATE inbounds SET stream_settings = ? WHERE id = ?", (json.dumps(_g_st, ensure_ascii=False), _g_id))
+                print(f"  [ИСПРАВЛЕНО] Инбаунд #{_g_id} ({_g_rem}): тип alpn в externalProxy исправлен со строки на массив")
+except Exception as _e_ext_scan:
+    pass
 
 domain = os.environ.get("PRIMARY_DOMAIN") or existing_settings.get("subDomain") or "localhost"
 panel_port = os.environ.get("PANEL_PORT") or existing_settings.get("webPort") or "10443"
@@ -19192,6 +19217,47 @@ def get_table_columns(tbl):
 client_traffics_cols = get_table_columns("client_traffics")
 clients_cols = get_table_columns("clients")
 client_inbounds_cols = get_table_columns("client_inbounds")
+inbounds_cols = get_table_columns("inbounds")
+
+if "inbounds" in all_tables:
+    if "traffic_reset" not in inbounds_cols and "trafficReset" not in inbounds_cols:
+        try:
+            cur.execute("ALTER TABLE inbounds ADD COLUMN traffic_reset TEXT DEFAULT 'never'")
+            inbounds_cols.add("traffic_reset")
+        except Exception:
+            pass
+    if "traffic_reset_day" not in inbounds_cols and "trafficResetDay" not in inbounds_cols:
+        try:
+            cur.execute("ALTER TABLE inbounds ADD COLUMN traffic_reset_day INTEGER DEFAULT 1")
+            inbounds_cols.add("traffic_reset_day")
+        except Exception:
+            pass
+    if "last_traffic_reset_time" not in inbounds_cols and "lastTrafficResetTime" not in inbounds_cols:
+        try:
+            cur.execute("ALTER TABLE inbounds ADD COLUMN last_traffic_reset_time INTEGER DEFAULT 0")
+            inbounds_cols.add("last_traffic_reset_time")
+        except Exception:
+            pass
+
+inbound_traffic_reset = os.environ.get("INBOUND_TRAFFIC_RESET", "monthly").strip().lower() or "monthly"
+try:
+    inbound_traffic_reset_day = int(os.environ.get("INBOUND_TRAFFIC_RESET_DAY", "1").strip() or "1")
+except (ValueError, TypeError):
+    inbound_traffic_reset_day = 1
+
+# Глобальная настройка ежемесячного сброса трафика для всех существующих инбаундов
+try:
+    _tr_col = "traffic_reset" if "traffic_reset" in inbounds_cols else ("trafficReset" if "trafficReset" in inbounds_cols else None)
+    _trd_col = "traffic_reset_day" if "traffic_reset_day" in inbounds_cols else ("trafficResetDay" if "trafficResetDay" in inbounds_cols else None)
+    if _tr_col and not dry_run:
+        if _trd_col:
+            cur.execute(f"UPDATE inbounds SET {_tr_col} = ?, {_trd_col} = ? WHERE {_tr_col} IS NULL OR {_tr_col} = '' OR {_tr_col} = 'never'", (inbound_traffic_reset, inbound_traffic_reset_day))
+        else:
+            cur.execute(f"UPDATE inbounds SET {_tr_col} = ? WHERE {_tr_col} IS NULL OR {_tr_col} = '' OR {_tr_col} = 'never'", (inbound_traffic_reset,))
+        if cur.rowcount > 0:
+            print(f"  [ОБНОВЛЕНО] Сброс трафика ({inbound_traffic_reset}, день {inbound_traffic_reset_day} в 00:00) активирован для {cur.rowcount} инбаунд(ов).")
+except Exception as _e_tr:
+    pass
 
 def sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_stream=None):
     clients = target_settings.get("clients", [])
@@ -19217,6 +19283,16 @@ def sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_s
         # 3. Статус активности
         if "enable" not in client:
             client["enable"] = True
+            
+        # 4. Расписание сброса трафика клиента (ежемесячно 1-го числа в 00:00)
+        c_tr = globals().get("inbound_traffic_reset", "monthly")
+        c_tr_day = globals().get("inbound_traffic_reset_day", 1)
+        if "trafficReset" not in client or client.get("trafficReset") in ("", "never", None):
+            client["trafficReset"] = c_tr
+        if "trafficResetDay" not in client or not client.get("trafficResetDay"):
+            client["trafficResetDay"] = c_tr_day
+        if "resetDay" not in client or not client.get("resetDay"):
+            client["resetDay"] = c_tr_day
             
         client_flow = client.get("flow", "")
         client_secret = client.get("secret", "")
@@ -19259,6 +19335,9 @@ def sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_s
                 for opt_col in ["uuid", "sub_id", "subId"]:
                     if opt_col in client_traffics_cols:
                         ct_data[opt_col] = client_uuid if opt_col == "uuid" else sub_id
+                for r_col in ["reset_day", "resetDay"]:
+                    if r_col in client_traffics_cols:
+                        ct_data[r_col] = c_tr_day
                 valid_ct = {k: v for k, v in ct_data.items() if k in client_traffics_cols}
                 if valid_ct:
                     cols = ", ".join(valid_ct.keys())
@@ -19272,6 +19351,9 @@ def sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_s
                     if opt_col in client_traffics_cols:
                         val = client_uuid if opt_col == "uuid" else sub_id
                         if val: ct_updates[opt_col] = val
+                for r_col in ["reset_day", "resetDay"]:
+                    if r_col in client_traffics_cols:
+                        ct_updates[r_col] = c_tr_day
                 valid_ct_up = {k: v for k, v in ct_updates.items() if k in client_traffics_cols}
                 if valid_ct_up:
                     set_ct = ", ".join(f"{k} = ?" for k in valid_ct_up.keys())
@@ -19289,6 +19371,10 @@ def sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_s
                     "created_at": now_ms,
                     "updated_at": now_ms
                 }
+                for tr_c in ["traffic_reset", "trafficReset"]:
+                    if tr_c in clients_cols: c_data[tr_c] = c_tr
+                for trd_c in ["traffic_reset_day", "trafficResetDay", "reset_day", "resetDay"]:
+                    if trd_c in clients_cols: c_data[trd_c] = c_tr_day
                 if "sub_id" in clients_cols and sub_id: c_data["sub_id"] = sub_id
                 if "subId" in clients_cols and sub_id: c_data["subId"] = sub_id
                 if "uuid" in clients_cols and client_uuid: c_data["uuid"] = client_uuid
@@ -19307,6 +19393,13 @@ def sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_s
                     if "wg_allowed_ips" in clients_cols and client.get("allowedIPs"):
                         ips = client.get("allowedIPs")
                         c_data["wg_allowed_ips"] = ", ".join(ips) if isinstance(ips, list) else str(ips).strip("[]'\"")
+                    if "wg_keep_alive_range" in clients_cols:
+                        c_data["wg_keep_alive_range"] = str(client.get("keepAlive") or "15-25")
+                    elif "wg_keep_alive" in clients_cols and client.get("keepAlive"):
+                        try:
+                            c_data["wg_keep_alive"] = int(str(client.get("keepAlive")).split("-")[0])
+                        except (ValueError, TypeError):
+                            pass
                 valid_c = {k: v for k, v in c_data.items() if k in clients_cols}
                 if valid_c:
                     cols = ", ".join(valid_c.keys())
@@ -19320,6 +19413,10 @@ def sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_s
                     c_updates["updated_at"] = now_ms
                 if "enable" in client and "enable" in clients_cols:
                     c_updates["enable"] = 1 if client["enable"] else 0
+                for tr_c in ["traffic_reset", "trafficReset"]:
+                    if tr_c in clients_cols: c_updates[tr_c] = c_tr
+                for trd_c in ["traffic_reset_day", "trafficResetDay", "reset_day", "resetDay"]:
+                    if trd_c in clients_cols: c_updates[trd_c] = c_tr_day
                 if "sub_id" in clients_cols and sub_id: c_updates["sub_id"] = sub_id
                 if "uuid" in clients_cols and client_uuid: c_updates["uuid"] = client_uuid
                 if "password" in clients_cols and client_pass and protocol != "hysteria": c_updates["password"] = client_pass
@@ -19343,6 +19440,13 @@ def sync_inbound_clients(inbound_id, protocol, remark, target_settings, target_s
                         curr_wg_ip = curr_wg_ip_row[0] if curr_wg_ip_row and curr_wg_ip_row[0] else ""
                         if not is_legacy_v2 or not curr_wg_ip or curr_wg_ip.startswith("["):
                             c_updates["wg_allowed_ips"] = clean_ip
+                    if "wg_keep_alive_range" in clients_cols:
+                        c_updates["wg_keep_alive_range"] = str(client.get("keepAlive") or "15-25")
+                    elif "wg_keep_alive" in clients_cols and client.get("keepAlive"):
+                        try:
+                            c_updates["wg_keep_alive"] = int(str(client.get("keepAlive")).split("-")[0])
+                        except (ValueError, TypeError):
+                            pass
                 valid_c_up = {k: v for k, v in c_updates.items() if k in clients_cols}
                 if valid_c_up:
                     set_clause = ", ".join(f"{k} = ?" for k in valid_c_up.keys())
@@ -20547,6 +20651,21 @@ obsolete_emails = []
 print(f"  [ЕДИНЫЙ КЛИЕНТ] Профиль: '{unified_email}' (привязка ко всем инбаундам, subId: {unified_sub_id[:6]}...)")
 
 def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, default_stream, listen="127.0.0.1"):
+    inb_cols = globals().get("inbounds_cols")
+    if inb_cols is None:
+        try:
+            cur.execute("PRAGMA table_info(inbounds)")
+            inb_cols = set(r[1] for r in cur.fetchall())
+        except Exception:
+            inb_cols = set()
+
+    tr_col = "traffic_reset" if "traffic_reset" in inb_cols else ("trafficReset" if "trafficReset" in inb_cols else None)
+    trd_col = "traffic_reset_day" if "traffic_reset_day" in inb_cols else ("trafficResetDay" if "trafficResetDay" in inb_cols else None)
+    ltrt_col = "last_traffic_reset_time" if "last_traffic_reset_time" in inb_cols else ("lastTrafficResetTime" if "lastTrafficResetTime" in inb_cols else None)
+
+    target_tr = globals().get("inbound_traffic_reset", "monthly")
+    target_tr_day = globals().get("inbound_traffic_reset_day", 1)
+
     cur.execute("SELECT id, settings, stream_settings, protocol, tag, remark, listen, enable FROM inbounds WHERE port = ? OR tag = ?", (port, tag))
     row = cur.fetchone()
     
@@ -20564,18 +20683,45 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
                     ep["forceTls"] = "same"
                 elif "forceTls" not in ep:
                     ep["forceTls"] = "tls"
+                if "alpn" in ep and isinstance(ep["alpn"], str):
+                    ep["alpn"] = [ep["alpn"]] if ep["alpn"] else []
 
         settings_json = json.dumps(target_settings, ensure_ascii=False)
         stream_json = json.dumps(target_stream, ensure_ascii=False)
         sniffing_json = json.dumps({"enabled": True, "destOverride": ["http", "tls", "quic", "fakedns"]})
         new_inbound_id = None
         if not dry_run:
-            cur.execute("""
-                INSERT INTO inbounds (
-                    user_id, up, down, total, remark, enable, expiry_time,
-                    listen, port, protocol, settings, stream_settings, tag, sniffing
-                ) VALUES (?, 0, 0, 0, ?, 1, 0, ?, ?, ?, ?, ?, ?, ?)
-            """, (admin_id, remark, listen, port, protocol, settings_json, stream_json, tag, sniffing_json))
+            ib_data = {
+                "user_id": admin_id,
+                "up": 0,
+                "down": 0,
+                "total": 0,
+                "remark": remark,
+                "enable": 1,
+                "expiry_time": 0,
+                "listen": listen,
+                "port": port,
+                "protocol": protocol,
+                "settings": settings_json,
+                "stream_settings": stream_json,
+                "tag": tag,
+                "sniffing": sniffing_json,
+            }
+            if tr_col:
+                ib_data[tr_col] = target_tr
+            if trd_col:
+                ib_data[trd_col] = target_tr_day
+            if ltrt_col:
+                ib_data[ltrt_col] = 0
+
+            if inb_cols:
+                valid_ib = {k: v for k, v in ib_data.items() if k in inb_cols}
+            else:
+                valid_ib = {k: v for k, v in ib_data.items() if not k.startswith("traffic") and not k.startswith("last_traffic")}
+
+            cols_str = ", ".join(valid_ib.keys())
+            placeholders = ", ".join(["?"] * len(valid_ib))
+            cur.execute(f"INSERT INTO inbounds ({cols_str}) VALUES ({placeholders})", list(valid_ib.values()))
             new_inbound_id = cur.lastrowid
             if "sync_inbound_clients" in globals():
                 sync_inbound_clients(new_inbound_id, protocol, remark, target_settings, target_stream)
@@ -20610,6 +20756,32 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
         if final_remark != remark:
             preserved.append(f"пользовательское название '{final_remark}'")
 
+    # Расписание сброса трафика инбаунда
+    final_tr = target_tr
+    final_tr_day = target_tr_day
+    if tr_col:
+        cur_tr = None
+        cur_tr_day = 1
+        try:
+            sel_cols = f"{tr_col}, {trd_col}" if trd_col else tr_col
+            cur.execute(f"SELECT {sel_cols} FROM inbounds WHERE id = ?", (inbound_id,))
+            tr_row = cur.fetchone()
+            if tr_row:
+                cur_tr = tr_row[0]
+                if trd_col and len(tr_row) > 1 and tr_row[1] is not None:
+                    cur_tr_day = tr_row[1]
+        except Exception:
+            pass
+
+        if cur_tr and cur_tr not in ("never", ""):
+            final_tr = cur_tr
+            final_tr_day = cur_tr_day
+            preserved.append(f"расписание сброса трафика '{cur_tr}' (день {cur_tr_day})")
+        else:
+            final_tr = target_tr
+            final_tr_day = target_tr_day
+            repairs.append(f"настроен ежемесячный сброс трафика (1-го числа в 00:00)")
+
     # А. Сохранение и консолидация клиентов (единый реестр)
     existing_clients = cur_settings.get("clients", [])
     if "unified_email" in globals() and globals().get("unified_email"):
@@ -20623,9 +20795,15 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             if ec_email == u_email:
                 if not has_unified and default_client:
                     merged_c = json.loads(json.dumps(default_client))
-                    for limit_field in ["totalGB", "expiryTime", "limitIp", "tgId", "reset", "resetDay", "resetMax", "enable"]:
+                    for limit_field in ["totalGB", "expiryTime", "limitIp", "tgId", "reset", "resetDay", "resetMax", "trafficReset", "trafficResetDay", "enable"]:
                         if limit_field in ec:
                             merged_c[limit_field] = ec[limit_field]
+                    if "trafficReset" not in merged_c or merged_c.get("trafficReset") in ("", "never", None):
+                        merged_c["trafficReset"] = target_tr
+                    if "trafficResetDay" not in merged_c or not merged_c.get("trafficResetDay"):
+                        merged_c["trafficResetDay"] = target_tr_day
+                    if "resetDay" not in merged_c or not merged_c.get("resetDay"):
+                        merged_c["resetDay"] = target_tr_day
                     if protocol == "shadowsocks" and ec.get("password"):
                         if "validate_ss2022_key" in globals() and validate_ss2022_key(ec["password"], target_settings.get("method", "2022-blake3-aes-256-gcm")):
                             merged_c["password"] = ec["password"]
@@ -20665,6 +20843,13 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
         target_settings["clients"] = consolidated_clients
     else:
         if existing_clients and len(existing_clients) > 0:
+            for ec in existing_clients:
+                if "trafficReset" not in ec or ec.get("trafficReset") in ("", "never", None):
+                    ec["trafficReset"] = target_tr
+                if "trafficResetDay" not in ec or not ec.get("trafficResetDay"):
+                    ec["trafficResetDay"] = target_tr_day
+                if "resetDay" not in ec or not ec.get("resetDay"):
+                    ec["resetDay"] = target_tr_day
             target_settings["clients"] = existing_clients
             preserved.append(f"клиенты ({len(existing_clients)} польз.)")
         else:
@@ -21060,6 +21245,8 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
                 entry["dest"] = target_dest
             entry["port"] = expected_ext_port
             entry["forceTls"] = force_tls_val
+            if "alpn" in entry and isinstance(entry["alpn"], str):
+                entry["alpn"] = [entry["alpn"]] if entry["alpn"] else []
             updated_ext.append(entry)
         target_stream["externalProxy"] = updated_ext
         if cur_ext != updated_ext:
@@ -21088,10 +21275,25 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             if def_ext[0].get("fingerprint"):
                 ext_entry["fingerprint"] = def_ext[0]["fingerprint"]
             if def_ext[0].get("alpn"):
-                ext_entry["alpn"] = def_ext[0]["alpn"]
+                ext_alpn = def_ext[0]["alpn"]
+                if isinstance(ext_alpn, str):
+                    ext_alpn = [ext_alpn] if ext_alpn else []
+                ext_entry["alpn"] = ext_alpn
 
         def_fp = def_ext[0].get("fingerprint") if (def_ext and isinstance(def_ext, list) and len(def_ext) > 0) else None
         cur_fp_single = cur_ext[0].get("fingerprint") if (cur_ext and isinstance(cur_ext, list) and len(cur_ext) > 0) else None
+
+        def_alpn = def_ext[0].get("alpn") if (def_ext and isinstance(def_ext, list) and len(def_ext) > 0) else None
+        if isinstance(def_alpn, str):
+            def_alpn = [def_alpn] if def_alpn else []
+        cur_alpn = cur_ext[0].get("alpn") if (cur_ext and isinstance(cur_ext, list) and len(cur_ext) > 0) else None
+
+        alpn_needs_repair = False
+        if isinstance(cur_alpn, str):
+            alpn_needs_repair = True
+        elif def_alpn is not None and cur_alpn != def_alpn:
+            alpn_needs_repair = True
+
         needs_ext_repair = (
             not cur_ext
             or cur_ext[0].get("port") != expected_ext_port
@@ -21100,6 +21302,7 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             or cur_ext[0].get("forceTls") != force_tls_val
             or (target_sni and cur_ext[0].get("sni") != target_sni)
             or (def_fp and cur_fp_single != def_fp)
+            or alpn_needs_repair
         )
 
         if needs_ext_repair:
@@ -21107,8 +21310,18 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             sni_desc = f", sni: {target_sni}" if target_sni else ""
             repairs.append(f"исправлен externalProxy -> {target_dest}:{expected_ext_port}{sni_desc}")
         else:
+            for ep in cur_ext:
+                if isinstance(ep, dict) and "alpn" in ep and isinstance(ep["alpn"], str):
+                    ep["alpn"] = [ep["alpn"]] if ep["alpn"] else []
+                    repairs.append("исправлен тип alpn в externalProxy (string -> array)")
             target_stream["externalProxy"] = cur_ext
             preserved.append(f"externalProxy :{expected_ext_port}")
+
+    # В 3X-UI externalProxy[].alpn обязан быть массивом (array), строка вызывает ошибку валидации формы
+    if "externalProxy" in target_stream and isinstance(target_stream["externalProxy"], list):
+        for ep in target_stream["externalProxy"]:
+            if isinstance(ep, dict) and "alpn" in ep and isinstance(ep["alpn"], str):
+                ep["alpn"] = [ep["alpn"]] if ep["alpn"] else []
 
     # Синхронизация клиентов в реестре (client_traffics, clients, client_inbounds)
     if "sync_inbound_clients" in globals():
@@ -21120,11 +21333,19 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
     sniffing_json = json.dumps({"enabled": True, "destOverride": ["http", "tls", "quic", "fakedns"]})
 
     if not dry_run:
-        cur.execute("""
-            UPDATE inbounds
-            SET protocol = ?, tag = ?, remark = ?, settings = ?, stream_settings = ?, listen = ?, sniffing = ?, enable = ?
-            WHERE id = ?
-        """, (protocol, tag, final_remark, settings_json, stream_json, listen, sniffing_json, cur_enable, inbound_id))
+        update_fields = [
+            "protocol = ?", "tag = ?", "remark = ?", "settings = ?",
+            "stream_settings = ?", "listen = ?", "sniffing = ?", "enable = ?"
+        ]
+        update_vals = [protocol, tag, final_remark, settings_json, stream_json, listen, sniffing_json, cur_enable]
+        if tr_col and tr_col in inb_cols:
+            update_fields.append(f"{tr_col} = ?")
+            update_vals.append(final_tr)
+        if trd_col and trd_col in inb_cols:
+            update_fields.append(f"{trd_col} = ?")
+            update_vals.append(final_tr_day)
+        update_vals.append(inbound_id)
+        cur.execute(f"UPDATE inbounds SET {', '.join(update_fields)} WHERE id = ?", tuple(update_vals))
 
     status_str = f"  [ОБНОВЛЕН] {final_remark} (порт {port}):"
     if repairs:
@@ -21229,7 +21450,7 @@ x_str = {
         }
     },
     "security": "none",
-    "externalProxy": [{"dest": domain, "port": 443, "forceTls": "tls", "sni": domain, "fingerprint": reality_fingerprint, "alpn": "h2", "remark": make_remark("VLESS xHTTP")}]
+    "externalProxy": [{"dest": domain, "port": 443, "forceTls": "tls", "sni": domain, "fingerprint": reality_fingerprint, "alpn": ["h2"], "remark": make_remark("VLESS xHTTP")}]
 }
 xhttp_remark = make_remark("VLESS xHTTP")
 xhttp_ib_id = smart_reconcile_inbound(xhttp_port, "vless", "in-xhttp-stream", xhttp_remark, x_set, x_str, listen="127.0.0.1")
@@ -21275,7 +21496,8 @@ if enable_awg_v3:
     a3_set = {
         "clients": [{
             "privateKey": def_wg_c_priv, "publicKey": def_wg_c_pub,
-            "allowedIPs": ["10.8.1.2/32"], "email": unified_email, "subId": unified_sub_id, "enable": True
+            "allowedIPs": ["10.8.1.2/32"], "email": unified_email, "subId": unified_sub_id, "enable": True,
+            "keepAlive": "15-25"
         }],
         "server": {
             "h1": "1", "h2": "2", "h3": "3", "h4": "4",
@@ -21305,7 +21527,8 @@ if enable_awg_v2:
     a2_set = {
         "clients": [{
             "privateKey": def_wg_c_priv, "publicKey": def_wg_c_pub,
-            "allowedIPs": ["10.8.2.2/32"], "email": unified_email, "subId": unified_sub_id, "enable": True
+            "allowedIPs": ["10.8.2.2/32"], "email": unified_email, "subId": unified_sub_id, "enable": True,
+            "keepAlive": "15-25"
         }],
         "server": {
             "h1": "149419586", "h2": "878791997", "h3": "1251051976", "h4": "1657628296",
@@ -21425,7 +21648,8 @@ cur.execute("""
         sockopt_params TEXT DEFAULT '',
         final_mask TEXT DEFAULT '',
         exclude_from_sub_types TEXT DEFAULT '',
-        shuffle_host INTEGER DEFAULT 0
+        shuffle_host INTEGER DEFAULT 0,
+        mihomo_x25519 INTEGER DEFAULT 0
     )
 """)
 cur.execute("PRAGMA table_info(hosts)")
@@ -21436,12 +21660,19 @@ if "shuffle_host" not in active_host_cols and "shuffleHost" not in active_host_c
         active_host_cols.add("shuffle_host")
     except Exception:
         pass
+if "mihomo_x25519" not in active_host_cols and "mihomoX25519" not in active_host_cols:
+    try:
+        cur.execute("ALTER TABLE hosts ADD COLUMN mihomo_x25519 INTEGER DEFAULT 0")
+        active_host_cols.add("mihomo_x25519")
+    except Exception:
+        pass
 
 inbound_col = "inboundId" if "inboundId" in active_host_cols else "inbound_id"
 sort_col = "sortOrder" if "sortOrder" in active_host_cols else "sort_order"
 shuffle_col = "shuffleHost" if "shuffleHost" in active_host_cols else "shuffle_host"
+mihomo_col = "mihomoX25519" if "mihomoX25519" in active_host_cols else "mihomo_x25519"
 
-def insert_host_entry(ib_id, host_remark, addr, host_port, sec, host_sni="", host_path="", host_alpn="", host_fp="firefox", sort_order=0, shuffle_host=0):
+def insert_host_entry(ib_id, host_remark, addr, host_port, sec, host_sni="", host_path="", host_alpn="", host_fp="firefox", sort_order=0, shuffle_host=0, mihomo_x25519=0):
     if ib_id is None or dry_run:
         return
     gid = str(uuid.uuid4())
@@ -21455,7 +21686,8 @@ def insert_host_entry(ib_id, host_remark, addr, host_port, sec, host_sni="", hos
         "is_disabled": 0, "isDisabled": 0, "is_hidden": 0, "isHidden": 0,
         "tags": "", "ech_config_list": "", "mux_params": "", "sockopt_params": "",
         "final_mask": "", "exclude_from_sub_types": "",
-        "shuffle_host": shuffle_host, "shuffleHost": shuffle_host
+        "shuffle_host": shuffle_host, "shuffleHost": shuffle_host,
+        "mihomo_x25519": mihomo_x25519, "mihomoX25519": mihomo_x25519
     }
     insert_data = {k: v for k, v in col_candidates.items() if k in active_host_cols}
     keys = list(insert_data.keys())
@@ -21463,7 +21695,7 @@ def insert_host_entry(ib_id, host_remark, addr, host_port, sec, host_sni="", hos
     placeholders = ",".join(["?"] * len(keys))
     cur.execute(f"INSERT INTO hosts ({','.join(keys)}) VALUES ({placeholders})", vals)
 
-def sync_host_entry(ib_id, host_remark, addr, host_port, sec, host_sni="", host_path="", host_alpn="", host_fp="firefox", sort_order=0, shuffle_host=0):
+def sync_host_entry(ib_id, host_remark, addr, host_port, sec, host_sni="", host_path="", host_alpn="", host_fp="firefox", sort_order=0, shuffle_host=0, mihomo_x25519=0):
     if ib_id is None:
         return
     cur.execute(f"SELECT id, remark FROM hosts WHERE {inbound_col} = ?", (ib_id,))
@@ -21480,10 +21712,13 @@ def sync_host_entry(ib_id, host_remark, addr, host_port, sec, host_sni="", host_
             if shuffle_col in active_host_cols:
                 update_fields.append(f"{shuffle_col} = ?")
                 update_vals.append(shuffle_host)
+            if mihomo_col in active_host_cols:
+                update_fields.append(f"{mihomo_col} = ?")
+                update_vals.append(mihomo_x25519)
             update_vals.append(h_id)
             cur.execute(f"UPDATE hosts SET {', '.join(update_fields)} WHERE id = ?", tuple(update_vals))
     else:
-        insert_host_entry(ib_id, host_remark, addr, host_port, sec, host_sni=host_sni, host_path=host_path, host_alpn=host_alpn, host_fp=host_fp, sort_order=sort_order, shuffle_host=shuffle_host)
+        insert_host_entry(ib_id, host_remark, addr, host_port, sec, host_sni=host_sni, host_path=host_path, host_alpn=host_alpn, host_fp=host_fp, sort_order=sort_order, shuffle_host=shuffle_host, mihomo_x25519=mihomo_x25519)
 
 def lookup_inbound_id(tag_val, port_val):
     cur.execute("SELECT id FROM inbounds WHERE tag = ? OR port = ?", (tag_val, port_val))
@@ -21497,7 +21732,7 @@ if enable_steal:
         cur.execute("SELECT remark FROM inbounds WHERE id = ?", (s_iid,))
         r_rem = cur.fetchone()
         s_rem = r_rem[0] if r_rem and r_rem[0] else steal_remark
-        sync_host_entry(s_iid, s_rem, domain, 443, "same", host_sni=steal_dom, host_fp=reality_fp, sort_order=1)
+        sync_host_entry(s_iid, s_rem, domain, 443, "same", host_sni=steal_dom, host_fp=reality_fp, sort_order=1, mihomo_x25519=1)
 
 if globals().get("enable_steal_compat", False) or ('enable_steal_compat' in locals() and enable_steal_compat):
     sc_iid = steal_compat_ib_id if ('steal_compat_ib_id' in locals() and steal_compat_ib_id) else (lookup_inbound_id("in-steal-backup", steal_compat_port) or lookup_inbound_id("in-steal-compat", steal_compat_port))
@@ -21505,7 +21740,7 @@ if globals().get("enable_steal_compat", False) or ('enable_steal_compat' in loca
         cur.execute("SELECT remark FROM inbounds WHERE id = ?", (sc_iid,))
         r_rem = cur.fetchone()
         sc_rem = r_rem[0] if r_rem and r_rem[0] else steal_compat_remark
-        sync_host_entry(sc_iid, sc_rem, domain, 443, "same", host_sni=steal_compat_dom, host_fp=reality_fp, sort_order=1)
+        sync_host_entry(sc_iid, sc_rem, domain, 443, "same", host_sni=steal_compat_dom, host_fp=reality_fp, sort_order=1, mihomo_x25519=1)
 
 if enable_classic:
     c_iid = classic_ib_id if ('classic_ib_id' in locals() and classic_ib_id) else lookup_inbound_id("in-classic-reality", classic_port)
@@ -21517,7 +21752,7 @@ if enable_classic:
             cur.execute(f"DELETE FROM hosts WHERE {inbound_col} = ?", (c_iid,))
         for idx, csni in enumerate(classic_snis, start=1):
             h_remark = f"{c_rem} ({csni})" if len(classic_snis) > 1 else c_rem
-            insert_host_entry(c_iid, h_remark, domain, 443, "same", host_sni=csni, host_fp=reality_fp, sort_order=idx, shuffle_host=1)
+            insert_host_entry(c_iid, h_remark, domain, 443, "same", host_sni=csni, host_fp=reality_fp, sort_order=idx, shuffle_host=1, mihomo_x25519=1)
 
 x_iid = xhttp_ib_id if ('xhttp_ib_id' in locals() and xhttp_ib_id) else lookup_inbound_id("in-xhttp-stream", xhttp_port)
 if x_iid:
@@ -22094,6 +22329,8 @@ install_step_panel() {
             export ENABLE_WARP
             export WARP_LICENSE_KEY
             export TIME_LOCATION
+            export INBOUND_TRAFFIC_RESET="${INBOUND_TRAFFIC_RESET:-monthly}"
+            export INBOUND_TRAFFIC_RESET_DAY="${INBOUND_TRAFFIC_RESET_DAY:-1}"
             export SUB_UPDATES
             export SUB_ENCRYPT
             export SUB_CLASH_PATH

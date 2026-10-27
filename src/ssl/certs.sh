@@ -6,38 +6,50 @@ install_certbot_package() {
         return 0
     fi
 
-    # 2. Приоритет: Нативный легкий certbot из официального apt репозитория
-    apt-get update -q -y >/dev/null 2>&1 || true
-    if apt-get install -y -q certbot; then
+    # 2. Alpine Linux: Нативная установка через apk (без snapd)
+    local os_id="${ID:-}"
+    if [ -f /etc/os-release ]; then . /etc/os-release 2>/dev/null; os_id="${ID:-}"; fi
+    if [ "$os_id" = "alpine" ] || command -v apk >/dev/null 2>&1; then
+        apk add --no-cache certbot py3-certbot 2>/dev/null || apk add --no-cache certbot || true
         if command -v certbot >/dev/null 2>&1; then
             return 0
         fi
     fi
 
-    # 3. Резервный вариант (Fallback): Установка через Snap, если apt недоступен
-    if apt-get install -y -q snapd; then
-        systemctl start snapd.socket 2>/dev/null || true
-        systemctl enable snapd.socket 2>/dev/null || true
-        for i in {1..10}; do
-            if snap version >/dev/null 2>&1; then break; fi
-            sleep 2
-        done
-        snap install core 2>/dev/null || true
-        snap refresh core 2>/dev/null || true
-        if snap install --classic certbot 2>/dev/null; then
-            ln -sf /snap/bin/certbot /usr/bin/certbot 2>/dev/null || true
+    # 3. Приоритет: Нативный легкий certbot из официального apt репозитория
+    if command -v apt-get >/dev/null 2>&1; then
+        apt-get update -q -y >/dev/null 2>&1 || true
+        if apt-get install -y -q certbot; then
             if command -v certbot >/dev/null 2>&1; then
                 return 0
             fi
         fi
+
+        # 4. Резервный вариант (Fallback): Установка через Snap, если apt недоступен
+        if apt-get install -y -q snapd; then
+            systemctl start snapd.socket 2>/dev/null || true
+            systemctl enable snapd.socket 2>/dev/null || true
+            for i in {1..10}; do
+                if snap version >/dev/null 2>&1; then break; fi
+                sleep 2
+            done
+            snap install core 2>/dev/null || true
+            snap refresh core 2>/dev/null || true
+            if snap install --classic certbot 2>/dev/null; then
+                ln -sf /snap/bin/certbot /usr/bin/certbot 2>/dev/null || true
+                if command -v certbot >/dev/null 2>&1; then
+                    return 0
+                fi
+            fi
+        fi
     fi
 
-    # 4. Если оба метода не удались — пробуем pip / certbot standalone
+    # 5. Если оба метода не удались — пробуем pip / certbot standalone
     if command -v certbot >/dev/null 2>&1; then
         return 0
     fi
 
-    die "Не удалось установить Certbot ни через APT, ни через Snap. Проверьте репозитории вашей ОС."
+    die "Не удалось установить Certbot ни через системный пакетный менеджер, ни через Snap. Проверьте репозитории вашей ОС."
 }
 
 # Принимает $1 = домен (был closure-переменной $dom из цикла)
@@ -56,16 +68,20 @@ obtain_cert() {
     fi
 
     # 2. Надежный fallback: Standalone (Certbot сам поднимает временный сервер на порту 80)
-    systemctl stop nginx 2>/dev/null || true
+    svc_stop nginx 2>/dev/null || systemctl stop nginx 2>/dev/null || true
     local res=0
     certbot certonly --standalone --expand -d "$dom" --non-interactive || res=$?
-    systemctl start nginx 2>/dev/null || true
+    svc_start nginx 2>/dev/null || systemctl start nginx 2>/dev/null || true
     return $res
 }
 
 install_acmesh() {
     export DEBIAN_FRONTEND=noninteractive
-    apt-get install -y cron socat -q
+    if command -v apk >/dev/null 2>&1; then
+        apk add --no-cache socat dcron 2>/dev/null || true
+    elif command -v apt-get >/dev/null 2>&1; then
+        apt-get install -y cron socat -q
+    fi
     local acme_mail="${LE_EMAIL:-admin@$PRIMARY_DOMAIN}"
     local _acme_bin="${HOME:-/root}/.acme.sh/acme.sh"
 
@@ -95,19 +111,26 @@ install_acmesh() {
 # Использует глобальные $_ACME (устанавливается после install_acmesh)
 obtain_cf_cert() {
     local dom="$1"
+    local ng_usr="www-data"
+    if command -v get_nginx_user >/dev/null 2>&1; then
+        ng_usr="$(get_nginx_user)"
+    elif [ -f /etc/os-release ]; then
+        local os_id=""
+        os_id=$(. /etc/os-release 2>/dev/null; echo "${ID:-}")
+        [ "$os_id" = "alpine" ] && ng_usr="nginx"
+    fi
+
     "$_ACME" --issue --dns dns_cf -d "$dom" --server letsencrypt --force && \
     mkdir -p "/etc/ssl/acme/$dom" && \
     chmod 750 "/etc/ssl/acme/$dom" && \
     "$_ACME" --install-cert -d "$dom" \
         --key-file       "/etc/ssl/acme/$dom/privkey.pem" \
         --fullchain-file "/etc/ssl/acme/$dom/fullchain.pem" \
-        --reloadcmd     "chmod 750 /etc/ssl/acme /etc/ssl/acme/$dom 2>/dev/null || true; chmod 640 /etc/ssl/acme/$dom/*.pem 2>/dev/null || true; chmod 600 /etc/ssl/acme/$dom/privkey*.pem 2>/dev/null || true; chown -R root:www-data /etc/ssl/acme 2>/dev/null || true; systemctl reload nginx"
+        --reloadcmd     "chmod 750 /etc/ssl/acme /etc/ssl/acme/$dom 2>/dev/null || true; chmod 640 /etc/ssl/acme/$dom/*.pem 2>/dev/null || true; chmod 600 /etc/ssl/acme/$dom/privkey*.pem 2>/dev/null || true; chown -R root:${ng_usr} /etc/ssl/acme 2>/dev/null || true; svc_reload nginx 2>/dev/null || systemctl reload nginx 2>/dev/null || rc-service nginx reload 2>/dev/null || true"
 }
 
 nginx_reload_task() {
     nginx -t || return 1
-    systemctl unmask nginx 2>/dev/null || true
-    systemctl enable nginx 2>/dev/null || true
-    systemctl restart nginx
+    svc_enable nginx 2>/dev/null || systemctl enable nginx 2>/dev/null || true
+    svc_restart nginx 2>/dev/null || systemctl restart nginx
 }
-

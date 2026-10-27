@@ -7,6 +7,10 @@ apply_sysctl_and_limits() {
     modprobe nf_conntrack 2>/dev/null || true
     if [ -d /etc/modules-load.d ]; then
         echo "nf_conntrack" > /etc/modules-load.d/99-vless-conntrack.conf 2>/dev/null || true
+    elif [ -f /etc/modules ]; then
+        if ! grep -q "^nf_conntrack" /etc/modules 2>/dev/null; then
+            echo "nf_conntrack" >> /etc/modules 2>/dev/null || true
+        fi
     fi
 
     cat << 'EOF' > /etc/sysctl.d/99-vless-tuning.conf
@@ -75,14 +79,16 @@ EOF
     fi
 
     # Хранение системных логов journald в RAM (Storage=volatile, без записи на диск)
-    mkdir -p /etc/systemd/journald.conf.d/
-    cat << 'EOF' > /etc/systemd/journald.conf.d/00-volatile.conf
+    if is_systemd; then
+        mkdir -p /etc/systemd/journald.conf.d/
+        cat << 'EOF' > /etc/systemd/journald.conf.d/00-volatile.conf
 [Journal]
 Storage=volatile
 RuntimeMaxUse=64M
 MaxRetentionSec=1day
 EOF
-    systemctl restart systemd-journald 2>/dev/null || true
+        systemctl restart systemd-journald 2>/dev/null || true
+    fi
 
     # Disable IPv6 immediately on all active interfaces (runtime)
     if [ -d /proc/sys/net/ipv6/conf ]; then
@@ -107,8 +113,16 @@ EOF
         fi
     fi
 
-    # Crontab guard against cloud-init / network daemon sysctl overrides on boot
-    if command -v crontab &>/dev/null; then
+    # Boot guard against cloud-init / network daemon sysctl overrides on boot
+    if is_openrc; then
+        mkdir -p /etc/local.d
+        cat << 'EOF_LOCAL' > /etc/local.d/99-sysctl.start
+#!/bin/sh
+sleep 10 && sysctl --system
+EOF_LOCAL
+        chmod +x /etc/local.d/99-sysctl.start
+        rc-update add local default 2>/dev/null || true
+    elif command -v crontab &>/dev/null; then
         local cron_job="@reboot sleep 10 && sysctl --system"
         if ! crontab -l 2>/dev/null | grep -Fq "$cron_job"; then
             (crontab -l 2>/dev/null || true; echo "$cron_job") | crontab - 2>/dev/null || true

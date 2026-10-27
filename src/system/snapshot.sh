@@ -27,7 +27,9 @@ create_initial_state_snapshot() {
     mkdir -p "$tmp_dir" 2>/dev/null || true
 
     # 2. Фиксация установленных пакетов
-    if command -v dpkg-query >/dev/null 2>&1; then
+    if command -v apk >/dev/null 2>&1; then
+        apk info -q > "$tmp_dir/packages_installed.list" 2>/dev/null || true
+    elif command -v dpkg-query >/dev/null 2>&1; then
         dpkg-query -f '${binary:Package}\n' -W > "$tmp_dir/packages_installed.list" 2>/dev/null || true
     elif command -v rpm >/dev/null 2>&1; then
         rpm -qa --qf '%{NAME}\n' > "$tmp_dir/packages_installed.list" 2>/dev/null || true
@@ -35,8 +37,11 @@ create_initial_state_snapshot() {
         : > "$tmp_dir/packages_installed.list"
     fi
 
-    # 3. Фиксация состояния служб systemd
-    if command -v systemctl >/dev/null 2>&1; then
+    # 3. Фиксация состояния служб
+    if is_openrc; then
+        rc-update show 2>/dev/null | awk '{print $1}' > "$tmp_dir/services_enabled.list" || true
+        rc-status -a 2>/dev/null | grep -E '\[ *(started|running) *\]' | awk '{print $1}' > "$tmp_dir/services_running.list" || true
+    elif command -v systemctl >/dev/null 2>&1; then
         systemctl list-unit-files --state=enabled --no-legend 2>/dev/null | awk '{print $1}' > "$tmp_dir/services_enabled.list" || true
         systemctl list-units --state=running --no-legend 2>/dev/null | awk '{print $1}' > "$tmp_dir/services_running.list" || true
     else
@@ -77,6 +82,7 @@ create_initial_state_snapshot() {
     [ -f "${target_root}/etc/sysctl.conf" ] && cp "${target_root}/etc/sysctl.conf" "$tmp_dir/sysctl/" 2>/dev/null || true
     [ -d "${target_root}/etc/sysctl.d" ] && tar --force-local -czf "$tmp_dir/sysctl/sysctl.d.tar.gz" -C "${target_root}/etc" "sysctl.d" 2>/dev/null || true
     [ -d "${target_root}/etc/security/limits.d" ] && tar --force-local -czf "$tmp_dir/sysctl/limits.d.tar.gz" -C "${target_root}/etc/security" "limits.d" 2>/dev/null || true
+    [ -d "${target_root}/etc/local.d" ] && tar --force-local -czf "$tmp_dir/sysctl/local.d.tar.gz" -C "${target_root}/etc" "local.d" 2>/dev/null || true
 
     # 7. Фиксация предсуществования Nginx и Fail2ban
     local nginx_preexisted=0

@@ -14,6 +14,7 @@ set -euo pipefail
 
 # @include "common/lock.sh"
 # @include "common/download.sh"
+# @include "system/service.sh"
 # @include "system/optimize.sh"
 
 DEFAULT_SSH_PORT=22
@@ -76,7 +77,9 @@ validate_port() {
 }
 
 get_ssh_service_name() {
-    if systemctl list-unit-files | grep -q "^sshd\.service"; then
+    if [ "${ID:-}" = "alpine" ] || [ -f /etc/alpine-release ] || [ -f /etc/init.d/sshd ] || { [ -f /etc/os-release ] && grep -qi "alpine" /etc/os-release; }; then
+        echo "sshd"
+    elif systemctl list-unit-files 2>/dev/null | grep -q "^sshd\.service"; then
         echo "sshd"
     else
         echo "ssh"

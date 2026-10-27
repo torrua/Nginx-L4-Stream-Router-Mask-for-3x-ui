@@ -163,9 +163,11 @@ apply_ssh_configuration() {
 
     # 1. Отключаем systemd socket-activation (Ubuntu 22.10+, Ubuntu 24.04 LTS),
     # чтобы служба корректно слушала кастомный порт через стандартный unit.
-    systemctl stop ssh.socket 2>/dev/null || true
-    systemctl disable ssh.socket 2>/dev/null || true
-    systemctl enable "${ssh_svc}.service" 2>/dev/null || true
+    if is_systemd; then
+        systemctl stop ssh.socket 2>/dev/null || true
+        systemctl disable ssh.socket 2>/dev/null || true
+    fi
+    svc_enable "${ssh_svc}" 2>/dev/null || true
 
     # 2. Обновляем базовый /etc/ssh/sshd_config с гарантией директивы Include
     if [ -f /etc/ssh/sshd_config ]; then
@@ -212,13 +214,13 @@ EOF
     # 4. Проверяем валидность конфигурации sshd перед перезапуском
     mkdir -p /run/sshd 2>/dev/null || true
     if /usr/sbin/sshd -t 2>/dev/null; then
-        systemctl daemon-reload 2>/dev/null || true
-        systemctl restart "${ssh_svc}.service" 2>/dev/null || systemctl restart ssh 2>/dev/null || true
+        svc_daemon_reload 2>/dev/null || true
+        svc_restart "${ssh_svc}" 2>/dev/null || svc_restart ssh 2>/dev/null || true
     else
         # При синтаксической ошибке — безопасный откат
         warn "Ошибка валидации sshd -t при настройке SSH! Выполнен откат изменений drop-in для предотвращения потери доступа."
         rm -f "$dropin_file"
-        systemctl restart "${ssh_svc}.service" 2>/dev/null || true
+        svc_restart "${ssh_svc}" 2>/dev/null || true
         return 1
     fi
 
@@ -234,7 +236,7 @@ AddressFamily inet
 PubkeyAuthentication yes
 EOF
             chmod 600 "$dropin_file" 2>/dev/null || true
-            systemctl restart "${ssh_svc}.service" 2>/dev/null || true
+            svc_restart "${ssh_svc}" 2>/dev/null || true
             return 1
         fi
     else
@@ -285,10 +287,13 @@ while true; do
             AUTH_OK=1
         fi
     fi
-    if [ "$AUTH_OK" -eq 0 ] && [ -f /var/log/auth.log ]; then
-        if grep -qE "Accepted (publickey|password|keyboard-interactive) for .* port ${TARGET_PORT}" /var/log/auth.log 2>/dev/null; then
-            AUTH_OK=1
-        fi
+    if [ "$AUTH_OK" -eq 0 ]; then
+        for auth_log in /var/log/auth.log /var/log/secure /var/log/messages; do
+            if [ -f "$auth_log" ] && grep -qE "Accepted (publickey|password|keyboard-interactive) for .* port ${TARGET_PORT}" "$auth_log" 2>/dev/null; then
+                AUTH_OK=1
+                break
+            fi
+        done
     fi
 
     if [ "$AUTH_OK" -eq 1 ]; then
@@ -298,7 +303,11 @@ while true; do
         if [ -f /etc/ssh/sshd_config.d/99-hardening.conf ]; then
             sed -i "/^Port ${ACTIVE_PORT}$/d" /etc/ssh/sshd_config.d/99-hardening.conf 2>/dev/null || true
         fi
-        systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null || true
+        if command -v rc-service >/dev/null 2>&1; then
+            rc-service sshd reload 2>/dev/null || rc-service sshd restart 2>/dev/null || true
+        else
+            systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null || true
+        fi
 
         # 2. Удаляем старый порт из UFW
         if command -v ufw >/dev/null 2>&1; then
@@ -308,13 +317,23 @@ while true; do
         # 3. Обновляем Fail2ban
         if [ -f /etc/fail2ban/jail.local ]; then
             sed -i "s/port = .*/port = ${TARGET_PORT}/" /etc/fail2ban/jail.local 2>/dev/null || true
-            systemctl reload fail2ban 2>/dev/null || systemctl restart fail2ban 2>/dev/null || true
+            if command -v rc-service >/dev/null 2>&1; then
+                rc-service fail2ban reload 2>/dev/null || rc-service fail2ban restart 2>/dev/null || true
+            else
+                systemctl reload fail2ban 2>/dev/null || systemctl restart fail2ban 2>/dev/null || true
+            fi
         fi
 
         logger -t ssh-watcher "Переход SSH успешно завершен. Порт $ACTIVE_PORT закрыт, активен только $TARGET_PORT."
-        systemctl disable --now ssh-transition-watcher.service 2>/dev/null || true
-        rm -f /etc/systemd/system/ssh-transition-watcher.service /usr/local/bin/ssh-transition-watcher.sh 2>/dev/null || true
-        systemctl daemon-reload 2>/dev/null || true
+        if command -v rc-service >/dev/null 2>&1; then
+            rc-service ssh-transition-watcher stop 2>/dev/null || true
+            rc-update del ssh-transition-watcher default 2>/dev/null || true
+            rm -f /etc/init.d/ssh-transition-watcher /usr/local/bin/ssh-transition-watcher.sh 2>/dev/null || true
+        else
+            systemctl disable --now ssh-transition-watcher.service 2>/dev/null || true
+            rm -f /etc/systemd/system/ssh-transition-watcher.service /usr/local/bin/ssh-transition-watcher.sh 2>/dev/null || true
+            systemctl daemon-reload 2>/dev/null || true
+        fi
         exit 0
     fi
 
@@ -323,8 +342,25 @@ done
 EOF
     chmod +x "$watcher_script" 2>/dev/null || true
 
-    mkdir -p /etc/systemd/system
-    cat << EOF > "$watcher_service"
+    if is_openrc; then
+        cat << EOF > /etc/init.d/ssh-transition-watcher
+#!/sbin/openrc-run
+description="SSH Port Transition Safe Watcher"
+command="${watcher_script}"
+command_args="${target_port} ${active_port} ${ttl_hours}"
+command_background=true
+pidfile="/run/ssh-transition-watcher.pid"
+depend() {
+    need net sshd
+}
+EOF
+        chmod +x /etc/init.d/ssh-transition-watcher
+        svc_enable ssh-transition-watcher >/dev/null 2>&1 || true
+        svc_start ssh-transition-watcher >/dev/null 2>&1 || true
+        ok "Развернут фоновый сторожевой сервис ${WHITE}ssh-transition-watcher (OpenRC)${NC}."
+    else
+        mkdir -p /etc/systemd/system
+        cat << EOF > "$watcher_service"
 [Unit]
 Description=SSH Port Transition Safe Watcher
 After=network.target sshd.service ssh.service
@@ -338,10 +374,11 @@ Restart=no
 WantedBy=multi-user.target
 EOF
 
-    if command -v systemctl >/dev/null 2>&1; then
-        systemctl daemon-reload 2>/dev/null || true
-        systemctl enable --now ssh-transition-watcher.service >/dev/null 2>&1 || true
-        ok "Развернут фоновый сторожевой сервис ${WHITE}ssh-transition-watcher.service${NC}."
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl daemon-reload 2>/dev/null || true
+            systemctl enable --now ssh-transition-watcher.service >/dev/null 2>&1 || true
+            ok "Развернут фоновый сторожевой сервис ${WHITE}ssh-transition-watcher.service${NC}."
+        fi
     fi
 }
 
@@ -368,7 +405,7 @@ finalize_ssh_transition() {
     # 3. Валидация и перезагрузка sshd
     mkdir -p /run/sshd 2>/dev/null || true
     if /usr/sbin/sshd -t 2>/dev/null; then
-        systemctl reload "${ssh_svc}.service" 2>/dev/null || systemctl restart "${ssh_svc}.service" 2>/dev/null || true
+        svc_reload "${ssh_svc}" 2>/dev/null || svc_restart "${ssh_svc}" 2>/dev/null || true
     fi
 
     # 4. Удаляем старый порт из UFW
@@ -379,13 +416,19 @@ finalize_ssh_transition() {
     # 5. Обновляем Fail2ban
     if [ -f /etc/fail2ban/jail.local ]; then
         sed -i "s/port = .*/port = ${target_port}/" /etc/fail2ban/jail.local 2>/dev/null || true
-        systemctl reload fail2ban 2>/dev/null || systemctl restart fail2ban 2>/dev/null || true
+        svc_reload fail2ban 2>/dev/null || svc_restart fail2ban 2>/dev/null || true
     fi
 
     # 6. Останавливаем и удаляем watcher
-    systemctl disable --now ssh-transition-watcher.service >/dev/null 2>&1 || true
-    rm -f /etc/systemd/system/ssh-transition-watcher.service /usr/local/bin/ssh-transition-watcher.sh 2>/dev/null || true
-    systemctl daemon-reload 2>/dev/null || true
+    if is_openrc; then
+        svc_stop ssh-transition-watcher >/dev/null 2>&1 || true
+        svc_disable ssh-transition-watcher >/dev/null 2>&1 || true
+        rm -f /etc/init.d/ssh-transition-watcher /usr/local/bin/ssh-transition-watcher.sh 2>/dev/null || true
+    else
+        systemctl disable --now ssh-transition-watcher.service >/dev/null 2>&1 || true
+        rm -f /etc/systemd/system/ssh-transition-watcher.service /usr/local/bin/ssh-transition-watcher.sh 2>/dev/null || true
+        systemctl daemon-reload 2>/dev/null || true
+    fi
 
     ok "Резервный порт SSH ${active_port} закрыт. SSH теперь работает исключительно на порту ${WHITE}${target_port}${NC}."
 }
@@ -475,7 +518,9 @@ apply_fail2ban_configuration() {
 
     # 1. Установка пакетов fail2ban и python3-systemd (для чтения journald в Ubuntu 24.04 / Debian 12)
     if ! command -v fail2ban-client >/dev/null 2>&1; then
-        if command -v apt-get >/dev/null 2>&1; then
+        if command -v apk >/dev/null 2>&1; then
+            apk add --no-cache fail2ban >/dev/null 2>&1 || true
+        elif command -v apt-get >/dev/null 2>&1; then
             export DEBIAN_FRONTEND=noninteractive
             apt-get update -y >/dev/null 2>&1 || true
             apt-get install -y fail2ban python3-systemd >/dev/null 2>&1 || apt-get install -y fail2ban >/dev/null 2>&1 || true
@@ -518,16 +563,19 @@ banaction = ufw
 enabled = true
 port = ${port_str}
 EOF
+    if is_openrc; then
+        sed -i 's/backend = systemd/backend = auto/' /etc/fail2ban/jail.d/90-ssh-shield.local 2>/dev/null || true
+    fi
     chmod 644 /etc/fail2ban/jail.d/90-ssh-shield.local 2>/dev/null || true
 
     # 3. Активация и запуск службы
-    systemctl enable fail2ban >/dev/null 2>&1 || true
-    systemctl restart fail2ban >/dev/null 2>&1 || true
+    svc_enable fail2ban >/dev/null 2>&1 || true
+    svc_restart fail2ban >/dev/null 2>&1 || true
 
-    if systemctl is-active --quiet fail2ban 2>/dev/null; then
+    if svc_is_active fail2ban 2>/dev/null; then
         ok "Служба Fail2ban успешно запущена и защищает SSH (порты: ${WHITE}${port_str}${NC})."
     else
-        warn "Служба Fail2ban была установлена, но не смогла запуститься. Проверьте journalctl -u fail2ban."
+        warn "Служба Fail2ban была установлена, но не смогла запуститься. Проверьте статус службы fail2ban."
         return 1
     fi
     return 0
@@ -657,8 +705,12 @@ EOF_DIAG_SVC
     fi
 
     # Гарантируем наличие утилиты mtr для бэкенда диагностики
-    if ! command -v mtr >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
-        apt-get install -y -qq mtr-tiny >/dev/null 2>&1 || true
+    if ! command -v mtr >/dev/null 2>&1; then
+        if command -v apk >/dev/null 2>&1; then
+            apk add --no-cache mtr >/dev/null 2>&1 || true
+        elif command -v apt-get >/dev/null 2>&1; then
+            apt-get install -y -qq mtr-tiny >/dev/null 2>&1 || true
+        fi
     fi
 
     # Назначение прав и групп доступа к диагностическому сервису
@@ -672,7 +724,27 @@ EOF_DIAG_SVC
     chmod -R 755 "$diag_dir" 2>/dev/null || true
     chmod 755 "$bin_dir/mtr-backend.py" 2>/dev/null || true
 
-    if command -v systemctl >/dev/null 2>&1 && [ -f "$svc_file" ]; then
+    if is_openrc; then
+        cat << 'EOF_OPENRC_MTR' > /etc/init.d/vpn-diagnostics
+#!/sbin/openrc-run
+description="VPN Diagnostics MTR Backend"
+command="/usr/bin/python3"
+command_args="/usr/local/lib/vpn-diagnostics/mtr-backend.py"
+command_background=true
+pidfile="/run/vpn-diagnostics.pid"
+depend() {
+    need net
+}
+EOF_OPENRC_MTR
+        chmod +x /etc/init.d/vpn-diagnostics
+        svc_enable vpn-diagnostics >/dev/null 2>&1 || true
+        svc_restart vpn-diagnostics 2>/dev/null || true
+        if svc_is_active vpn-diagnostics 2>/dev/null; then
+            ok "Служба vpn-diagnostics запущена на сокете /run/vpn-diagnostics/mtr-backend.sock (OpenRC)."
+        else
+            warn "Служба vpn-diagnostics не смогла запуститься."
+        fi
+    elif command -v systemctl >/dev/null 2>&1 && [ -f "$svc_file" ]; then
         systemctl daemon-reload 2>/dev/null || true
         systemctl enable vpn-diagnostics >/dev/null 2>&1 || true
         systemctl restart vpn-diagnostics 2>/dev/null || true

@@ -8,6 +8,7 @@
 
 # @include "common/colors.sh"
 # @include "common/logger.sh"
+# @include "system/service.sh"
 # @include "system/snapshot.sh"
 
 UNINSTALL_FORCE="${UNINSTALL_FORCE:-0}"
@@ -155,7 +156,12 @@ run_uninstall() {
     [ "$nginx_preexisted" -eq 0 ] && services_to_stop+=("nginx")
 
     for svc in "${services_to_stop[@]}"; do
-        if command -v systemctl >/dev/null 2>&1; then
+        if is_openrc; then
+            local orc_svc="$svc"
+            [ "$svc" = "awg-quick@awg0" ] && orc_svc="awg-quick.awg0"
+            rc-service "$orc_svc" stop 2>/dev/null || true
+            rc-update del "$orc_svc" default 2>/dev/null || true
+        elif command -v systemctl >/dev/null 2>&1; then
             systemctl stop "$svc" 2>/dev/null || true
             systemctl disable "$svc" 2>/dev/null || true
         fi
@@ -164,7 +170,7 @@ run_uninstall() {
     pkill -9 -f "nfqws" 2>/dev/null || true
     ok "Службы остановлены и отключены."
 
-    log "Шаг 2/8: Удаление созданных systemd units и cron-задач..."
+    log "Шаг 2/8: Удаление созданных systemd units, OpenRC скриптов и cron-задач..."
     local units_to_remove=(
         "${target_root}/etc/systemd/system/x-ui.service"
         "${target_root}/etc/systemd/system/xray-geo-update.service"
@@ -179,8 +185,27 @@ run_uninstall() {
         "${target_root}/etc/systemd/system/zapret.service"
         "${target_root}/etc/systemd/system/zapret-server.service"
         "${target_root}/etc/systemd/system/nginx.service.d/override.conf"
+        "${target_root}/etc/init.d/x-ui"
+        "${target_root}/etc/init.d/sing-box-masque"
+        "${target_root}/etc/init.d/shadow-tls"
+        "${target_root}/etc/init.d/wstunnel"
+        "${target_root}/etc/init.d/dnstt-server"
+        "${target_root}/etc/init.d/caddy-naive"
+        "${target_root}/etc/init.d/mita"
+        "${target_root}/etc/init.d/mieru"
+        "${target_root}/etc/init.d/zapret-server"
+        "${target_root}/etc/init.d/awg-quick.awg0"
+        "${target_root}/etc/init.d/ssh-transition-watcher"
+        "${target_root}/etc/init.d/vpn-diagnostics"
+        "${target_root}/etc/periodic/weekly/xray-geo-update"
+        "${target_root}/etc/periodic/hourly/awg-purge-expired"
+        "${target_root}/etc/local.d/99-sysctl.start"
+        "${target_root}/etc/kernel-hooks.d/50-amneziawg"
     )
-    [ "$agh_preexisted" -eq 0 ] && units_to_remove+=("${target_root}/etc/systemd/system/AdGuardHome.service")
+    [ "$agh_preexisted" -eq 0 ] && units_to_remove+=(
+        "${target_root}/etc/systemd/system/AdGuardHome.service"
+        "${target_root}/etc/init.d/AdGuardHome"
+    )
 
     for unit in "${units_to_remove[@]}"; do
         rm -f "$unit" 2>/dev/null || true
@@ -414,10 +439,14 @@ run_uninstall() {
     rm -f "${target_root}/usr/local/bin/ssh-port-watcher.sh" 2>/dev/null || true
 
     # Перезапуск SSH-службы
-    if [ "$ssh_restored" -eq 1 ] && command -v systemctl >/dev/null 2>&1; then
-        local ssh_svc="ssh"
-        systemctl is-active --quiet sshd 2>/dev/null && ssh_svc="sshd"
-        systemctl reload "$ssh_svc" 2>/dev/null || systemctl restart "$ssh_svc" 2>/dev/null || true
+    if [ "$ssh_restored" -eq 1 ]; then
+        if is_openrc; then
+            rc-service sshd reload 2>/dev/null || rc-service sshd restart 2>/dev/null || true
+        elif command -v systemctl >/dev/null 2>&1; then
+            local ssh_svc="ssh"
+            systemctl is-active --quiet sshd 2>/dev/null && ssh_svc="sshd"
+            systemctl reload "$ssh_svc" 2>/dev/null || systemctl restart "$ssh_svc" 2>/dev/null || true
+        fi
     fi
     rm -rf "$tmp_extract" 2>/dev/null || true
 
@@ -426,6 +455,10 @@ run_uninstall() {
     rm -f "${target_root}/etc/modules-load.d/99-vless-conntrack.conf" 2>/dev/null || true
     rm -f "${target_root}/etc/security/limits.d/99-proxy-limits.conf" 2>/dev/null || true
     rm -f "${target_root}/etc/systemd/journald.conf.d/00-volatile.conf" 2>/dev/null || true
+    rm -f "${target_root}/etc/local.d/99-sysctl.start" 2>/dev/null || true
+    if [ -f "${target_root}/etc/modules" ]; then
+        sed -i '/^nf_conntrack$/d' "${target_root}/etc/modules" 2>/dev/null || true
+    fi
     command -v sysctl >/dev/null 2>&1 && sysctl --system >/dev/null 2>&1 || true
     ok "Сетевые параметры ядра возвращены к значениям по умолчанию."
 
@@ -494,18 +527,22 @@ run_uninstall() {
             fi
         fi
         rm -rf "$tmp_extract" 2>/dev/null || true
-        command -v systemctl >/dev/null 2>&1 && systemctl restart fail2ban 2>/dev/null || true
+        svc_restart fail2ban 2>/dev/null || command -v systemctl >/dev/null 2>&1 && systemctl restart fail2ban 2>/dev/null || true
     else
-        if [ "${UNINSTALL_PURGE_PKGS:-0}" -eq 1 ] && command -v apt-get >/dev/null 2>&1; then
-            export DEBIAN_FRONTEND=noninteractive
-            local f2b_pkgs=()
-            for pkg_cand in fail2ban python3-systemd; do
-                if dpkg-query -W -f='${Status}' "$pkg_cand" 2>/dev/null | grep -q "ok installed"; then
-                    f2b_pkgs+=("$pkg_cand")
+        if [ "${UNINSTALL_PURGE_PKGS:-0}" -eq 1 ]; then
+            if command -v apk >/dev/null 2>&1; then
+                apk del fail2ban >/dev/null 2>&1 || true
+            elif command -v apt-get >/dev/null 2>&1; then
+                export DEBIAN_FRONTEND=noninteractive
+                local f2b_pkgs=()
+                for pkg_cand in fail2ban python3-systemd; do
+                    if dpkg-query -W -f='${Status}' "$pkg_cand" 2>/dev/null | grep -q "ok installed"; then
+                        f2b_pkgs+=("$pkg_cand")
+                    fi
+                done
+                if [ ${#f2b_pkgs[@]} -gt 0 ]; then
+                    apt-get purge -y "${f2b_pkgs[@]}" >/dev/null 2>&1 || true
                 fi
-            done
-            if [ ${#f2b_pkgs[@]} -gt 0 ]; then
-                apt-get purge -y "${f2b_pkgs[@]}" >/dev/null 2>&1 || true
             fi
         fi
         rmdir "${target_root}/etc/fail2ban" 2>/dev/null || true
@@ -611,7 +648,7 @@ run_uninstall() {
     ok "Рабочие директории и бинарники успешно удалены."
 
     log "Шаг 8/8: Завершение отката..."
-    if [ "${UNINSTALL_PURGE_PKGS:-0}" -eq 1 ] && [ "$has_snapshot" -eq 1 ] && command -v apt-get >/dev/null 2>&1; then
+    if [ "${UNINSTALL_PURGE_PKGS:-0}" -eq 1 ] && [ "$has_snapshot" -eq 1 ]; then
         local snap_pkgs=""
         local tmp_extract=""
         if [ -f "$snap_dir/packages_installed.list" ]; then
@@ -625,21 +662,36 @@ run_uninstall() {
         fi
 
         if [ -n "$snap_pkgs" ] && [ -f "$snap_pkgs" ]; then
-            log "Вычисление и удаление добавленных пакетов (--purge)..."
-            local cur_pkgs
-            cur_pkgs="$(mktemp 2>/dev/null || echo "/tmp/cur_pkgs_$$")"
-            dpkg-query -f '${binary:Package}\n' -W > "$cur_pkgs" 2>/dev/null || true
-            local diff_pkgs
-            # Удаляем ТОЛЬКО пакеты стека, добавленные установщиком (полная защита стороннего ПО: Docker, Dokploy, баз данных и утилит пользователя)
-            local stack_pkg_regex="^(nginx.*|libnginx.*|certbot|python3-certbot.*|fail2ban|python3-systemd|amneziawg.*|wireguard.*|libnetfilter-queue.*|apache2-utils|python3-bcrypt|mtr-tiny|socat)$"
-            diff_pkgs="$(comm -13 <(sort "$snap_pkgs") <(sort "$cur_pkgs") | grep -E "$stack_pkg_regex" || true)"
-            if [ -n "$diff_pkgs" ]; then
-                export DEBIAN_FRONTEND=noninteractive
-                # shellcheck disable=SC2086
-                apt-get purge -y $diff_pkgs >/dev/null 2>&1 || true
+            if command -v apk >/dev/null 2>&1; then
+                log "Вычисление и удаление добавленных пакетов (--purge) через apk..."
+                local cur_pkgs
+                cur_pkgs="$(mktemp 2>/dev/null || echo "/tmp/cur_pkgs_$$")"
+                apk info -q > "$cur_pkgs" 2>/dev/null || true
+                local diff_pkgs
+                local stack_pkg_regex="^(nginx.*|certbot|py3-certbot.*|fail2ban|amneziawg.*|wireguard-tools|libnetfilter_queue.*|apache2-utils|py3-bcrypt|mtr|socat)$"
+                diff_pkgs="$(comm -13 <(sort "$snap_pkgs") <(sort "$cur_pkgs") | grep -E "$stack_pkg_regex" || true)"
+                if [ -n "$diff_pkgs" ]; then
+                    # shellcheck disable=SC2086
+                    apk del $diff_pkgs >/dev/null 2>&1 || true
+                fi
+                rm -f "$cur_pkgs" 2>/dev/null || true
+            elif command -v apt-get >/dev/null 2>&1; then
+                log "Вычисление и удаление добавленных пакетов (--purge)..."
+                local cur_pkgs
+                cur_pkgs="$(mktemp 2>/dev/null || echo "/tmp/cur_pkgs_$$")"
+                dpkg-query -f '${binary:Package}\n' -W > "$cur_pkgs" 2>/dev/null || true
+                local diff_pkgs
+                # Удаляем ТОЛЬКО пакеты стека, добавленные установщиком (полная защита стороннего ПО: Docker, Dokploy, баз данных и утилит пользователя)
+                local stack_pkg_regex="^(nginx.*|libnginx.*|certbot|python3-certbot.*|fail2ban|python3-systemd|amneziawg.*|wireguard.*|libnetfilter-queue.*|apache2-utils|python3-bcrypt|mtr-tiny|socat)$"
+                diff_pkgs="$(comm -13 <(sort "$snap_pkgs") <(sort "$cur_pkgs") | grep -E "$stack_pkg_regex" || true)"
+                if [ -n "$diff_pkgs" ]; then
+                    export DEBIAN_FRONTEND=noninteractive
+                    # shellcheck disable=SC2086
+                    apt-get purge -y $diff_pkgs >/dev/null 2>&1 || true
+                fi
+                apt-get autoremove --purge -y >/dev/null 2>&1 || true
+                rm -f "$cur_pkgs" 2>/dev/null || true
             fi
-            apt-get autoremove --purge -y >/dev/null 2>&1 || true
-            rm -f "$cur_pkgs" 2>/dev/null || true
         fi
         [ -n "$tmp_extract" ] && rm -rf "$tmp_extract" 2>/dev/null || true
     fi

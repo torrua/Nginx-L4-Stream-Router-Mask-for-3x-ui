@@ -1,3 +1,24 @@
+get_nginx_user() {
+    if [ "${ID:-}" = "alpine" ]; then
+        echo "nginx"
+        return 0
+    elif [ -f /etc/os-release ]; then
+        local os_id=""
+        os_id=$(. /etc/os-release 2>/dev/null; echo "${ID:-}")
+        if [ "$os_id" = "alpine" ]; then
+            echo "nginx"
+            return 0
+        fi
+    fi
+    if id -u www-data >/dev/null 2>&1; then
+        echo "www-data"
+    elif id -u nginx >/dev/null 2>&1; then
+        echo "nginx"
+    else
+        echo "www-data"
+    fi
+}
+
 ensure_nginx_stream_module() {
     command -v nginx >/dev/null 2>&1 || return 0
 
@@ -41,24 +62,36 @@ EOF
     done
 
     # 4. Если модуль не найден на диске, устанавливаем пакет модуля через пакетный менеджер
-    if [ -z "$mod_so" ] && command -v apt-get >/dev/null 2>&1; then
-        log "Установка модуля Nginx Stream L4 (libnginx-mod-stream / nginx-module-stream)..."
-        export DEBIAN_FRONTEND=noninteractive
-        apt-get update -q || true
-        apt-get install -y -q -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
-            libnginx-mod-stream 2>/dev/null || \
-        apt-get install -y -q -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
-            nginx-module-stream 2>/dev/null || true
+    if [ -z "$mod_so" ]; then
+        if command -v apk >/dev/null 2>&1; then
+            log "Установка модуля Nginx Stream L4 (nginx-mod-stream) через apk..."
+            apk add --no-cache nginx-mod-stream 2>/dev/null || true
+            for cand in /usr/lib/nginx/modules/ngx_stream_module.so \
+                        /etc/nginx/modules/ngx_stream_module.so; do
+                if [ -f "$cand" ]; then
+                    mod_so="$cand"
+                    break
+                fi
+            done
+        elif command -v apt-get >/dev/null 2>&1; then
+            log "Установка модуля Nginx Stream L4 (libnginx-mod-stream / nginx-module-stream)..."
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -q || true
+            apt-get install -y -q -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
+                libnginx-mod-stream 2>/dev/null || \
+            apt-get install -y -q -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
+                nginx-module-stream 2>/dev/null || true
 
-        for cand in /etc/nginx/modules/ngx_stream_module.so \
-                    /usr/lib/nginx/modules/ngx_stream_module.so \
-                    /usr/share/nginx/modules/ngx_stream_module.so \
-                    /usr/local/nginx/modules/ngx_stream_module.so; do
-            if [ -f "$cand" ]; then
-                mod_so="$cand"
-                break
-            fi
-        done
+            for cand in /etc/nginx/modules/ngx_stream_module.so \
+                        /usr/lib/nginx/modules/ngx_stream_module.so \
+                        /usr/share/nginx/modules/ngx_stream_module.so \
+                        /usr/local/nginx/modules/ngx_stream_module.so; do
+                if [ -f "$cand" ]; then
+                    mod_so="$cand"
+                    break
+                fi
+            done
+        fi
     fi
 
     # 5. Если модуль найден, создаем конфигурационный файл в modules-enabled
@@ -118,6 +151,14 @@ setup_nginx_mainline() {
         . /etc/os-release
         os_id="${ID:-ubuntu}"
         os_codename="${VERSION_CODENAME:-${UBUNTU_CODENAME:-jammy}}"
+    fi
+
+    if [ "$os_id" = "alpine" ]; then
+        log "Установка Nginx и Stream модуля для Alpine Linux..."
+        apk add --no-cache nginx nginx-mod-stream nginx-openrc 2>/dev/null || apk add --no-cache nginx nginx-mod-stream || true
+        mkdir -p /etc/nginx/modules-enabled 2>/dev/null || true
+        ensure_nginx_stream_module
+        return 0
     fi
 
     # 1. Если Nginx уже установлен — проверяем, запускается ли бинарник и поддерживает ли ssl_reject_handshake

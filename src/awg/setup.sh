@@ -3,6 +3,25 @@
 
 AMNEZIA_PPA_GPG_B64="xsFNBGV0UhsBEAC33rMndHSN/k+u7gcZbh9/FjgYfGltQAtVe2QDxzn7UV+k/ChXOrYRw6Izw/DrhaapkNCThK2jwJE64e0NjboLH7UrrmSJLXMfOlDFbyGJVRA+1sTBlo7kKHY0xiZ1CHDzjKNV3czbesu80A9nuTZYyWHEn9ax6wsqKG3N8SvzQkUrIOVD2wZjh0p273CCEGkBnax1ghAV3MF8OrsPU6FRJ+ZakzKbu54g68xoV+2813YECme0JKsWfUUe/1uEJOXCvuACURSxnYr0sihJd8QI/jHSGlfeq72e5MflFEOrnu5xaDSJr2W5lvUetG7EGSxtNKd7Jm/KhUV04g7arA0qydRjRToW3QqyzG7VB2nXKz3AOBYNearWAuBcTkfPvRVchxbjiYonKZA5tIlVrpawMZsdxKvYwl6LVnpBcccFWPhpudfy4TpCqCxRoAanOCvSirI3/y7TcZMBw643SaxXi1ifGeg6eyMzrLtP3CeonKBHGzrt1eeKGtEw/PFN4RmwpBePxi+uj0CoTD6zjCQa3c8EeB4Qz7tt6PnpibxdtZE8sBdd51wSA/fPGi2tFph8IVAsws7oxcQxZYl8CyncKDLcoR4dxVHYdFEDDf1GjRjoQ3AinD7fxD5qYzExe50DBVpuUbWcAiGICNxfvzQtUSRRtMoSHDcvzsy03KC6VwARAQABzR5MYXVuY2hwYWQgUFBBIGZvciBJdXJpaSBFZ29yb3bCwY4EEwEKADgWIQR1yd1yx5mHDjEFQuJBZvLCVykIKAUCZXRSGwIbAwULCQgHAgYVCgkICwIEFgIDAQIeAQIXgAAKCRBBZvLCVykIKBu5D/9akmHCHlUqm2RTTBeTMbLNGc0l6YugpPaCM6vz0O9kBFP5PfRaNSRzyF7wHFHNY3JUHcor28my1fD8AE4+C3PwXz8tVYLh57UUsp4wjqHY+MTl/1ngDViPGD3PRjB8ZlO+19yerfplZv1Jaw7FZZv2BZOAXb+ddqUG4EmlzOnCEhcSDdFrzEBB3RGthjIb3QkKWKGbELDiMfogmsO9BE139Raiw23blagDrbnWsG4jReZeu3atjG6AW8eL7m+i7bKKshD2CYVMznI5cYGLMKo9w7sb33uylPj1Vx9O7joP2GFf2rTpCY8wgzk7i1RqsipJ80u1/DY91Xdizv3f2BBe6UY7qHKoK00O11J0y8yUis2Asycy33Wy51pf6rCFUBLQu+c1fEypHF6jqANmQwaH7pPBliy4gGWvrVggzV4mxv7SnRiMi4PFyVwjKWm8dmuMxi/B9s++VG/ed+5aYgJYL58MohG3MUI/L58eitSCDDcQ1iAnBmawnGMKPqzMgRFB3OU3wDwfh7LNVvQqWpQ4q7pr4Cq1CvZvGoggXWDo1/vylPsRmiiuNetfsoVYmrkgtj1om07m5Xp1v4SyXJH11c3dc/xfMmn/4RlMWIpq86IsOjpr3avsw3FVUNCgD5Wf5+rHG+7gNmM6Cm/F8MDfAnnRmsw4h6hgvcJNQT5Dig=="
 
+detect_alpine_kheaders() {
+    local kver="${1:-$(uname -r)}"
+    local kflavor="${kver##*-}"
+    local cand="linux-${kflavor}-dev"
+    if command -v apk >/dev/null 2>&1; then
+        if [ -n "$(apk search -e "$cand" 2>/dev/null)" ]; then
+            echo "$cand"
+            return 0
+        fi
+    fi
+    case "$kflavor" in
+        virt|lts|edge)
+            echo "linux-${kflavor}-dev"
+            return 0
+            ;;
+    esac
+    echo "linux-lts-dev"
+}
+
 install_amneziawg_packages_task() {
     export DEBIAN_FRONTEND=noninteractive
     local os_id=""
@@ -15,6 +34,70 @@ install_amneziawg_packages_task() {
 
     # 1. Если бинарник awg уже доступен в системе — ничего делать не нужно
     if command -v awg >/dev/null 2>&1; then
+        return 0
+    fi
+
+    if [[ "$os_id" == "alpine" ]]; then
+        local kheaders
+        kheaders=$(detect_alpine_kheaders "$(uname -r)")
+        apk update || true
+        apk add --no-cache bash make gcc musl-dev libmnl-dev kmod iproute2 iptables iptables-openrc openrc git curl tar unzip file ca-certificates "$kheaders" build-base libqrencode-tools 2>/dev/null || true
+
+        # Сборка amneziawg-tools если утилита awg отсутствует
+        if ! command -v awg >/dev/null 2>&1; then
+            local tools_tmp="/tmp/amneziawg-tools-$$"
+            if git clone --depth 1 https://github.com/amnezia-vpn/amneziawg-tools.git "$tools_tmp" 2>/dev/null; then
+                make -C "$tools_tmp/src" >/dev/null 2>&1 || true
+                make -C "$tools_tmp/src" install >/dev/null 2>&1 || true
+                rm -rf "$tools_tmp" 2>/dev/null || true
+            fi
+        fi
+
+        # Сборка модуля ядра amneziawg через Kbuild при наличии заголовков ядра
+        local kbuild_dir="/lib/modules/$(uname -r)/build"
+        if [ ! -d "$kbuild_dir" ]; then
+            local cand_hdr
+            cand_hdr="$(find /usr/src -maxdepth 1 -name "linux-headers-$(uname -r)*" -type d 2>/dev/null | head -n1 || true)"
+            [ -n "$cand_hdr" ] && kbuild_dir="$cand_hdr"
+        fi
+
+        if [ -d "$kbuild_dir" ]; then
+            local kmod_tmp="/tmp/amneziawg-kmod-$$"
+            if git clone --depth 1 https://github.com/amnezia-vpn/amneziawg-linux-kernel-module.git "$kmod_tmp" 2>/dev/null; then
+                make -C "$kmod_tmp/src" KERNELDIR="$kbuild_dir" >/dev/null 2>&1 || true
+                if [ -f "$kmod_tmp/src/amneziawg.ko" ]; then
+                    local mod_dest="/lib/modules/$(uname -r)/extra"
+                    mkdir -p "$mod_dest" 2>/dev/null || true
+                    cp -f "$kmod_tmp/src/amneziawg.ko" "$mod_dest/amneziawg.ko" 2>/dev/null || true
+                    depmod -a "$(uname -r)" 2>/dev/null || depmod -a 2>/dev/null || true
+                fi
+                rm -rf "$kmod_tmp" 2>/dev/null || true
+            fi
+        fi
+
+        # Регистрация хука ядра для автоматической пересборки модуля при обновлении ядра Alpine
+        mkdir -p /etc/kernel-hooks.d 2>/dev/null || true
+        cat << 'EOF_KHOOK' > /etc/kernel-hooks.d/50-amneziawg
+#!/bin/sh
+TARGET_KERNEL="${1:-$(uname -r)}"
+KDIR="/lib/modules/${TARGET_KERNEL}/build"
+[ -d "$KDIR" ] || KDIR="$(find /usr/src -maxdepth 1 -name "linux-headers-${TARGET_KERNEL}*" -type d 2>/dev/null | head -n1)"
+[ -d "$KDIR" ] || exit 0
+
+TMP_KMOD="/tmp/awg_kmod_hook_$$"
+git clone --depth 1 https://github.com/amnezia-vpn/amneziawg-linux-kernel-module.git "$TMP_KMOD" >/dev/null 2>&1 || exit 0
+make -C "$TMP_KMOD/src" KERNELDIR="$KDIR" >/dev/null 2>&1 || { rm -rf "$TMP_KMOD"; exit 0; }
+if [ -f "$TMP_KMOD/src/amneziawg.ko" ]; then
+    mkdir -p "/lib/modules/${TARGET_KERNEL}/extra"
+    cp -f "$TMP_KMOD/src/amneziawg.ko" "/lib/modules/${TARGET_KERNEL}/extra/amneziawg.ko"
+    depmod -a "${TARGET_KERNEL}" 2>/dev/null || true
+fi
+rm -rf "$TMP_KMOD"
+exit 0
+EOF_KHOOK
+        chmod 755 /etc/kernel-hooks.d/50-amneziawg 2>/dev/null || true
+
+        modprobe amneziawg 2>/dev/null || true
         return 0
     fi
 
@@ -161,6 +244,12 @@ EOF_AWG_SH
 0 * * * * root /usr/local/bin/awg-mgr purge-expired --quiet >/dev/null 2>&1
 EOF_CRON
         chmod 644 /etc/cron.d/awg-purge-expired 2>/dev/null || true
+    elif [ -d /etc/periodic/hourly ]; then
+        cat << 'EOF_PERIODIC' > /etc/periodic/hourly/awg-purge-expired
+#!/bin/sh
+/usr/local/bin/awg-mgr purge-expired --quiet >/dev/null 2>&1
+EOF_PERIODIC
+        chmod 755 /etc/periodic/hourly/awg-purge-expired 2>/dev/null || true
     fi
 
     ok "Контроллер AmneziaWG готов: утилита awg-mgr доступна в системе."
@@ -192,9 +281,11 @@ deploy_amneziawg_backend() {
         done
     fi
 
-    if [ "$active_backend" -eq 0 ] && systemctl is-active --quiet awg-quick@awg0 2>/dev/null; then
-        active_backend=1
-        ok "Обнаружена активная служба awg-quick@awg0 — сохраняем без изменений."
+    if [ "$active_backend" -eq 0 ]; then
+        if systemctl is-active --quiet awg-quick@awg0 2>/dev/null || (command -v rc-service >/dev/null 2>&1 && rc-service awg-quick.awg0 status >/dev/null 2>&1); then
+            active_backend=1
+            ok "Обнаружена активная служба awg-quick@awg0 — сохраняем без изменений."
+        fi
     fi
 
     local def_iface
@@ -291,6 +382,32 @@ EOF_AWG0
             systemctl daemon-reload >/dev/null 2>&1 || true
             systemctl enable --now awg-quick@awg0.service >/dev/null 2>&1 || true
             ok "Системная служба awg-quick@awg0 запущена на порту ${awg_port}/udp"
+        elif command -v rc-service >/dev/null 2>&1 || is_openrc; then
+            cat << 'EOF_ORC_AWG' > /etc/init.d/awg-quick.awg0
+#!/sbin/openrc-run
+description="AmneziaWG interface awg0 via awg-quick"
+
+depend() {
+    need net
+    after firewall
+}
+
+start() {
+    ebegin "Starting AmneziaWG awg0"
+    awg-quick up awg0
+    eend $?
+}
+
+stop() {
+    ebegin "Stopping AmneziaWG awg0"
+    awg-quick down awg0
+    eend $?
+}
+EOF_ORC_AWG
+            chmod 755 /etc/init.d/awg-quick.awg0
+            rc-update add awg-quick.awg0 default >/dev/null 2>&1 || true
+            rc-service awg-quick.awg0 restart >/dev/null 2>&1 || rc-service awg-quick.awg0 start >/dev/null 2>&1 || true
+            ok "Служба OpenRC awg-quick.awg0 запущена на порту ${awg_port}/udp"
         fi
     fi
 

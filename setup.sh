@@ -1345,6 +1345,206 @@ done
 
 
 
+#!/usr/bin/env bash
+# ==============================================================================
+# src/system/service.sh — Unified Service Manager & OS Abstraction Layer
+# ==============================================================================
+# Transparently abstracts service management between systemd and OpenRC.
+# Ensures 100% native execution on Alpine Linux while preserving full
+# backward compatibility with Ubuntu / Debian.
+# ==============================================================================
+
+is_openrc() {
+    if [ -f /sbin/openrc-run ] || [ -f /etc/init.d/rc ] || [ -f /etc/alpine-release ]; then
+        return 0
+    fi
+    if ! command -v systemctl >/dev/null 2>&1 && command -v rc-service >/dev/null 2>&1; then
+        return 0
+    fi
+    if [ -f /etc/os-release ]; then
+        local os_id=""
+        os_id=$(. /etc/os-release 2>/dev/null; echo "${ID:-}")
+        if [ "$os_id" = "alpine" ] && ! command -v systemctl >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+    return 1
+}
+
+is_systemd() {
+    command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]
+}
+
+svc_daemon_reload() {
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload >/dev/null 2>&1 || true
+    fi
+}
+
+svc_start() {
+    local name="$1"
+    if is_openrc; then
+        rc-service "$name" start
+    elif command -v systemctl >/dev/null 2>&1; then
+        systemctl start "$name"
+    elif [ -x "/etc/init.d/$name" ]; then
+        "/etc/init.d/$name" start
+    else
+        return 1
+    fi
+}
+
+svc_stop() {
+    local name="$1"
+    if is_openrc; then
+        rc-service "$name" stop
+    elif command -v systemctl >/dev/null 2>&1; then
+        systemctl stop "$name"
+    elif [ -x "/etc/init.d/$name" ]; then
+        "/etc/init.d/$name" stop
+    else
+        return 1
+    fi
+}
+
+svc_restart() {
+    local name="$1"
+    if is_openrc; then
+        rc-service "$name" restart
+    elif command -v systemctl >/dev/null 2>&1; then
+        systemctl restart "$name"
+    elif [ -x "/etc/init.d/$name" ]; then
+        "/etc/init.d/$name" restart
+    else
+        return 1
+    fi
+}
+
+svc_reload() {
+    local name="$1"
+    if is_openrc; then
+        rc-service "$name" reload 2>/dev/null || rc-service "$name" restart
+    elif command -v systemctl >/dev/null 2>&1; then
+        systemctl reload "$name" 2>/dev/null || systemctl restart "$name"
+    elif [ -x "/etc/init.d/$name" ]; then
+        "/etc/init.d/$name" reload 2>/dev/null || "/etc/init.d/$name" restart
+    else
+        return 1
+    fi
+}
+
+svc_enable() {
+    local name="$1"
+    if is_openrc; then
+        rc-update add "$name" default >/dev/null 2>&1 || true
+    elif command -v systemctl >/dev/null 2>&1; then
+        systemctl enable "$name" >/dev/null 2>&1 || true
+    fi
+}
+
+svc_disable() {
+    local name="$1"
+    if is_openrc; then
+        rc-update del "$name" default >/dev/null 2>&1 || rc-update del "$name" >/dev/null 2>&1 || true
+    elif command -v systemctl >/dev/null 2>&1; then
+        systemctl disable "$name" >/dev/null 2>&1 || true
+    fi
+}
+
+svc_is_active() {
+    local name="$1"
+    if is_openrc; then
+        rc-service "$name" status >/dev/null 2>&1
+    elif command -v systemctl >/dev/null 2>&1; then
+        systemctl is-active --quiet "$name" 2>/dev/null
+    elif [ -x "/etc/init.d/$name" ]; then
+        "/etc/init.d/$name" status >/dev/null 2>&1
+    else
+        return 1
+    fi
+}
+
+svc_create_daemon() {
+    local name="$1"
+    local desc="$2"
+    local cmd="$3"
+    local args="${4:-}"
+    local respawn_delay="${5:-3}"
+    local pre_start="${6:-}"
+    local post_stop="${7:-}"
+    local user="${8:-}"
+    local group="${9:-}"
+
+    if is_openrc; then
+        mkdir -p /etc/init.d /run/openrc 2>/dev/null || true
+        touch /run/openrc/softlevel 2>/dev/null || true
+        local init_file="/etc/init.d/${name}"
+
+        {
+            echo "#!/sbin/openrc-run"
+            echo "description=\"${desc}\""
+            echo "supervisor=\"supervise-daemon\""
+            echo "command=\"${cmd}\""
+            [ -n "${args}" ] && echo "command_args=\"${args}\""
+            echo "pidfile=\"/run/\${RC_SVCNAME}.pid\""
+            echo "respawn_delay=${respawn_delay}"
+            echo "respawn_max=5"
+            [ -n "${user}" ] && echo "command_user=\"${user}${group:+:$group}\""
+            echo ""
+            if [ -n "${pre_start}" ]; then
+                echo "start_pre() {"
+                echo "    ${pre_start}"
+                echo "}"
+                echo ""
+            fi
+            if [ -n "${post_stop}" ]; then
+                echo "stop_post() {"
+                echo "    ${post_stop}"
+                echo "}"
+                echo ""
+            fi
+            echo "depend() {"
+            echo "    need net"
+            echo "    after firewall"
+            echo "}"
+        } > "$init_file"
+
+        chmod 755 "$init_file"
+    else
+        mkdir -p /etc/systemd/system 2>/dev/null || true
+        local unit_file="/etc/systemd/system/${name}.service"
+
+        {
+            echo "[Unit]"
+            echo "Description=${desc}"
+            echo "After=network.target network-online.target"
+            echo "Wants=network-online.target"
+            echo ""
+            echo "[Service]"
+            echo "Type=simple"
+            [ -n "${user}" ] && echo "User=${user}"
+            [ -n "${group}" ] && echo "Group=${group}"
+            if [ -n "${pre_start}" ]; then
+                # Split multiple commands if delimited by semicolon or emit as is
+                echo "ExecStartPre=${pre_start}"
+            fi
+            echo "ExecStart=${cmd}${args:+ $args}"
+            if [ -n "${post_stop}" ]; then
+                echo "ExecStopPost=${post_stop}"
+            fi
+            echo "Restart=always"
+            echo "RestartSec=${respawn_delay}s"
+            echo "LimitNOFILE=65535"
+            echo ""
+            echo "[Install]"
+            echo "WantedBy=multi-user.target"
+        } > "$unit_file"
+
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl daemon-reload >/dev/null 2>&1 || true
+        fi
+    fi
+}
 # ----------------------- Системные предусловия -----------------------
 # Проверка прав root только при реальной установке (пропускается для --help, --gen-config, --check, --doctor)
 check_root() {
@@ -1363,15 +1563,130 @@ check_root "$@"
 
 if [ -f /etc/os-release ]; then
     . /etc/os-release
-    if [[ "$ID" != "ubuntu" && "$ID" != "debian" ]]; then
-        die "Данный скрипт оптимизирован строго под дистрибутивы семейств Ubuntu и Debian."
+    if [[ "$ID" != "ubuntu" && "$ID" != "debian" && "$ID" != "alpine" ]]; then
+        die "Данный скрипт оптимизирован строго под дистрибутивы семейств Ubuntu, Debian и Alpine Linux."
     fi
 else
     die "Не удалось определить параметры текущего дистрибутива ОС."
 fi
 
+# Унифицированные обертки для работы с пакетными менеджерами
+pkg_update() {
+    if command -v apk >/dev/null 2>&1; then
+        apk update
+    elif command -v apt-get >/dev/null 2>&1; then
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -q
+    fi
+}
+
+pkg_install() {
+    [ $# -eq 0 ] && return 0
+    if command -v apk >/dev/null 2>&1; then
+        apk add --no-cache "$@"
+    elif command -v apt-get >/dev/null 2>&1; then
+        export DEBIAN_FRONTEND=noninteractive
+        local apt_flags=("-o" "Acquire::Retries=3" "-o" "Acquire::http::Timeout=15" "-o" "DPkg::Lock::Timeout=60")
+        apt-get install -y --no-install-recommends "${apt_flags[@]}" -q "$@"
+    fi
+}
+
+pkg_remove() {
+    [ $# -eq 0 ] && return 0
+    if command -v apk >/dev/null 2>&1; then
+        apk del "$@"
+    elif command -v apt-get >/dev/null 2>&1; then
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get purge -y "$@"
+    fi
+}
+
+pkg_is_installed() {
+    local pkg="$1"
+    if command -v apk >/dev/null 2>&1; then
+        apk info -e "$pkg" >/dev/null 2>&1
+    elif command -v dpkg-query >/dev/null 2>&1; then
+        dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "ok installed"
+    else
+        return 1
+    fi
+}
+
+map_pkg_to_alpine() {
+    local pkg="$1"
+    case "$pkg" in
+        build-essential) echo "build-base" ;;
+        python3-bcrypt) echo "py3-bcrypt" ;;
+        python3-pip) echo "py3-pip" ;;
+        python3-sqlite3) echo "py3-sqlite3" ;;
+        python3-certbot-nginx|python3-certbot-dns-cloudflare) echo "certbot" ;;
+        qrencode) echo "libqrencode-tools" ;;
+        resolvconf) echo "openresolv" ;;
+        cron) echo "dcron" ;;
+        mtr-tiny) echo "mtr" ;;
+        libnginx-mod-stream) echo "nginx-mod-stream" ;;
+        iptables-persistent) echo "iptables-openrc" ;;
+        libnetfilter-queue1|libnetfilter-queue-dev) echo "libnetfilter_queue" ;;
+        iproute2-ss) echo "iproute2-ss" ;;
+        *) echo "$pkg" ;;
+    esac
+}
+
 # Функция установки базовых зависимостей без вывода простыни apt
 install_prerequisites() {
+    if [[ "${ID:-}" == "alpine" ]]; then
+        local alpine_missing=()
+        declare -A alpine_pkg_map=(
+            [curl]="curl"
+            [bash]="bash"
+            [rc-service]="openrc"
+            [openssl]="openssl"
+            [awk]="gawk"
+            [cron]="dcron"
+            [crond]="dcron"
+            [ufw]="ufw"
+            [python3]="python3"
+            [mtr]="mtr"
+            [qrencode]="libqrencode-tools"
+            [tar]="tar"
+            [grep]="grep"
+            [coreutils]="coreutils"
+            [procps]="procps"
+            [iptables]="iptables"
+            [ss]="iproute2-ss"
+        )
+        for cmd in "${!alpine_pkg_map[@]}"; do
+            if ! command -v "$cmd" >/dev/null 2>&1; then
+                alpine_missing+=("${alpine_pkg_map[$cmd]}")
+            fi
+        done
+        if command -v python3 >/dev/null 2>&1 && ! python3 -c "import bcrypt" >/dev/null 2>&1; then
+            alpine_missing+=("py3-bcrypt")
+        fi
+        if command -v python3 >/dev/null 2>&1 && ! python3 -c "import sqlite3" >/dev/null 2>&1; then
+            alpine_missing+=("py3-sqlite3")
+        fi
+
+        if [ ${#alpine_missing[@]} -gt 0 ]; then
+            if [ "${DEBUG_MODE:-0}" -eq 1 ]; then
+                echo "  [DEBUG] Alpine: Требуется установка: ${alpine_missing[*]}"
+            fi
+            apk update || true
+            apk add --no-cache "${alpine_missing[@]}" iptables-openrc shadow 2>/dev/null || apk add "${alpine_missing[@]}" || true
+        else
+            if [ "${DEBUG_MODE:-0}" -eq 1 ]; then
+                echo "  [DEBUG] Все базовые утилиты уже установлены — пропускаем apk add."
+            fi
+        fi
+
+        # Запуск и включение службы cron (dcron) в OpenRC
+        if command -v rc-update >/dev/null 2>&1; then
+            rc-update add dcron default >/dev/null 2>&1 || rc-update add cron default >/dev/null 2>&1 || true
+            rc-service dcron start >/dev/null 2>&1 || rc-service cron start >/dev/null 2>&1 || true
+        fi
+        return 0
+    fi
+
     local missing_pkgs=()
     declare -A pkg_map=(
         [curl]="curl"
@@ -1424,8 +1739,10 @@ install_prerequisites() {
     if [ -f /etc/default/motd-news ]; then
         sed -i 's/ENABLED=1/ENABLED=0/' /etc/default/motd-news 2>/dev/null || true
     fi
-    systemctl stop motd-news.timer >/dev/null 2>&1 || true
-    systemctl disable motd-news.timer >/dev/null 2>&1 || true
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl stop motd-news.timer >/dev/null 2>&1 || true
+        systemctl disable motd-news.timer >/dev/null 2>&1 || true
+    fi
     chmod -x /etc/update-motd.d/10-help-text \
              /etc/update-motd.d/50-motd-news \
              /etc/update-motd.d/88-esm-announce \
@@ -1436,7 +1753,6 @@ install_prerequisites() {
     fi
     rm -f /var/lib/update-notifier/updates-available 2>/dev/null || true
 }
-
 
 # =============================================================
 #  ФУНКЦИИ НЕИНТЕРАКТИВНОГО РЕЖИМА, CLI И .ENV
@@ -2501,7 +2817,9 @@ create_initial_state_snapshot() {
     mkdir -p "$tmp_dir" 2>/dev/null || true
 
     # 2. Фиксация установленных пакетов
-    if command -v dpkg-query >/dev/null 2>&1; then
+    if command -v apk >/dev/null 2>&1; then
+        apk info -q > "$tmp_dir/packages_installed.list" 2>/dev/null || true
+    elif command -v dpkg-query >/dev/null 2>&1; then
         dpkg-query -f '${binary:Package}\n' -W > "$tmp_dir/packages_installed.list" 2>/dev/null || true
     elif command -v rpm >/dev/null 2>&1; then
         rpm -qa --qf '%{NAME}\n' > "$tmp_dir/packages_installed.list" 2>/dev/null || true
@@ -2509,8 +2827,11 @@ create_initial_state_snapshot() {
         : > "$tmp_dir/packages_installed.list"
     fi
 
-    # 3. Фиксация состояния служб systemd
-    if command -v systemctl >/dev/null 2>&1; then
+    # 3. Фиксация состояния служб
+    if is_openrc; then
+        rc-update show 2>/dev/null | awk '{print $1}' > "$tmp_dir/services_enabled.list" || true
+        rc-status -a 2>/dev/null | grep -E '\[ *(started|running) *\]' | awk '{print $1}' > "$tmp_dir/services_running.list" || true
+    elif command -v systemctl >/dev/null 2>&1; then
         systemctl list-unit-files --state=enabled --no-legend 2>/dev/null | awk '{print $1}' > "$tmp_dir/services_enabled.list" || true
         systemctl list-units --state=running --no-legend 2>/dev/null | awk '{print $1}' > "$tmp_dir/services_running.list" || true
     else
@@ -2551,6 +2872,7 @@ create_initial_state_snapshot() {
     [ -f "${target_root}/etc/sysctl.conf" ] && cp "${target_root}/etc/sysctl.conf" "$tmp_dir/sysctl/" 2>/dev/null || true
     [ -d "${target_root}/etc/sysctl.d" ] && tar --force-local -czf "$tmp_dir/sysctl/sysctl.d.tar.gz" -C "${target_root}/etc" "sysctl.d" 2>/dev/null || true
     [ -d "${target_root}/etc/security/limits.d" ] && tar --force-local -czf "$tmp_dir/sysctl/limits.d.tar.gz" -C "${target_root}/etc/security" "limits.d" 2>/dev/null || true
+    [ -d "${target_root}/etc/local.d" ] && tar --force-local -czf "$tmp_dir/sysctl/local.d.tar.gz" -C "${target_root}/etc" "local.d" 2>/dev/null || true
 
     # 7. Фиксация предсуществования Nginx и Fail2ban
     local nginx_preexisted=0
@@ -2678,6 +3000,206 @@ die()  {
 }
 #!/usr/bin/env bash
 # ==============================================================================
+# src/system/service.sh — Unified Service Manager & OS Abstraction Layer
+# ==============================================================================
+# Transparently abstracts service management between systemd and OpenRC.
+# Ensures 100% native execution on Alpine Linux while preserving full
+# backward compatibility with Ubuntu / Debian.
+# ==============================================================================
+
+is_openrc() {
+    if [ -f /sbin/openrc-run ] || [ -f /etc/init.d/rc ] || [ -f /etc/alpine-release ]; then
+        return 0
+    fi
+    if ! command -v systemctl >/dev/null 2>&1 && command -v rc-service >/dev/null 2>&1; then
+        return 0
+    fi
+    if [ -f /etc/os-release ]; then
+        local os_id=""
+        os_id=$(. /etc/os-release 2>/dev/null; echo "${ID:-}")
+        if [ "$os_id" = "alpine" ] && ! command -v systemctl >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+    return 1
+}
+
+is_systemd() {
+    command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]
+}
+
+svc_daemon_reload() {
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload >/dev/null 2>&1 || true
+    fi
+}
+
+svc_start() {
+    local name="$1"
+    if is_openrc; then
+        rc-service "$name" start
+    elif command -v systemctl >/dev/null 2>&1; then
+        systemctl start "$name"
+    elif [ -x "/etc/init.d/$name" ]; then
+        "/etc/init.d/$name" start
+    else
+        return 1
+    fi
+}
+
+svc_stop() {
+    local name="$1"
+    if is_openrc; then
+        rc-service "$name" stop
+    elif command -v systemctl >/dev/null 2>&1; then
+        systemctl stop "$name"
+    elif [ -x "/etc/init.d/$name" ]; then
+        "/etc/init.d/$name" stop
+    else
+        return 1
+    fi
+}
+
+svc_restart() {
+    local name="$1"
+    if is_openrc; then
+        rc-service "$name" restart
+    elif command -v systemctl >/dev/null 2>&1; then
+        systemctl restart "$name"
+    elif [ -x "/etc/init.d/$name" ]; then
+        "/etc/init.d/$name" restart
+    else
+        return 1
+    fi
+}
+
+svc_reload() {
+    local name="$1"
+    if is_openrc; then
+        rc-service "$name" reload 2>/dev/null || rc-service "$name" restart
+    elif command -v systemctl >/dev/null 2>&1; then
+        systemctl reload "$name" 2>/dev/null || systemctl restart "$name"
+    elif [ -x "/etc/init.d/$name" ]; then
+        "/etc/init.d/$name" reload 2>/dev/null || "/etc/init.d/$name" restart
+    else
+        return 1
+    fi
+}
+
+svc_enable() {
+    local name="$1"
+    if is_openrc; then
+        rc-update add "$name" default >/dev/null 2>&1 || true
+    elif command -v systemctl >/dev/null 2>&1; then
+        systemctl enable "$name" >/dev/null 2>&1 || true
+    fi
+}
+
+svc_disable() {
+    local name="$1"
+    if is_openrc; then
+        rc-update del "$name" default >/dev/null 2>&1 || rc-update del "$name" >/dev/null 2>&1 || true
+    elif command -v systemctl >/dev/null 2>&1; then
+        systemctl disable "$name" >/dev/null 2>&1 || true
+    fi
+}
+
+svc_is_active() {
+    local name="$1"
+    if is_openrc; then
+        rc-service "$name" status >/dev/null 2>&1
+    elif command -v systemctl >/dev/null 2>&1; then
+        systemctl is-active --quiet "$name" 2>/dev/null
+    elif [ -x "/etc/init.d/$name" ]; then
+        "/etc/init.d/$name" status >/dev/null 2>&1
+    else
+        return 1
+    fi
+}
+
+svc_create_daemon() {
+    local name="$1"
+    local desc="$2"
+    local cmd="$3"
+    local args="${4:-}"
+    local respawn_delay="${5:-3}"
+    local pre_start="${6:-}"
+    local post_stop="${7:-}"
+    local user="${8:-}"
+    local group="${9:-}"
+
+    if is_openrc; then
+        mkdir -p /etc/init.d /run/openrc 2>/dev/null || true
+        touch /run/openrc/softlevel 2>/dev/null || true
+        local init_file="/etc/init.d/${name}"
+
+        {
+            echo "#!/sbin/openrc-run"
+            echo "description=\"${desc}\""
+            echo "supervisor=\"supervise-daemon\""
+            echo "command=\"${cmd}\""
+            [ -n "${args}" ] && echo "command_args=\"${args}\""
+            echo "pidfile=\"/run/\${RC_SVCNAME}.pid\""
+            echo "respawn_delay=${respawn_delay}"
+            echo "respawn_max=5"
+            [ -n "${user}" ] && echo "command_user=\"${user}${group:+:$group}\""
+            echo ""
+            if [ -n "${pre_start}" ]; then
+                echo "start_pre() {"
+                echo "    ${pre_start}"
+                echo "}"
+                echo ""
+            fi
+            if [ -n "${post_stop}" ]; then
+                echo "stop_post() {"
+                echo "    ${post_stop}"
+                echo "}"
+                echo ""
+            fi
+            echo "depend() {"
+            echo "    need net"
+            echo "    after firewall"
+            echo "}"
+        } > "$init_file"
+
+        chmod 755 "$init_file"
+    else
+        mkdir -p /etc/systemd/system 2>/dev/null || true
+        local unit_file="/etc/systemd/system/${name}.service"
+
+        {
+            echo "[Unit]"
+            echo "Description=${desc}"
+            echo "After=network.target network-online.target"
+            echo "Wants=network-online.target"
+            echo ""
+            echo "[Service]"
+            echo "Type=simple"
+            [ -n "${user}" ] && echo "User=${user}"
+            [ -n "${group}" ] && echo "Group=${group}"
+            if [ -n "${pre_start}" ]; then
+                # Split multiple commands if delimited by semicolon or emit as is
+                echo "ExecStartPre=${pre_start}"
+            fi
+            echo "ExecStart=${cmd}${args:+ $args}"
+            if [ -n "${post_stop}" ]; then
+                echo "ExecStopPost=${post_stop}"
+            fi
+            echo "Restart=always"
+            echo "RestartSec=${respawn_delay}s"
+            echo "LimitNOFILE=65535"
+            echo ""
+            echo "[Install]"
+            echo "WantedBy=multi-user.target"
+        } > "$unit_file"
+
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl daemon-reload >/dev/null 2>&1 || true
+        fi
+    fi
+}
+#!/usr/bin/env bash
+# ==============================================================================
 #  SNAPSHOT ENGINE: Initial System State Capture & Verification
 # ==============================================================================
 #  Creates a secure, immutable snapshot of server packages, services, SSH config,
@@ -2705,7 +3227,9 @@ create_initial_state_snapshot() {
     mkdir -p "$tmp_dir" 2>/dev/null || true
 
     # 2. Фиксация установленных пакетов
-    if command -v dpkg-query >/dev/null 2>&1; then
+    if command -v apk >/dev/null 2>&1; then
+        apk info -q > "$tmp_dir/packages_installed.list" 2>/dev/null || true
+    elif command -v dpkg-query >/dev/null 2>&1; then
         dpkg-query -f '${binary:Package}\n' -W > "$tmp_dir/packages_installed.list" 2>/dev/null || true
     elif command -v rpm >/dev/null 2>&1; then
         rpm -qa --qf '%{NAME}\n' > "$tmp_dir/packages_installed.list" 2>/dev/null || true
@@ -2713,8 +3237,11 @@ create_initial_state_snapshot() {
         : > "$tmp_dir/packages_installed.list"
     fi
 
-    # 3. Фиксация состояния служб systemd
-    if command -v systemctl >/dev/null 2>&1; then
+    # 3. Фиксация состояния служб
+    if is_openrc; then
+        rc-update show 2>/dev/null | awk '{print $1}' > "$tmp_dir/services_enabled.list" || true
+        rc-status -a 2>/dev/null | grep -E '\[ *(started|running) *\]' | awk '{print $1}' > "$tmp_dir/services_running.list" || true
+    elif command -v systemctl >/dev/null 2>&1; then
         systemctl list-unit-files --state=enabled --no-legend 2>/dev/null | awk '{print $1}' > "$tmp_dir/services_enabled.list" || true
         systemctl list-units --state=running --no-legend 2>/dev/null | awk '{print $1}' > "$tmp_dir/services_running.list" || true
     else
@@ -2755,6 +3282,7 @@ create_initial_state_snapshot() {
     [ -f "${target_root}/etc/sysctl.conf" ] && cp "${target_root}/etc/sysctl.conf" "$tmp_dir/sysctl/" 2>/dev/null || true
     [ -d "${target_root}/etc/sysctl.d" ] && tar --force-local -czf "$tmp_dir/sysctl/sysctl.d.tar.gz" -C "${target_root}/etc" "sysctl.d" 2>/dev/null || true
     [ -d "${target_root}/etc/security/limits.d" ] && tar --force-local -czf "$tmp_dir/sysctl/limits.d.tar.gz" -C "${target_root}/etc/security" "limits.d" 2>/dev/null || true
+    [ -d "${target_root}/etc/local.d" ] && tar --force-local -czf "$tmp_dir/sysctl/local.d.tar.gz" -C "${target_root}/etc" "local.d" 2>/dev/null || true
 
     # 7. Фиксация предсуществования Nginx и Fail2ban
     local nginx_preexisted=0
@@ -2986,7 +3514,12 @@ run_uninstall() {
     [ "$nginx_preexisted" -eq 0 ] && services_to_stop+=("nginx")
 
     for svc in "${services_to_stop[@]}"; do
-        if command -v systemctl >/dev/null 2>&1; then
+        if is_openrc; then
+            local orc_svc="$svc"
+            [ "$svc" = "awg-quick@awg0" ] && orc_svc="awg-quick.awg0"
+            rc-service "$orc_svc" stop 2>/dev/null || true
+            rc-update del "$orc_svc" default 2>/dev/null || true
+        elif command -v systemctl >/dev/null 2>&1; then
             systemctl stop "$svc" 2>/dev/null || true
             systemctl disable "$svc" 2>/dev/null || true
         fi
@@ -2995,7 +3528,7 @@ run_uninstall() {
     pkill -9 -f "nfqws" 2>/dev/null || true
     ok "Службы остановлены и отключены."
 
-    log "Шаг 2/8: Удаление созданных systemd units и cron-задач..."
+    log "Шаг 2/8: Удаление созданных systemd units, OpenRC скриптов и cron-задач..."
     local units_to_remove=(
         "${target_root}/etc/systemd/system/x-ui.service"
         "${target_root}/etc/systemd/system/xray-geo-update.service"
@@ -3010,8 +3543,27 @@ run_uninstall() {
         "${target_root}/etc/systemd/system/zapret.service"
         "${target_root}/etc/systemd/system/zapret-server.service"
         "${target_root}/etc/systemd/system/nginx.service.d/override.conf"
+        "${target_root}/etc/init.d/x-ui"
+        "${target_root}/etc/init.d/sing-box-masque"
+        "${target_root}/etc/init.d/shadow-tls"
+        "${target_root}/etc/init.d/wstunnel"
+        "${target_root}/etc/init.d/dnstt-server"
+        "${target_root}/etc/init.d/caddy-naive"
+        "${target_root}/etc/init.d/mita"
+        "${target_root}/etc/init.d/mieru"
+        "${target_root}/etc/init.d/zapret-server"
+        "${target_root}/etc/init.d/awg-quick.awg0"
+        "${target_root}/etc/init.d/ssh-transition-watcher"
+        "${target_root}/etc/init.d/vpn-diagnostics"
+        "${target_root}/etc/periodic/weekly/xray-geo-update"
+        "${target_root}/etc/periodic/hourly/awg-purge-expired"
+        "${target_root}/etc/local.d/99-sysctl.start"
+        "${target_root}/etc/kernel-hooks.d/50-amneziawg"
     )
-    [ "$agh_preexisted" -eq 0 ] && units_to_remove+=("${target_root}/etc/systemd/system/AdGuardHome.service")
+    [ "$agh_preexisted" -eq 0 ] && units_to_remove+=(
+        "${target_root}/etc/systemd/system/AdGuardHome.service"
+        "${target_root}/etc/init.d/AdGuardHome"
+    )
 
     for unit in "${units_to_remove[@]}"; do
         rm -f "$unit" 2>/dev/null || true
@@ -3245,10 +3797,14 @@ run_uninstall() {
     rm -f "${target_root}/usr/local/bin/ssh-port-watcher.sh" 2>/dev/null || true
 
     # Перезапуск SSH-службы
-    if [ "$ssh_restored" -eq 1 ] && command -v systemctl >/dev/null 2>&1; then
-        local ssh_svc="ssh"
-        systemctl is-active --quiet sshd 2>/dev/null && ssh_svc="sshd"
-        systemctl reload "$ssh_svc" 2>/dev/null || systemctl restart "$ssh_svc" 2>/dev/null || true
+    if [ "$ssh_restored" -eq 1 ]; then
+        if is_openrc; then
+            rc-service sshd reload 2>/dev/null || rc-service sshd restart 2>/dev/null || true
+        elif command -v systemctl >/dev/null 2>&1; then
+            local ssh_svc="ssh"
+            systemctl is-active --quiet sshd 2>/dev/null && ssh_svc="sshd"
+            systemctl reload "$ssh_svc" 2>/dev/null || systemctl restart "$ssh_svc" 2>/dev/null || true
+        fi
     fi
     rm -rf "$tmp_extract" 2>/dev/null || true
 
@@ -3257,6 +3813,10 @@ run_uninstall() {
     rm -f "${target_root}/etc/modules-load.d/99-vless-conntrack.conf" 2>/dev/null || true
     rm -f "${target_root}/etc/security/limits.d/99-proxy-limits.conf" 2>/dev/null || true
     rm -f "${target_root}/etc/systemd/journald.conf.d/00-volatile.conf" 2>/dev/null || true
+    rm -f "${target_root}/etc/local.d/99-sysctl.start" 2>/dev/null || true
+    if [ -f "${target_root}/etc/modules" ]; then
+        sed -i '/^nf_conntrack$/d' "${target_root}/etc/modules" 2>/dev/null || true
+    fi
     command -v sysctl >/dev/null 2>&1 && sysctl --system >/dev/null 2>&1 || true
     ok "Сетевые параметры ядра возвращены к значениям по умолчанию."
 
@@ -3325,18 +3885,22 @@ run_uninstall() {
             fi
         fi
         rm -rf "$tmp_extract" 2>/dev/null || true
-        command -v systemctl >/dev/null 2>&1 && systemctl restart fail2ban 2>/dev/null || true
+        svc_restart fail2ban 2>/dev/null || command -v systemctl >/dev/null 2>&1 && systemctl restart fail2ban 2>/dev/null || true
     else
-        if [ "${UNINSTALL_PURGE_PKGS:-0}" -eq 1 ] && command -v apt-get >/dev/null 2>&1; then
-            export DEBIAN_FRONTEND=noninteractive
-            local f2b_pkgs=()
-            for pkg_cand in fail2ban python3-systemd; do
-                if dpkg-query -W -f='${Status}' "$pkg_cand" 2>/dev/null | grep -q "ok installed"; then
-                    f2b_pkgs+=("$pkg_cand")
+        if [ "${UNINSTALL_PURGE_PKGS:-0}" -eq 1 ]; then
+            if command -v apk >/dev/null 2>&1; then
+                apk del fail2ban >/dev/null 2>&1 || true
+            elif command -v apt-get >/dev/null 2>&1; then
+                export DEBIAN_FRONTEND=noninteractive
+                local f2b_pkgs=()
+                for pkg_cand in fail2ban python3-systemd; do
+                    if dpkg-query -W -f='${Status}' "$pkg_cand" 2>/dev/null | grep -q "ok installed"; then
+                        f2b_pkgs+=("$pkg_cand")
+                    fi
+                done
+                if [ ${#f2b_pkgs[@]} -gt 0 ]; then
+                    apt-get purge -y "${f2b_pkgs[@]}" >/dev/null 2>&1 || true
                 fi
-            done
-            if [ ${#f2b_pkgs[@]} -gt 0 ]; then
-                apt-get purge -y "${f2b_pkgs[@]}" >/dev/null 2>&1 || true
             fi
         fi
         rmdir "${target_root}/etc/fail2ban" 2>/dev/null || true
@@ -3442,7 +4006,7 @@ run_uninstall() {
     ok "Рабочие директории и бинарники успешно удалены."
 
     log "Шаг 8/8: Завершение отката..."
-    if [ "${UNINSTALL_PURGE_PKGS:-0}" -eq 1 ] && [ "$has_snapshot" -eq 1 ] && command -v apt-get >/dev/null 2>&1; then
+    if [ "${UNINSTALL_PURGE_PKGS:-0}" -eq 1 ] && [ "$has_snapshot" -eq 1 ]; then
         local snap_pkgs=""
         local tmp_extract=""
         if [ -f "$snap_dir/packages_installed.list" ]; then
@@ -3456,21 +4020,36 @@ run_uninstall() {
         fi
 
         if [ -n "$snap_pkgs" ] && [ -f "$snap_pkgs" ]; then
-            log "Вычисление и удаление добавленных пакетов (--purge)..."
-            local cur_pkgs
-            cur_pkgs="$(mktemp 2>/dev/null || echo "/tmp/cur_pkgs_$$")"
-            dpkg-query -f '${binary:Package}\n' -W > "$cur_pkgs" 2>/dev/null || true
-            local diff_pkgs
-            # Удаляем ТОЛЬКО пакеты стека, добавленные установщиком (полная защита стороннего ПО: Docker, Dokploy, баз данных и утилит пользователя)
-            local stack_pkg_regex="^(nginx.*|libnginx.*|certbot|python3-certbot.*|fail2ban|python3-systemd|amneziawg.*|wireguard.*|libnetfilter-queue.*|apache2-utils|python3-bcrypt|mtr-tiny|socat)$"
-            diff_pkgs="$(comm -13 <(sort "$snap_pkgs") <(sort "$cur_pkgs") | grep -E "$stack_pkg_regex" || true)"
-            if [ -n "$diff_pkgs" ]; then
-                export DEBIAN_FRONTEND=noninteractive
-                # shellcheck disable=SC2086
-                apt-get purge -y $diff_pkgs >/dev/null 2>&1 || true
+            if command -v apk >/dev/null 2>&1; then
+                log "Вычисление и удаление добавленных пакетов (--purge) через apk..."
+                local cur_pkgs
+                cur_pkgs="$(mktemp 2>/dev/null || echo "/tmp/cur_pkgs_$$")"
+                apk info -q > "$cur_pkgs" 2>/dev/null || true
+                local diff_pkgs
+                local stack_pkg_regex="^(nginx.*|certbot|py3-certbot.*|fail2ban|amneziawg.*|wireguard-tools|libnetfilter_queue.*|apache2-utils|py3-bcrypt|mtr|socat)$"
+                diff_pkgs="$(comm -13 <(sort "$snap_pkgs") <(sort "$cur_pkgs") | grep -E "$stack_pkg_regex" || true)"
+                if [ -n "$diff_pkgs" ]; then
+                    # shellcheck disable=SC2086
+                    apk del $diff_pkgs >/dev/null 2>&1 || true
+                fi
+                rm -f "$cur_pkgs" 2>/dev/null || true
+            elif command -v apt-get >/dev/null 2>&1; then
+                log "Вычисление и удаление добавленных пакетов (--purge)..."
+                local cur_pkgs
+                cur_pkgs="$(mktemp 2>/dev/null || echo "/tmp/cur_pkgs_$$")"
+                dpkg-query -f '${binary:Package}\n' -W > "$cur_pkgs" 2>/dev/null || true
+                local diff_pkgs
+                # Удаляем ТОЛЬКО пакеты стека, добавленные установщиком (полная защита стороннего ПО: Docker, Dokploy, баз данных и утилит пользователя)
+                local stack_pkg_regex="^(nginx.*|libnginx.*|certbot|python3-certbot.*|fail2ban|python3-systemd|amneziawg.*|wireguard.*|libnetfilter-queue.*|apache2-utils|python3-bcrypt|mtr-tiny|socat)$"
+                diff_pkgs="$(comm -13 <(sort "$snap_pkgs") <(sort "$cur_pkgs") | grep -E "$stack_pkg_regex" || true)"
+                if [ -n "$diff_pkgs" ]; then
+                    export DEBIAN_FRONTEND=noninteractive
+                    # shellcheck disable=SC2086
+                    apt-get purge -y $diff_pkgs >/dev/null 2>&1 || true
+                fi
+                apt-get autoremove --purge -y >/dev/null 2>&1 || true
+                rm -f "$cur_pkgs" 2>/dev/null || true
             fi
-            apt-get autoremove --purge -y >/dev/null 2>&1 || true
-            rm -f "$cur_pkgs" 2>/dev/null || true
         fi
         [ -n "$tmp_extract" ] && rm -rf "$tmp_extract" 2>/dev/null || true
     fi
@@ -5280,7 +5859,7 @@ restore_nginx_configs() {
     if [ -n "$bkp" ] && [ -f "$bkp" ]; then
         log "Откат конфигурации Nginx из резервной копии $bkp..."
         tar -xzf "$bkp" -C /etc 2>/dev/null || true
-        nginx -t >/dev/null 2>&1 && systemctl reload nginx 2>/dev/null || true
+        nginx -t >/dev/null 2>&1 && { svc_reload nginx 2>/dev/null || systemctl reload nginx 2>/dev/null || true; }
         ok "Конфигурация Nginx возвращена в исходное состояние."
     fi
 }
@@ -5288,7 +5867,7 @@ restore_nginx_configs() {
 determine_nginx_http2_mode() {
     local ver_raw=""
     if command -v nginx >/dev/null 2>&1; then
-        ver_raw=$(nginx -v 2>&1 | grep -oP 'nginx/\K[0-9.]+' || true)
+        ver_raw=$(nginx -v 2>&1 | sed -n 's/.*nginx\/\([0-9.]*\).*/\1/p' || true)
     fi
     [ -n "$ver_raw" ] || ver_raw="1.25.1"
 
@@ -5333,7 +5912,9 @@ detect_active_ssh_port() {
 }
 
 get_ssh_service_name() {
-    if systemctl list-unit-files 2>/dev/null | grep -q "^sshd\.service"; then
+    if [ "${ID:-}" = "alpine" ] || [ -f /etc/alpine-release ] || [ -f /etc/init.d/sshd ] || { [ -f /etc/os-release ] && grep -qi "alpine" /etc/os-release; }; then
+        echo "sshd"
+    elif systemctl list-unit-files 2>/dev/null | grep -q "^sshd\.service"; then
         echo "sshd"
     else
         echo "ssh"
@@ -5398,7 +5979,7 @@ get_port_listener_info() {
     local proc_info=""
     if [ -n "$raw" ]; then
         if echo "$raw" | grep -q 'users:('; then
-            proc_info=$(echo "$raw" | grep -oP 'users:\(\(\K[^)]+' | head -n1 | tr -d '"' || true)
+            proc_info=$(echo "$raw" | sed -n 's/.*users:((\([^)]*\).*/\1/p' | head -n1 | tr -d '"' || true)
         elif echo "$raw" | grep -qE '[0-9]+/[-_a-zA-Z0-9]+'; then
             proc_info=$(echo "$raw" | grep -oE '[0-9]+/[-_a-zA-Z0-9]+' | head -n1 || true)
         fi
@@ -6049,6 +6630,10 @@ apply_sysctl_and_limits() {
     modprobe nf_conntrack 2>/dev/null || true
     if [ -d /etc/modules-load.d ]; then
         echo "nf_conntrack" > /etc/modules-load.d/99-vless-conntrack.conf 2>/dev/null || true
+    elif [ -f /etc/modules ]; then
+        if ! grep -q "^nf_conntrack" /etc/modules 2>/dev/null; then
+            echo "nf_conntrack" >> /etc/modules 2>/dev/null || true
+        fi
     fi
 
     cat << 'EOF' > /etc/sysctl.d/99-vless-tuning.conf
@@ -6117,14 +6702,16 @@ EOF
     fi
 
     # Хранение системных логов journald в RAM (Storage=volatile, без записи на диск)
-    mkdir -p /etc/systemd/journald.conf.d/
-    cat << 'EOF' > /etc/systemd/journald.conf.d/00-volatile.conf
+    if is_systemd; then
+        mkdir -p /etc/systemd/journald.conf.d/
+        cat << 'EOF' > /etc/systemd/journald.conf.d/00-volatile.conf
 [Journal]
 Storage=volatile
 RuntimeMaxUse=64M
 MaxRetentionSec=1day
 EOF
-    systemctl restart systemd-journald 2>/dev/null || true
+        systemctl restart systemd-journald 2>/dev/null || true
+    fi
 
     # Disable IPv6 immediately on all active interfaces (runtime)
     if [ -d /proc/sys/net/ipv6/conf ]; then
@@ -6149,8 +6736,16 @@ EOF
         fi
     fi
 
-    # Crontab guard against cloud-init / network daemon sysctl overrides on boot
-    if command -v crontab &>/dev/null; then
+    # Boot guard against cloud-init / network daemon sysctl overrides on boot
+    if is_openrc; then
+        mkdir -p /etc/local.d
+        cat << 'EOF_LOCAL' > /etc/local.d/99-sysctl.start
+#!/bin/sh
+sleep 10 && sysctl --system
+EOF_LOCAL
+        chmod +x /etc/local.d/99-sysctl.start
+        rc-update add local default 2>/dev/null || true
+    elif command -v crontab &>/dev/null; then
         local cron_job="@reboot sleep 10 && sysctl --system"
         if ! crontab -l 2>/dev/null | grep -Fq "$cron_job"; then
             (crontab -l 2>/dev/null || true; echo "$cron_job") | crontab - 2>/dev/null || true
@@ -6388,9 +6983,11 @@ apply_ssh_configuration() {
 
     # 1. Отключаем systemd socket-activation (Ubuntu 22.10+, Ubuntu 24.04 LTS),
     # чтобы служба корректно слушала кастомный порт через стандартный unit.
-    systemctl stop ssh.socket 2>/dev/null || true
-    systemctl disable ssh.socket 2>/dev/null || true
-    systemctl enable "${ssh_svc}.service" 2>/dev/null || true
+    if is_systemd; then
+        systemctl stop ssh.socket 2>/dev/null || true
+        systemctl disable ssh.socket 2>/dev/null || true
+    fi
+    svc_enable "${ssh_svc}" 2>/dev/null || true
 
     # 2. Обновляем базовый /etc/ssh/sshd_config с гарантией директивы Include
     if [ -f /etc/ssh/sshd_config ]; then
@@ -6437,13 +7034,13 @@ EOF
     # 4. Проверяем валидность конфигурации sshd перед перезапуском
     mkdir -p /run/sshd 2>/dev/null || true
     if /usr/sbin/sshd -t 2>/dev/null; then
-        systemctl daemon-reload 2>/dev/null || true
-        systemctl restart "${ssh_svc}.service" 2>/dev/null || systemctl restart ssh 2>/dev/null || true
+        svc_daemon_reload 2>/dev/null || true
+        svc_restart "${ssh_svc}" 2>/dev/null || svc_restart ssh 2>/dev/null || true
     else
         # При синтаксической ошибке — безопасный откат
         warn "Ошибка валидации sshd -t при настройке SSH! Выполнен откат изменений drop-in для предотвращения потери доступа."
         rm -f "$dropin_file"
-        systemctl restart "${ssh_svc}.service" 2>/dev/null || true
+        svc_restart "${ssh_svc}" 2>/dev/null || true
         return 1
     fi
 
@@ -6459,7 +7056,7 @@ AddressFamily inet
 PubkeyAuthentication yes
 EOF
             chmod 600 "$dropin_file" 2>/dev/null || true
-            systemctl restart "${ssh_svc}.service" 2>/dev/null || true
+            svc_restart "${ssh_svc}" 2>/dev/null || true
             return 1
         fi
     else
@@ -6510,10 +7107,13 @@ while true; do
             AUTH_OK=1
         fi
     fi
-    if [ "$AUTH_OK" -eq 0 ] && [ -f /var/log/auth.log ]; then
-        if grep -qE "Accepted (publickey|password|keyboard-interactive) for .* port ${TARGET_PORT}" /var/log/auth.log 2>/dev/null; then
-            AUTH_OK=1
-        fi
+    if [ "$AUTH_OK" -eq 0 ]; then
+        for auth_log in /var/log/auth.log /var/log/secure /var/log/messages; do
+            if [ -f "$auth_log" ] && grep -qE "Accepted (publickey|password|keyboard-interactive) for .* port ${TARGET_PORT}" "$auth_log" 2>/dev/null; then
+                AUTH_OK=1
+                break
+            fi
+        done
     fi
 
     if [ "$AUTH_OK" -eq 1 ]; then
@@ -6523,7 +7123,11 @@ while true; do
         if [ -f /etc/ssh/sshd_config.d/99-hardening.conf ]; then
             sed -i "/^Port ${ACTIVE_PORT}$/d" /etc/ssh/sshd_config.d/99-hardening.conf 2>/dev/null || true
         fi
-        systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null || true
+        if command -v rc-service >/dev/null 2>&1; then
+            rc-service sshd reload 2>/dev/null || rc-service sshd restart 2>/dev/null || true
+        else
+            systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null || true
+        fi
 
         # 2. Удаляем старый порт из UFW
         if command -v ufw >/dev/null 2>&1; then
@@ -6533,13 +7137,23 @@ while true; do
         # 3. Обновляем Fail2ban
         if [ -f /etc/fail2ban/jail.local ]; then
             sed -i "s/port = .*/port = ${TARGET_PORT}/" /etc/fail2ban/jail.local 2>/dev/null || true
-            systemctl reload fail2ban 2>/dev/null || systemctl restart fail2ban 2>/dev/null || true
+            if command -v rc-service >/dev/null 2>&1; then
+                rc-service fail2ban reload 2>/dev/null || rc-service fail2ban restart 2>/dev/null || true
+            else
+                systemctl reload fail2ban 2>/dev/null || systemctl restart fail2ban 2>/dev/null || true
+            fi
         fi
 
         logger -t ssh-watcher "Переход SSH успешно завершен. Порт $ACTIVE_PORT закрыт, активен только $TARGET_PORT."
-        systemctl disable --now ssh-transition-watcher.service 2>/dev/null || true
-        rm -f /etc/systemd/system/ssh-transition-watcher.service /usr/local/bin/ssh-transition-watcher.sh 2>/dev/null || true
-        systemctl daemon-reload 2>/dev/null || true
+        if command -v rc-service >/dev/null 2>&1; then
+            rc-service ssh-transition-watcher stop 2>/dev/null || true
+            rc-update del ssh-transition-watcher default 2>/dev/null || true
+            rm -f /etc/init.d/ssh-transition-watcher /usr/local/bin/ssh-transition-watcher.sh 2>/dev/null || true
+        else
+            systemctl disable --now ssh-transition-watcher.service 2>/dev/null || true
+            rm -f /etc/systemd/system/ssh-transition-watcher.service /usr/local/bin/ssh-transition-watcher.sh 2>/dev/null || true
+            systemctl daemon-reload 2>/dev/null || true
+        fi
         exit 0
     fi
 
@@ -6548,8 +7162,25 @@ done
 EOF
     chmod +x "$watcher_script" 2>/dev/null || true
 
-    mkdir -p /etc/systemd/system
-    cat << EOF > "$watcher_service"
+    if is_openrc; then
+        cat << EOF > /etc/init.d/ssh-transition-watcher
+#!/sbin/openrc-run
+description="SSH Port Transition Safe Watcher"
+command="${watcher_script}"
+command_args="${target_port} ${active_port} ${ttl_hours}"
+command_background=true
+pidfile="/run/ssh-transition-watcher.pid"
+depend() {
+    need net sshd
+}
+EOF
+        chmod +x /etc/init.d/ssh-transition-watcher
+        svc_enable ssh-transition-watcher >/dev/null 2>&1 || true
+        svc_start ssh-transition-watcher >/dev/null 2>&1 || true
+        ok "Развернут фоновый сторожевой сервис ${WHITE}ssh-transition-watcher (OpenRC)${NC}."
+    else
+        mkdir -p /etc/systemd/system
+        cat << EOF > "$watcher_service"
 [Unit]
 Description=SSH Port Transition Safe Watcher
 After=network.target sshd.service ssh.service
@@ -6563,10 +7194,11 @@ Restart=no
 WantedBy=multi-user.target
 EOF
 
-    if command -v systemctl >/dev/null 2>&1; then
-        systemctl daemon-reload 2>/dev/null || true
-        systemctl enable --now ssh-transition-watcher.service >/dev/null 2>&1 || true
-        ok "Развернут фоновый сторожевой сервис ${WHITE}ssh-transition-watcher.service${NC}."
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl daemon-reload 2>/dev/null || true
+            systemctl enable --now ssh-transition-watcher.service >/dev/null 2>&1 || true
+            ok "Развернут фоновый сторожевой сервис ${WHITE}ssh-transition-watcher.service${NC}."
+        fi
     fi
 }
 
@@ -6593,7 +7225,7 @@ finalize_ssh_transition() {
     # 3. Валидация и перезагрузка sshd
     mkdir -p /run/sshd 2>/dev/null || true
     if /usr/sbin/sshd -t 2>/dev/null; then
-        systemctl reload "${ssh_svc}.service" 2>/dev/null || systemctl restart "${ssh_svc}.service" 2>/dev/null || true
+        svc_reload "${ssh_svc}" 2>/dev/null || svc_restart "${ssh_svc}" 2>/dev/null || true
     fi
 
     # 4. Удаляем старый порт из UFW
@@ -6604,13 +7236,19 @@ finalize_ssh_transition() {
     # 5. Обновляем Fail2ban
     if [ -f /etc/fail2ban/jail.local ]; then
         sed -i "s/port = .*/port = ${target_port}/" /etc/fail2ban/jail.local 2>/dev/null || true
-        systemctl reload fail2ban 2>/dev/null || systemctl restart fail2ban 2>/dev/null || true
+        svc_reload fail2ban 2>/dev/null || svc_restart fail2ban 2>/dev/null || true
     fi
 
     # 6. Останавливаем и удаляем watcher
-    systemctl disable --now ssh-transition-watcher.service >/dev/null 2>&1 || true
-    rm -f /etc/systemd/system/ssh-transition-watcher.service /usr/local/bin/ssh-transition-watcher.sh 2>/dev/null || true
-    systemctl daemon-reload 2>/dev/null || true
+    if is_openrc; then
+        svc_stop ssh-transition-watcher >/dev/null 2>&1 || true
+        svc_disable ssh-transition-watcher >/dev/null 2>&1 || true
+        rm -f /etc/init.d/ssh-transition-watcher /usr/local/bin/ssh-transition-watcher.sh 2>/dev/null || true
+    else
+        systemctl disable --now ssh-transition-watcher.service >/dev/null 2>&1 || true
+        rm -f /etc/systemd/system/ssh-transition-watcher.service /usr/local/bin/ssh-transition-watcher.sh 2>/dev/null || true
+        systemctl daemon-reload 2>/dev/null || true
+    fi
 
     ok "Резервный порт SSH ${active_port} закрыт. SSH теперь работает исключительно на порту ${WHITE}${target_port}${NC}."
 }
@@ -6700,7 +7338,9 @@ apply_fail2ban_configuration() {
 
     # 1. Установка пакетов fail2ban и python3-systemd (для чтения journald в Ubuntu 24.04 / Debian 12)
     if ! command -v fail2ban-client >/dev/null 2>&1; then
-        if command -v apt-get >/dev/null 2>&1; then
+        if command -v apk >/dev/null 2>&1; then
+            apk add --no-cache fail2ban >/dev/null 2>&1 || true
+        elif command -v apt-get >/dev/null 2>&1; then
             export DEBIAN_FRONTEND=noninteractive
             apt-get update -y >/dev/null 2>&1 || true
             apt-get install -y fail2ban python3-systemd >/dev/null 2>&1 || apt-get install -y fail2ban >/dev/null 2>&1 || true
@@ -6743,16 +7383,19 @@ banaction = ufw
 enabled = true
 port = ${port_str}
 EOF
+    if is_openrc; then
+        sed -i 's/backend = systemd/backend = auto/' /etc/fail2ban/jail.d/90-ssh-shield.local 2>/dev/null || true
+    fi
     chmod 644 /etc/fail2ban/jail.d/90-ssh-shield.local 2>/dev/null || true
 
     # 3. Активация и запуск службы
-    systemctl enable fail2ban >/dev/null 2>&1 || true
-    systemctl restart fail2ban >/dev/null 2>&1 || true
+    svc_enable fail2ban >/dev/null 2>&1 || true
+    svc_restart fail2ban >/dev/null 2>&1 || true
 
-    if systemctl is-active --quiet fail2ban 2>/dev/null; then
+    if svc_is_active fail2ban 2>/dev/null; then
         ok "Служба Fail2ban успешно запущена и защищает SSH (порты: ${WHITE}${port_str}${NC})."
     else
-        warn "Служба Fail2ban была установлена, но не смогла запуститься. Проверьте journalctl -u fail2ban."
+        warn "Служба Fail2ban была установлена, но не смогла запуститься. Проверьте статус службы fail2ban."
         return 1
     fi
     return 0
@@ -8853,8 +9496,12 @@ EOF_DIAG_SVC
     fi
 
     # Гарантируем наличие утилиты mtr для бэкенда диагностики
-    if ! command -v mtr >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
-        apt-get install -y -qq mtr-tiny >/dev/null 2>&1 || true
+    if ! command -v mtr >/dev/null 2>&1; then
+        if command -v apk >/dev/null 2>&1; then
+            apk add --no-cache mtr >/dev/null 2>&1 || true
+        elif command -v apt-get >/dev/null 2>&1; then
+            apt-get install -y -qq mtr-tiny >/dev/null 2>&1 || true
+        fi
     fi
 
     # Назначение прав и групп доступа к диагностическому сервису
@@ -8868,7 +9515,27 @@ EOF_DIAG_SVC
     chmod -R 755 "$diag_dir" 2>/dev/null || true
     chmod 755 "$bin_dir/mtr-backend.py" 2>/dev/null || true
 
-    if command -v systemctl >/dev/null 2>&1 && [ -f "$svc_file" ]; then
+    if is_openrc; then
+        cat << 'EOF_OPENRC_MTR' > /etc/init.d/vpn-diagnostics
+#!/sbin/openrc-run
+description="VPN Diagnostics MTR Backend"
+command="/usr/bin/python3"
+command_args="/usr/local/lib/vpn-diagnostics/mtr-backend.py"
+command_background=true
+pidfile="/run/vpn-diagnostics.pid"
+depend() {
+    need net
+}
+EOF_OPENRC_MTR
+        chmod +x /etc/init.d/vpn-diagnostics
+        svc_enable vpn-diagnostics >/dev/null 2>&1 || true
+        svc_restart vpn-diagnostics 2>/dev/null || true
+        if svc_is_active vpn-diagnostics 2>/dev/null; then
+            ok "Служба vpn-diagnostics запущена на сокете /run/vpn-diagnostics/mtr-backend.sock (OpenRC)."
+        else
+            warn "Служба vpn-diagnostics не смогла запуститься."
+        fi
+    elif command -v systemctl >/dev/null 2>&1 && [ -f "$svc_file" ]; then
         systemctl daemon-reload 2>/dev/null || true
         systemctl enable vpn-diagnostics >/dev/null 2>&1 || true
         systemctl restart vpn-diagnostics 2>/dev/null || true
@@ -8877,6 +9544,27 @@ EOF_DIAG_SVC
         else
             warn "Служба vpn-diagnostics не смогла запуститься."
         fi
+    fi
+}
+
+get_nginx_user() {
+    if [ "${ID:-}" = "alpine" ]; then
+        echo "nginx"
+        return 0
+    elif [ -f /etc/os-release ]; then
+        local os_id=""
+        os_id=$(. /etc/os-release 2>/dev/null; echo "${ID:-}")
+        if [ "$os_id" = "alpine" ]; then
+            echo "nginx"
+            return 0
+        fi
+    fi
+    if id -u www-data >/dev/null 2>&1; then
+        echo "www-data"
+    elif id -u nginx >/dev/null 2>&1; then
+        echo "nginx"
+    else
+        echo "www-data"
     fi
 }
 
@@ -8923,24 +9611,36 @@ EOF
     done
 
     # 4. Если модуль не найден на диске, устанавливаем пакет модуля через пакетный менеджер
-    if [ -z "$mod_so" ] && command -v apt-get >/dev/null 2>&1; then
-        log "Установка модуля Nginx Stream L4 (libnginx-mod-stream / nginx-module-stream)..."
-        export DEBIAN_FRONTEND=noninteractive
-        apt-get update -q || true
-        apt-get install -y -q -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
-            libnginx-mod-stream 2>/dev/null || \
-        apt-get install -y -q -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
-            nginx-module-stream 2>/dev/null || true
+    if [ -z "$mod_so" ]; then
+        if command -v apk >/dev/null 2>&1; then
+            log "Установка модуля Nginx Stream L4 (nginx-mod-stream) через apk..."
+            apk add --no-cache nginx-mod-stream 2>/dev/null || true
+            for cand in /usr/lib/nginx/modules/ngx_stream_module.so \
+                        /etc/nginx/modules/ngx_stream_module.so; do
+                if [ -f "$cand" ]; then
+                    mod_so="$cand"
+                    break
+                fi
+            done
+        elif command -v apt-get >/dev/null 2>&1; then
+            log "Установка модуля Nginx Stream L4 (libnginx-mod-stream / nginx-module-stream)..."
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -q || true
+            apt-get install -y -q -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
+                libnginx-mod-stream 2>/dev/null || \
+            apt-get install -y -q -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
+                nginx-module-stream 2>/dev/null || true
 
-        for cand in /etc/nginx/modules/ngx_stream_module.so \
-                    /usr/lib/nginx/modules/ngx_stream_module.so \
-                    /usr/share/nginx/modules/ngx_stream_module.so \
-                    /usr/local/nginx/modules/ngx_stream_module.so; do
-            if [ -f "$cand" ]; then
-                mod_so="$cand"
-                break
-            fi
-        done
+            for cand in /etc/nginx/modules/ngx_stream_module.so \
+                        /usr/lib/nginx/modules/ngx_stream_module.so \
+                        /usr/share/nginx/modules/ngx_stream_module.so \
+                        /usr/local/nginx/modules/ngx_stream_module.so; do
+                if [ -f "$cand" ]; then
+                    mod_so="$cand"
+                    break
+                fi
+            done
+        fi
     fi
 
     # 5. Если модуль найден, создаем конфигурационный файл в modules-enabled
@@ -9000,6 +9700,14 @@ setup_nginx_mainline() {
         . /etc/os-release
         os_id="${ID:-ubuntu}"
         os_codename="${VERSION_CODENAME:-${UBUNTU_CODENAME:-jammy}}"
+    fi
+
+    if [ "$os_id" = "alpine" ]; then
+        log "Установка Nginx и Stream модуля для Alpine Linux..."
+        apk add --no-cache nginx nginx-mod-stream nginx-openrc 2>/dev/null || apk add --no-cache nginx nginx-mod-stream || true
+        mkdir -p /etc/nginx/modules-enabled 2>/dev/null || true
+        ensure_nginx_stream_module
+        return 0
     fi
 
     # 1. Если Nginx уже установлен — проверяем, запускается ли бинарник и поддерживает ли ssl_reject_handshake
@@ -9092,38 +9800,50 @@ install_certbot_package() {
         return 0
     fi
 
-    # 2. Приоритет: Нативный легкий certbot из официального apt репозитория
-    apt-get update -q -y >/dev/null 2>&1 || true
-    if apt-get install -y -q certbot; then
+    # 2. Alpine Linux: Нативная установка через apk (без snapd)
+    local os_id="${ID:-}"
+    if [ -f /etc/os-release ]; then . /etc/os-release 2>/dev/null; os_id="${ID:-}"; fi
+    if [ "$os_id" = "alpine" ] || command -v apk >/dev/null 2>&1; then
+        apk add --no-cache certbot py3-certbot 2>/dev/null || apk add --no-cache certbot || true
         if command -v certbot >/dev/null 2>&1; then
             return 0
         fi
     fi
 
-    # 3. Резервный вариант (Fallback): Установка через Snap, если apt недоступен
-    if apt-get install -y -q snapd; then
-        systemctl start snapd.socket 2>/dev/null || true
-        systemctl enable snapd.socket 2>/dev/null || true
-        for i in {1..10}; do
-            if snap version >/dev/null 2>&1; then break; fi
-            sleep 2
-        done
-        snap install core 2>/dev/null || true
-        snap refresh core 2>/dev/null || true
-        if snap install --classic certbot 2>/dev/null; then
-            ln -sf /snap/bin/certbot /usr/bin/certbot 2>/dev/null || true
+    # 3. Приоритет: Нативный легкий certbot из официального apt репозитория
+    if command -v apt-get >/dev/null 2>&1; then
+        apt-get update -q -y >/dev/null 2>&1 || true
+        if apt-get install -y -q certbot; then
             if command -v certbot >/dev/null 2>&1; then
                 return 0
             fi
         fi
+
+        # 4. Резервный вариант (Fallback): Установка через Snap, если apt недоступен
+        if apt-get install -y -q snapd; then
+            systemctl start snapd.socket 2>/dev/null || true
+            systemctl enable snapd.socket 2>/dev/null || true
+            for i in {1..10}; do
+                if snap version >/dev/null 2>&1; then break; fi
+                sleep 2
+            done
+            snap install core 2>/dev/null || true
+            snap refresh core 2>/dev/null || true
+            if snap install --classic certbot 2>/dev/null; then
+                ln -sf /snap/bin/certbot /usr/bin/certbot 2>/dev/null || true
+                if command -v certbot >/dev/null 2>&1; then
+                    return 0
+                fi
+            fi
+        fi
     fi
 
-    # 4. Если оба метода не удались — пробуем pip / certbot standalone
+    # 5. Если оба метода не удались — пробуем pip / certbot standalone
     if command -v certbot >/dev/null 2>&1; then
         return 0
     fi
 
-    die "Не удалось установить Certbot ни через APT, ни через Snap. Проверьте репозитории вашей ОС."
+    die "Не удалось установить Certbot ни через системный пакетный менеджер, ни через Snap. Проверьте репозитории вашей ОС."
 }
 
 # Принимает $1 = домен (был closure-переменной $dom из цикла)
@@ -9142,16 +9862,20 @@ obtain_cert() {
     fi
 
     # 2. Надежный fallback: Standalone (Certbot сам поднимает временный сервер на порту 80)
-    systemctl stop nginx 2>/dev/null || true
+    svc_stop nginx 2>/dev/null || systemctl stop nginx 2>/dev/null || true
     local res=0
     certbot certonly --standalone --expand -d "$dom" --non-interactive || res=$?
-    systemctl start nginx 2>/dev/null || true
+    svc_start nginx 2>/dev/null || systemctl start nginx 2>/dev/null || true
     return $res
 }
 
 install_acmesh() {
     export DEBIAN_FRONTEND=noninteractive
-    apt-get install -y cron socat -q
+    if command -v apk >/dev/null 2>&1; then
+        apk add --no-cache socat dcron 2>/dev/null || true
+    elif command -v apt-get >/dev/null 2>&1; then
+        apt-get install -y cron socat -q
+    fi
     local acme_mail="${LE_EMAIL:-admin@$PRIMARY_DOMAIN}"
     local _acme_bin="${HOME:-/root}/.acme.sh/acme.sh"
 
@@ -9181,27 +9905,53 @@ install_acmesh() {
 # Использует глобальные $_ACME (устанавливается после install_acmesh)
 obtain_cf_cert() {
     local dom="$1"
+    local ng_usr="www-data"
+    if command -v get_nginx_user >/dev/null 2>&1; then
+        ng_usr="$(get_nginx_user)"
+    elif [ -f /etc/os-release ]; then
+        local os_id=""
+        os_id=$(. /etc/os-release 2>/dev/null; echo "${ID:-}")
+        [ "$os_id" = "alpine" ] && ng_usr="nginx"
+    fi
+
     "$_ACME" --issue --dns dns_cf -d "$dom" --server letsencrypt --force && \
     mkdir -p "/etc/ssl/acme/$dom" && \
     chmod 750 "/etc/ssl/acme/$dom" && \
     "$_ACME" --install-cert -d "$dom" \
         --key-file       "/etc/ssl/acme/$dom/privkey.pem" \
         --fullchain-file "/etc/ssl/acme/$dom/fullchain.pem" \
-        --reloadcmd     "chmod 750 /etc/ssl/acme /etc/ssl/acme/$dom 2>/dev/null || true; chmod 640 /etc/ssl/acme/$dom/*.pem 2>/dev/null || true; chmod 600 /etc/ssl/acme/$dom/privkey*.pem 2>/dev/null || true; chown -R root:www-data /etc/ssl/acme 2>/dev/null || true; systemctl reload nginx"
+        --reloadcmd     "chmod 750 /etc/ssl/acme /etc/ssl/acme/$dom 2>/dev/null || true; chmod 640 /etc/ssl/acme/$dom/*.pem 2>/dev/null || true; chmod 600 /etc/ssl/acme/$dom/privkey*.pem 2>/dev/null || true; chown -R root:${ng_usr} /etc/ssl/acme 2>/dev/null || true; svc_reload nginx 2>/dev/null || systemctl reload nginx 2>/dev/null || rc-service nginx reload 2>/dev/null || true"
 }
 
 nginx_reload_task() {
     nginx -t || return 1
-    systemctl unmask nginx 2>/dev/null || true
-    systemctl enable nginx 2>/dev/null || true
-    systemctl restart nginx
+    svc_enable nginx 2>/dev/null || systemctl enable nginx 2>/dev/null || true
+    svc_restart nginx 2>/dev/null || systemctl restart nginx
 }
-
 
 # --- Модуль AmneziaWG: Универсальный контроллер и сервис управления (v3.1 / v2.0) ---
 # На базе концепций проекта: https://github.com/bivlked/amneziawg-installer (@bivlked)
 
 AMNEZIA_PPA_GPG_B64="xsFNBGV0UhsBEAC33rMndHSN/k+u7gcZbh9/FjgYfGltQAtVe2QDxzn7UV+k/ChXOrYRw6Izw/DrhaapkNCThK2jwJE64e0NjboLH7UrrmSJLXMfOlDFbyGJVRA+1sTBlo7kKHY0xiZ1CHDzjKNV3czbesu80A9nuTZYyWHEn9ax6wsqKG3N8SvzQkUrIOVD2wZjh0p273CCEGkBnax1ghAV3MF8OrsPU6FRJ+ZakzKbu54g68xoV+2813YECme0JKsWfUUe/1uEJOXCvuACURSxnYr0sihJd8QI/jHSGlfeq72e5MflFEOrnu5xaDSJr2W5lvUetG7EGSxtNKd7Jm/KhUV04g7arA0qydRjRToW3QqyzG7VB2nXKz3AOBYNearWAuBcTkfPvRVchxbjiYonKZA5tIlVrpawMZsdxKvYwl6LVnpBcccFWPhpudfy4TpCqCxRoAanOCvSirI3/y7TcZMBw643SaxXi1ifGeg6eyMzrLtP3CeonKBHGzrt1eeKGtEw/PFN4RmwpBePxi+uj0CoTD6zjCQa3c8EeB4Qz7tt6PnpibxdtZE8sBdd51wSA/fPGi2tFph8IVAsws7oxcQxZYl8CyncKDLcoR4dxVHYdFEDDf1GjRjoQ3AinD7fxD5qYzExe50DBVpuUbWcAiGICNxfvzQtUSRRtMoSHDcvzsy03KC6VwARAQABzR5MYXVuY2hwYWQgUFBBIGZvciBJdXJpaSBFZ29yb3bCwY4EEwEKADgWIQR1yd1yx5mHDjEFQuJBZvLCVykIKAUCZXRSGwIbAwULCQgHAgYVCgkICwIEFgIDAQIeAQIXgAAKCRBBZvLCVykIKBu5D/9akmHCHlUqm2RTTBeTMbLNGc0l6YugpPaCM6vz0O9kBFP5PfRaNSRzyF7wHFHNY3JUHcor28my1fD8AE4+C3PwXz8tVYLh57UUsp4wjqHY+MTl/1ngDViPGD3PRjB8ZlO+19yerfplZv1Jaw7FZZv2BZOAXb+ddqUG4EmlzOnCEhcSDdFrzEBB3RGthjIb3QkKWKGbELDiMfogmsO9BE139Raiw23blagDrbnWsG4jReZeu3atjG6AW8eL7m+i7bKKshD2CYVMznI5cYGLMKo9w7sb33uylPj1Vx9O7joP2GFf2rTpCY8wgzk7i1RqsipJ80u1/DY91Xdizv3f2BBe6UY7qHKoK00O11J0y8yUis2Asycy33Wy51pf6rCFUBLQu+c1fEypHF6jqANmQwaH7pPBliy4gGWvrVggzV4mxv7SnRiMi4PFyVwjKWm8dmuMxi/B9s++VG/ed+5aYgJYL58MohG3MUI/L58eitSCDDcQ1iAnBmawnGMKPqzMgRFB3OU3wDwfh7LNVvQqWpQ4q7pr4Cq1CvZvGoggXWDo1/vylPsRmiiuNetfsoVYmrkgtj1om07m5Xp1v4SyXJH11c3dc/xfMmn/4RlMWIpq86IsOjpr3avsw3FVUNCgD5Wf5+rHG+7gNmM6Cm/F8MDfAnnRmsw4h6hgvcJNQT5Dig=="
+
+detect_alpine_kheaders() {
+    local kver="${1:-$(uname -r)}"
+    local kflavor="${kver##*-}"
+    local cand="linux-${kflavor}-dev"
+    if command -v apk >/dev/null 2>&1; then
+        if [ -n "$(apk search -e "$cand" 2>/dev/null)" ]; then
+            echo "$cand"
+            return 0
+        fi
+    fi
+    case "$kflavor" in
+        virt|lts|edge)
+            echo "linux-${kflavor}-dev"
+            return 0
+            ;;
+    esac
+    echo "linux-lts-dev"
+}
 
 install_amneziawg_packages_task() {
     export DEBIAN_FRONTEND=noninteractive
@@ -9215,6 +9965,70 @@ install_amneziawg_packages_task() {
 
     # 1. Если бинарник awg уже доступен в системе — ничего делать не нужно
     if command -v awg >/dev/null 2>&1; then
+        return 0
+    fi
+
+    if [[ "$os_id" == "alpine" ]]; then
+        local kheaders
+        kheaders=$(detect_alpine_kheaders "$(uname -r)")
+        apk update || true
+        apk add --no-cache bash make gcc musl-dev libmnl-dev kmod iproute2 iptables iptables-openrc openrc git curl tar unzip file ca-certificates "$kheaders" build-base libqrencode-tools 2>/dev/null || true
+
+        # Сборка amneziawg-tools если утилита awg отсутствует
+        if ! command -v awg >/dev/null 2>&1; then
+            local tools_tmp="/tmp/amneziawg-tools-$$"
+            if git clone --depth 1 https://github.com/amnezia-vpn/amneziawg-tools.git "$tools_tmp" 2>/dev/null; then
+                make -C "$tools_tmp/src" >/dev/null 2>&1 || true
+                make -C "$tools_tmp/src" install >/dev/null 2>&1 || true
+                rm -rf "$tools_tmp" 2>/dev/null || true
+            fi
+        fi
+
+        # Сборка модуля ядра amneziawg через Kbuild при наличии заголовков ядра
+        local kbuild_dir="/lib/modules/$(uname -r)/build"
+        if [ ! -d "$kbuild_dir" ]; then
+            local cand_hdr
+            cand_hdr="$(find /usr/src -maxdepth 1 -name "linux-headers-$(uname -r)*" -type d 2>/dev/null | head -n1 || true)"
+            [ -n "$cand_hdr" ] && kbuild_dir="$cand_hdr"
+        fi
+
+        if [ -d "$kbuild_dir" ]; then
+            local kmod_tmp="/tmp/amneziawg-kmod-$$"
+            if git clone --depth 1 https://github.com/amnezia-vpn/amneziawg-linux-kernel-module.git "$kmod_tmp" 2>/dev/null; then
+                make -C "$kmod_tmp/src" KERNELDIR="$kbuild_dir" >/dev/null 2>&1 || true
+                if [ -f "$kmod_tmp/src/amneziawg.ko" ]; then
+                    local mod_dest="/lib/modules/$(uname -r)/extra"
+                    mkdir -p "$mod_dest" 2>/dev/null || true
+                    cp -f "$kmod_tmp/src/amneziawg.ko" "$mod_dest/amneziawg.ko" 2>/dev/null || true
+                    depmod -a "$(uname -r)" 2>/dev/null || depmod -a 2>/dev/null || true
+                fi
+                rm -rf "$kmod_tmp" 2>/dev/null || true
+            fi
+        fi
+
+        # Регистрация хука ядра для автоматической пересборки модуля при обновлении ядра Alpine
+        mkdir -p /etc/kernel-hooks.d 2>/dev/null || true
+        cat << 'EOF_KHOOK' > /etc/kernel-hooks.d/50-amneziawg
+#!/bin/sh
+TARGET_KERNEL="${1:-$(uname -r)}"
+KDIR="/lib/modules/${TARGET_KERNEL}/build"
+[ -d "$KDIR" ] || KDIR="$(find /usr/src -maxdepth 1 -name "linux-headers-${TARGET_KERNEL}*" -type d 2>/dev/null | head -n1)"
+[ -d "$KDIR" ] || exit 0
+
+TMP_KMOD="/tmp/awg_kmod_hook_$$"
+git clone --depth 1 https://github.com/amnezia-vpn/amneziawg-linux-kernel-module.git "$TMP_KMOD" >/dev/null 2>&1 || exit 0
+make -C "$TMP_KMOD/src" KERNELDIR="$KDIR" >/dev/null 2>&1 || { rm -rf "$TMP_KMOD"; exit 0; }
+if [ -f "$TMP_KMOD/src/amneziawg.ko" ]; then
+    mkdir -p "/lib/modules/${TARGET_KERNEL}/extra"
+    cp -f "$TMP_KMOD/src/amneziawg.ko" "/lib/modules/${TARGET_KERNEL}/extra/amneziawg.ko"
+    depmod -a "${TARGET_KERNEL}" 2>/dev/null || true
+fi
+rm -rf "$TMP_KMOD"
+exit 0
+EOF_KHOOK
+        chmod 755 /etc/kernel-hooks.d/50-amneziawg 2>/dev/null || true
+
+        modprobe amneziawg 2>/dev/null || true
         return 0
     fi
 
@@ -11273,6 +12087,12 @@ EOF_AWG_SH
 0 * * * * root /usr/local/bin/awg-mgr purge-expired --quiet >/dev/null 2>&1
 EOF_CRON
         chmod 644 /etc/cron.d/awg-purge-expired 2>/dev/null || true
+    elif [ -d /etc/periodic/hourly ]; then
+        cat << 'EOF_PERIODIC' > /etc/periodic/hourly/awg-purge-expired
+#!/bin/sh
+/usr/local/bin/awg-mgr purge-expired --quiet >/dev/null 2>&1
+EOF_PERIODIC
+        chmod 755 /etc/periodic/hourly/awg-purge-expired 2>/dev/null || true
     fi
 
     ok "Контроллер AmneziaWG готов: утилита awg-mgr доступна в системе."
@@ -11304,9 +12124,11 @@ deploy_amneziawg_backend() {
         done
     fi
 
-    if [ "$active_backend" -eq 0 ] && systemctl is-active --quiet awg-quick@awg0 2>/dev/null; then
-        active_backend=1
-        ok "Обнаружена активная служба awg-quick@awg0 — сохраняем без изменений."
+    if [ "$active_backend" -eq 0 ]; then
+        if systemctl is-active --quiet awg-quick@awg0 2>/dev/null || (command -v rc-service >/dev/null 2>&1 && rc-service awg-quick.awg0 status >/dev/null 2>&1); then
+            active_backend=1
+            ok "Обнаружена активная служба awg-quick@awg0 — сохраняем без изменений."
+        fi
     fi
 
     local def_iface
@@ -11557,6 +12379,32 @@ EOF_AWG0
             systemctl daemon-reload >/dev/null 2>&1 || true
             systemctl enable --now awg-quick@awg0.service >/dev/null 2>&1 || true
             ok "Системная служба awg-quick@awg0 запущена на порту ${awg_port}/udp"
+        elif command -v rc-service >/dev/null 2>&1 || is_openrc; then
+            cat << 'EOF_ORC_AWG' > /etc/init.d/awg-quick.awg0
+#!/sbin/openrc-run
+description="AmneziaWG interface awg0 via awg-quick"
+
+depend() {
+    need net
+    after firewall
+}
+
+start() {
+    ebegin "Starting AmneziaWG awg0"
+    awg-quick up awg0
+    eend $?
+}
+
+stop() {
+    ebegin "Stopping AmneziaWG awg0"
+    awg-quick down awg0
+    eend $?
+}
+EOF_ORC_AWG
+            chmod 755 /etc/init.d/awg-quick.awg0
+            rc-update add awg-quick.awg0 default >/dev/null 2>&1 || true
+            rc-service awg-quick.awg0 restart >/dev/null 2>&1 || rc-service awg-quick.awg0 start >/dev/null 2>&1 || true
+            ok "Служба OpenRC awg-quick.awg0 запущена на порту ${awg_port}/udp"
         fi
     fi
 
@@ -11582,6 +12430,28 @@ EOF_AWG0
         fi
     fi
 }
+if ! declare -f is_openrc >/dev/null 2>&1; then
+    _STEPS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
+    if [ -n "$_STEPS_DIR" ] && [ -f "${_STEPS_DIR}/../system/service.sh" ]; then
+        # shellcheck disable=SC1091
+        source "${_STEPS_DIR}/../system/service.sh"
+    elif [ -f "src/system/service.sh" ]; then
+        # shellcheck disable=SC1091
+        source "src/system/service.sh"
+    else
+        is_openrc() { return 1; }
+        is_systemd() { command -v systemctl >/dev/null 2>&1; }
+        svc_daemon_reload() { command -v systemctl >/dev/null 2>&1 && systemctl daemon-reload 2>/dev/null || true; }
+        svc_start() { command -v systemctl >/dev/null 2>&1 && systemctl start "$1" 2>/dev/null || true; }
+        svc_stop() { command -v systemctl >/dev/null 2>&1 && systemctl stop "$1" 2>/dev/null || true; }
+        svc_restart() { command -v systemctl >/dev/null 2>&1 && systemctl restart "$1" 2>/dev/null || true; }
+        svc_reload() { command -v systemctl >/dev/null 2>&1 && systemctl reload "$1" 2>/dev/null || true; }
+        svc_enable() { command -v systemctl >/dev/null 2>&1 && systemctl enable "$1" 2>/dev/null || true; }
+        svc_disable() { command -v systemctl >/dev/null 2>&1 && systemctl disable "$1" 2>/dev/null || true; }
+        svc_is_active() { command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet "$1" 2>/dev/null; }
+    fi
+fi
+
 setup_zapret_service() {
     log "Настройка службы Server-Side Zapret nfqws..."
     local cur_arch
@@ -11601,11 +12471,19 @@ setup_zapret_service() {
         mkdir -p "$z_tmp"
         if download_manifest_component "zapret" "$z_tmp/zapret.tar.gz" "all"; then
             tar -zxf "$z_tmp/zapret.tar.gz" -C "$z_tmp" --strip-components=1 2>/dev/null || true
-            if [ -f "$z_tmp/binaries/${z_arch}/nfqws" ]; then
+            if [ -f "$z_tmp/binaries/linux-${z_arch}/nfqws" ]; then
+                cp "$z_tmp/binaries/linux-${z_arch}/nfqws" "${bin_dir}/nfqws"
+                chmod +x "${bin_dir}/nfqws"
+            elif [ -f "$z_tmp/binaries/${z_arch}/nfqws" ]; then
                 cp "$z_tmp/binaries/${z_arch}/nfqws" "${bin_dir}/nfqws"
                 chmod +x "${bin_dir}/nfqws"
+            elif [ -n "$(find "$z_tmp" -path "*/linux-${z_arch}/*" -name nfqws -type f 2>/dev/null)" ]; then
+                cp "$(find "$z_tmp" -path "*/linux-${z_arch}/*" -name nfqws -type f | head -n1)" "${bin_dir}/nfqws"
+                chmod +x "${bin_dir}/nfqws"
             elif [ -n "$(find "$z_tmp" -name nfqws -type f 2>/dev/null)" ]; then
-                cp "$(find "$z_tmp" -name nfqws -type f | grep "${z_arch}" | head -n1 || find "$z_tmp" -name nfqws -type f | head -n1)" "${bin_dir}/nfqws"
+                local found_bin
+                found_bin="$(find "$z_tmp" -name nfqws -type f | grep -v "android" | head -n1 || find "$z_tmp" -name nfqws -type f | head -n1)"
+                cp "$found_bin" "${bin_dir}/nfqws"
                 chmod +x "${bin_dir}/nfqws"
             elif [ -d "$z_tmp/nfqws" ]; then
                 make -C "$z_tmp/nfqws" >/dev/null 2>&1 || true
@@ -11624,19 +12502,48 @@ setup_zapret_service() {
     local iptables_bin
     iptables_bin="$(command -v iptables 2>/dev/null || echo "/usr/sbin/iptables")"
 
-    mkdir -p /etc/systemd/system
-    cat << EOF > /etc/systemd/system/zapret-server.service
+    local pre_cmd="${iptables_bin} -t mangle -D POSTROUTING -p tcp -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original -m mark ! --mark 0x40000000/0x40000000 -j NFQUEUE --queue-num ${qnum} --queue-bypass 2>/dev/null || true; ${iptables_bin} -t mangle -I POSTROUTING -p tcp -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original -m mark ! --mark 0x40000000/0x40000000 -j NFQUEUE --queue-num ${qnum} --queue-bypass"
+    local post_cmd="${iptables_bin} -t mangle -D POSTROUTING -p tcp -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original -m mark ! --mark 0x40000000/0x40000000 -j NFQUEUE --queue-num ${qnum} --queue-bypass 2>/dev/null || true"
+
+    if is_openrc; then
+        mkdir -p /etc/init.d /run/openrc 2>/dev/null || true
+        touch /run/openrc/softlevel 2>/dev/null || true
+        cat << EOF > /etc/init.d/zapret-server
+#!/sbin/openrc-run
+description="Server-Side Zapret nfqws DPI Desync Daemon"
+supervisor="supervise-daemon"
+command="${bin_dir}/nfqws"
+command_args="--qnum=${qnum} --dpi-desync=${desync} --dpi-desync-fooling=${fooling}"
+pidfile="/run/\${RC_SVCNAME}.pid"
+respawn_delay=3
+respawn_max=5
+
+start_pre() {
+    ${pre_cmd}
+}
+
+stop_post() {
+    ${post_cmd}
+}
+
+depend() {
+    need net
+    after firewall
+}
+EOF
+        chmod 755 /etc/init.d/zapret-server
+    else
+        mkdir -p /etc/systemd/system
+        cat << EOF > /etc/systemd/system/zapret-server.service
 [Unit]
 Description=Server-Side Zapret nfqws DPI Desync Daemon
-After=network-online.target
-Wants=network-online.target
+After=network.target network-online.target
 
 [Service]
 Type=simple
-ExecStartPre=-${iptables_bin} -t mangle -D POSTROUTING -p tcp -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original -m mark ! --mark 0x40000000/0x40000000 -j NFQUEUE --queue-num ${qnum} --queue-bypass
-ExecStartPre=${iptables_bin} -t mangle -I POSTROUTING -p tcp -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original -m mark ! --mark 0x40000000/0x40000000 -j NFQUEUE --queue-num ${qnum} --queue-bypass
+ExecStartPre=+/bin/sh -c '${pre_cmd}'
 ExecStart=${bin_dir}/nfqws --qnum=${qnum} --dpi-desync=${desync} --dpi-desync-fooling=${fooling}
-ExecStopPost=-${iptables_bin} -t mangle -D POSTROUTING -p tcp -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original -m mark ! --mark 0x40000000/0x40000000 -j NFQUEUE --queue-num ${qnum} --queue-bypass
+ExecStopPost=+/bin/sh -c '${post_cmd}'
 Restart=always
 RestartSec=3s
 LimitNOFILE=65535
@@ -11644,16 +12551,17 @@ LimitNOFILE=65535
 [Install]
 WantedBy=multi-user.target
 EOF
-
-    if command -v systemctl >/dev/null 2>&1; then
-        systemctl daemon-reload 2>/dev/null || true
-        systemctl enable zapret-server >/dev/null 2>&1 || true
-        if [ -x "${bin_dir}/nfqws" ]; then
-            systemctl restart zapret-server 2>/dev/null || true
-            ok "Служба Server-Side Zapret активирована (NFQUEUE $qnum, desync: $desync)."
-        else
-            warn "Бинарник ${bin_dir}/nfqws не найден, запуск zapret-server отложен."
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl daemon-reload 2>/dev/null || true
         fi
+    fi
+
+    svc_enable zapret-server
+    if [ -x "${bin_dir}/nfqws" ]; then
+        svc_restart zapret-server 2>/dev/null || true
+        ok "Служба Server-Side Zapret активирована (NFQUEUE $qnum, desync: $desync)."
+    else
+        warn "Бинарник ${bin_dir}/nfqws не найден, запуск zapret-server отложен."
     fi
 }
 
@@ -11682,17 +12590,31 @@ setup_masque_service() {
     if [ ! -x "${bin_dir}/sing-box" ]; then
         local sb_tmp="/tmp/sing-box_${sb_ver}"
         mkdir -p "$sb_tmp"
-        if curl -fsSL --connect-timeout 15 "https://github.com/SagerNet/sing-box/releases/download/v${sb_ver}/sing-box-${sb_ver}-linux-${sb_arch}.tar.gz" -o "$sb_tmp/sb.tar.gz" 2>/dev/null || \
-           curl -fsSL --connect-timeout 15 "https://ghfast.top/https://github.com/SagerNet/sing-box/releases/download/v${sb_ver}/sing-box-${sb_ver}-linux-${sb_arch}.tar.gz" -o "$sb_tmp/sb.tar.gz" 2>/dev/null; then
-            tar -zxf "$sb_tmp/sb.tar.gz" -C "$sb_tmp" --strip-components=1 2>/dev/null || true
-            if [ -f "$sb_tmp/sing-box" ]; then
-                cp "$sb_tmp/sing-box" "${bin_dir}/sing-box"
-                chmod +x "${bin_dir}/sing-box"
-            elif [ -n "$(find "$sb_tmp" -name sing-box -type f 2>/dev/null)" ]; then
-                cp "$(find "$sb_tmp" -name sing-box -type f | head -n1)" "${bin_dir}/sing-box"
-                chmod +x "${bin_dir}/sing-box"
-            fi
+        local sb_urls=()
+        if is_openrc || [ "${ID:-}" = "alpine" ]; then
+            sb_urls+=(
+                "https://github.com/SagerNet/sing-box/releases/download/v${sb_ver}/sing-box-${sb_ver}-linux-${sb_arch}-musl.tar.gz"
+                "https://ghfast.top/https://github.com/SagerNet/sing-box/releases/download/v${sb_ver}/sing-box-${sb_ver}-linux-${sb_arch}-musl.tar.gz"
+            )
         fi
+        sb_urls+=(
+            "https://github.com/SagerNet/sing-box/releases/download/v${sb_ver}/sing-box-${sb_ver}-linux-${sb_arch}.tar.gz"
+            "https://ghfast.top/https://github.com/SagerNet/sing-box/releases/download/v${sb_ver}/sing-box-${sb_ver}-linux-${sb_arch}.tar.gz"
+        )
+        for u in "${sb_urls[@]}"; do
+            if curl -fsSL --connect-timeout 15 "$u" -o "$sb_tmp/sb.tar.gz" 2>/dev/null; then
+                tar -zxf "$sb_tmp/sb.tar.gz" -C "$sb_tmp" --strip-components=1 2>/dev/null || true
+                if [ -f "$sb_tmp/sing-box" ]; then
+                    cp "$sb_tmp/sing-box" "${bin_dir}/sing-box"
+                    chmod +x "${bin_dir}/sing-box"
+                    break
+                elif [ -n "$(find "$sb_tmp" -name sing-box -type f 2>/dev/null)" ]; then
+                    cp "$(find "$sb_tmp" -name sing-box -type f | head -n1)" "${bin_dir}/sing-box"
+                    chmod +x "${bin_dir}/sing-box"
+                    break
+                fi
+            fi
+        done
         rm -rf "$sb_tmp" 2>/dev/null || true
     fi
 
@@ -11759,8 +12681,27 @@ setup_masque_service() {
 }
 EOF
 
-    mkdir -p /etc/systemd/system
-    cat << EOF > /etc/systemd/system/sing-box-masque.service
+    if is_openrc; then
+        mkdir -p /etc/init.d /run/openrc 2>/dev/null || true
+        touch /run/openrc/softlevel 2>/dev/null || true
+        cat << EOF > /etc/init.d/sing-box-masque
+#!/sbin/openrc-run
+description="Sing-box MASQUE (RFC 9484 / RFC 9298) Daemon"
+supervisor="supervise-daemon"
+command="${bin_dir}/sing-box"
+command_args="run -c /etc/sing-box/masque.json"
+pidfile="/run/\${RC_SVCNAME}.pid"
+respawn_delay=3
+respawn_max=5
+depend() {
+    need net
+    after firewall
+}
+EOF
+        chmod 755 /etc/init.d/sing-box-masque
+    else
+        mkdir -p /etc/systemd/system
+        cat << EOF > /etc/systemd/system/sing-box-masque.service
 [Unit]
 Description=Sing-box MASQUE (RFC 9484 / RFC 9298) Daemon
 After=network.target network-online.target
@@ -11775,22 +12716,27 @@ LimitNOFILE=65535
 [Install]
 WantedBy=multi-user.target
 EOF
-
-    if command -v systemctl >/dev/null 2>&1; then
-        systemctl daemon-reload 2>/dev/null || true
-        systemctl enable sing-box-masque >/dev/null 2>&1 || true
-        if [ -x "${bin_dir}/sing-box" ]; then
-            systemctl restart sing-box-masque 2>/dev/null || true
-            sleep 1
-            if systemctl is-active --quiet sing-box-masque; then
-                ok "Служба Sing-box MASQUE активирована (порт ${masque_p}/udp, H3/QUIC)."
-            else
-                warn "Служба sing-box-masque не перешла в статус active. Проверьте: journalctl -u sing-box-masque -n 20"
-                journalctl -u sing-box-masque -n 15 --no-pager 2>/dev/null || true
-            fi
-        else
-            warn "Бинарник ${bin_dir}/sing-box не найден, запуск sing-box-masque отложен."
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl daemon-reload 2>/dev/null || true
         fi
+    fi
+
+    svc_enable sing-box-masque
+    if [ -x "${bin_dir}/sing-box" ]; then
+        svc_restart sing-box-masque 2>/dev/null || true
+        sleep 1
+        if svc_is_active sing-box-masque; then
+            ok "Служба Sing-box MASQUE активирована (порт ${masque_p}/udp, H3/QUIC)."
+        else
+            warn "Служба sing-box-masque не перешла в статус active. Проверьте: journalctl -u sing-box-masque -n 20"
+            if command -v journalctl >/dev/null 2>&1; then
+                journalctl -u sing-box-masque -n 15 --no-pager 2>/dev/null || true
+            elif command -v rc-service >/dev/null 2>&1; then
+                rc-service sing-box-masque status 2>/dev/null || true
+            fi
+        fi
+    else
+        warn "Бинарник ${bin_dir}/sing-box не найден, запуск sing-box-masque отложен."
     fi
 }
 
@@ -11819,8 +12765,27 @@ setup_shadowtls_service() {
     local st_sni="${SHADOWTLS_SNI:-gateway.icloud.com}"
     local st_pwd="${SHADOWTLS_PASSWORD:-}"
 
-    mkdir -p /etc/systemd/system
-    cat << EOF > /etc/systemd/system/shadow-tls.service
+    if is_openrc; then
+        mkdir -p /etc/init.d /run/openrc 2>/dev/null || true
+        touch /run/openrc/softlevel 2>/dev/null || true
+        cat << EOF > /etc/init.d/shadow-tls
+#!/sbin/openrc-run
+description="ShadowTLS v4 Stealth SNI Decoy Gateway"
+supervisor="supervise-daemon"
+command="${bin_dir}/shadow-tls"
+command_args="--v3 server --listen 127.0.0.1:${st_port} --server 127.0.0.1:${ss_backend_port} --tls ${st_sni}:443 --password ${st_pwd}"
+pidfile="/run/\${RC_SVCNAME}.pid"
+respawn_delay=3
+respawn_max=5
+depend() {
+    need net
+    after firewall
+}
+EOF
+        chmod 755 /etc/init.d/shadow-tls
+    else
+        mkdir -p /etc/systemd/system
+        cat << EOF > /etc/systemd/system/shadow-tls.service
 [Unit]
 Description=ShadowTLS v4 Stealth SNI Decoy Gateway
 After=network.target network-online.target
@@ -11835,16 +12800,17 @@ LimitNOFILE=65535
 [Install]
 WantedBy=multi-user.target
 EOF
-
-    if command -v systemctl >/dev/null 2>&1; then
-        systemctl daemon-reload 2>/dev/null || true
-        systemctl enable shadow-tls >/dev/null 2>&1 || true
-        if [ -x "${bin_dir}/shadow-tls" ]; then
-            systemctl restart shadow-tls 2>/dev/null || true
-            ok "Служба ShadowTLS v4 активирована (порт ${st_port}, decoy: ${st_sni})."
-        else
-            warn "Бинарник ${bin_dir}/shadow-tls не найден, запуск shadow-tls отложен."
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl daemon-reload 2>/dev/null || true
         fi
+    fi
+
+    svc_enable shadow-tls
+    if [ -x "${bin_dir}/shadow-tls" ]; then
+        svc_restart shadow-tls 2>/dev/null || true
+        ok "Служба ShadowTLS v4 активирована (порт ${st_port}, decoy: ${st_sni})."
+    else
+        warn "Бинарник ${bin_dir}/shadow-tls не найден, запуск shadow-tls отложен."
     fi
 }
 
@@ -11882,8 +12848,27 @@ setup_wstunnel_service() {
     local ws_prefix="${WSTUNNEL_PREFIX#/}"
     ws_prefix="${ws_prefix%/}"
 
-    mkdir -p /etc/systemd/system
-    cat << EOF > /etc/systemd/system/wstunnel.service
+    if is_openrc; then
+        mkdir -p /etc/init.d /run/openrc 2>/dev/null || true
+        touch /run/openrc/softlevel 2>/dev/null || true
+        cat << EOF > /etc/init.d/wstunnel
+#!/sbin/openrc-run
+description="Wstunnel L7 WebSocket Tunnel Daemon"
+supervisor="supervise-daemon"
+command="${bin_dir}/wstunnel"
+command_args="server --restrict-http-upgrade-path-prefix ${ws_prefix} ws://127.0.0.1:${ws_port}"
+pidfile="/run/\${RC_SVCNAME}.pid"
+respawn_delay=3
+respawn_max=5
+depend() {
+    need net
+    after firewall
+}
+EOF
+        chmod 755 /etc/init.d/wstunnel
+    else
+        mkdir -p /etc/systemd/system
+        cat << EOF > /etc/systemd/system/wstunnel.service
 [Unit]
 Description=Wstunnel L7 WebSocket Tunnel Daemon
 After=network.target network-online.target
@@ -11898,16 +12883,17 @@ LimitNOFILE=65535
 [Install]
 WantedBy=multi-user.target
 EOF
-
-    if command -v systemctl >/dev/null 2>&1; then
-        systemctl daemon-reload 2>/dev/null || true
-        systemctl enable wstunnel >/dev/null 2>&1 || true
-        if [ -x "${bin_dir}/wstunnel" ]; then
-            systemctl restart wstunnel 2>/dev/null || true
-            ok "Служба Wstunnel L7 активирована (порт ${ws_port}, prefix: /${ws_prefix}/)."
-        else
-            warn "Бинарник ${bin_dir}/wstunnel не найден, запуск wstunnel отложен."
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl daemon-reload 2>/dev/null || true
         fi
+    fi
+
+    svc_enable wstunnel
+    if [ -x "${bin_dir}/wstunnel" ]; then
+        svc_restart wstunnel 2>/dev/null || true
+        ok "Служба Wstunnel L7 активирована (порт ${ws_port}, prefix: /${ws_prefix}/)."
+    else
+        warn "Бинарник ${bin_dir}/wstunnel не найден, запуск wstunnel отложен."
     fi
 }
 
@@ -12039,8 +13025,27 @@ setup_naive_service() {
 EOF
     cp -f /etc/caddy/Caddyfile /etc/naiveproxy/Caddyfile 2>/dev/null || true
 
-    mkdir -p /etc/systemd/system
-    cat << EOF > /etc/systemd/system/caddy-naive.service
+    if is_openrc; then
+        mkdir -p /etc/init.d /run/openrc 2>/dev/null || true
+        touch /run/openrc/softlevel 2>/dev/null || true
+        cat << EOF > /etc/init.d/caddy-naive
+#!/sbin/openrc-run
+description="Caddy NaïveProxy Server Daemon"
+supervisor="supervise-daemon"
+command="${caddy_bin}"
+command_args="run --config /etc/caddy/Caddyfile --adapter caddyfile"
+pidfile="/run/\${RC_SVCNAME}.pid"
+respawn_delay=3
+respawn_max=5
+depend() {
+    need net
+    after firewall
+}
+EOF
+        chmod 755 /etc/init.d/caddy-naive
+    else
+        mkdir -p /etc/systemd/system
+        cat << EOF > /etc/systemd/system/caddy-naive.service
 [Unit]
 Description=Caddy NaïveProxy Server Daemon
 After=network.target network-online.target
@@ -12055,22 +13060,27 @@ LimitNOFILE=65535
 [Install]
 WantedBy=multi-user.target
 EOF
-
-    if command -v systemctl >/dev/null 2>&1; then
-        systemctl daemon-reload 2>/dev/null || true
-        systemctl enable caddy-naive >/dev/null 2>&1 || true
-        if [ -x "$caddy_bin" ]; then
-            systemctl restart caddy-naive 2>/dev/null || true
-            sleep 1
-            if systemctl is-active --quiet caddy-naive; then
-                ok "Служба NaïveProxy активирована (порт ${naive_port}, user: ${naive_user})."
-            else
-                warn "Служба caddy-naive не перешла в статус active. Проверьте: journalctl -u caddy-naive -n 20"
-                journalctl -u caddy-naive -n 15 --no-pager 2>/dev/null || true
-            fi
-        else
-            warn "Бинарник ${caddy_bin} не найден, запуск caddy-naive отложен."
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl daemon-reload 2>/dev/null || true
         fi
+    fi
+
+    svc_enable caddy-naive
+    if [ -x "$caddy_bin" ]; then
+        svc_restart caddy-naive 2>/dev/null || true
+        sleep 1
+        if svc_is_active caddy-naive; then
+            ok "Служба NaïveProxy активирована (порт ${naive_port}, user: ${naive_user})."
+        else
+            warn "Служба caddy-naive не перешла в статус active. Проверьте: journalctl -u caddy-naive -n 20"
+            if command -v journalctl >/dev/null 2>&1; then
+                journalctl -u caddy-naive -n 15 --no-pager 2>/dev/null || true
+            elif command -v rc-service >/dev/null 2>&1; then
+                rc-service caddy-naive status 2>/dev/null || true
+            fi
+        fi
+    else
+        warn "Бинарник ${caddy_bin} не найден, запуск caddy-naive отложен."
     fi
 }
 
@@ -12321,8 +13331,27 @@ EOF_DNSTT_KEY
     DNSTT_PUBKEY="$(cat /etc/dnstt/server.pub 2>/dev/null | tr -d '[:space:]')"
     export DNSTT_PUBKEY
 
-    mkdir -p /etc/systemd/system
-    cat << EOF > /etc/systemd/system/dnstt-server.service
+    if is_openrc; then
+        mkdir -p /etc/init.d /run/openrc 2>/dev/null || true
+        touch /run/openrc/softlevel 2>/dev/null || true
+        cat << EOF > /etc/init.d/dnstt-server
+#!/sbin/openrc-run
+description="DNSTT DNS Tunneling Server Daemon (DoH / UDP)"
+supervisor="supervise-daemon"
+command="${dnstt_bin}"
+command_args="-udp 0.0.0.0:${dnstt_port} -privkey-file /etc/dnstt/server.key ${dnstt_domain} 127.0.0.1:${ss_backend_port}"
+pidfile="/run/\${RC_SVCNAME}.pid"
+respawn_delay=3
+respawn_max=5
+depend() {
+    need net
+    after firewall
+}
+EOF
+        chmod 755 /etc/init.d/dnstt-server
+    else
+        mkdir -p /etc/systemd/system
+        cat << EOF > /etc/systemd/system/dnstt-server.service
 [Unit]
 Description=DNSTT DNS Tunneling Server Daemon (DoH / UDP)
 After=network.target network-online.target
@@ -12337,22 +13366,27 @@ LimitNOFILE=65535
 [Install]
 WantedBy=multi-user.target
 EOF
-
-    if command -v systemctl >/dev/null 2>&1; then
-        systemctl daemon-reload 2>/dev/null || true
-        systemctl enable dnstt-server >/dev/null 2>&1 || true
-        if [ -x "$dnstt_bin" ]; then
-            systemctl restart dnstt-server 2>/dev/null || true
-            sleep 1
-            if systemctl is-active --quiet dnstt-server; then
-                ok "Служба DNSTT активирована (порт ${dnstt_port}/udp, домен: ${dnstt_domain})."
-            else
-                warn "Служба dnstt-server не перешла в статус active. Проверьте: journalctl -u dnstt-server -n 20"
-                journalctl -u dnstt-server -n 15 --no-pager 2>/dev/null || true
-            fi
-        else
-            warn "Бинарник ${dnstt_bin} не найден, запуск dnstt-server отложен."
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl daemon-reload 2>/dev/null || true
         fi
+    fi
+
+    svc_enable dnstt-server
+    if [ -x "$dnstt_bin" ]; then
+        svc_restart dnstt-server 2>/dev/null || true
+        sleep 1
+        if svc_is_active dnstt-server; then
+            ok "Служба DNSTT активирована (порт ${dnstt_port}/udp, домен: ${dnstt_domain})."
+        else
+            warn "Служба dnstt-server не перешла в статус active. Проверьте: journalctl -u dnstt-server -n 20"
+            if command -v journalctl >/dev/null 2>&1; then
+                journalctl -u dnstt-server -n 15 --no-pager 2>/dev/null || true
+            elif command -v rc-service >/dev/null 2>&1; then
+                rc-service dnstt-server status 2>/dev/null || true
+            fi
+        fi
+    else
+        warn "Бинарник ${dnstt_bin} не найден, запуск dnstt-server отложен."
     fi
 }
 
@@ -12515,8 +13549,37 @@ PYEOF
     chown mita:mita "$m_cfg_file" "$m_compat_file" 2>/dev/null || true
     chmod 600 "$m_cfg_file" "$m_compat_file" 2>/dev/null || true
 
-    mkdir -p /etc/systemd/system
-    cat << EOF > /etc/systemd/system/mita.service
+    local mita_pre="mkdir -p /var/run/mita /var/lib/mita && chown -R mita:mita /var/run/mita /var/lib/mita /etc/mita && chmod 750 /var/run/mita /var/lib/mita /etc/mita && chmod 600 ${m_cfg_file} ${m_compat_file} 2>/dev/null || true"
+
+    if is_openrc; then
+        mkdir -p /etc/init.d /run/openrc 2>/dev/null || true
+        touch /run/openrc/softlevel 2>/dev/null || true
+        cat << EOF > /etc/init.d/mita
+#!/sbin/openrc-run
+description="Mieru proxy server (mita)"
+supervisor="supervise-daemon"
+command="${mita_bin}"
+command_args="run"
+command_user="mita:mita"
+pidfile="/run/\${RC_SVCNAME}.pid"
+respawn_delay=5
+respawn_max=5
+export MITA_LOG_NO_TIMESTAMP=true
+export MITA_CONFIG_JSON_FILE="${m_cfg_file}"
+
+start_pre() {
+    ${mita_pre}
+}
+
+depend() {
+    need net
+    after firewall
+}
+EOF
+        chmod 755 /etc/init.d/mita
+    else
+        mkdir -p /etc/systemd/system
+        cat << EOF > /etc/systemd/system/mita.service
 [Unit]
 Description=Mieru proxy server (mita)
 After=network-online.target network.service systemd-timesyncd.service
@@ -12531,7 +13594,7 @@ Group=mita
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 Environment="MITA_LOG_NO_TIMESTAMP=true"
 Environment="MITA_CONFIG_JSON_FILE=${m_cfg_file}"
-ExecStartPre=+/bin/sh -c 'mkdir -p /var/run/mita /var/lib/mita && chown -R mita:mita /var/run/mita /var/lib/mita /etc/mita && chmod 750 /var/run/mita /var/lib/mita /etc/mita && chmod 600 ${m_cfg_file} ${m_compat_file} 2>/dev/null || true'
+ExecStartPre=+/bin/sh -c '${mita_pre}'
 ExecStart=${mita_bin} run
 Nice=-10
 Restart=on-failure
@@ -12541,6 +13604,10 @@ LimitNOFILE=65535
 [Install]
 WantedBy=multi-user.target
 EOF
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl daemon-reload 2>/dev/null || true
+        fi
+    fi
 
     if command -v ufw >/dev/null 2>&1; then
         local ufw_m_port="${m_port//-/:}"
@@ -12552,26 +13619,27 @@ EOF
         fi
     fi
 
-    if command -v systemctl >/dev/null 2>&1; then
-        systemctl daemon-reload 2>/dev/null || true
-        systemctl enable mita >/dev/null 2>&1 || true
-        systemctl restart mita 2>/dev/null || true
+    svc_enable mita
+    svc_restart mita 2>/dev/null || true
+    sleep 1
+    if [ -x "$mita_bin" ] && [ -f /etc/mita/config.json ]; then
+        "$mita_bin" apply config /etc/mita/config.json 2>/dev/null || true
+        "$mita_bin" start 2>/dev/null || true
+    fi
+    sleep 1
+    if svc_is_active mita; then
+        ok "Служба Mieru (mita) успешно запущена (порт ${m_port}, XChaCha20-Poly1305)."
+    else
+        svc_restart mita 2>/dev/null || true
         sleep 1
-        if [ -x "$mita_bin" ] && [ -f /etc/mita/config.json ]; then
-            "$mita_bin" apply config /etc/mita/config.json 2>/dev/null || true
-            "$mita_bin" start 2>/dev/null || true
-        fi
-        sleep 1
-        if systemctl is-active --quiet mita; then
+        if svc_is_active mita; then
             ok "Служба Mieru (mita) успешно запущена (порт ${m_port}, XChaCha20-Poly1305)."
         else
-            systemctl restart mita 2>/dev/null || true
-            sleep 1
-            if systemctl is-active --quiet mita; then
-                ok "Служба Mieru (mita) успешно запущена (порт ${m_port}, XChaCha20-Poly1305)."
-            else
-                warn "Служба Mieru не перешла в статус active. Проверьте: journalctl -u mita -n 20"
+            warn "Служба Mieru не перешла в статус active. Проверьте: journalctl -u mita -n 20"
+            if command -v journalctl >/dev/null 2>&1; then
                 journalctl -u mita -n 15 --no-pager 2>/dev/null || true
+            elif command -v rc-service >/dev/null 2>&1; then
+                rc-service mita status 2>/dev/null || true
             fi
         fi
     fi
@@ -21111,11 +22179,19 @@ fi
 if [ -s "$GEO_DIR/geoip.dat.tmp" ]; then
     mv -f "$GEO_DIR/geoip.dat.tmp" "$GEO_DIR/geoip.dat"
 fi
-systemctl restart x-ui >/dev/null 2>&1 || true
+svc_restart x-ui >/dev/null 2>&1 || systemctl restart x-ui >/dev/null 2>&1 || rc-service x-ui restart >/dev/null 2>&1 || true
 EOF_GEO
             chmod +x /usr/local/bin/update-xray-geo.sh
 
-            cat << 'EOF_GEOSVC' > /etc/systemd/system/xray-geo-update.service
+            if is_openrc; then
+                mkdir -p /etc/periodic/weekly 2>/dev/null || true
+                cat << 'EOF_GEOCRON' > /etc/periodic/weekly/xray-geo-update
+#!/bin/sh
+/usr/local/bin/update-xray-geo.sh >/dev/null 2>&1
+EOF_GEOCRON
+                chmod +x /etc/periodic/weekly/xray-geo-update 2>/dev/null || true
+            else
+                cat << 'EOF_GEOSVC' > /etc/systemd/system/xray-geo-update.service
 [Unit]
 Description=Weekly update of Xray GeoSite and GeoIP databases
 After=network.target
@@ -21125,7 +22201,7 @@ Type=oneshot
 ExecStart=/usr/local/bin/update-xray-geo.sh
 EOF_GEOSVC
 
-            cat << 'EOF_GEOTMR' > /etc/systemd/system/xray-geo-update.timer
+                cat << 'EOF_GEOTMR' > /etc/systemd/system/xray-geo-update.timer
 [Unit]
 Description=Weekly timer for Xray GeoSite and GeoIP databases update
 
@@ -21137,8 +22213,9 @@ Persistent=true
 WantedBy=timers.target
 EOF_GEOTMR
 
-            systemctl daemon-reload
-            systemctl enable --now xray-geo-update.timer >/dev/null 2>&1 || true
+                systemctl daemon-reload
+                systemctl enable --now xray-geo-update.timer >/dev/null 2>&1 || true
+            fi
         }
         run_with_spinner "Активация таймера еженедельного обновления geosite.dat и geoip.dat" setup_xray_geo_timer_task
     else

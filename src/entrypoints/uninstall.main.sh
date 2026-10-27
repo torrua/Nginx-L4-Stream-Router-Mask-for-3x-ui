@@ -10,6 +10,7 @@ set -euo pipefail
 # @include "common/colors.sh"
 # @include "common/logger.sh"
 # @include "common/lock.sh"
+# @include "system/service.sh"
 # @include "system/snapshot.sh"
 # @include "system/uninstall.sh"
 

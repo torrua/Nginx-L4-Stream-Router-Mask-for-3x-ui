@@ -38,6 +38,7 @@ SCRIPT_VERSION="__VERSION__"
 
 # @include "tui/banner.sh"
 
+# @include "system/service.sh"
 # @include "system/packages.sh"
 
 # @include "system/env.sh"

@@ -120,11 +120,19 @@ fi
 if [ -s "$GEO_DIR/geoip.dat.tmp" ]; then
     mv -f "$GEO_DIR/geoip.dat.tmp" "$GEO_DIR/geoip.dat"
 fi
-systemctl restart x-ui >/dev/null 2>&1 || true
+svc_restart x-ui >/dev/null 2>&1 || systemctl restart x-ui >/dev/null 2>&1 || rc-service x-ui restart >/dev/null 2>&1 || true
 EOF_GEO
             chmod +x /usr/local/bin/update-xray-geo.sh
 
-            cat << 'EOF_GEOSVC' > /etc/systemd/system/xray-geo-update.service
+            if is_openrc; then
+                mkdir -p /etc/periodic/weekly 2>/dev/null || true
+                cat << 'EOF_GEOCRON' > /etc/periodic/weekly/xray-geo-update
+#!/bin/sh
+/usr/local/bin/update-xray-geo.sh >/dev/null 2>&1
+EOF_GEOCRON
+                chmod +x /etc/periodic/weekly/xray-geo-update 2>/dev/null || true
+            else
+                cat << 'EOF_GEOSVC' > /etc/systemd/system/xray-geo-update.service
 [Unit]
 Description=Weekly update of Xray GeoSite and GeoIP databases
 After=network.target
@@ -134,7 +142,7 @@ Type=oneshot
 ExecStart=/usr/local/bin/update-xray-geo.sh
 EOF_GEOSVC
 
-            cat << 'EOF_GEOTMR' > /etc/systemd/system/xray-geo-update.timer
+                cat << 'EOF_GEOTMR' > /etc/systemd/system/xray-geo-update.timer
 [Unit]
 Description=Weekly timer for Xray GeoSite and GeoIP databases update
 
@@ -146,8 +154,9 @@ Persistent=true
 WantedBy=timers.target
 EOF_GEOTMR
 
-            systemctl daemon-reload
-            systemctl enable --now xray-geo-update.timer >/dev/null 2>&1 || true
+                systemctl daemon-reload
+                systemctl enable --now xray-geo-update.timer >/dev/null 2>&1 || true
+            fi
         }
         run_with_spinner "Активация таймера еженедельного обновления geosite.dat и geoip.dat" setup_xray_geo_timer_task
     else

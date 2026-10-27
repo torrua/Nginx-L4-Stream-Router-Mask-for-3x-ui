@@ -31,7 +31,7 @@ restore_nginx_configs() {
     if [ -n "$bkp" ] && [ -f "$bkp" ]; then
         log "Откат конфигурации Nginx из резервной копии $bkp..."
         tar -xzf "$bkp" -C /etc 2>/dev/null || true
-        nginx -t >/dev/null 2>&1 && systemctl reload nginx 2>/dev/null || true
+        nginx -t >/dev/null 2>&1 && { svc_reload nginx 2>/dev/null || systemctl reload nginx 2>/dev/null || true; }
         ok "Конфигурация Nginx возвращена в исходное состояние."
     fi
 }
@@ -39,7 +39,7 @@ restore_nginx_configs() {
 determine_nginx_http2_mode() {
     local ver_raw=""
     if command -v nginx >/dev/null 2>&1; then
-        ver_raw=$(nginx -v 2>&1 | grep -oP 'nginx/\K[0-9.]+' || true)
+        ver_raw=$(nginx -v 2>&1 | sed -n 's/.*nginx\/\([0-9.]*\).*/\1/p' || true)
     fi
     [ -n "$ver_raw" ] || ver_raw="1.25.1"
 
@@ -84,7 +84,9 @@ detect_active_ssh_port() {
 }
 
 get_ssh_service_name() {
-    if systemctl list-unit-files 2>/dev/null | grep -q "^sshd\.service"; then
+    if [ "${ID:-}" = "alpine" ] || [ -f /etc/alpine-release ] || [ -f /etc/init.d/sshd ] || { [ -f /etc/os-release ] && grep -qi "alpine" /etc/os-release; }; then
+        echo "sshd"
+    elif systemctl list-unit-files 2>/dev/null | grep -q "^sshd\.service"; then
         echo "sshd"
     else
         echo "ssh"
@@ -149,7 +151,7 @@ get_port_listener_info() {
     local proc_info=""
     if [ -n "$raw" ]; then
         if echo "$raw" | grep -q 'users:('; then
-            proc_info=$(echo "$raw" | grep -oP 'users:\(\(\K[^)]+' | head -n1 | tr -d '"' || true)
+            proc_info=$(echo "$raw" | sed -n 's/.*users:((\([^)]*\).*/\1/p' | head -n1 | tr -d '"' || true)
         elif echo "$raw" | grep -qE '[0-9]+/[-_a-zA-Z0-9]+'; then
             proc_info=$(echo "$raw" | grep -oE '[0-9]+/[-_a-zA-Z0-9]+' | head -n1 || true)
         fi

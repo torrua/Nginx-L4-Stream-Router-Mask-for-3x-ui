@@ -406,8 +406,24 @@ inspect_port_conflicts() {
 }
 
 check_required_service() {
-    if systemctl is-active --quiet "$1"; then ok "Service $1: active";
-    else warn "Service $1: inactive"; return 1; fi
+    local svc="$1"
+    if is_openrc; then
+        [ "$svc" = "awg-quick@awg0" ] && svc="awg-quick.awg0"
+        if rc-service "$svc" status >/dev/null 2>&1; then
+            ok "Service $1: active"
+            return 0
+        fi
+    elif command -v systemctl >/dev/null 2>&1; then
+        if systemctl is-active --quiet "$svc" 2>/dev/null; then
+            ok "Service $1: active"
+            return 0
+        fi
+    elif command -v svc_is_active >/dev/null 2>&1 && svc_is_active "$svc"; then
+        ok "Service $1: active"
+        return 0
+    fi
+    warn "Service $1: inactive"
+    return 1
 }
 
 check_required_file() {
@@ -555,10 +571,19 @@ post_install_sanity_check() {
             check_required_port udp "$agh_dns_check" || all_ok=0
         fi
         # curl validates the certificate and hostname as well as HTTPS availability.
-        if ! curl -fLsS --connect-timeout 3 --max-time 10 -o /dev/null \
+        local curl_ssl_args=()
+        if [ -f "${SSL_BASE_DIR:-/etc/letsencrypt/live}/${PRIMARY_DOMAIN}/fullchain.pem" ]; then
+            curl_ssl_args+=(--cacert "${SSL_BASE_DIR:-/etc/letsencrypt/live}/${PRIMARY_DOMAIN}/fullchain.pem")
+        fi
+        if ! curl -fLsS "${curl_ssl_args[@]}" --connect-timeout 3 --max-time 10 -o /dev/null \
             --resolve "${PRIMARY_DOMAIN}:443:127.0.0.1" "https://${PRIMARY_DOMAIN}/"; then
-            warn "HTTPS/certificate check failed: ${PRIMARY_DOMAIN}"
-            all_ok=0
+            if ! curl -k -fLsS --connect-timeout 3 --max-time 10 -o /dev/null \
+                --resolve "${PRIMARY_DOMAIN}:443:127.0.0.1" "https://${PRIMARY_DOMAIN}/"; then
+                warn "HTTPS/certificate check failed: ${PRIMARY_DOMAIN}"
+                all_ok=0
+            else
+                warn "HTTPS доступен, но сертификат ${PRIMARY_DOMAIN} не доверен корневым хранилищем CA."
+            fi
         fi
     fi
     if is_true "${ENABLE_AWG_STANDALONE:-n}"; then

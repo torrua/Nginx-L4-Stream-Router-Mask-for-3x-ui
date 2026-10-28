@@ -152,6 +152,33 @@ echo "DOKPLOY:$DOKPLOY_COEXISTENCE"
         self.assertIn("xray-xhttp:", content)
         self.assertIn("host.docker.internal:10443", content)
 
+    def test_dokploy_all_in_one_compose_template_exists(self):
+        """Verify that compose/docker-compose.dokploy-all-in-one.yml exists and defines 3X-UI + Traefik labels."""
+        aio_path = ROOT / "compose" / "docker-compose.dokploy-all-in-one.yml"
+        self.assertTrue(aio_path.is_file(), "compose/docker-compose.dokploy-all-in-one.yml must exist")
+        content = aio_path.read_text(encoding="utf-8")
+        self.assertIn("3x-ui-dokploy", content)
+        self.assertIn("wstunnel-dokploy", content)
+        self.assertIn("sing-box-masque", content)
+        self.assertIn("traefik.http.routers.xui-panel.rule", content)
+        self.assertIn("traefik.http.routers.xui-sub.rule", content)
+        self.assertIn("dokploy-network:", content)
+
+    def test_manage_services_dokploy_commands(self):
+        """Verify manage-services.sh commands for dokploy (dokploy-export, dokploy-all-in-one, dokploy-traefik)."""
+        manage_sh = ROOT / "manage-services.sh"
+        res_aio = run_shell(f"""
+bash "{manage_sh}" dokploy-all-in-one
+""")
+        self.assertEqual(res_aio.returncode, 0, f"dokploy-all-in-one failed: {res_aio.stderr}")
+        self.assertIn("3x-ui-dokploy", res_aio.stdout)
+
+        res_traefik = run_shell(f"""
+bash "{manage_sh}" dokploy-traefik
+""")
+        self.assertEqual(res_traefik.returncode, 0, f"dokploy-traefik failed: {res_traefik.stderr}")
+        self.assertIn("xui-panel:", res_traefik.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

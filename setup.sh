@@ -205,10 +205,10 @@ checkpoint_artifact_valid() {
             done
             ;;
         decoy) [ -f /var/www/html/index.html ] ;;
-        nginx_config) [ -f /etc/nginx/stream.d/00-stream.conf ] && nginx -t >/dev/null 2>&1 && systemctl is-active --quiet nginx ;;
-        panel) { [ -f /etc/x-ui/x-ui.db ] || [ -f /usr/local/x-ui/bin/x-ui.db ]; } && systemctl is-active --quiet x-ui ;;
-        adguard) [ -f /opt/AdGuardHome/AdGuardHome.yaml ] && systemctl is-active --quiet AdGuardHome ;;
-        awg) [ -f /etc/amnezia/amneziawg/awg0.conf ] && command -v awg >/dev/null && systemctl is-active --quiet awg-quick@awg0 ;;
+        nginx_config) [ -f /etc/nginx/stream.d/00-stream.conf ] && nginx -t >/dev/null 2>&1 && { svc_is_active nginx 2>/dev/null || systemctl is-active --quiet nginx 2>/dev/null; } ;;
+        panel) { [ -f /etc/x-ui/x-ui.db ] || [ -f /usr/local/x-ui/bin/x-ui.db ]; } && { svc_is_active x-ui 2>/dev/null || systemctl is-active --quiet x-ui 2>/dev/null; } ;;
+        adguard) [ -f /opt/AdGuardHome/AdGuardHome.yaml ] && { svc_is_active AdGuardHome 2>/dev/null || systemctl is-active --quiet AdGuardHome 2>/dev/null; } ;;
+        awg) [ -f /etc/amnezia/amneziawg/awg0.conf ] && command -v awg >/dev/null && { svc_is_active awg-quick.awg0 2>/dev/null || svc_is_active awg-quick@awg0 2>/dev/null || systemctl is-active --quiet awg-quick@awg0 2>/dev/null; } ;;
         *) return 1 ;;
     esac
 }
@@ -4348,6 +4348,157 @@ offer_debug_log_export() {
         esac
     done
 }
+#!/usr/bin/env bash
+# ==============================================================================
+#  YABS BENCHMARK RUNNER & INTERACTIVE PROMPT
+# ==============================================================================
+#  Интеграция Yet Another Bench Script (fio, iperf3, Geekbench 6/7)
+#  с поддержкой экспресс-режимов, Geekbench 7, таймаута и неинтерактивного обхода.
+# ==============================================================================
+
+run_yabs_benchmark() {
+    local flags="${1:-}"
+    local log_file="${2:-/root/yabs.log}"
+
+    # Защита директории для лога
+    local log_dir
+    log_dir=$(dirname "$log_file")
+    if [ ! -d "$log_dir" ]; then
+        mkdir -p "$log_dir" 2>/dev/null || log_file="/tmp/yabs.log"
+    fi
+
+    log "Запуск тестирования производительности сервера (YABS)..."
+    echo -e "  ${DIM}Команда:${NC} ${CYAN}curl -sL yabs.sh | bash ${flags:+-s -- $flags}${NC}"
+    echo -e "  ${DIM}Файл отчета:${NC} ${GREEN}${log_file}${NC}\n"
+
+    if ! command -v curl >/dev/null 2>&1; then
+        warn "Утилита curl не найдена. Установите curl для запуска YABS."
+        return 1
+    fi
+
+    # Основной и зеркальный адреса YABS
+    local yabs_url="https://raw.githubusercontent.com/masonr/yet-another-bench-script/master/yabs.sh"
+    if ! curl -sI --max-time 3 "https://raw.githubusercontent.com" >/dev/null 2>&1; then
+        yabs_url="https://yabs.sh"
+    fi
+
+    # Временно отключаем pipefail и set -e, чтобы прерывание или сбой бенчмарка
+    # не ломали общий статус завершения скрипта развертывания
+    local prev_pipefail=0
+    if [[ $- == *o* ]] && shopt -po pipefail >/dev/null 2>&1; then
+        prev_pipefail=1
+        set +o pipefail
+    fi
+    local prev_errexit=0
+    if [[ $- == *e* ]]; then
+        prev_errexit=1
+        set +e
+    fi
+
+    if [ -n "${TEST_YABS_RUNNER:-}" ]; then
+        # Хук для модульных тестов
+        "$TEST_YABS_RUNNER" "$flags" 2>&1 | tee "$log_file"
+    elif [ -n "$flags" ]; then
+        # shellcheck disable=SC2086
+        curl -sL "$yabs_url" | bash -s -- $flags 2>&1 | tee "$log_file"
+    else
+        curl -sL "$yabs_url" | bash 2>&1 | tee "$log_file"
+    fi
+    local exit_code=${PIPESTATUS[0]:-$?}
+
+    if [ "$prev_pipefail" -eq 1 ]; then
+        set -o pipefail
+    fi
+    if [ "$prev_errexit" -eq 1 ]; then
+        set -e
+    fi
+
+    if [ -f "$log_file" ]; then
+        chmod 600 "$log_file" 2>/dev/null || true
+        echo ""
+        ok "Отчет бенчмарка успешно сохранен в: ${GREEN}${log_file}${NC}"
+    fi
+
+    return "$exit_code"
+}
+
+offer_yabs_benchmark() {
+    # Защита от повторного вызова
+    if [ "${_YABS_BENCHMARK_OFFERED:-0}" -eq 1 ]; then
+        return 0
+    fi
+    _YABS_BENCHMARK_OFFERED=1
+
+    # Полное отключение через SKIP_YABS
+    if is_true "${SKIP_YABS:-0}"; then
+        return 0
+    fi
+
+    # Автоматический запуск, если явно включен через флаг/переменную RUN_YABS / YABS
+    if is_true "${RUN_YABS:-0}" || is_true "${YABS:-0}"; then
+        local auto_flags="${YABS_ARGS:--g}"
+        run_yabs_benchmark "$auto_flags"
+        return $?
+    fi
+
+    # Если включен неинтерактивный режим — пропускаем без запроса
+    if is_true "${NON_INTERACTIVE:-0}"; then
+        return 0
+    fi
+
+    # Проверка объема оперативной памяти для подсказки к Geekbench 7
+    local mem_total_kb=0 mem_total_mb=0 ram_warning=""
+    if [ -f /proc/meminfo ]; then
+        mem_total_kb=$(grep MemTotal /proc/meminfo 2>/dev/null | awk '{print $2}' || echo 0)
+        mem_total_mb=$(( mem_total_kb / 1024 ))
+    fi
+    if [ "$mem_total_mb" -gt 0 ] && [ "$mem_total_mb" -lt 2000 ]; then
+        ram_warning=" ${YELLOW}(Внимание: на сервере ${mem_total_mb}MB RAM, рекомендуется >= 2GB)${NC}"
+    fi
+
+    local timeout_sec="${YABS_TIMEOUT:-20}"
+
+    echo ""
+    echo -e "  ${CYAN}${BOLD}────────────────────────────────────────────────────────────${NC}"
+    echo -e "  ${CYAN}${BOLD}🚀 Проверка производительности сервера (YABS Benchmark)${NC}"
+    echo -e "  ${CYAN}${BOLD}────────────────────────────────────────────────────────────${NC}"
+    echo -e "  ${WHITE}Желаете протестировать диск (fio), сеть (iperf3) и процессор (Geekbench)?${NC}"
+    echo -e "  ${DIM}Отчет будет выведен в терминал и сохранен в /root/yabs.log.${NC}"
+    echo ""
+    echo -e "  ${CYAN}[1]${NC} Пропустить и завершить ${DIM}(по умолчанию через ${timeout_sec} сек)${NC}"
+    echo -e "  ${CYAN}[2]${NC} Экспресс-тест ${GREEN}(Диск fio + Сеть iperf3, без CPU, ~2 мин)${NC}"
+    echo -e "  ${CYAN}[3]${NC} Стандартный бенчмарк ${GREEN}(Диск + Сеть + Geekbench 6, ~8-10 мин)${NC}"
+    echo -e "  ${CYAN}[4]${NC} Продвинутый бенчмарк ${GREEN}(Диск + Сеть + Geekbench 7, ~10-15 мин)${NC}${ram_warning}"
+    echo -e "  ${CYAN}[5]${NC} Только скорость сети ${GREEN}(iperf3 по всему миру, ~1 мин)${NC}"
+    echo ""
+
+    local choice="1"
+    read -r -t "$timeout_sec" -p "  Ваш выбор [1-5] (по умолчанию: 1): " choice </dev/tty 2>/dev/null || \
+    read -r -t "$timeout_sec" choice 2>/dev/null || choice="1"
+    choice=$(echo "${choice:-1}" | tr -d '[:space:]')
+
+    case "$choice" in
+        2)
+            run_yabs_benchmark "${YABS_ARGS:--g}"
+            ;;
+        3)
+            run_yabs_benchmark "${YABS_ARGS:-}"
+            ;;
+        4)
+            run_yabs_benchmark "${YABS_ARGS:--7}"
+            ;;
+        5)
+            run_yabs_benchmark "${YABS_ARGS:--f -g}"
+            ;;
+        *)
+            ok "Тестирование производительности пропущено."
+            echo -e "  ${DIM}Вы всегда можете запустить YABS вручную позже:${NC}"
+            echo -e "  ${CYAN}curl -sL yabs.sh | bash${NC}  ${DIM}(или с флагом -g для пропуска Geekbench)${NC}\n"
+            ;;
+    esac
+
+    return 0
+}
 
 
 prompt_default() {
@@ -6270,8 +6421,24 @@ inspect_port_conflicts() {
 }
 
 check_required_service() {
-    if systemctl is-active --quiet "$1"; then ok "Service $1: active";
-    else warn "Service $1: inactive"; return 1; fi
+    local svc="$1"
+    if is_openrc; then
+        [ "$svc" = "awg-quick@awg0" ] && svc="awg-quick.awg0"
+        if rc-service "$svc" status >/dev/null 2>&1; then
+            ok "Service $1: active"
+            return 0
+        fi
+    elif command -v systemctl >/dev/null 2>&1; then
+        if systemctl is-active --quiet "$svc" 2>/dev/null; then
+            ok "Service $1: active"
+            return 0
+        fi
+    elif command -v svc_is_active >/dev/null 2>&1 && svc_is_active "$svc"; then
+        ok "Service $1: active"
+        return 0
+    fi
+    warn "Service $1: inactive"
+    return 1
 }
 
 check_required_file() {
@@ -6419,10 +6586,19 @@ post_install_sanity_check() {
             check_required_port udp "$agh_dns_check" || all_ok=0
         fi
         # curl validates the certificate and hostname as well as HTTPS availability.
-        if ! curl -fLsS --connect-timeout 3 --max-time 10 -o /dev/null \
+        local curl_ssl_args=()
+        if [ -f "${SSL_BASE_DIR:-/etc/letsencrypt/live}/${PRIMARY_DOMAIN}/fullchain.pem" ]; then
+            curl_ssl_args+=(--cacert "${SSL_BASE_DIR:-/etc/letsencrypt/live}/${PRIMARY_DOMAIN}/fullchain.pem")
+        fi
+        if ! curl -fLsS "${curl_ssl_args[@]}" --connect-timeout 3 --max-time 10 -o /dev/null \
             --resolve "${PRIMARY_DOMAIN}:443:127.0.0.1" "https://${PRIMARY_DOMAIN}/"; then
-            warn "HTTPS/certificate check failed: ${PRIMARY_DOMAIN}"
-            all_ok=0
+            if ! curl -k -fLsS --connect-timeout 3 --max-time 10 -o /dev/null \
+                --resolve "${PRIMARY_DOMAIN}:443:127.0.0.1" "https://${PRIMARY_DOMAIN}/"; then
+                warn "HTTPS/certificate check failed: ${PRIMARY_DOMAIN}"
+                all_ok=0
+            else
+                warn "HTTPS доступен, но сертификат ${PRIMARY_DOMAIN} не доверен корневым хранилищем CA."
+            fi
         fi
     fi
     if is_true "${ENABLE_AWG_STANDALONE:-n}"; then
@@ -10033,7 +10209,7 @@ obtain_cf_cert() {
 nginx_reload_task() {
     nginx -t || return 1
     svc_enable nginx 2>/dev/null || systemctl enable nginx 2>/dev/null || true
-    svc_restart nginx 2>/dev/null || systemctl restart nginx
+    svc_restart nginx 2>/dev/null || systemctl restart nginx 2>/dev/null || rc-service nginx restart 2>/dev/null || true
 }
 
 # --- Модуль AmneziaWG: Универсальный контроллер и сервис управления (v3.1 / v2.0) ---
@@ -12566,7 +12742,26 @@ EOF_AWG0
         fi
 
         # Активация и запуск системной службы WireGuard / AmneziaWG
-        if command -v systemctl >/dev/null 2>&1 && [ -f /lib/systemd/system/awg-quick@.service -o -f /etc/systemd/system/awg-quick@.service -o -f /usr/lib/systemd/system/awg-quick@.service ]; then
+        if ! is_openrc && command -v systemctl >/dev/null 2>&1; then
+            if [ ! -f /lib/systemd/system/awg-quick@.service ] && [ ! -f /etc/systemd/system/awg-quick@.service ] && [ ! -f /usr/lib/systemd/system/awg-quick@.service ]; then
+                local awg_q_bin
+                awg_q_bin="$(command -v awg-quick 2>/dev/null || echo "/usr/local/bin/awg-quick")"
+                cat << EOF_AWG_SVC > /etc/systemd/system/awg-quick@.service
+[Unit]
+Description=AmneziaWG via awg-quick on %I
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=${awg_q_bin} up %i
+ExecStop=${awg_q_bin} down %i
+
+[Install]
+WantedBy=multi-user.target
+EOF_AWG_SVC
+            fi
             systemctl daemon-reload >/dev/null 2>&1 || true
             systemctl enable --now awg-quick@awg0.service >/dev/null 2>&1 || true
             ok "Системная служба awg-quick@awg0 запущена на порту ${awg_port}/udp"
@@ -14692,14 +14887,15 @@ install_step_nginx() {
         NGINX_USER="www-data"
     fi
 
-    mkdir -p /etc/systemd/system/nginx.service.d
-    cat << 'EOF' > /etc/systemd/system/nginx.service.d/override.conf
+    if ! is_openrc && command -v systemctl >/dev/null 2>&1; then
+        mkdir -p /etc/systemd/system/nginx.service.d
+        cat << 'EOF' > /etc/systemd/system/nginx.service.d/override.conf
 [Service]
 LimitNOFILE=524288
 LimitNPROC=524288
 EOF
-
-    systemctl daemon-reload
+        systemctl daemon-reload 2>/dev/null || true
+    fi
 
     log "Инициализация файловой структуры веб-сервера..."
     WEBROOT="/var/www/html"
@@ -14720,8 +14916,8 @@ EOF
         NGINX_80_SERVER_NAMES="${ALL_DOMAINS[*]}"
 
         # Останавливаем конкурирующие веб-сервисы, если они были предустановлены
-        systemctl stop apache2 2>/dev/null || true
-        systemctl disable apache2 2>/dev/null || true
+        svc_stop apache2 2>/dev/null || systemctl stop apache2 2>/dev/null || true
+        svc_disable apache2 2>/dev/null || systemctl disable apache2 2>/dev/null || true
 
         # Удаляем дефолтные конфигурации сайтов с [::]:80, которые приводят к сбою запуска при выключенном IPv6
         rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-available/default /etc/nginx/conf.d/default.conf 2>/dev/null || true
@@ -14753,7 +14949,7 @@ EOF
                 die "Ошибка синтаксиса начальной конфигурации Nginx."
             fi
         fi
-        systemctl restart nginx >/dev/null 2>&1 || systemctl start nginx >/dev/null 2>&1
+        svc_restart nginx >/dev/null 2>&1 || svc_start nginx >/dev/null 2>&1 || systemctl restart nginx >/dev/null 2>&1 || systemctl start nginx >/dev/null 2>&1 || true
     fi
 
     # =============================================================
@@ -14799,7 +14995,7 @@ chmod 755 /etc/letsencrypt/live/* 2>/dev/null || true
 chmod 644 /etc/letsencrypt/live/*/*.pem 2>/dev/null || true
 chmod 600 /etc/letsencrypt/live/*/privkey*.pem 2>/dev/null || true
 chmod 600 /etc/letsencrypt/archive/*/privkey*.pem 2>/dev/null || true
-systemctl reload nginx
+svc_reload nginx 2>/dev/null || systemctl reload nginx 2>/dev/null || rc-service nginx reload 2>/dev/null || true
 EOF
             chmod +x /etc/letsencrypt/renewal-hooks/deploy/nginx-reload.sh
 
@@ -22814,14 +23010,16 @@ EOF_AGH
         /opt/AdGuardHome/AdGuardHome -s install >/dev/null 2>&1 || true
 
         # 6. Ограничение памяти Go для экономии RAM на VPS
-        mkdir -p /etc/systemd/system/AdGuardHome.service.d
-        cat << 'EOF_GOMEM' > /etc/systemd/system/AdGuardHome.service.d/memory.conf
+        if ! is_openrc && command -v systemctl >/dev/null 2>&1; then
+            mkdir -p /etc/systemd/system/AdGuardHome.service.d
+            cat << 'EOF_GOMEM' > /etc/systemd/system/AdGuardHome.service.d/memory.conf
 [Service]
 Environment="GOGC=50"
 Environment="GOMEMLIMIT=100MiB"
 EOF_GOMEM
-        systemctl daemon-reload 2>/dev/null || true
-        systemctl restart AdGuardHome 2>/dev/null || true
+            systemctl daemon-reload 2>/dev/null || true
+        fi
+        svc_restart AdGuardHome 2>/dev/null || systemctl restart AdGuardHome 2>/dev/null || rc-service AdGuardHome restart 2>/dev/null || true
 
         # 7. Интеграция с Xray DNS (если выбрано AGH_XRAY_DNS=y)
         if [[ "${AGH_XRAY_DNS,,}" == "y" || "${AGH_XRAY_DNS:-}" == "1" ]]; then
@@ -22851,7 +23049,7 @@ if row and row[0]:
         pass
 conn.close()
 " 2>/dev/null || true
-                systemctl restart x-ui 2>/dev/null || true
+                svc_restart x-ui 2>/dev/null || systemctl restart x-ui 2>/dev/null || rc-service x-ui restart 2>/dev/null || true
             fi
         fi
     }
@@ -23355,6 +23553,11 @@ fi
         if command -v offer_debug_log_export >/dev/null 2>&1; then
             offer_debug_log_export
         fi
+    fi
+
+    # Предложение запуска YABS бенчмарка производительности
+    if command -v offer_yabs_benchmark >/dev/null 2>&1; then
+        offer_yabs_benchmark
     fi
 }
 
@@ -24658,6 +24861,11 @@ EOF_REALITY_SCANNER
     q_step_domain() {
         echo
         echo -e "${YELLOW}━━━ Шаг 1/11: Конфигурация главного сайта (домена) ━━━${NC}"
+        if is_true "${DOKPLOY_COEXISTENCE:-n}"; then
+            echo -e "  ${GREEN}★ Включен режим бесконфликтного сосуществования с Dokploy.${NC}"
+            echo -e "    Порты 80 и 443 остаются за Traefik. Панель и подписки будут подключены через Traefik."
+            echo
+        fi
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Ваш основной домен (например, ${BOLD}yourdomain.online${NC})."
             echo -e "     На нем будет работать веб-маска (декой-сайт), панель 3X-UI,"

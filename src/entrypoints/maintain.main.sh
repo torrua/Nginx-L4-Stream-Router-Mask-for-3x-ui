@@ -22,6 +22,7 @@ set -euo pipefail
 # @include "common/download.sh"
 # @include "common/backup.sh"
 # @include "system/mieru-mgr.sh"
+# @include "system/benchmark.sh"
 
 
 show_help() {
@@ -34,6 +35,7 @@ show_help() {
   backup, -b, --backup          Создать полный транзакционный бэкап стека (WAL-safe + селективный SSL)
   restore, --restore <АРХИВ>    Безопасно восстановить конфигурацию с валидацией SSL и автооткатом
   extract, --extract <АРХ> <DIR> Аварийно распаковать архив без прав root (PEP 706 Path Traversal safe)
+  bench, --bench, --yabs [FLG]  Запустить тестирование производительности сервера (YABS)
 
 Опции обслуживания:
   -c, --config <FILE>     Путь к файлу конфигурации (.env) (по умолчанию: ./server-setup.env)
@@ -101,6 +103,12 @@ while [[ $# -gt 0 ]]; do
                 COMMAND_ARGS+=("$1")
                 shift
             done
+            ;;
+        bench|--bench|--yabs)
+            COMMAND="bench"
+            shift
+            COMMAND_ARGS=("$@")
+            break
             ;;
         -c|--config)
             [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: путь к файлу конфигурации."
@@ -195,6 +203,15 @@ if [ -n "$COMMAND" ]; then
             ;;
         extract)
             do_extract "${COMMAND_ARGS[@]}"
+            exit $?
+            ;;
+        bench)
+            bench_flags="${COMMAND_ARGS[*]:-}"
+            if [ -n "$bench_flags" ]; then
+                run_yabs_benchmark "$bench_flags"
+            else
+                offer_yabs_benchmark
+            fi
             exit $?
             ;;
     esac

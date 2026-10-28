@@ -54,4 +54,9 @@ report_installation() {
             offer_debug_log_export
         fi
     fi
+
+    # Предложение запуска YABS бенчмарка производительности
+    if command -v offer_yabs_benchmark >/dev/null 2>&1; then
+        offer_yabs_benchmark
+    fi
 }

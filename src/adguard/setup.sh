@@ -107,14 +107,16 @@ EOF_AGH
         /opt/AdGuardHome/AdGuardHome -s install >/dev/null 2>&1 || true
 
         # 6. Ограничение памяти Go для экономии RAM на VPS
-        mkdir -p /etc/systemd/system/AdGuardHome.service.d
-        cat << 'EOF_GOMEM' > /etc/systemd/system/AdGuardHome.service.d/memory.conf
+        if ! is_openrc && command -v systemctl >/dev/null 2>&1; then
+            mkdir -p /etc/systemd/system/AdGuardHome.service.d
+            cat << 'EOF_GOMEM' > /etc/systemd/system/AdGuardHome.service.d/memory.conf
 [Service]
 Environment="GOGC=50"
 Environment="GOMEMLIMIT=100MiB"
 EOF_GOMEM
-        systemctl daemon-reload 2>/dev/null || true
-        systemctl restart AdGuardHome 2>/dev/null || true
+            systemctl daemon-reload 2>/dev/null || true
+        fi
+        svc_restart AdGuardHome 2>/dev/null || systemctl restart AdGuardHome 2>/dev/null || rc-service AdGuardHome restart 2>/dev/null || true
 
         # 7. Интеграция с Xray DNS (если выбрано AGH_XRAY_DNS=y)
         if [[ "${AGH_XRAY_DNS,,}" == "y" || "${AGH_XRAY_DNS:-}" == "1" ]]; then
@@ -144,7 +146,7 @@ if row and row[0]:
         pass
 conn.close()
 " 2>/dev/null || true
-                systemctl restart x-ui 2>/dev/null || true
+                svc_restart x-ui 2>/dev/null || systemctl restart x-ui 2>/dev/null || rc-service x-ui restart 2>/dev/null || true
             fi
         fi
     }

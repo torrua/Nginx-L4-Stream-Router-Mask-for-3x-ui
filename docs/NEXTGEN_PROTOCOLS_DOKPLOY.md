@@ -182,20 +182,33 @@ Traefik самостоятельно выпускает SSL для `wstunnel.you
 
 ---
 
-## 8. Развертывание в панели Dokploy
+## 8. Два варианта развертывания в Dokploy (на выбор)
 
-1. Откройте веб-панель **Dokploy** (`https://your-dokploy-ip:3000`).
-2. Перейдите в раздел **Compose** → **Create Compose**.
-3. Задайте имя проекта: `nextgen-protocols`.
-4. Вставьте содержимое файла [`compose/docker-compose.dokploy.yml`](../compose/docker-compose.dokploy.yml).
-5. В разделе **Environment Variables** добавьте параметры из `compose/.env.example`:
-   - `PRIMARY_DOMAIN`: ваш основной домен
-   - `WSTUNNEL_DOMAIN`: поддомен для wstunnel (например, `wstunnel.yourdomain.online`)
-   - `SHADOWTLS_PASSWORD`: сгенерированный пароль ShadowTLS
-   - `MASQUE_PASS`: пароль для MASQUE
-   - `CLOUDFLARE_API_TOKEN`: API токен Cloudflare (при использовании NaïveProxy)
-6. Нажмите **Deploy**.
-7. Все сервисы развернутся автоматически с привязкой к Traefik.
+Вы можете выбрать наиболее подходящий для ваших задач метод интеграции:
+
+### Вариант А: Гибридный режим (Рекомендуется для максимальной скорости AmneziaWG)
+* Ядро AmneziaWG (DKMS-модуль) и панель 3X-UI работают на хосте, гарантируя максимальную пропускную способность (Wire Speed) и оптимизации BBR/conntrack.
+* Dokploy Traefik перехватывает веб-трафик и автоматически выпускает SSL:
+  1. На сервере выполните установку:
+     ```bash
+     sudo bash setup.sh --dokploy
+     ```
+  2. Подключите панель и подписки к Dokploy Traefik:
+     ```bash
+     ./manage-services.sh dokploy-traefik > /etc/dokploy/traefik/dynamic/vpn.yml
+     ```
+  3. Traefik моментально привяжет `panel.yourdomain.online` и `sub.yourdomain.online` с авто-SSL.
+
+---
+
+### Вариант Б: All-in-One Compose (100% через веб-панель Dokploy)
+* Полностью контейнеризированный запуск: 3X-UI, Wstunnel, MASQUE, ShadowTLS и NaïveProxy поднимаются внутри Dokploy.
+* Не требует установки компонентов на хост через SSH:
+  1. Откройте панель **Dokploy** (`https://your-dokploy-ip:3000`).
+  2. Перейдите в **Compose** → **Create Compose** (например, `vpn-stack`).
+  3. Вставьте содержимое [`compose/docker-compose.dokploy-all-in-one.yml`](../compose/docker-compose.dokploy-all-in-one.yml) (или скопируйте вывод команды `./manage-services.sh dokploy-all-in-one`).
+  4. Заполните переменные окружения (`PRIMARY_DOMAIN`, `PANEL_DOMAIN`, `SUB_DOMAIN`, `WSTUNNEL_DOMAIN`, `AWG_PORT`).
+  5. Нажмите **Deploy**. Traefik автоматически создаст маршруты с авто-SSL.
 
 ---
 
@@ -217,8 +230,11 @@ Traefik самостоятельно выпускает SSL для `wstunnel.you
 ./manage-services.sh logs shadow-tls
 ./manage-services.sh logs wstunnel
 
-# Экспорт стека для Dokploy
-./manage-services.sh dokploy-export
+# Экспорт стека All-in-One для вставки в Dokploy Compose UI
+./manage-services.sh dokploy-all-in-one
+
+# Генерация динамической конфигурации Traefik для гибридного режима
+./manage-services.sh dokploy-traefik
 ```
 
 ---

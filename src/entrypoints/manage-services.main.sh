@@ -248,6 +248,15 @@ cmd_dokploy_export() {
     fi
 }
 
+cmd_dokploy_all_in_one() {
+    local aio_file="${COMPOSE_DIR}/docker-compose.dokploy-all-in-one.yml"
+    if [ -f "$aio_file" ]; then
+        cat "$aio_file"
+    else
+        die "Файл ${aio_file} не найден."
+    fi
+}
+
 cmd_dokploy_traefik() {
     load_config_data_safe "$ENV_FILE" 2>/dev/null || true
     local py_script="${SCRIPT_DIR}/src/panel/dokploy_traefik.py"
@@ -396,14 +405,17 @@ case "${1:-status}" in
     dokploy-export)
         cmd_dokploy_export
         ;;
-    dokploy-traefik)
+    dokploy-all-in-one)
+        cmd_dokploy_all_in_one
+        ;;
+    dokploy-traefik|dokploy-hybrid)
         cmd_dokploy_traefik
         ;;
     clients)
         cmd_clients
         ;;
     *)
-        echo "Использование: $0 {status|up|down|restart|logs|clients|dokploy-export|dokploy-traefik} [service]"
+        echo "Использование: $0 {status|up|down|restart|logs|clients|dokploy-export|dokploy-all-in-one|dokploy-traefik} [service]"
         exit 1
         ;;
 esac

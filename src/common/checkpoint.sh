@@ -173,10 +173,10 @@ checkpoint_artifact_valid() {
             done
             ;;
         decoy) [ -f /var/www/html/index.html ] ;;
-        nginx_config) [ -f /etc/nginx/stream.d/00-stream.conf ] && nginx -t >/dev/null 2>&1 && systemctl is-active --quiet nginx ;;
-        panel) { [ -f /etc/x-ui/x-ui.db ] || [ -f /usr/local/x-ui/bin/x-ui.db ]; } && systemctl is-active --quiet x-ui ;;
-        adguard) [ -f /opt/AdGuardHome/AdGuardHome.yaml ] && systemctl is-active --quiet AdGuardHome ;;
-        awg) [ -f /etc/amnezia/amneziawg/awg0.conf ] && command -v awg >/dev/null && systemctl is-active --quiet awg-quick@awg0 ;;
+        nginx_config) [ -f /etc/nginx/stream.d/00-stream.conf ] && nginx -t >/dev/null 2>&1 && { svc_is_active nginx 2>/dev/null || systemctl is-active --quiet nginx 2>/dev/null; } ;;
+        panel) { [ -f /etc/x-ui/x-ui.db ] || [ -f /usr/local/x-ui/bin/x-ui.db ]; } && { svc_is_active x-ui 2>/dev/null || systemctl is-active --quiet x-ui 2>/dev/null; } ;;
+        adguard) [ -f /opt/AdGuardHome/AdGuardHome.yaml ] && { svc_is_active AdGuardHome 2>/dev/null || systemctl is-active --quiet AdGuardHome 2>/dev/null; } ;;
+        awg) [ -f /etc/amnezia/amneziawg/awg0.conf ] && command -v awg >/dev/null && { svc_is_active awg-quick.awg0 2>/dev/null || svc_is_active awg-quick@awg0 2>/dev/null || systemctl is-active --quiet awg-quick@awg0 2>/dev/null; } ;;
         *) return 1 ;;
     esac
 }

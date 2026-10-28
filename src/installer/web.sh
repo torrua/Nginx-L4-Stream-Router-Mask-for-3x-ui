@@ -13,14 +13,15 @@ install_step_nginx() {
         NGINX_USER="www-data"
     fi
 
-    mkdir -p /etc/systemd/system/nginx.service.d
-    cat << 'EOF' > /etc/systemd/system/nginx.service.d/override.conf
+    if ! is_openrc && command -v systemctl >/dev/null 2>&1; then
+        mkdir -p /etc/systemd/system/nginx.service.d
+        cat << 'EOF' > /etc/systemd/system/nginx.service.d/override.conf
 [Service]
 LimitNOFILE=524288
 LimitNPROC=524288
 EOF
-
-    systemctl daemon-reload
+        systemctl daemon-reload 2>/dev/null || true
+    fi
 
     log "Инициализация файловой структуры веб-сервера..."
     WEBROOT="/var/www/html"
@@ -41,8 +42,8 @@ EOF
         NGINX_80_SERVER_NAMES="${ALL_DOMAINS[*]}"
 
         # Останавливаем конкурирующие веб-сервисы, если они были предустановлены
-        systemctl stop apache2 2>/dev/null || true
-        systemctl disable apache2 2>/dev/null || true
+        svc_stop apache2 2>/dev/null || systemctl stop apache2 2>/dev/null || true
+        svc_disable apache2 2>/dev/null || systemctl disable apache2 2>/dev/null || true
 
         # Удаляем дефолтные конфигурации сайтов с [::]:80, которые приводят к сбою запуска при выключенном IPv6
         rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-available/default /etc/nginx/conf.d/default.conf 2>/dev/null || true
@@ -74,7 +75,7 @@ EOF
                 die "Ошибка синтаксиса начальной конфигурации Nginx."
             fi
         fi
-        systemctl restart nginx >/dev/null 2>&1 || systemctl start nginx >/dev/null 2>&1
+        svc_restart nginx >/dev/null 2>&1 || svc_start nginx >/dev/null 2>&1 || systemctl restart nginx >/dev/null 2>&1 || systemctl start nginx >/dev/null 2>&1 || true
     fi
 
     # =============================================================
@@ -120,7 +121,7 @@ chmod 755 /etc/letsencrypt/live/* 2>/dev/null || true
 chmod 644 /etc/letsencrypt/live/*/*.pem 2>/dev/null || true
 chmod 600 /etc/letsencrypt/live/*/privkey*.pem 2>/dev/null || true
 chmod 600 /etc/letsencrypt/archive/*/privkey*.pem 2>/dev/null || true
-systemctl reload nginx
+svc_reload nginx 2>/dev/null || systemctl reload nginx 2>/dev/null || rc-service nginx reload 2>/dev/null || true
 EOF
             chmod +x /etc/letsencrypt/renewal-hooks/deploy/nginx-reload.sh
 

@@ -378,7 +378,26 @@ EOF_AWG0
         fi
 
         # Активация и запуск системной службы WireGuard / AmneziaWG
-        if command -v systemctl >/dev/null 2>&1 && [ -f /lib/systemd/system/awg-quick@.service -o -f /etc/systemd/system/awg-quick@.service -o -f /usr/lib/systemd/system/awg-quick@.service ]; then
+        if ! is_openrc && command -v systemctl >/dev/null 2>&1; then
+            if [ ! -f /lib/systemd/system/awg-quick@.service ] && [ ! -f /etc/systemd/system/awg-quick@.service ] && [ ! -f /usr/lib/systemd/system/awg-quick@.service ]; then
+                local awg_q_bin
+                awg_q_bin="$(command -v awg-quick 2>/dev/null || echo "/usr/local/bin/awg-quick")"
+                cat << EOF_AWG_SVC > /etc/systemd/system/awg-quick@.service
+[Unit]
+Description=AmneziaWG via awg-quick on %I
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=${awg_q_bin} up %i
+ExecStop=${awg_q_bin} down %i
+
+[Install]
+WantedBy=multi-user.target
+EOF_AWG_SVC
+            fi
             systemctl daemon-reload >/dev/null 2>&1 || true
             systemctl enable --now awg-quick@awg0.service >/dev/null 2>&1 || true
             ok "Системная служба awg-quick@awg0 запущена на порту ${awg_port}/udp"

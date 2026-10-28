@@ -132,5 +132,5 @@ obtain_cf_cert() {
 nginx_reload_task() {
     nginx -t || return 1
     svc_enable nginx 2>/dev/null || systemctl enable nginx 2>/dev/null || true
-    svc_restart nginx 2>/dev/null || systemctl restart nginx
+    svc_restart nginx 2>/dev/null || systemctl restart nginx 2>/dev/null || rc-service nginx restart 2>/dev/null || true
 }

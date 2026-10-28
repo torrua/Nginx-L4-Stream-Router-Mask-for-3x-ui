@@ -659,6 +659,11 @@ EOF_REALITY_SCANNER
     q_step_domain() {
         echo
         echo -e "${YELLOW}━━━ Шаг 1/11: Конфигурация главного сайта (домена) ━━━${NC}"
+        if is_true "${DOKPLOY_COEXISTENCE:-n}"; then
+            echo -e "  ${GREEN}★ Включен режим бесконфликтного сосуществования с Dokploy.${NC}"
+            echo -e "    Порты 80 и 443 остаются за Traefik. Панель и подписки будут подключены через Traefik."
+            echo
+        fi
         if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
             echo -e "  ${CYAN}💡 Что это:${NC} Ваш основной домен (например, ${BOLD}yourdomain.online${NC})."
             echo -e "     На нем будет работать веб-маска (декой-сайт), панель 3X-UI,"

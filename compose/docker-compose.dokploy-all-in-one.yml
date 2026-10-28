@@ -1,0 +1,127 @@
+# ==============================================================================
+# DOKPLOY ALL-IN-ONE VPN & NEXT-GEN PROTOCOLS STACK
+# ==============================================================================
+# Развертывание в 1 клик через веб-интерфейс Dokploy (Compose ➜ Create Compose).
+# Не требует предварительной настройки через SSH.
+# Traefik автоматически выпускает Let's Encrypt SSL для панели, подписок и Wstunnel.
+# ==============================================================================
+
+services:
+  # 0. 3X-UI Web Panel & Xray Core (AmneziaWG, VLESS, Hysteria 2, TUIC, Shadowsocks)
+  x-ui:
+    image: ghcr.io/mhsanaei/3x-ui:latest
+    container_name: 3x-ui-dokploy
+    restart: unless-stopped
+    volumes:
+      - xui_data:/etc/x-ui
+      - /lib/modules:/lib/modules:ro
+    ports:
+      - "${AWG_PORT:-8443}:${AWG_PORT:-8443}/udp"
+      - "${TUIC_PORT:-8448}:${TUIC_PORT:-8448}/udp"
+      - "${SS2022_PORT:-8388}:${SS2022_PORT:-8388}/tcp"
+      - "${SS2022_PORT:-8388}:${SS2022_PORT:-8388}/udp"
+      - "${MTPROTO_PORT:-8444}:${MTPROTO_PORT:-8444}/tcp"
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      - net.ipv4.ip_forward=1
+    environment:
+      - XRAY_VMESS_AEAD_FORCED=false
+    networks:
+      - dokploy-network
+    labels:
+      - "traefik.enable=true"
+      # Веб-панель управления 3X-UI
+      - "traefik.http.routers.xui-panel.rule=Host(`${PANEL_DOMAIN:-panel.yourdomain.online}`)"
+      - "traefik.http.routers.xui-panel.entrypoints=websecure"
+      - "traefik.http.routers.xui-panel.tls=true"
+      - "traefik.http.routers.xui-panel.tls.certresolver=letsencrypt"
+      - "traefik.http.services.xui-panel.loadbalancer.server.port=2053"
+      # Сервер подписок 3X-UI
+      - "traefik.http.routers.xui-sub.rule=Host(`${SUB_DOMAIN:-sub.yourdomain.online}`)"
+      - "traefik.http.routers.xui-sub.entrypoints=websecure"
+      - "traefik.http.routers.xui-sub.tls=true"
+      - "traefik.http.routers.xui-sub.tls.certresolver=letsencrypt"
+      - "traefik.http.services.xui-sub.loadbalancer.server.port=2096"
+
+  # 1. Wstunnel over Dokploy Traefik (WebSocket / HTTP/3 over port 443)
+  wstunnel-dokploy:
+    image: ghcr.io/erebe/wstunnel:latest
+    container_name: wstunnel-dokploy
+    restart: unless-stopped
+    command:
+      - "server"
+      - "--restrict-to=3x-ui-dokploy:8443,3x-ui-dokploy:51820,3x-ui-dokploy:8388,host.docker.internal:51820"
+      - "ws://0.0.0.0:8080"
+    networks:
+      - dokploy-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.wstunnel.rule=Host(`${WSTUNNEL_DOMAIN:-wstunnel.yourdomain.online}`)"
+      - "traefik.http.routers.wstunnel.entrypoints=websecure"
+      - "traefik.http.routers.wstunnel.tls=true"
+      - "traefik.http.routers.wstunnel.tls.certresolver=letsencrypt"
+      - "traefik.http.services.wstunnel.loadbalancer.server.port=8080"
+
+  # 2. MASQUE (RFC 9484 / RFC 9298 via Sing-box 1.14+)
+  sing-box-masque:
+    image: ghcr.io/sagernet/sing-box:latest
+    container_name: sing-box-masque
+    restart: unless-stopped
+    ports:
+      - "${MASQUE_PORT:-8449}:${MASQUE_PORT:-8449}/udp"
+    volumes:
+      - ./sing-box-masque/config.json:/etc/sing-box/config.json:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - /etc/ssl/certs:/etc/ssl/certs:ro
+    command: ["run", "-c", "/etc/sing-box/config.json"]
+
+  # 3. ShadowTLS v4 + Shadowsocks-2022
+  shadow-tls:
+    image: ghcr.io/ihciah/shadow-tls:latest
+    container_name: shadow-tls
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - MODE=server
+      - V3=1
+      - LISTEN=0.0.0.0:${SHADOWTLS_PORT:-8543}
+      - SERVER=${SS2022_BACKEND_HOST:-127.0.0.1}:${SS2022_BACKEND_PORT:-8388}
+      - TLS=${SHADOWTLS_SNI:-gateway.icloud.com}:443
+      - TLS_NAMES=${SHADOWTLS_SNI:-gateway.icloud.com}
+      - PASSWORD=${SHADOWTLS_PASSWORD}
+
+  # 4. NaïveProxy with Caddy (Cloudflare DNS-01 ACME)
+  naiveproxy-caddy:
+    build:
+      context: ./naiveproxy
+      dockerfile: Dockerfile
+    image: local-naiveproxy:latest
+    container_name: naiveproxy-caddy
+    restart: unless-stopped
+    ports:
+      - "${NAIVE_PORT:-8446}:${NAIVE_PORT:-8446}/tcp"
+      - "${NAIVE_PORT:-8446}:${NAIVE_PORT:-8446}/udp"
+    environment:
+      - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}
+      - NAIVE_DOMAIN=${NAIVE_DOMAIN:-naive.yourdomain.online}
+      - NAIVE_USER=${NAIVE_USER:-user}
+      - NAIVE_PASS=${NAIVE_PASS:-password}
+      - LE_EMAIL=${LE_EMAIL:-admin@yourdomain.online}
+    volumes:
+      - ./naiveproxy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - naive_caddy_data:/data
+      - naive_caddy_config:/config
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+
+volumes:
+  xui_data:
+  naive_caddy_data:
+  naive_caddy_config:
+
+networks:
+  dokploy-network:
+    external: true

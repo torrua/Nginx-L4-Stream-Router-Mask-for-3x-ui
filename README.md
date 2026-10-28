@@ -6,7 +6,7 @@
 Надёжный персональный VPN на VPS, устойчивый к блокировкам операторов связи.  
 Работает на смартфонах (iOS, Android), компьютерах (Windows, macOS) и роутерах.
 
-[Инструкция для новичков](docs/BEGINNER_GUIDE.md) • [Техническая архитектура](docs/ARCHITECTURE.md) • [Бэклог задач (РФ)](docs/BACKLOG.md) • [Быстрый старт](#-быстрый-старт-установка-в-1-команду)
+[Инструкция для новичков](docs/BEGINNER_GUIDE.md) • [Руководство Dokploy](docs/DOKPLOY_SETUP_GUIDE.md) • [Техническая архитектура](docs/ARCHITECTURE.md) • [Бэклог задач (РФ)](docs/BACKLOG.md) • [Быстрый старт](#-быстрый-старт-установка-в-1-команду)
 
 [![CI](https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/actions/workflows/ci.yml/badge.svg)](https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/actions/workflows/ci.yml)
 [![Версия](https://img.shields.io/badge/версия-v9.6.4-blue)](https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui)
@@ -167,6 +167,7 @@ flowchart TD
 | Руководство | Описание |
 | :--- | :--- |
 | 🚀 **[Инструкция для новичков](docs/BEGINNER_GUIDE.md)** | Пошаговый запуск с нуля: аренда VPS и домена, укрепление ОС (`prepare-server.sh`), настройка Nginx (`setup.sh`) и подключение устройств. |
+| 🐳 **[Руководство Dokploy & AmneziaWG](docs/DOKPLOY_SETUP_GUIDE.md)** | Пошаговая настройка VPN и AmneziaWG на сервере с Dokploy: два сценария (Гибридный режим для максимальной скорости AWG и 100% All-in-One Compose). |
 | ⚙️ **[Техническое описание архитектуры](docs/ARCHITECTURE.md)** | Полная инженерная документация: схема Nginx L4 Stream, ручная настройка инбаундов 3X-UI, правила UFW от сканирования, Anti-Loop порт 9443, тюнинг буферов HTTP/2 xHTTP, диагностика (Health Check) и бэкапы. |
 | 🛡️ **[Протоколы следующего поколения & Dokploy](docs/NEXTGEN_PROTOCOLS_DOKPLOY.md)** | Развертывание MASQUE, ShadowTLS v4, NaïveProxy, Zapret и Wstunnel через Docker Compose с нулевым конфликтом с Dokploy Traefik на портах 80/443. |
 | 🎛️ **[Автонастройка 3X-UI (`configure-panel.sh`)](#-ручная-пошаговая-установка-для-экспертов)** | Скрипт, который сам создаёт подключения в панели, генерирует клиентские ссылки `:443` через `externalProxy`, настраивает Cloudflare WARP, задает часовой пояс, ежемесячный сброс трафика, защиту от SMTP-спама (порт 25) и блокировку SSRF к локальным службам VPS. |

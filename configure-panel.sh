@@ -3718,6 +3718,8 @@ configure_3xui_panel() {
   --domain <DOMAIN>       Основной домен сервера (например, example.com)
   --sub-domain <DOMAIN>   Домен для раздачи подписок (например, sub.example.com)
   --panel-domain <DOMAIN> Домен веб-панели управления (например, panel.example.com)
+  --hy2-domain <DOMAIN>   Домен для протокола Hysteria 2 (например, hy2.example.com)
+  --no-hy2                Отключить Hysteria 2 (не требует SSL-сертификата)
   --dry-run               Только аудит и проверка (без внесения изменений)
   --force-sub             Принудительно перезаписать кастомные параметры подписки из .env
   --force-remarks         Принудительно сбросить названия инбаундов к стандартным из .env
@@ -3751,6 +3753,8 @@ EOF_HELP
     local CLI_ENABLE_NODE_TOKEN=""
     local CLI_NODE_TOKEN_NAME=""
     local CLI_NODE_TOKEN_SCOPE=""
+    local CLI_ENABLE_HY2=""
+    local CLI_HY2_DOMAIN=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -3778,6 +3782,19 @@ EOF_HELP
                 [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: домен панели."
                 PANEL_DOMAIN="$2"
                 shift 2
+                ;;
+            --hy2-domain)
+                [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: домен Hysteria 2."
+                CLI_HY2_DOMAIN="$2"
+                shift 2
+                ;;
+            --hy2)
+                CLI_ENABLE_HY2="y"
+                shift
+                ;;
+            --no-hy2)
+                CLI_ENABLE_HY2="n"
+                shift
                 ;;
             --dry-run)
                 DRY_RUN=1
@@ -3869,6 +3886,8 @@ EOF_HELP
     [ -n "$CLI_NODE_TOKEN_NAME" ] && NODE_TOKEN_NAME="$CLI_NODE_TOKEN_NAME"
     [ -n "$CLI_NODE_TOKEN_SCOPE" ] && NODE_TOKEN_SCOPE="$CLI_NODE_TOKEN_SCOPE"
     NODE_TOKEN_SCOPE="${NODE_TOKEN_SCOPE:-node-sync}"
+    [ -n "$CLI_ENABLE_HY2" ] && ENABLE_HY2="$CLI_ENABLE_HY2"
+    [ -n "$CLI_HY2_DOMAIN" ] && HY2_DOMAIN="$CLI_HY2_DOMAIN"
 
     # Дефолтные значения переменных, если не определены в .env
     PRIMARY_DOMAIN="${PRIMARY_DOMAIN:-yourdomain.online}"

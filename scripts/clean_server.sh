@@ -161,6 +161,8 @@ PACKAGES_TO_PURGE=(
     g++
     adwaita-icon-theme
     glycin-loaders
+    python-babel-localedata
+    python3-babel
 )
 
 INSTALLED_PURGE=()
@@ -193,6 +195,7 @@ path-exclude /usr/share/linda/*
 EOF
 
 rm -rf /usr/share/doc/* /usr/share/man/* /usr/share/groff/* /usr/share/info/*
+find /usr/share/locale -mindepth 1 -maxdepth 1 ! -name 'en*' ! -name 'ru*' ! -name 'locale.alias' -exec rm -rf {} + 2>/dev/null || true
 
 echo "=========================================================="
 echo " [6/9] Запрет кэша APT и автоочистка пакетов"
@@ -207,7 +210,8 @@ EOF
 
 apt-get autoremove --purge -y
 apt-get clean
-rm -rf /var/cache/apt/archives/*.deb /var/cache/apt/*.bin
+rm -rf /var/cache/apt/archives/*.deb /var/cache/apt/*.bin /var/lib/apt/lists/* /var/cache/swcatalog/* /var/lib/ubuntu-advantage/apt-esm/* 2>/dev/null || true
+rm -f /usr/local/x-ui/bin/geoip_IR.dat /usr/local/x-ui/bin/geosite_IR.dat 2>/dev/null || true
 
 echo "=========================================================="
 echo " [7/9] Ограничение системных логов Journald и ротация логов Docker"

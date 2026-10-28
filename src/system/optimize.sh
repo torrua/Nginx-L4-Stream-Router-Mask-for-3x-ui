@@ -111,6 +111,8 @@ optimize_vps_storage() {
         g++
         adwaita-icon-theme
         glycin-loaders
+        python-babel-localedata
+        python3-babel
     )
     local installed_purge=()
     for pkg in "${packages_to_purge[@]}"; do
@@ -140,6 +142,7 @@ path-exclude /usr/share/lintian/*
 path-exclude /usr/share/linda/*
 EOF
     rm -rf /usr/share/doc/* /usr/share/man/* /usr/share/groff/* /usr/share/info/* 2>/dev/null || true
+    find /usr/share/locale -mindepth 1 -maxdepth 1 ! -name 'en*' ! -name 'ru*' ! -name 'locale.alias' -exec rm -rf {} + 2>/dev/null || true
 
     # 6. Политика APT no-cache и очистка архивов
     mkdir -p /etc/apt/apt.conf.d
@@ -152,7 +155,8 @@ EOF
 
     apt-get autoremove --purge -y 2>/dev/null || true
     apt-get clean 2>/dev/null || true
-    rm -rf /var/cache/apt/archives/*.deb /var/cache/apt/*.bin 2>/dev/null || true
+    rm -rf /var/cache/apt/archives/*.deb /var/cache/apt/*.bin /var/lib/apt/lists/* /var/cache/swcatalog/* /var/lib/ubuntu-advantage/apt-esm/* 2>/dev/null || true
+    rm -f /usr/local/x-ui/bin/geoip_IR.dat /usr/local/x-ui/bin/geosite_IR.dat 2>/dev/null || true
     echo "  ✔ Дисковая очистка и политики экономии памяти успешно применены."
 }
 

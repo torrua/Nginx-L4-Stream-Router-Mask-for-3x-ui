@@ -10451,11 +10451,22 @@ REKEY_TIMEOUT = os.environ.get("AWG_REKEY_TIMEOUT") or CONF_PARAMS.get("RekeyTim
 REJECT_AFTER_TIME = os.environ.get("AWG_REJECT_AFTER_TIME") or CONF_PARAMS.get("RejectAfterTime", "")
 KEEPALIVE_TIMEOUT = os.environ.get("AWG_KEEPALIVE_TIMEOUT") or CONF_PARAMS.get("KeepaliveTimeout", "")
 MAX_HANDSHAKE_ATTEMPTS = os.environ.get("AWG_MAX_HANDSHAKE_ATTEMPTS") or CONF_PARAMS.get("MaxHandshakeAttempts", "")
-raw_ka = os.environ.get("AWG_PERSISTENT_KEEPALIVE") or CONF_PARAMS.get("PersistentKeepalive", "15-25")
-if "-" in str(raw_ka) or not str(raw_ka).strip().isdigit():
-    PERSISTENT_KEEPALIVE = "25"
-else:
-    PERSISTENT_KEEPALIVE = str(raw_ka).strip()
+
+def normalize_keepalive(ka_str: str | None, default: str = "15-25") -> str:
+    if not ka_str:
+        return default
+    s = str(ka_str).strip()
+    if s.isdigit():
+        return s
+    m = re.match(r"^(\d+)\s*-\s*(\d+)$", s)
+    if m:
+        return f"{m.group(1)}-{m.group(2)}"
+    return default
+
+PERSISTENT_KEEPALIVE = normalize_keepalive(
+    os.environ.get("AWG_PERSISTENT_KEEPALIVE") or CONF_PARAMS.get("PersistentKeepalive", "15-25"),
+    default="15-25"
+)
 ALLOWED_IPS = os.environ.get("AWG_ALLOWED_IPS", "0.0.0.0/0, ::/0")
 CPA = os.environ.get("AWG_CPA") or os.environ.get("AWG_CONTENT_PADDING_ADDITION") or CONF_PARAMS.get("ContentPaddingAddition") or CONF_PARAMS.get("CPA", "")
 
@@ -10858,9 +10869,7 @@ PersistentKeepalive = {PERSISTENT_KEEPALIVE}
 
         m_ka = re.search(r"^\s*PersistentKeepalive\s*=\s*([0-9\-]+)", internal_config, re.MULTILINE | re.IGNORECASE)
         if m_ka:
-            cur_keepalive = m_ka.group(1).strip()
-            if "-" in cur_keepalive or not cur_keepalive.isdigit():
-                cur_keepalive = "25"
+            cur_keepalive = normalize_keepalive(m_ka.group(1).strip(), default=PERSISTENT_KEEPALIVE)
 
         m_al = re.search(r"^\s*AllowedIPs\s*=\s*(.+)$", internal_config, re.MULTILINE | re.IGNORECASE)
         if m_al:
@@ -11163,7 +11172,7 @@ def add_client(
     client_jc = str(custom_jc).strip() if custom_jc is not None else str(JC)
     client_jmin = str(custom_jmin).strip() if custom_jmin is not None else str(JMIN)
     client_jmax = str(custom_jmax).strip() if custom_jmax is not None else str(JMAX)
-    client_keepalive = str(custom_keepalive).strip() if custom_keepalive is not None else str(PERSISTENT_KEEPALIVE)
+    client_keepalive = normalize_keepalive(custom_keepalive, default=PERSISTENT_KEEPALIVE) if custom_keepalive is not None else PERSISTENT_KEEPALIVE
     client_allowed_ips = str(custom_allowed_ips).strip() if custom_allowed_ips is not None else str(ALLOWED_IPS)
 
     target_i1 = custom_i1 if custom_i1 is not None else I1

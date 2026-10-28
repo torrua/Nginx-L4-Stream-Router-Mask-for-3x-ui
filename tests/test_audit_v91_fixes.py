@@ -462,9 +462,9 @@ do_restore_rollback "{rb_dir.as_posix()}"
         # 2. HeaderProtectionKey prioritizes CONF_PARAMS
         self.assertIn('CONF_PARAMS.get("HeaderProtectionKey")', manage_clients_py)
 
-        # 3. PersistentKeepalive normalized to integer
-        self.assertIn('if "-" in str(raw_ka) or not str(raw_ka).strip().isdigit():', manage_clients_py)
-        self.assertIn('PERSISTENT_KEEPALIVE = "25"', manage_clients_py)
+        # 3. PersistentKeepalive validation supports both ranges (15-25) and integers (25)
+        self.assertIn('def normalize_keepalive(ka_str: str | None, default: str = "15-25") -> str:', manage_clients_py)
+        self.assertIn('PERSISTENT_KEEPALIVE = normalize_keepalive(', manage_clients_py)
 
         # 4. AllowedIPs defaults to dual-stack IPv4/IPv6
         self.assertIn('ALLOWED_IPS = os.environ.get("AWG_ALLOWED_IPS", "0.0.0.0/0, ::/0")', manage_clients_py)

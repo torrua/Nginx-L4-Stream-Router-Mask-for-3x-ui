@@ -565,14 +565,18 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
     def_dest = def_ext[0].get("dest") if (def_ext and isinstance(def_ext, list) and def_ext[0].get("dest")) else cur_domain
     def_sni = def_ext[0].get("sni", "") if (def_ext and isinstance(def_ext, list) and def_ext[0].get("sni")) else ""
 
+    force_sub_flag = globals().get("force_sub", False)
     # Сохраняем кастомный хост узла (dest), если он был настроен и не равен localhost
     target_dest = def_dest
-    if cur_ext and len(cur_ext) > 0 and cur_ext[0].get("dest"):
+    if not force_sub_flag and cur_ext and len(cur_ext) > 0 and cur_ext[0].get("dest"):
         ext_dest = str(cur_ext[0]["dest"]).strip()
         if ext_dest and ext_dest not in ("127.0.0.1", "localhost", "0.0.0.0"):
-            target_dest = ext_dest
-            if ext_dest != cur_domain and ext_dest != def_dest:
-                preserved.append(f"кастомный хост узла ({ext_dest})")
+            if ext_dest == cur_domain and def_dest != cur_domain:
+                target_dest = def_dest
+            else:
+                target_dest = ext_dest
+                if ext_dest != cur_domain and ext_dest != def_dest:
+                    preserved.append(f"кастомный хост узла ({ext_dest})")
 
     if protocol in ("shadowsocks", "mtproto", "amneziawg"):
         force_tls_val = "none"
@@ -604,12 +608,15 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
     else:
         # Сохраняем SNI для externalProxy (критично для VLESS REALITY и маршрутизации Nginx Stream L4)
         target_sni = def_sni
-        if cur_ext and len(cur_ext) > 0 and cur_ext[0].get("sni"):
+        if not force_sub_flag and cur_ext and len(cur_ext) > 0 and cur_ext[0].get("sni"):
             ext_sni = str(cur_ext[0]["sni"]).strip()
             if ext_sni:
-                target_sni = ext_sni
-                if target_sni != def_sni:
-                    preserved.append(f"кастомный externalProxy SNI ({ext_sni})")
+                if ext_sni == cur_domain and def_sni != cur_domain:
+                    target_sni = def_sni
+                else:
+                    target_sni = ext_sni
+                    if target_sni != def_sni:
+                        preserved.append(f"кастомный externalProxy SNI ({ext_sni})")
 
         ext_entry = {
             "dest": target_dest,

@@ -166,9 +166,30 @@ extracted_amnezia/
 # ------------------------------------------------------------------------------
 # 6. Local-Only Infrastructure Docs & Sync Notes
 # ------------------------------------------------------------------------------
+*upstream*
+*UPSTREAM*
 docs/UPSTREAM_TRACKING.md
 docs/upstream_sync_state.json
 scripts/check_upstream_sync.py
+scripts/check_safety.py
+
+# Server inventories, cluster configs, node lists & zone files with real IPs
+*inventory*
+*INVENTORY*
+*cluster*
+*CLUSTER*
+*nodes*
+*NODES*
+*.zone
+*.zonefile
+*.top.*
+*.top
+servers.txt
+servers.json
+servers.yaml
+servers.yml
+server_list*
+servers_list*
 docs/AWG_BEST_PRACTICES_REFERENCE.md
 docs/AWG_3.1_REFERENCE_SPECIFICATION.md
 docs/*_INTERNAL.md

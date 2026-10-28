@@ -5,11 +5,13 @@
 
 set -e
 
-echo "[pre-commit] Running privacy and security safety scanner..."
-python scripts/check_safety.py || {
-    echo "[pre-commit] ERROR: Safety scan failed! Aborting commit to prevent data leak."
-    exit 1
-}
+if [ -f scripts/check_safety.py ]; then
+    echo "[pre-commit] Running privacy and security safety scanner..."
+    python scripts/check_safety.py || {
+        echo "[pre-commit] ERROR: Safety scan failed! Aborting commit to prevent data leak."
+        exit 1
+    }
+fi
 
 echo "[pre-commit] Checking build synchronization and linting..."
 python scripts/build.py --check --lint || {

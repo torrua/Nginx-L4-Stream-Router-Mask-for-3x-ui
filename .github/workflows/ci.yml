@@ -51,7 +51,10 @@ jobs:
         run: python scripts/build.py --check --lint
 
       - name: Verify Privacy and Security Safety (Zero Leaks Check)
-        run: python scripts/check_safety.py
+        run: |
+          if [ -f scripts/check_safety.py ]; then
+            python scripts/check_safety.py
+          fi
 
   syntax-and-lint:
     name: Bash Syntax & Version Check

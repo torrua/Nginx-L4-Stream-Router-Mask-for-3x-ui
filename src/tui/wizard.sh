@@ -2385,7 +2385,7 @@ if is_true "${ENABLE_WEB_STACK:-y}"; then
 
             local_dns_ok=0
             if [ -z "$resolved_ip" ]; then
-                warn "Домен $dom не разрешается в IP-адрес. Проверьте DNS A-запись."
+                warn "Не удаётся определить IP-адрес для домена $dom. Проверьте DNS A-запись."
             elif [ "$resolved_ip" != "$WAN_IP" ]; then
                 warn "Несовпадение IP: $dom указывает на $resolved_ip, IP сервера: $WAN_IP."
             else

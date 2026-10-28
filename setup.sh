@@ -22665,11 +22665,10 @@ EOF_CLEAN_JSON
             fi
         fi
 
-        # Возобновление/перезапуск службы 3X-UI
-        if [ "${WAS_ACTIVE:-0}" -eq 1 ] || svc_is_active x-ui 2>/dev/null || (command -v systemctl >/dev/null 2>&1 && systemctl is-enabled --quiet x-ui 2>/dev/null); then
-            log "Перезапуск службы 3X-UI..."
-            (svc_restart x-ui || svc_start x-ui || systemctl restart x-ui) && ok "Служба 3X-UI успешно перезапущена." || warn "Не удалось перезапустить службу x-ui."
-        fi
+        # Активация службы 3X-UI
+        log "Активация службы 3X-UI..."
+        (svc_restart x-ui 2>/dev/null || svc_start x-ui 2>/dev/null || systemctl restart x-ui 2>/dev/null || rc-service x-ui restart 2>/dev/null || rc-service x-ui start 2>/dev/null) && ok "Служба 3X-UI успешно активирована." || warn "Не удалось активировать службу x-ui."
+        sleep 2
 
         # Проверка Nginx на наличие мертвого SNI и мягкий reload
         if command -v nginx >/dev/null 2>&1; then
@@ -26864,7 +26863,7 @@ if is_true "${ENABLE_WEB_STACK:-y}"; then
 
             local_dns_ok=0
             if [ -z "$resolved_ip" ]; then
-                warn "Домен $dom не разрешается в IP-адрес. Проверьте DNS A-запись."
+                warn "Не удаётся определить IP-адрес для домена $dom. Проверьте DNS A-запись."
             elif [ "$resolved_ip" != "$WAN_IP" ]; then
                 warn "Несовпадение IP: $dom указывает на $resolved_ip, IP сервера: $WAN_IP."
             else

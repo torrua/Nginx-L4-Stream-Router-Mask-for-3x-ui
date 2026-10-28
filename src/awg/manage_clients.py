@@ -239,9 +239,9 @@ SERVER_PORT = os.environ.get("SERVER_PORT") or os.environ.get("AWG_SERVER_PORT")
 CLIENT_MTU = os.environ.get("CLIENT_MTU") or CONF_PARAMS.get("MTU") or "1280"
 
 HEADER_PROTECTION_KEY = (
-    os.environ.get("HEADER_PROTECTION_KEY")
+    CONF_PARAMS.get("HeaderProtectionKey")
+    or os.environ.get("HEADER_PROTECTION_KEY")
     or os.environ.get("AWG_HEADER_PROTECTION_KEY")
-    or CONF_PARAMS.get("HeaderProtectionKey")
     or ""
 )
 
@@ -271,10 +271,10 @@ def resolve_dns(dns_key: str = "default") -> tuple[str, str]:
     parts = [p.strip() for p in target.split(",", 1)]
     return parts[0], (parts[1] if len(parts) > 1 else SECONDARY_DNS)
 
-raw_rt = os.environ.get("AWG_RANDOM_TRAILERS") or CONF_PARAMS.get("RandomTrailers") or "on"
+raw_rt = CONF_PARAMS.get("RandomTrailers") or os.environ.get("AWG_RANDOM_TRAILERS") or "on"
 RANDOM_TRAILERS = "on" if str(raw_rt).strip().lower() in ("on", "true", "1", "yes") else "off"
 
-raw_dc = os.environ.get("AWG_DISABLE_COOKIES") or CONF_PARAMS.get("DisableCookies") or "off"
+raw_dc = CONF_PARAMS.get("DisableCookies") or os.environ.get("AWG_DISABLE_COOKIES") or "off"
 DISABLE_COOKIES = "on" if str(raw_dc).strip().lower() in ("on", "true", "1", "yes") else "off"
 
 def_jc = CONF_PARAMS.get("Jc")
@@ -312,8 +312,12 @@ REKEY_TIMEOUT = os.environ.get("AWG_REKEY_TIMEOUT") or CONF_PARAMS.get("RekeyTim
 REJECT_AFTER_TIME = os.environ.get("AWG_REJECT_AFTER_TIME") or CONF_PARAMS.get("RejectAfterTime", "")
 KEEPALIVE_TIMEOUT = os.environ.get("AWG_KEEPALIVE_TIMEOUT") or CONF_PARAMS.get("KeepaliveTimeout", "")
 MAX_HANDSHAKE_ATTEMPTS = os.environ.get("AWG_MAX_HANDSHAKE_ATTEMPTS") or CONF_PARAMS.get("MaxHandshakeAttempts", "")
-PERSISTENT_KEEPALIVE = os.environ.get("AWG_PERSISTENT_KEEPALIVE") or CONF_PARAMS.get("PersistentKeepalive", "15-25")
-ALLOWED_IPS = os.environ.get("AWG_ALLOWED_IPS", "0.0.0.0/0")
+raw_ka = os.environ.get("AWG_PERSISTENT_KEEPALIVE") or CONF_PARAMS.get("PersistentKeepalive", "15-25")
+if "-" in str(raw_ka) or not str(raw_ka).strip().isdigit():
+    PERSISTENT_KEEPALIVE = "25"
+else:
+    PERSISTENT_KEEPALIVE = str(raw_ka).strip()
+ALLOWED_IPS = os.environ.get("AWG_ALLOWED_IPS", "0.0.0.0/0, ::/0")
 CPA = os.environ.get("AWG_CPA") or os.environ.get("AWG_CONTENT_PADDING_ADDITION") or CONF_PARAMS.get("ContentPaddingAddition") or CONF_PARAMS.get("CPA", "")
 
 def ensure_backend_networking():
@@ -562,6 +566,8 @@ PersistentKeepalive = {PERSISTENT_KEEPALIVE}
         m_ka = re.search(r"^\s*PersistentKeepalive\s*=\s*([0-9\-]+)", internal_config, re.MULTILINE | re.IGNORECASE)
         if m_ka:
             cur_keepalive = m_ka.group(1).strip()
+            if "-" in cur_keepalive or not cur_keepalive.isdigit():
+                cur_keepalive = "25"
 
         m_al = re.search(r"^\s*AllowedIPs\s*=\s*(.+)$", internal_config, re.MULTILINE | re.IGNORECASE)
         if m_al:

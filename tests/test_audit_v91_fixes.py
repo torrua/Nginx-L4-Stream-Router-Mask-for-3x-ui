@@ -451,6 +451,29 @@ do_restore_rollback "{rb_dir.as_posix()}"
         # 3. Node token scope node-admin
         self.assertIn('("scope", "node-admin")', node_token_py)
 
+    def test_14_awg_31_maximum_compatibility_generation(self):
+        """[P1] Verify AWG 3.1 client configs prioritize awg0.conf params, normalize keepalive to int, and default dual-stack."""
+        manage_clients_py = (ROOT_DIR / "src" / "awg" / "manage_clients.py").read_text(encoding="utf-8")
+
+        # 1. RandomTrailers and DisableCookies prioritize CONF_PARAMS over ambient env vars
+        self.assertIn('raw_rt = CONF_PARAMS.get("RandomTrailers") or os.environ.get("AWG_RANDOM_TRAILERS") or "on"', manage_clients_py)
+        self.assertIn('raw_dc = CONF_PARAMS.get("DisableCookies") or os.environ.get("AWG_DISABLE_COOKIES") or "off"', manage_clients_py)
+
+        # 2. HeaderProtectionKey prioritizes CONF_PARAMS
+        self.assertIn('CONF_PARAMS.get("HeaderProtectionKey")', manage_clients_py)
+
+        # 3. PersistentKeepalive normalized to integer
+        self.assertIn('if "-" in str(raw_ka) or not str(raw_ka).strip().isdigit():', manage_clients_py)
+        self.assertIn('PERSISTENT_KEEPALIVE = "25"', manage_clients_py)
+
+        # 4. AllowedIPs defaults to dual-stack IPv4/IPv6
+        self.assertIn('ALLOWED_IPS = os.environ.get("AWG_ALLOWED_IPS", "0.0.0.0/0, ::/0")', manage_clients_py)
+
+        # 5. Container amnezia-awg2 and format_version 1
+        self.assertIn('"container": container_id', manage_clients_py)
+        self.assertIn('"amnezia-awg2"', manage_clients_py)
+        self.assertIn('"format_version": 1', manage_clients_py)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -176,6 +176,8 @@ else
                     ENABLE_AWG_V2=""
                     ENABLE_AGH=""
                     ENABLE_NODE_TOKEN=""
+                    NODE_TOKEN_NAME=""
+                    NODE_TOKEN_SCOPE=""
                     ENABLE_WARP=""
                     AUTO_SETUP_3XUI=""
                     STEAL_DOMAINS=()
@@ -624,9 +626,11 @@ EOF_REALITY_SCANNER
                 fi
                 NODE_TOKEN_NAME="$def_token_name"
             fi
+            NODE_TOKEN_SCOPE="${NODE_TOKEN_SCOPE:-node-sync}"
         else
             ENABLE_NODE_TOKEN="n"
             NODE_TOKEN_NAME=""
+            NODE_TOKEN_SCOPE=""
         fi
         if [[ "${ENABLE_WARP,,}" == "y" || "${ENABLE_WARP:-}" == "1" ]]; then
             ENABLE_WARP="y"
@@ -1867,18 +1871,30 @@ EOF_PARSE_PROBE
                 fi
                 if [[ "${EXPERT_MODE:-0}" == "1" ]] && declare -F prompt_default >/dev/null; then
                     prompt_default "  Имя API-токена ноды" "${NODE_TOKEN_NAME:-$def_token_name}" NODE_TOKEN_NAME || return $?
+                    if declare -F prompt_select >/dev/null; then
+                        local scope_keys=("node-sync" "admin")
+                        local scope_labels=("Синхронизация узла (Node Sync - рекомендуется)" "Администратор (Admin - полный доступ)")
+                        prompt_select "  Область доступа (тип) API-ключа ноды" NODE_TOKEN_SCOPE "${NODE_TOKEN_SCOPE:-node-sync}" scope_keys scope_labels || return $?
+                    else
+                        NODE_TOKEN_SCOPE="${NODE_TOKEN_SCOPE:-node-sync}"
+                    fi
                 else
                     NODE_TOKEN_NAME="${NODE_TOKEN_NAME:-$def_token_name}"
+                    NODE_TOKEN_SCOPE="${NODE_TOKEN_SCOPE:-node-sync}"
                 fi
-                ok "API-токен ноды будет создан с именем: ${WHITE}$NODE_TOKEN_NAME${NC}"
+                local scope_display="Синхронизация узла"
+                [ "${NODE_TOKEN_SCOPE:-node-sync}" = "admin" ] && scope_display="Администратор"
+                ok "API-токен ноды будет создан с именем: ${WHITE}$NODE_TOKEN_NAME${NC} (область доступа: ${CYAN}$scope_display${NC})"
             else
                 ENABLE_NODE_TOKEN="n"
                 NODE_TOKEN_NAME=""
+                NODE_TOKEN_SCOPE=""
             fi
         else
             AUTO_SETUP_3XUI="n"
             ENABLE_NODE_TOKEN="n"
             NODE_TOKEN_NAME=""
+            NODE_TOKEN_SCOPE=""
         fi
         return 0
     }
@@ -1987,13 +2003,22 @@ EOF_PARSE_PROBE
                 k_choice="${k_choice:-1}"
                 case "$k_choice" in
                     1)
-                        echo -e "  ${CYAN}Вставьте ваш публичный ключ (начинается с ssh-ed25519, ssh-rsa или ecdsa):${NC}"
+                        echo -e "  ${CYAN}Вставьте ваш публичный ключ (начинается с ssh-ed25519, ssh-rsa или ecdsa) или укажите путь к .pub файлу:${NC}"
                         local pub_in=""
                         read -r pub_in </dev/tty 2>/dev/null || read -r pub_in 2>/dev/null || true
                         pub_in=$(echo "$pub_in" | tr -d '\r\n')
                         if [ -n "$pub_in" ]; then
-                            add_authorized_key "$pub_in" "root"
-                            SSH_PUBLIC_KEY="$pub_in"
+                            local resolved_key="$pub_in"
+                            local check_f="$pub_in"
+                            [[ "$check_f" == ~* ]] && check_f="${check_f/#\~/$HOME}"
+                            if [ -f "$check_f" ] && [ -r "$check_f" ]; then
+                                local f_extracted
+                                f_extracted=$(grep -m 1 -E '(^|[[:space:]])(ssh-rsa|ssh-ed25519|ecdsa-sha2-[a-z0-9]+|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-[a-z0-9]+@openssh\.com|ssh-dss)' "$check_f" 2>/dev/null || cat "$check_f" 2>/dev/null)
+                                [ -n "$f_extracted" ] && resolved_key="$f_extracted"
+                            fi
+                            resolved_key=$(echo "$resolved_key" | sed -E 's/^["'"'"'](.*)["'"'"']$/\1/')
+                            add_authorized_key "$resolved_key" "root"
+                            SSH_PUBLIC_KEY="$resolved_key"
                         else
                             warn "Публичный ключ не введен, пропуск."
                         fi
@@ -2176,7 +2201,9 @@ EOF_PARSE_PROBE
         local auto_3xui_str="${GREEN}Да${NC}"
         is_true "${AUTO_SETUP_3XUI:-y}" || auto_3xui_str="${RED}Нет${NC}"
         if is_true "${ENABLE_NODE_TOKEN:-n}"; then
-            auto_3xui_str="${auto_3xui_str} ${DIM}(+ Node Token: ${WHITE}${NODE_TOKEN_NAME}${DIM})${NC}"
+            local scope_display="Синхронизация узла"
+            [ "${NODE_TOKEN_SCOPE:-node-sync}" = "admin" ] && scope_display="Администратор"
+            auto_3xui_str="${auto_3xui_str} ${DIM}(+ Node Token: ${WHITE}${NODE_TOKEN_NAME}${DIM} [${scope_display}])${NC}"
         fi
         echo -e "  ${CYAN}[8]${NC} ${BOLD}3X-UI автонастройка:${NC}  $auto_3xui_str"
 

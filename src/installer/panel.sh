@@ -49,6 +49,7 @@ install_step_panel() {
             export UPDATE_XRAY_CORE="${UPDATE_XRAY_CORE:-y}"
             export ENABLE_NODE_TOKEN
             export NODE_TOKEN_NAME
+            export NODE_TOKEN_SCOPE
             export NODE_ENV_FILE
             export AWG_PRIMARY_DNS
             export AWG_SECONDARY_DNS

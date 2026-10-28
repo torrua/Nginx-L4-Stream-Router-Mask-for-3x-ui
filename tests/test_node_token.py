@@ -126,7 +126,7 @@ printf 'RESULT=%s' "$NODE_TOKEN"
         self.assertRegex(token, r"^[0-9a-f]{64}$")
         with closing(sqlite3.connect(self.db)) as conn, conn:
             stored = conn.execute("SELECT token,enabled,scope FROM api_tokens WHERE name=?", ("Server/O'Brien",)).fetchone()
-        self.assertEqual(stored, (hashlib.sha256(token.encode()).hexdigest(), 1, "node-admin"))
+        self.assertEqual(stored, (hashlib.sha256(token.encode()).hexdigest(), 1, "node-sync"))
         self.assertIn(token, self.config.read_text(encoding="utf-8"))
         self.assertIn(token, (self.work / "node.env").read_text(encoding="utf-8"))
         if os.name != "nt":
@@ -152,6 +152,67 @@ printf 'RESULT=%s' "$NODE_TOKEN"
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("RESULT=" + TOKEN, result.stdout)
         self.assertIn(TOKEN, self.config.read_text(encoding="utf-8"))
+
+    def test_cli_prefers_node_sync_by_default(self):
+        self.create_table(TOKEN)
+        result = self.shell(r'''
+ENABLE_NODE_TOKEN=y; NODE_TOKEN_NAME=Server-Node; NODE_TOKEN=""
+fake_cli() {
+    if [[ "$*" == *"-tokenScope node-sync"* ]]; then
+        echo 'apiToken:' "$TOKEN_FIXTURE"
+        return 0
+    fi
+    echo "Unexpected CLI args: $*" >&2
+    return 1
+}
+XUI_BIN=fake_cli
+ensure_node_token
+printf 'RESULT=%s' "$NODE_TOKEN"
+''', self.generation())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("RESULT=" + TOKEN, result.stdout)
+
+    def test_cli_falls_back_to_admin_if_node_sync_unsupported(self):
+        self.create_table(TOKEN)
+        result = self.shell(r'''
+ENABLE_NODE_TOKEN=y; NODE_TOKEN_NAME=Server-Node; NODE_TOKEN=""
+fake_cli() {
+    # Emulate older 3X-UI that rejects node-sync scope
+    if [[ "$*" == *"-tokenScope node-sync"* ]]; then
+        echo "Error: invalid scope node-sync" >&2
+        return 1
+    fi
+    if [[ "$*" == *"-tokenScope admin"* ]]; then
+        echo 'apiToken:' "$TOKEN_FIXTURE"
+        return 0
+    fi
+    return 1
+}
+XUI_BIN=fake_cli
+ensure_node_token
+printf 'RESULT=%s' "$NODE_TOKEN"
+''', self.generation())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("RESULT=" + TOKEN, result.stdout)
+
+    def test_explicit_admin_scope_is_honored(self):
+        self.create_table(TOKEN)
+        result = self.shell(r'''
+ENABLE_NODE_TOKEN=y; NODE_TOKEN_NAME=Server-Node; NODE_TOKEN_SCOPE=admin; NODE_TOKEN=""
+fake_cli() {
+    if [[ "$*" == *"-tokenScope admin"* ]]; then
+        echo 'apiToken:' "$TOKEN_FIXTURE"
+        return 0
+    fi
+    echo "Expected admin scope but got: $*" >&2
+    return 1
+}
+XUI_BIN=fake_cli
+ensure_node_token
+printf 'RESULT=%s' "$NODE_TOKEN"
+''', self.generation())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("RESULT=" + TOKEN, result.stdout)
 
     def test_expired_key_is_replaced_and_expiry_is_cleared(self):
         self.create_table(TOKEN, expires=1)

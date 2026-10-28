@@ -50,7 +50,7 @@ chmod 600 /root/.ssh/authorized_keys
 # Если cloud-init заблокировал root оберткой command="echo Please login as...",
 # аккуратно снимаем ограничение, сохраняя сам публичный ключ:
 if grep -qE 'command=".*Please login as' /root/.ssh/authorized_keys 2>/dev/null; then
-    sed -i -E 's/^(no-[^ ]+ +)*command="[^"]*" +//g' /root/.ssh/authorized_keys
+    sed -i -E 's/^.*(ssh-[a-z0-9]+|ecdsa-[a-z0-9-]+)/\1/' /root/.ssh/authorized_keys
     echo "  -> Снята cloud-init блокировка прямого входа root в authorized_keys."
 fi
 
@@ -141,11 +141,16 @@ PACKAGES_TO_PURGE=(
     ubuntu-kernel-accessories
 )
 
+INSTALLED_PURGE=()
 for pkg in "${PACKAGES_TO_PURGE[@]}"; do
-    if dpkg -l | grep -qE "^ii\s+${pkg}\b"; then
-        apt-get purge -y "$pkg" 2>/dev/null || true
+    if dpkg -l | grep -qE "^ii\s+${pkg}\b" 2>/dev/null; then
+        INSTALLED_PURGE+=("$pkg")
     fi
 done
+
+if [ ${#INSTALLED_PURGE[@]} -gt 0 ]; then
+    apt-get purge -y "${INSTALLED_PURGE[@]}" 2>/dev/null || true
+fi
 
 echo "=========================================================="
 echo " [4/9] Удаление неиспользуемых заголовочных файлов ядра (headers)"

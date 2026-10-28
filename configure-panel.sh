@@ -483,6 +483,12 @@ normalize_node_token_config() {
     local enabled="${CLI_ENABLE_NODE_TOKEN:-${ENABLE_NODE_TOKEN:-y}}"
     NODE_TOKEN="${NODE_TOKEN:-}"
     NODE_TOKEN_NAME="${CLI_NODE_TOKEN_NAME:-${NODE_TOKEN_NAME:-}}"
+    NODE_TOKEN_SCOPE="${CLI_NODE_TOKEN_SCOPE:-${NODE_TOKEN_SCOPE:-node-sync}}"
+    case "${NODE_TOKEN_SCOPE,,}" in
+        admin) NODE_TOKEN_SCOPE="admin" ;;
+        node-admin) NODE_TOKEN_SCOPE="node-admin" ;;
+        *) NODE_TOKEN_SCOPE="node-sync" ;;
+    esac
     case "${enabled,,}" in y|1|true) ENABLE_NODE_TOKEN=y ;; *) ENABLE_NODE_TOKEN=n; return 0 ;; esac
     case "${AUTO_SETUP_3XUI:-y}" in n|0|false) ENABLE_NODE_TOKEN=n; return 0 ;; esac
     if [ -z "$NODE_TOKEN_NAME" ]; then
@@ -512,7 +518,7 @@ load_node_token_result() {
     local double_quote='^"(.*)"$' single_quote="^'(.*)'\$"
     while IFS= read -r line || [ -n "$line" ]; do
         line="${line%$'\r'}"
-        [[ "$line" =~ ^(NODE_TOKEN_NAME|NODE_TOKEN)=(.*)$ ]] || continue
+        [[ "$line" =~ ^(NODE_TOKEN_NAME|NODE_TOKEN|NODE_TOKEN_SCOPE)=(.*)$ ]] || continue
         key="${BASH_REMATCH[1]}"; value="${BASH_REMATCH[2]}"
         if [[ "$value" =~ $double_quote ]] || [[ "$value" =~ $single_quote ]]; then value="${BASH_REMATCH[1]}"; fi
         printf -v "$key" '%s' "$value"
@@ -539,7 +545,7 @@ def connect(path):
     return sqlite3.connect(Path(path).resolve().as_uri() + "?mode=rw", uri=True, timeout=10)
 
 
-def verify(path, name, token):
+def verify(path, name, token, required_scope=None):
     if not token:
         return False
     try:
@@ -554,21 +560,31 @@ def verify(path, name, token):
                 expiry //= 1000
             if expiry and expiry <= int(time.time()):
                 return False
-        if "scope" in row.keys() and row["scope"] not in ("admin", "node-admin", "node-sync"):
-            return False
+        if "scope" in row.keys():
+            if row["scope"] not in ("admin", "node-admin", "node-sync"):
+                return False
+            if required_scope and row["scope"] != required_scope:
+                return False
         return hmac.compare_digest(hashlib.sha256(token.encode()).hexdigest(), row["token"])
     except (sqlite3.Error, ValueError, TypeError):
         return False
 
 
-def create(path, name):
+def create(path, name, scope="node-sync"):
     with closing(connect(path)) as conn, conn:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(api_tokens)")}
         if not {"name", "token", "enabled"} <= columns:
             raise ValueError("Unsupported 3X-UI API-token schema")
         token = secrets.token_hex(32)
         values = {"name": name, "token": hashlib.sha256(token.encode()).hexdigest(), "enabled": 1}
-        for column, value in (("scope", "node-admin"), ("created_at", int(time.time())), ("expires_at", 0)):
+        target_scope = scope if scope else "node-sync"
+        scope_map = {
+            "node-sync": ("scope", "node-sync"),
+            "node-admin": ("scope", "node-admin"),
+            "admin": ("scope", "admin"),
+        }
+        scope_entry = scope_map.get(target_scope, ("scope", target_scope))
+        for column, value in (scope_entry, ("created_at", int(time.time())), ("expires_at", 0)):
             if column in columns:
                 values[column] = value
         if conn.execute("SELECT 1 FROM api_tokens WHERE name=?", (name,)).fetchone():
@@ -594,8 +610,10 @@ def atomic_write(path, text):
             os.unlink(temporary)
 
 
-def persist(runtime_path, config_path, name, token):
+def persist(runtime_path, config_path, name, token, scope=None):
     values = {"ENABLE_NODE_TOKEN": "y", "NODE_TOKEN_NAME": name, "NODE_TOKEN": token}
+    if scope:
+        values["NODE_TOKEN_SCOPE"] = scope
     if any("\n" in value or "\r" in value for value in values.values()):
         raise ValueError("Node-token values must be single-line strings")
     # These files are read as literal KEY=value data, never evaluated as shell code.
@@ -632,6 +650,13 @@ EOF_NODE_TOKEN_PY
 ensure_node_token() {
     case "${ENABLE_NODE_TOKEN:-y}" in n|0|false) return 0 ;; esac
     NODE_TOKEN="${NODE_TOKEN:-}"
+    local target_scope="${NODE_TOKEN_SCOPE:-node-sync}"
+    case "${target_scope,,}" in
+        admin) target_scope="admin" ;;
+        node-admin) target_scope="node-admin" ;;
+        *) target_scope="node-sync" ;;
+    esac
+
     if node_token_operation verify "$DB_PATH" "$NODE_TOKEN_NAME" "$NODE_TOKEN"; then
         ok "Действующий API-ключ ноды '$NODE_TOKEN_NAME' сохранён."
     else
@@ -639,10 +664,18 @@ ensure_node_token() {
         local token_out="" attempt
         local -a arguments=()
         if [ -n "${XUI_BIN:-}" ]; then
-            for attempt in 1 2; do
+            for attempt in 1 2 3; do
                 case "$attempt" in
-                    1) arguments=(-tokenName "$NODE_TOKEN_NAME" -tokenScope admin) ;;
-                    2) arguments=(-tokenName "$NODE_TOKEN_NAME") ;;
+                    1) arguments=(-tokenName "$NODE_TOKEN_NAME" -tokenScope "$target_scope") ;;
+                    2)
+                        # Fallback if 3X-UI version does not support node-sync for -tokenScope
+                        if [ "$target_scope" != "admin" ]; then
+                            arguments=(-tokenName "$NODE_TOKEN_NAME" -tokenScope admin)
+                        else
+                            arguments=(-tokenName "$NODE_TOKEN_NAME")
+                        fi
+                        ;;
+                    3) arguments=(-tokenName "$NODE_TOKEN_NAME") ;;
                 esac
                 token_out=$("$XUI_BIN" setting -getApiToken "${arguments[@]}" 2>&1 || true)
                 NODE_TOKEN=$(printf '%s\n' "$token_out" | awk '$1 == "apiToken:" {gsub(/\r/, "", $2); print $2; exit}')
@@ -651,14 +684,16 @@ ensure_node_token() {
         fi
         # Also handles CLI versions without named-token flags, without renaming other tokens.
         if ! node_token_operation verify "$DB_PATH" "$NODE_TOKEN_NAME" "$NODE_TOKEN"; then
-            NODE_TOKEN=$(node_token_operation create "$DB_PATH" "$NODE_TOKEN_NAME") || die "Не удалось создать API-ключ ноды 3X-UI."
+            NODE_TOKEN=$(node_token_operation create "$DB_PATH" "$NODE_TOKEN_NAME" "$target_scope") || die "Не удалось создать API-ключ ноды 3X-UI."
         fi
         [ -n "$NODE_TOKEN" ] || die "3X-UI не вернул API-ключ ноды."
-        ok "API-ключ ноды '$NODE_TOKEN_NAME' создан."
+        local scope_title="Синхронизация узла"
+        [ "$target_scope" = "admin" ] && scope_title="Администратор"
+        ok "API-ключ ноды '$NODE_TOKEN_NAME' создан (область доступа: $scope_title)."
     fi
     local runtime_file
     runtime_file=$(node_token_runtime_file)
-    node_token_operation persist "$runtime_file" "${CONFIG_FILE:-}" "$NODE_TOKEN_NAME" "$NODE_TOKEN" || die "Не удалось сохранить API-ключ ноды."
+    node_token_operation persist "$runtime_file" "${CONFIG_FILE:-}" "$NODE_TOKEN_NAME" "$NODE_TOKEN" "$target_scope" || die "Не удалось сохранить API-ключ ноды."
 }
 # SQLite WAL-safe live database backup and verification
 get_sqlite_backup_python() {
@@ -2110,6 +2145,12 @@ normalize_node_token_config() {
     local enabled="${CLI_ENABLE_NODE_TOKEN:-${ENABLE_NODE_TOKEN:-y}}"
     NODE_TOKEN="${NODE_TOKEN:-}"
     NODE_TOKEN_NAME="${CLI_NODE_TOKEN_NAME:-${NODE_TOKEN_NAME:-}}"
+    NODE_TOKEN_SCOPE="${CLI_NODE_TOKEN_SCOPE:-${NODE_TOKEN_SCOPE:-node-sync}}"
+    case "${NODE_TOKEN_SCOPE,,}" in
+        admin) NODE_TOKEN_SCOPE="admin" ;;
+        node-admin) NODE_TOKEN_SCOPE="node-admin" ;;
+        *) NODE_TOKEN_SCOPE="node-sync" ;;
+    esac
     case "${enabled,,}" in y|1|true) ENABLE_NODE_TOKEN=y ;; *) ENABLE_NODE_TOKEN=n; return 0 ;; esac
     case "${AUTO_SETUP_3XUI:-y}" in n|0|false) ENABLE_NODE_TOKEN=n; return 0 ;; esac
     if [ -z "$NODE_TOKEN_NAME" ]; then
@@ -2139,7 +2180,7 @@ load_node_token_result() {
     local double_quote='^"(.*)"$' single_quote="^'(.*)'\$"
     while IFS= read -r line || [ -n "$line" ]; do
         line="${line%$'\r'}"
-        [[ "$line" =~ ^(NODE_TOKEN_NAME|NODE_TOKEN)=(.*)$ ]] || continue
+        [[ "$line" =~ ^(NODE_TOKEN_NAME|NODE_TOKEN|NODE_TOKEN_SCOPE)=(.*)$ ]] || continue
         key="${BASH_REMATCH[1]}"; value="${BASH_REMATCH[2]}"
         if [[ "$value" =~ $double_quote ]] || [[ "$value" =~ $single_quote ]]; then value="${BASH_REMATCH[1]}"; fi
         printf -v "$key" '%s' "$value"
@@ -2166,7 +2207,7 @@ def connect(path):
     return sqlite3.connect(Path(path).resolve().as_uri() + "?mode=rw", uri=True, timeout=10)
 
 
-def verify(path, name, token):
+def verify(path, name, token, required_scope=None):
     if not token:
         return False
     try:
@@ -2181,21 +2222,31 @@ def verify(path, name, token):
                 expiry //= 1000
             if expiry and expiry <= int(time.time()):
                 return False
-        if "scope" in row.keys() and row["scope"] not in ("admin", "node-admin", "node-sync"):
-            return False
+        if "scope" in row.keys():
+            if row["scope"] not in ("admin", "node-admin", "node-sync"):
+                return False
+            if required_scope and row["scope"] != required_scope:
+                return False
         return hmac.compare_digest(hashlib.sha256(token.encode()).hexdigest(), row["token"])
     except (sqlite3.Error, ValueError, TypeError):
         return False
 
 
-def create(path, name):
+def create(path, name, scope="node-sync"):
     with closing(connect(path)) as conn, conn:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(api_tokens)")}
         if not {"name", "token", "enabled"} <= columns:
             raise ValueError("Unsupported 3X-UI API-token schema")
         token = secrets.token_hex(32)
         values = {"name": name, "token": hashlib.sha256(token.encode()).hexdigest(), "enabled": 1}
-        for column, value in (("scope", "node-admin"), ("created_at", int(time.time())), ("expires_at", 0)):
+        target_scope = scope if scope else "node-sync"
+        scope_map = {
+            "node-sync": ("scope", "node-sync"),
+            "node-admin": ("scope", "node-admin"),
+            "admin": ("scope", "admin"),
+        }
+        scope_entry = scope_map.get(target_scope, ("scope", target_scope))
+        for column, value in (scope_entry, ("created_at", int(time.time())), ("expires_at", 0)):
             if column in columns:
                 values[column] = value
         if conn.execute("SELECT 1 FROM api_tokens WHERE name=?", (name,)).fetchone():
@@ -2221,8 +2272,10 @@ def atomic_write(path, text):
             os.unlink(temporary)
 
 
-def persist(runtime_path, config_path, name, token):
+def persist(runtime_path, config_path, name, token, scope=None):
     values = {"ENABLE_NODE_TOKEN": "y", "NODE_TOKEN_NAME": name, "NODE_TOKEN": token}
+    if scope:
+        values["NODE_TOKEN_SCOPE"] = scope
     if any("\n" in value or "\r" in value for value in values.values()):
         raise ValueError("Node-token values must be single-line strings")
     # These files are read as literal KEY=value data, never evaluated as shell code.
@@ -2259,6 +2312,13 @@ EOF_NODE_TOKEN_PY
 ensure_node_token() {
     case "${ENABLE_NODE_TOKEN:-y}" in n|0|false) return 0 ;; esac
     NODE_TOKEN="${NODE_TOKEN:-}"
+    local target_scope="${NODE_TOKEN_SCOPE:-node-sync}"
+    case "${target_scope,,}" in
+        admin) target_scope="admin" ;;
+        node-admin) target_scope="node-admin" ;;
+        *) target_scope="node-sync" ;;
+    esac
+
     if node_token_operation verify "$DB_PATH" "$NODE_TOKEN_NAME" "$NODE_TOKEN"; then
         ok "Действующий API-ключ ноды '$NODE_TOKEN_NAME' сохранён."
     else
@@ -2266,10 +2326,18 @@ ensure_node_token() {
         local token_out="" attempt
         local -a arguments=()
         if [ -n "${XUI_BIN:-}" ]; then
-            for attempt in 1 2; do
+            for attempt in 1 2 3; do
                 case "$attempt" in
-                    1) arguments=(-tokenName "$NODE_TOKEN_NAME" -tokenScope admin) ;;
-                    2) arguments=(-tokenName "$NODE_TOKEN_NAME") ;;
+                    1) arguments=(-tokenName "$NODE_TOKEN_NAME" -tokenScope "$target_scope") ;;
+                    2)
+                        # Fallback if 3X-UI version does not support node-sync for -tokenScope
+                        if [ "$target_scope" != "admin" ]; then
+                            arguments=(-tokenName "$NODE_TOKEN_NAME" -tokenScope admin)
+                        else
+                            arguments=(-tokenName "$NODE_TOKEN_NAME")
+                        fi
+                        ;;
+                    3) arguments=(-tokenName "$NODE_TOKEN_NAME") ;;
                 esac
                 token_out=$("$XUI_BIN" setting -getApiToken "${arguments[@]}" 2>&1 || true)
                 NODE_TOKEN=$(printf '%s\n' "$token_out" | awk '$1 == "apiToken:" {gsub(/\r/, "", $2); print $2; exit}')
@@ -2278,14 +2346,16 @@ ensure_node_token() {
         fi
         # Also handles CLI versions without named-token flags, without renaming other tokens.
         if ! node_token_operation verify "$DB_PATH" "$NODE_TOKEN_NAME" "$NODE_TOKEN"; then
-            NODE_TOKEN=$(node_token_operation create "$DB_PATH" "$NODE_TOKEN_NAME") || die "Не удалось создать API-ключ ноды 3X-UI."
+            NODE_TOKEN=$(node_token_operation create "$DB_PATH" "$NODE_TOKEN_NAME" "$target_scope") || die "Не удалось создать API-ключ ноды 3X-UI."
         fi
         [ -n "$NODE_TOKEN" ] || die "3X-UI не вернул API-ключ ноды."
-        ok "API-ключ ноды '$NODE_TOKEN_NAME' создан."
+        local scope_title="Синхронизация узла"
+        [ "$target_scope" = "admin" ] && scope_title="Администратор"
+        ok "API-ключ ноды '$NODE_TOKEN_NAME' создан (область доступа: $scope_title)."
     fi
     local runtime_file
     runtime_file=$(node_token_runtime_file)
-    node_token_operation persist "$runtime_file" "${CONFIG_FILE:-}" "$NODE_TOKEN_NAME" "$NODE_TOKEN" || die "Не удалось сохранить API-ключ ноды."
+    node_token_operation persist "$runtime_file" "${CONFIG_FILE:-}" "$NODE_TOKEN_NAME" "$NODE_TOKEN" "$target_scope" || die "Не удалось сохранить API-ключ ноды."
 }
 # SQLite WAL-safe live database backup and verification
 get_sqlite_backup_python() {
@@ -3454,6 +3524,7 @@ configure_3xui_panel() {
   --node-token            Создать API-токен для подключения сервера как узла (3X-UI Node)
   --no-node-token         Не создавать API-токен для подключения сервера как узла
   --node-token-name <NAME> Название API-токена ноды (по умолчанию: <SERVER_PREFIX>-Node)
+  --node-token-scope <SCOPE> Тип API-токена ноды: node-sync (по умолчанию) или admin
   -y, --yes               Неинтерактивное выполнение (без подтверждений)
   -h, --help              Показать эту справку и выйти
 
@@ -3476,6 +3547,7 @@ EOF_HELP
     local CLI_WARP_KEY=""
     local CLI_ENABLE_NODE_TOKEN=""
     local CLI_NODE_TOKEN_NAME=""
+    local CLI_NODE_TOKEN_SCOPE=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -3532,6 +3604,11 @@ EOF_HELP
                 CLI_NODE_TOKEN_NAME="$2"
                 shift 2
                 ;;
+            --node-token-scope)
+                [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: тип (scope) токена ноды."
+                CLI_NODE_TOKEN_SCOPE="$2"
+                shift 2
+                ;;
             -y|--yes)
                 NON_INTERACTIVE=1
                 shift
@@ -3577,6 +3654,8 @@ EOF_HELP
     [ -n "$CLI_WARP_KEY" ] && WARP_LICENSE_KEY="$CLI_WARP_KEY"
     [ -n "$CLI_ENABLE_NODE_TOKEN" ] && ENABLE_NODE_TOKEN="$CLI_ENABLE_NODE_TOKEN"
     [ -n "$CLI_NODE_TOKEN_NAME" ] && NODE_TOKEN_NAME="$CLI_NODE_TOKEN_NAME"
+    [ -n "$CLI_NODE_TOKEN_SCOPE" ] && NODE_TOKEN_SCOPE="$CLI_NODE_TOKEN_SCOPE"
+    NODE_TOKEN_SCOPE="${NODE_TOKEN_SCOPE:-node-sync}"
 
     # Дефолтные значения переменных, если не определены в .env
     PRIMARY_DOMAIN="${PRIMARY_DOMAIN:-yourdomain.online}"

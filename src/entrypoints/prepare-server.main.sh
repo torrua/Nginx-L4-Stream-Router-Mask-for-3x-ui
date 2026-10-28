@@ -162,20 +162,42 @@ setup_ssh_keys() {
             return 0
             ;;
         2)
-            echo "Вставьте ваш публичный ключ (начинается с ssh-rsa или ssh-ed25519):"
+            echo "Вставьте ваш публичный ключ (начинается с ssh-rsa или ssh-ed25519) или укажите путь к .pub файлу:"
             local pub_key=""
             if ! read -r pub_key; then
                 pub_key=""
             fi
 
+            pub_key=$(echo "$pub_key" | tr -d '\r\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^["'"'"']\(.*\)["'"'"']$/\1/')
             if [[ -z "$pub_key" ]]; then
                 echo "Ключ не введен."
                 return 1
             fi
 
+            if [[ "$pub_key" == ~* ]]; then
+                pub_key="${pub_key/#\~/$HOME}"
+            fi
+            if [ -f "$pub_key" ] && [ -r "$pub_key" ]; then
+                local file_key
+                file_key=$(grep -m 1 -E '(^|[[:space:]])(ssh-rsa|ssh-ed25519|ecdsa-sha2-[a-z0-9]+|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-[a-z0-9]+@openssh\.com|ssh-dss)' "$pub_key" 2>/dev/null || cat "$pub_key" 2>/dev/null)
+                if [ -n "$file_key" ]; then
+                    pub_key="$file_key"
+                fi
+            fi
+
             mkdir -p "$user_home/.ssh"
             chmod 700 "$user_home/.ssh" || true
+            if [ -s "$user_home/.ssh/authorized_keys" ]; then
+                local last_c
+                last_c=$(tail -c 1 "$user_home/.ssh/authorized_keys" 2>/dev/null || true)
+                [ -n "$last_c" ] && echo "" >> "$user_home/.ssh/authorized_keys"
+            fi
             echo "$pub_key" >> "$user_home/.ssh/authorized_keys"
+
+            # Снятие блокировки cloud-init при наличии
+            if grep -qE 'command=".*Please login as' "$user_home/.ssh/authorized_keys" 2>/dev/null; then
+                sed -i -E 's/^.*command=.*Please login as.*(ssh-rsa|ssh-ed25519|ecdsa-sha2-[a-z0-9]+|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-[a-z0-9]+@openssh\.com|ssh-dss)/\1/' "$user_home/.ssh/authorized_keys" 2>/dev/null || true
+            fi
 
             chmod 600 "$user_home/.ssh/authorized_keys" || true
             chown -R "$target_user":"$target_user" "$user_home/.ssh" 2>/dev/null || chown -R "$target_user" "$user_home/.ssh" || true
@@ -438,14 +460,33 @@ fi
 #####################################
 KEYS_INSTALLED="false"
 
+check_target_user="${CREATED_USER:-root}"
+check_target_home=$( (getent passwd "$check_target_user" 2>/dev/null || true) | cut -d: -f6 )
+[ -z "$check_target_home" ] && check_target_home="/root"
+check_auth_file="$check_target_home/.ssh/authorized_keys"
+
+if [ -f "$check_auth_file" ] && [ -s "$check_auth_file" ]; then
+    if grep -qE 'command=".*Please login as' "$check_auth_file" 2>/dev/null; then
+        sed -i -E 's/^.*command=.*Please login as.*(ssh-rsa|ssh-ed25519|ecdsa-sha2-[a-z0-9]+|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-[a-z0-9]+@openssh\.com|ssh-dss)/\1/' "$check_auth_file" 2>/dev/null || true
+    fi
+    if grep -qE '(^|[[:space:]])(ssh-rsa|ssh-ed25519|ecdsa-sha2-[a-z0-9]+|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-[a-z0-9]+@openssh\.com|ssh-dss|[a-z0-9._-]+-cert-v[0-9]+@openssh\.com)[[:space:]]+[A-Za-z0-9+/=]+' "$check_auth_file" 2>/dev/null; then
+        KEYS_INSTALLED="true"
+        echo "В системе уже обнаружены авторизованные SSH-ключи для $check_target_user."
+    fi
+fi
+
 if [ -n "$CREATED_USER" ]; then
-    if prompt_yes_no "Настроить SSH ключи для пользователя $CREATED_USER"; then
+    prompt_msg="Настроить SSH ключи для пользователя $CREATED_USER"
+    [ "$KEYS_INSTALLED" = "true" ] && prompt_msg="Добавить дополнительный SSH-ключ для пользователя $CREATED_USER"
+    if prompt_yes_no "$prompt_msg"; then
         if setup_ssh_keys "$CREATED_USER"; then
             KEYS_INSTALLED="true"
         fi
     fi
 else
-    if prompt_yes_no "Настроить SSH ключи для ROOT"; then
+    prompt_msg="Настроить SSH ключи для ROOT"
+    [ "$KEYS_INSTALLED" = "true" ] && prompt_msg="Добавить дополнительный SSH-ключ для ROOT"
+    if prompt_yes_no "$prompt_msg"; then
         if setup_ssh_keys "root"; then
             KEYS_INSTALLED="true"
         fi

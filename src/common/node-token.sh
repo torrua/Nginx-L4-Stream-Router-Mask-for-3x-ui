@@ -2,6 +2,12 @@ normalize_node_token_config() {
     local enabled="${CLI_ENABLE_NODE_TOKEN:-${ENABLE_NODE_TOKEN:-y}}"
     NODE_TOKEN="${NODE_TOKEN:-}"
     NODE_TOKEN_NAME="${CLI_NODE_TOKEN_NAME:-${NODE_TOKEN_NAME:-}}"
+    NODE_TOKEN_SCOPE="${CLI_NODE_TOKEN_SCOPE:-${NODE_TOKEN_SCOPE:-node-sync}}"
+    case "${NODE_TOKEN_SCOPE,,}" in
+        admin) NODE_TOKEN_SCOPE="admin" ;;
+        node-admin) NODE_TOKEN_SCOPE="node-admin" ;;
+        *) NODE_TOKEN_SCOPE="node-sync" ;;
+    esac
     case "${enabled,,}" in y|1|true) ENABLE_NODE_TOKEN=y ;; *) ENABLE_NODE_TOKEN=n; return 0 ;; esac
     case "${AUTO_SETUP_3XUI:-y}" in n|0|false) ENABLE_NODE_TOKEN=n; return 0 ;; esac
     if [ -z "$NODE_TOKEN_NAME" ]; then
@@ -31,7 +37,7 @@ load_node_token_result() {
     local double_quote='^"(.*)"$' single_quote="^'(.*)'\$"
     while IFS= read -r line || [ -n "$line" ]; do
         line="${line%$'\r'}"
-        [[ "$line" =~ ^(NODE_TOKEN_NAME|NODE_TOKEN)=(.*)$ ]] || continue
+        [[ "$line" =~ ^(NODE_TOKEN_NAME|NODE_TOKEN|NODE_TOKEN_SCOPE)=(.*)$ ]] || continue
         key="${BASH_REMATCH[1]}"; value="${BASH_REMATCH[2]}"
         if [[ "$value" =~ $double_quote ]] || [[ "$value" =~ $single_quote ]]; then value="${BASH_REMATCH[1]}"; fi
         printf -v "$key" '%s' "$value"

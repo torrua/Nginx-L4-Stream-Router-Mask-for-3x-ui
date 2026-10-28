@@ -28,7 +28,9 @@ if is_true "${ENABLE_AGH:-n}"; then
     fi
 fi
 if is_true "${ENABLE_NODE_TOKEN:-n}"; then
-    echo -e "  3X-UI Node API Token:        ${GREEN}${NODE_TOKEN:-Не получен}${NC} (${WHITE}${NODE_TOKEN_NAME:-Node}${NC})"
+    node_scope_title="Синхронизация ноды"
+    [ "${NODE_TOKEN_SCOPE:-node-sync}" = "admin" ] && node_scope_title="Администратор"
+    echo -e "  3X-UI Node API Token:        ${GREEN}${NODE_TOKEN:-Не получен}${NC} (${WHITE}${NODE_TOKEN_NAME:-Node}${NC}, ${CYAN}${node_scope_title}${NC})"
 fi
 
 # Сохранение учетных данных в защищенный файл
@@ -61,10 +63,13 @@ URL DoH для роутера:   $([ "${AGH_MODE:-1}" = "2" ] && echo "https://$
 EOF_AGH_CRED
     fi
     if is_true "${ENABLE_NODE_TOKEN:-n}"; then
+        node_scope_title="Синхронизация ноды"
+        [ "${NODE_TOKEN_SCOPE:-node-sync}" = "admin" ] && node_scope_title="Администратор"
         cat << EOF_NODE_CRED >> "$CRED_FILE"
 =====================================================================
 ПОДКЛЮЧЕНИЕ СЕРВЕРА КАК УЗЛА (3X-UI NODE)
 Имя узла (Node Name):  ${NODE_TOKEN_NAME}
+Тип ключа (Scope):    ${node_scope_title} (${NODE_TOKEN_SCOPE:-node-sync})
 Адрес хоста (Host):    ${PRIMARY_DOMAIN}
 Порт (Port):           443 (HTTPS через Nginx L4/L7)
 Базовый путь:          ${PANEL_PATH}
@@ -248,6 +253,9 @@ fi
         echo
         echo -e "${YELLOW}ПОДКЛЮЧЕНИЕ СЕРВЕРА КАК УЗЛА (3X-UI NODE):${NC}"
         echo -e "  - ${YELLOW}Имя узла (Node Name):${NC}       ${GREEN}${NODE_TOKEN_NAME:-Node}${NC}"
+        node_scope_title="Синхронизация узла (Node Sync)"
+        [ "${NODE_TOKEN_SCOPE:-node-sync}" = "admin" ] && node_scope_title="Администратор (Admin)"
+        echo -e "  - ${YELLOW}Область доступа (Scope):${NC}    ${CYAN}${node_scope_title}${NC}"
         echo -e "  - ${YELLOW}Адрес хоста (Host):${NC}         ${CYAN}${PRIMARY_DOMAIN}${NC}"
         echo -e "  - ${YELLOW}Порт (Port):${NC}                ${GREEN}443${NC} (HTTPS через Nginx L4/L7 маскировку)"
         echo -e "  - ${YELLOW}Базовый путь (Base Path):${NC}   ${CYAN}${PANEL_PATH}${NC}"

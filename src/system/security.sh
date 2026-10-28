@@ -20,7 +20,7 @@ get_user_home() {
     fi
     local home_dir=""
     if command -v getent >/dev/null 2>&1; then
-        home_dir="$(getent passwd "$target_user" 2>/dev/null | cut -d: -f6)"
+        home_dir=$( (getent passwd "$target_user" 2>/dev/null || true) | cut -d: -f6 )
     fi
     if [ -n "$home_dir" ]; then
         echo "$home_dir"
@@ -34,12 +34,28 @@ has_authorized_keys() {
     local user_home
     if [ "$target_user" = "root" ]; then
         user_home="/root"
+        # Если у root ключ отсутствует, но скрипт запущен через sudo, пробуем подтянуть ключ SUDO_USER
+        if [ ! -s "${user_home}/.ssh/authorized_keys" ] && [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+            local sudo_home
+            sudo_home="$(get_user_home "$SUDO_USER")"
+            local sudo_auth="${sudo_home}/.ssh/authorized_keys"
+            if [ -f "$sudo_auth" ] && [ -s "$sudo_auth" ]; then
+                mkdir -p "${user_home}/.ssh" 2>/dev/null || true
+                chmod 700 "${user_home}/.ssh" 2>/dev/null || true
+                cp "$sudo_auth" "${user_home}/.ssh/authorized_keys" 2>/dev/null || true
+                chmod 600 "${user_home}/.ssh/authorized_keys" 2>/dev/null || true
+            fi
+        fi
     else
         user_home="$(get_user_home "$target_user")"
     fi
     local auth_file="${user_home}/.ssh/authorized_keys"
     if [ -f "$auth_file" ] && [ -s "$auth_file" ]; then
-        if grep -qE '^[[:space:]]*(ssh-rsa|ssh-ed25519|ecdsa-sha2-[a-z0-9]+|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-[a-z0-9]+@openssh\.com)' "$auth_file" 2>/dev/null; then
+        # Автоматическое снятие cloud-init блокировки root при наличии
+        if grep -qE 'command=".*Please login as' "$auth_file" 2>/dev/null; then
+            sed -i -E 's/^.*command=.*Please login as.*(ssh-rsa|ssh-ed25519|ecdsa-sha2-[a-z0-9]+|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-[a-z0-9]+@openssh\.com|ssh-dss)/\1/' "$auth_file" 2>/dev/null || true
+        fi
+        if grep -qE '(^|[[:space:]])(ssh-rsa|ssh-ed25519|ecdsa-sha2-[a-z0-9]+|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-[a-z0-9]+@openssh\.com|ssh-dss|[a-z0-9._-]+-cert-v[0-9]+@openssh\.com)[[:space:]]+[A-Za-z0-9+/=]+' "$auth_file" 2>/dev/null; then
             return 0
         fi
     fi
@@ -47,8 +63,30 @@ has_authorized_keys() {
 }
 
 add_authorized_key() {
-    local key_data="$1"
+    local raw_input="$1"
     local target_user="${2:-root}"
+    [ -n "$raw_input" ] || return 1
+
+    # Очистка от внешних пробелов и кавычек
+    raw_input=$(echo "$raw_input" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+    raw_input=$(echo "$raw_input" | sed -E 's/^["'"'"'](.*)["'"'"']$/\1/')
+    raw_input=$(echo "$raw_input" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+
+    # Проверка: передан ли путь к файлу публичного ключа
+    local key_file="$raw_input"
+    if [[ "$key_file" == ~* ]]; then
+        key_file="${key_file/#\~/$HOME}"
+    fi
+    if [ -f "$key_file" ] && [ -r "$key_file" ]; then
+        local extracted_key
+        extracted_key=$(grep -m 1 -E '(^|[[:space:]])(ssh-rsa|ssh-ed25519|ecdsa-sha2-[a-z0-9]+|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-[a-z0-9]+@openssh\.com|ssh-dss)' "$key_file" 2>/dev/null || cat "$key_file" 2>/dev/null)
+        if [ -n "$extracted_key" ]; then
+            raw_input="$extracted_key"
+        fi
+    fi
+
+    local key_data
+    key_data=$(echo "$raw_input" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
     [ -n "$key_data" ] || return 1
 
     local user_home
@@ -65,12 +103,28 @@ add_authorized_key() {
     touch "$auth_file"
     chmod 600 "$auth_file" 2>/dev/null || true
 
-    # Проверка, не добавлен ли уже этот ключ
+    # Снятие cloud-init блокировки, если она есть
+    if grep -qE 'command=".*Please login as' "$auth_file" 2>/dev/null; then
+        sed -i -E 's/^.*command=.*Please login as.*(ssh-rsa|ssh-ed25519|ecdsa-sha2-[a-z0-9]+|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-[a-z0-9]+@openssh\.com|ssh-dss)/\1/' "$auth_file" 2>/dev/null || true
+    fi
+
+    # Выделение сигнатуры ключа (тип + base64) для надежного поиска дубликатов
     local clean_key
-    clean_key=$(echo "$key_data" | awk '{print $1" "$2}')
+    clean_key=$(echo "$key_data" | awk '{for(i=1;i<=NF;i++){if($i ~ /^(ssh-|ecdsa-|sk-)/){print $i" "$(i+1); break}}}')
+    [ -n "$clean_key" ] || clean_key=$(echo "$key_data" | awk '{print $1" "$2}')
+
     if [ -n "$clean_key" ] && grep -Fq "$clean_key" "$auth_file" 2>/dev/null; then
         ok "SSH-ключ уже присутствует в $auth_file."
         return 0
+    fi
+
+    # Гарантия перевода строки перед добавлением нового ключа
+    if [ -s "$auth_file" ]; then
+        local last_char
+        last_char=$(tail -c 1 "$auth_file" 2>/dev/null || true)
+        if [ -n "$last_char" ]; then
+            echo "" >> "$auth_file"
+        fi
     fi
 
     echo "$key_data" >> "$auth_file"

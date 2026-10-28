@@ -15,7 +15,7 @@ def connect(path):
     return sqlite3.connect(Path(path).resolve().as_uri() + "?mode=rw", uri=True, timeout=10)
 
 
-def verify(path, name, token):
+def verify(path, name, token, required_scope=None):
     if not token:
         return False
     try:
@@ -30,21 +30,31 @@ def verify(path, name, token):
                 expiry //= 1000
             if expiry and expiry <= int(time.time()):
                 return False
-        if "scope" in row.keys() and row["scope"] not in ("admin", "node-admin", "node-sync"):
-            return False
+        if "scope" in row.keys():
+            if row["scope"] not in ("admin", "node-admin", "node-sync"):
+                return False
+            if required_scope and row["scope"] != required_scope:
+                return False
         return hmac.compare_digest(hashlib.sha256(token.encode()).hexdigest(), row["token"])
     except (sqlite3.Error, ValueError, TypeError):
         return False
 
 
-def create(path, name):
+def create(path, name, scope="node-sync"):
     with closing(connect(path)) as conn, conn:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(api_tokens)")}
         if not {"name", "token", "enabled"} <= columns:
             raise ValueError("Unsupported 3X-UI API-token schema")
         token = secrets.token_hex(32)
         values = {"name": name, "token": hashlib.sha256(token.encode()).hexdigest(), "enabled": 1}
-        for column, value in (("scope", "node-admin"), ("created_at", int(time.time())), ("expires_at", 0)):
+        target_scope = scope if scope else "node-sync"
+        scope_map = {
+            "node-sync": ("scope", "node-sync"),
+            "node-admin": ("scope", "node-admin"),
+            "admin": ("scope", "admin"),
+        }
+        scope_entry = scope_map.get(target_scope, ("scope", target_scope))
+        for column, value in (scope_entry, ("created_at", int(time.time())), ("expires_at", 0)):
             if column in columns:
                 values[column] = value
         if conn.execute("SELECT 1 FROM api_tokens WHERE name=?", (name,)).fetchone():
@@ -70,8 +80,10 @@ def atomic_write(path, text):
             os.unlink(temporary)
 
 
-def persist(runtime_path, config_path, name, token):
+def persist(runtime_path, config_path, name, token, scope=None):
     values = {"ENABLE_NODE_TOKEN": "y", "NODE_TOKEN_NAME": name, "NODE_TOKEN": token}
+    if scope:
+        values["NODE_TOKEN_SCOPE"] = scope
     if any("\n" in value or "\r" in value for value in values.values()):
         raise ValueError("Node-token values must be single-line strings")
     # These files are read as literal KEY=value data, never evaluated as shell code.

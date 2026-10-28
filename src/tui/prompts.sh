@@ -755,6 +755,7 @@ CLI_ADMIN_USERNAME=""
 CLI_ADMIN_PASSWORD=""
 CLI_ENABLE_NODE_TOKEN=""
 CLI_NODE_TOKEN_NAME=""
+CLI_NODE_TOKEN_SCOPE=""
 CLI_ENABLE_HY2=""
 CLI_ENABLE_AWG_V3=""
 CLI_AWG_V3_PORT=""
@@ -813,6 +814,11 @@ while [[ $# -gt 0 ]]; do
         --node-token-name)
             [[ -n "${2:-}" ]] || die "Параметр $1 требует имя API-ключа ноды."
             CLI_NODE_TOKEN_NAME="$2"
+            shift 2
+            ;;
+        --node-token-scope)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует тип (scope) API-ключа ноды."
+            CLI_NODE_TOKEN_SCOPE="$2"
             shift 2
             ;;
         --rotate-paths)
@@ -1345,6 +1351,7 @@ fi
 [ -n "${CLI_ADMIN_PASSWORD:-}" ] && ADMIN_PASSWORD="$CLI_ADMIN_PASSWORD"
 [ -n "${CLI_ENABLE_NODE_TOKEN:-}" ] && ENABLE_NODE_TOKEN="$CLI_ENABLE_NODE_TOKEN"
 [ -n "${CLI_NODE_TOKEN_NAME:-}" ] && NODE_TOKEN_NAME="$CLI_NODE_TOKEN_NAME"
+[ -n "${CLI_NODE_TOKEN_SCOPE:-}" ] && NODE_TOKEN_SCOPE="$CLI_NODE_TOKEN_SCOPE"
 if [ -n "${CLI_PANEL_PATH:-}" ]; then
     RAW_PATH="${CLI_PANEL_PATH#/}"; RAW_PATH="${RAW_PATH%/}"
 fi

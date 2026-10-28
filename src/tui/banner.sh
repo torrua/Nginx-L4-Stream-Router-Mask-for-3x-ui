@@ -42,6 +42,7 @@ show_help() {
   --expert                     Запустить Экспертный режим без повторного запроса меню
   --node-token / --no-node-token Создавать API-ключ ноды 3X-UI (по умолчанию: да) / отключить
   --node-token-name <NAME>      Имя API-ключа ноды
+  --node-token-scope <SCOPE>    Тип API-ключа ноды: node-sync (по умолчанию) или admin
   --gen-config [FILE]          Сгенерировать шаблон конфигурации (.env.example) и выйти
   --debug                      Режим отладки: отключить спиннеры, вывод команд в реальном времени
   --dry-run                    Информация о холостом аудите (см. ./maintain.sh --dry-run)
@@ -237,6 +238,8 @@ AUTO_SETUP_3XUI="y"
 ENABLE_NODE_TOKEN="y"
 # Название API-токена ноды (если не указано, формируется как <SERVER_PREFIX>-Node или Master-Node-Cluster)
 NODE_TOKEN_NAME=""
+# Тип (scope) API-токена ноды: node-sync (Синхронизация ноды - по умолчанию) или admin (Администратор)
+NODE_TOKEN_SCOPE="node-sync"
 
 # Автоматически обновлять ядро Xray-core до последней официальной версии с GitHub (v26.10.21+) [y/n]
 UPDATE_XRAY_CORE="y"

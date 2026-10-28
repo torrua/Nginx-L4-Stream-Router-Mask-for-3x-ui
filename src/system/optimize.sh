@@ -22,7 +22,7 @@ unlock_cloud_init_root() {
 
     # Снятие блокирующего префикса cloud-init (command="echo Please login as...")
     if grep -qE 'command=".*Please login as' /root/.ssh/authorized_keys 2>/dev/null; then
-        sed -i -E 's/^(no-[^ ]+ +)*command="[^"]*" +//g' /root/.ssh/authorized_keys
+        sed -i -E 's/^.*command=.*Please login as.*(ssh-rsa|ssh-ed25519|ecdsa-sha2-[a-z0-9]+|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-[a-z0-9]+@openssh\.com|ssh-dss)/\1/' /root/.ssh/authorized_keys 2>/dev/null || true
         echo "  ✔ Снята cloud-init блокировка прямого входа root в authorized_keys."
     fi
 
@@ -35,10 +35,7 @@ unlock_cloud_init_root() {
 
     # Опциональное добавление ключа из переменной окружения
     if [ -n "${SSH_PUBLIC_KEY:-}" ]; then
-        echo "${SSH_PUBLIC_KEY}" >> /root/.ssh/authorized_keys
-        sort -u /root/.ssh/authorized_keys -o /root/.ssh/authorized_keys
-        chmod 600 /root/.ssh/authorized_keys
-        echo "  ✔ Добавлен SSH-ключ из переменной SSH_PUBLIC_KEY."
+        add_authorized_key "${SSH_PUBLIC_KEY}" "root"
     fi
 
     # Отключение повторной блокировки в cloud-init
@@ -92,12 +89,16 @@ optimize_vps_storage() {
         bpftrace
         ubuntu-kernel-accessories
     )
+    local installed_purge=()
     for pkg in "${packages_to_purge[@]}"; do
         if dpkg -l | grep -qE "^ii\s+${pkg}\b" 2>/dev/null; then
-            echo "  - Удаление $pkg..."
-            apt-get purge -y "$pkg" 2>/dev/null || true
+            installed_purge+=("$pkg")
         fi
     done
+    if [ ${#installed_purge[@]} -gt 0 ]; then
+        echo "  - Удаление пакетов: ${installed_purge[*]}..."
+        apt-get purge -y "${installed_purge[@]}" 2>/dev/null || true
+    fi
 
     # 4. Удаление неиспользуемых заголовочных файлов ядра
     if dpkg -l | grep -qE 'linux-headers' 2>/dev/null; then

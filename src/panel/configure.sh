@@ -33,6 +33,7 @@ configure_3xui_panel() {
   --node-token            Создать API-токен для подключения сервера как узла (3X-UI Node)
   --no-node-token         Не создавать API-токен для подключения сервера как узла
   --node-token-name <NAME> Название API-токена ноды (по умолчанию: <SERVER_PREFIX>-Node)
+  --node-token-scope <SCOPE> Тип API-токена ноды: node-sync (по умолчанию) или admin
   -y, --yes               Неинтерактивное выполнение (без подтверждений)
   -h, --help              Показать эту справку и выйти
 
@@ -55,6 +56,7 @@ EOF_HELP
     local CLI_WARP_KEY=""
     local CLI_ENABLE_NODE_TOKEN=""
     local CLI_NODE_TOKEN_NAME=""
+    local CLI_NODE_TOKEN_SCOPE=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -111,6 +113,11 @@ EOF_HELP
                 CLI_NODE_TOKEN_NAME="$2"
                 shift 2
                 ;;
+            --node-token-scope)
+                [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: тип (scope) токена ноды."
+                CLI_NODE_TOKEN_SCOPE="$2"
+                shift 2
+                ;;
             -y|--yes)
                 NON_INTERACTIVE=1
                 shift
@@ -156,6 +163,8 @@ EOF_HELP
     [ -n "$CLI_WARP_KEY" ] && WARP_LICENSE_KEY="$CLI_WARP_KEY"
     [ -n "$CLI_ENABLE_NODE_TOKEN" ] && ENABLE_NODE_TOKEN="$CLI_ENABLE_NODE_TOKEN"
     [ -n "$CLI_NODE_TOKEN_NAME" ] && NODE_TOKEN_NAME="$CLI_NODE_TOKEN_NAME"
+    [ -n "$CLI_NODE_TOKEN_SCOPE" ] && NODE_TOKEN_SCOPE="$CLI_NODE_TOKEN_SCOPE"
+    NODE_TOKEN_SCOPE="${NODE_TOKEN_SCOPE:-node-sync}"
 
     # Дефолтные значения переменных, если не определены в .env
     PRIMARY_DOMAIN="${PRIMARY_DOMAIN:-yourdomain.online}"

@@ -78,7 +78,7 @@ checkpoint_signature() {
         certificates) keys="PRIMARY_DOMAIN ALL_DOMAINS SSL_ENGINE_CHOICE CF_AUTH_METHOD CF_Token CF_Account_ID CF_Email CF_Key" ;;
         decoy) keys="PRIMARY_DOMAIN DECOY_MODE" ;;
         security) keys="SSH_PORT SSH_PUBLIC_KEY ENABLE_HOST_SECURITY ENABLE_FAIL2BAN DISABLE_PASSWORD_AUTH" ;;
-        *) keys="PRIMARY_DOMAIN ALL_DOMAINS STEAL_PORTS_LIST CLASSIC_PORTS_LIST EXT_SNI_LIST ALL_EXT_SNIS ADD_WWW ENABLE_WEB_STACK ENABLE_STEAL STEAL_DOMAINS STEAL_PORT ENABLE_STEAL_COMPAT STEAL_COMPAT_PORT STEAL_COMPAT_DOMAIN ENABLE_CLASSIC CLASSIC_SNI CLASSIC_PORT REALITY_FINGERPRINT PORTS_SETUP_MODE PATHS_SETUP_MODE CREDS_SETUP_MODE PANEL_PORT PANEL_PATH ADMIN_USERNAME ADMIN_PASSWORD SUB_PORT SUB_PATH SUB_CLASH_PATH SUB_TITLE XHTTP_STREAM_PORT XHTTP_STREAM_PATH ENABLE_HY2 HY2_PORT HY2_DOMAIN HY2_PORT_HOPPING HY2_PORT_HOPPING_RANGE ENABLE_AWG_V3 AWG_V3_PORT ENABLE_AWG_V2 AWG_V2_PORT ENABLE_AWG_STANDALONE AWG_STANDALONE_PORT AWG_SERVER_HOST AWG_PRIMARY_DNS AWG_SECONDARY_DNS ENABLE_AGH AGH_MODE AGH_DOMAIN AGH_USER AGH_PASS AGH_CLIENT_ID AGH_XRAY_DNS PORT_AGH_WEB PORT_AGH_DNS DIAG_PATH DIAG_TOKEN ENABLE_WARP WARP_LICENSE_KEY ENABLE_SS2022 SS2022_PORT SS2022_METHOD SS2022_PASSWORD ENABLE_TUIC TUIC_PORT TUIC_UUID TUIC_PASSWORD ENABLE_MTPROTO MTPROTO_PORT MTPROTO_SECRET ENABLE_MASQUE MASQUE_PORT MASQUE_PASSWORD ENABLE_SHADOWTLS SHADOWTLS_PORT SHADOWTLS_DOMAIN SHADOWTLS_PASSWORD ENABLE_NAIVE NAIVE_PORT NAIVE_DOMAIN NAIVE_USER NAIVE_PASS ENABLE_WSTUNNEL WSTUNNEL_PORT WSTUNNEL_PREFIX WSTUNNEL_SECRET ENABLE_DNSTT DNSTT_PORT DNSTT_DOMAIN DNSTT_PUBKEY ENABLE_ZAPRET ZAPRET_QNUM ZAPRET_DESYNC ZAPRET_FOOLING ENABLE_MIERU MIERU_PORT_MODE MIERU_PORT MIERU_TRANSPORT MIERU_USER MIERU_PASS MIERU_MTU AUTO_SETUP_3XUI ENABLE_NODE_TOKEN NODE_TOKEN NODE_TOKEN_NAME TIME_LOCATION INBOUND_TRAFFIC_RESET INBOUND_TRAFFIC_RESET_DAY BLOCK_SMTP BLOCK_LAN WEB_LISTEN SUB_LISTEN AWG_HEADER_PROTECTION_KEY AWG_RANDOM_TRAILERS AWG_SUBNET_IP AWG_SUBNET_CIDR MTPROTO_FAKETLS_DOMAIN MTPROTO_ADTAG SHADOWTLS_SNI WSTUNNEL_DOMAIN" ;;
+        *) keys="PRIMARY_DOMAIN ALL_DOMAINS STEAL_PORTS_LIST CLASSIC_PORTS_LIST EXT_SNI_LIST ALL_EXT_SNIS ADD_WWW ENABLE_WEB_STACK ENABLE_STEAL STEAL_DOMAINS STEAL_PORT ENABLE_STEAL_COMPAT STEAL_COMPAT_PORT STEAL_COMPAT_DOMAIN ENABLE_CLASSIC CLASSIC_SNI CLASSIC_PORT REALITY_FINGERPRINT PORTS_SETUP_MODE PATHS_SETUP_MODE CREDS_SETUP_MODE PANEL_PORT PANEL_PATH ADMIN_USERNAME ADMIN_PASSWORD SUB_PORT SUB_PATH SUB_CLASH_PATH SUB_TITLE XHTTP_STREAM_PORT XHTTP_STREAM_PATH ENABLE_HY2 HY2_PORT HY2_DOMAIN HY2_PORT_HOPPING HY2_PORT_HOPPING_RANGE ENABLE_AWG_V3 AWG_V3_PORT ENABLE_AWG_V2 AWG_V2_PORT ENABLE_AWG_STANDALONE AWG_STANDALONE_PORT AWG_SERVER_HOST AWG_PRIMARY_DNS AWG_SECONDARY_DNS ENABLE_AGH AGH_MODE AGH_DOMAIN AGH_USER AGH_PASS AGH_CLIENT_ID AGH_XRAY_DNS PORT_AGH_WEB PORT_AGH_DNS DIAG_PATH DIAG_TOKEN ENABLE_WARP WARP_LICENSE_KEY ENABLE_SS2022 SS2022_PORT SS2022_METHOD SS2022_PASSWORD ENABLE_TUIC TUIC_PORT TUIC_UUID TUIC_PASSWORD ENABLE_MTPROTO MTPROTO_PORT MTPROTO_SECRET ENABLE_MASQUE MASQUE_PORT MASQUE_PASSWORD ENABLE_SHADOWTLS SHADOWTLS_PORT SHADOWTLS_DOMAIN SHADOWTLS_PASSWORD ENABLE_NAIVE NAIVE_PORT NAIVE_DOMAIN NAIVE_USER NAIVE_PASS ENABLE_WSTUNNEL WSTUNNEL_PORT WSTUNNEL_PREFIX WSTUNNEL_SECRET ENABLE_DNSTT DNSTT_PORT DNSTT_DOMAIN DNSTT_PUBKEY ENABLE_ZAPRET ZAPRET_QNUM ZAPRET_DESYNC ZAPRET_FOOLING ENABLE_MIERU MIERU_PORT_MODE MIERU_PORT MIERU_TRANSPORT MIERU_USER MIERU_PASS MIERU_MTU AUTO_SETUP_3XUI ENABLE_NODE_TOKEN NODE_TOKEN NODE_TOKEN_NAME NODE_TOKEN_SCOPE TIME_LOCATION INBOUND_TRAFFIC_RESET INBOUND_TRAFFIC_RESET_DAY BLOCK_SMTP BLOCK_LAN WEB_LISTEN SUB_LISTEN AWG_HEADER_PROTECTION_KEY AWG_RANDOM_TRAILERS AWG_SUBNET_IP AWG_SUBNET_CIDR MTPROTO_FAKETLS_DOMAIN MTPROTO_ADTAG SHADOWTLS_SNI WSTUNNEL_DOMAIN" ;;
     esac
     {
         printf '%s\0' "${SCRIPT_VERSION:-unknown}" "$id"
@@ -977,6 +977,7 @@ show_help() {
   --expert                     Запустить Экспертный режим без повторного запроса меню
   --node-token / --no-node-token Создавать API-ключ ноды 3X-UI (по умолчанию: да) / отключить
   --node-token-name <NAME>      Имя API-ключа ноды
+  --node-token-scope <SCOPE>    Тип API-ключа ноды: node-sync (по умолчанию) или admin
   --gen-config [FILE]          Сгенерировать шаблон конфигурации (.env.example) и выйти
   --debug                      Режим отладки: отключить спиннеры, вывод команд в реальном времени
   --dry-run                    Информация о холостом аудите (см. ./maintain.sh --dry-run)
@@ -1172,6 +1173,8 @@ AUTO_SETUP_3XUI="y"
 ENABLE_NODE_TOKEN="y"
 # Название API-токена ноды (если не указано, формируется как <SERVER_PREFIX>-Node или Master-Node-Cluster)
 NODE_TOKEN_NAME=""
+# Тип (scope) API-токена ноды: node-sync (Синхронизация ноды - по умолчанию) или admin (Администратор)
+NODE_TOKEN_SCOPE="node-sync"
 
 # Автоматически обновлять ядро Xray-core до последней официальной версии с GitHub (v26.10.21+) [y/n]
 UPDATE_XRAY_CORE="y"
@@ -2065,6 +2068,12 @@ normalize_node_token_config() {
     local enabled="${CLI_ENABLE_NODE_TOKEN:-${ENABLE_NODE_TOKEN:-y}}"
     NODE_TOKEN="${NODE_TOKEN:-}"
     NODE_TOKEN_NAME="${CLI_NODE_TOKEN_NAME:-${NODE_TOKEN_NAME:-}}"
+    NODE_TOKEN_SCOPE="${CLI_NODE_TOKEN_SCOPE:-${NODE_TOKEN_SCOPE:-node-sync}}"
+    case "${NODE_TOKEN_SCOPE,,}" in
+        admin) NODE_TOKEN_SCOPE="admin" ;;
+        node-admin) NODE_TOKEN_SCOPE="node-admin" ;;
+        *) NODE_TOKEN_SCOPE="node-sync" ;;
+    esac
     case "${enabled,,}" in y|1|true) ENABLE_NODE_TOKEN=y ;; *) ENABLE_NODE_TOKEN=n; return 0 ;; esac
     case "${AUTO_SETUP_3XUI:-y}" in n|0|false) ENABLE_NODE_TOKEN=n; return 0 ;; esac
     if [ -z "$NODE_TOKEN_NAME" ]; then
@@ -2094,7 +2103,7 @@ load_node_token_result() {
     local double_quote='^"(.*)"$' single_quote="^'(.*)'\$"
     while IFS= read -r line || [ -n "$line" ]; do
         line="${line%$'\r'}"
-        [[ "$line" =~ ^(NODE_TOKEN_NAME|NODE_TOKEN)=(.*)$ ]] || continue
+        [[ "$line" =~ ^(NODE_TOKEN_NAME|NODE_TOKEN|NODE_TOKEN_SCOPE)=(.*)$ ]] || continue
         key="${BASH_REMATCH[1]}"; value="${BASH_REMATCH[2]}"
         if [[ "$value" =~ $double_quote ]] || [[ "$value" =~ $single_quote ]]; then value="${BASH_REMATCH[1]}"; fi
         printf -v "$key" '%s' "$value"
@@ -2695,6 +2704,7 @@ AUTO_SETUP_3XUI="$auto_setup_3xui_save"
 ENABLE_NODE_TOKEN="$node_token_save"
 NODE_TOKEN_NAME="${NODE_TOKEN_NAME:-}"
 NODE_TOKEN="${NODE_TOKEN:-}"
+NODE_TOKEN_SCOPE="${NODE_TOKEN_SCOPE:-node-sync}"
 
 ENABLE_WARP="$warp_save"
 WARP_LICENSE_KEY="${WARP_LICENSE_KEY:-}"
@@ -5096,6 +5106,7 @@ CLI_ADMIN_USERNAME=""
 CLI_ADMIN_PASSWORD=""
 CLI_ENABLE_NODE_TOKEN=""
 CLI_NODE_TOKEN_NAME=""
+CLI_NODE_TOKEN_SCOPE=""
 CLI_ENABLE_HY2=""
 CLI_ENABLE_AWG_V3=""
 CLI_AWG_V3_PORT=""
@@ -5154,6 +5165,11 @@ while [[ $# -gt 0 ]]; do
         --node-token-name)
             [[ -n "${2:-}" ]] || die "Параметр $1 требует имя API-ключа ноды."
             CLI_NODE_TOKEN_NAME="$2"
+            shift 2
+            ;;
+        --node-token-scope)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует тип (scope) API-ключа ноды."
+            CLI_NODE_TOKEN_SCOPE="$2"
             shift 2
             ;;
         --rotate-paths)
@@ -5686,6 +5702,7 @@ fi
 [ -n "${CLI_ADMIN_PASSWORD:-}" ] && ADMIN_PASSWORD="$CLI_ADMIN_PASSWORD"
 [ -n "${CLI_ENABLE_NODE_TOKEN:-}" ] && ENABLE_NODE_TOKEN="$CLI_ENABLE_NODE_TOKEN"
 [ -n "${CLI_NODE_TOKEN_NAME:-}" ] && NODE_TOKEN_NAME="$CLI_NODE_TOKEN_NAME"
+[ -n "${CLI_NODE_TOKEN_SCOPE:-}" ] && NODE_TOKEN_SCOPE="$CLI_NODE_TOKEN_SCOPE"
 if [ -n "${CLI_PANEL_PATH:-}" ]; then
     RAW_PATH="${CLI_PANEL_PATH#/}"; RAW_PATH="${RAW_PATH%/}"
 fi
@@ -6842,7 +6859,7 @@ get_user_home() {
     fi
     local home_dir=""
     if command -v getent >/dev/null 2>&1; then
-        home_dir="$(getent passwd "$target_user" 2>/dev/null | cut -d: -f6)"
+        home_dir=$( (getent passwd "$target_user" 2>/dev/null || true) | cut -d: -f6 )
     fi
     if [ -n "$home_dir" ]; then
         echo "$home_dir"
@@ -6856,12 +6873,28 @@ has_authorized_keys() {
     local user_home
     if [ "$target_user" = "root" ]; then
         user_home="/root"
+        # Если у root ключ отсутствует, но скрипт запущен через sudo, пробуем подтянуть ключ SUDO_USER
+        if [ ! -s "${user_home}/.ssh/authorized_keys" ] && [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+            local sudo_home
+            sudo_home="$(get_user_home "$SUDO_USER")"
+            local sudo_auth="${sudo_home}/.ssh/authorized_keys"
+            if [ -f "$sudo_auth" ] && [ -s "$sudo_auth" ]; then
+                mkdir -p "${user_home}/.ssh" 2>/dev/null || true
+                chmod 700 "${user_home}/.ssh" 2>/dev/null || true
+                cp "$sudo_auth" "${user_home}/.ssh/authorized_keys" 2>/dev/null || true
+                chmod 600 "${user_home}/.ssh/authorized_keys" 2>/dev/null || true
+            fi
+        fi
     else
         user_home="$(get_user_home "$target_user")"
     fi
     local auth_file="${user_home}/.ssh/authorized_keys"
     if [ -f "$auth_file" ] && [ -s "$auth_file" ]; then
-        if grep -qE '^[[:space:]]*(ssh-rsa|ssh-ed25519|ecdsa-sha2-[a-z0-9]+|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-[a-z0-9]+@openssh\.com)' "$auth_file" 2>/dev/null; then
+        # Автоматическое снятие cloud-init блокировки root при наличии
+        if grep -qE 'command=".*Please login as' "$auth_file" 2>/dev/null; then
+            sed -i -E 's/^.*command=.*Please login as.*(ssh-rsa|ssh-ed25519|ecdsa-sha2-[a-z0-9]+|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-[a-z0-9]+@openssh\.com|ssh-dss)/\1/' "$auth_file" 2>/dev/null || true
+        fi
+        if grep -qE '(^|[[:space:]])(ssh-rsa|ssh-ed25519|ecdsa-sha2-[a-z0-9]+|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-[a-z0-9]+@openssh\.com|ssh-dss|[a-z0-9._-]+-cert-v[0-9]+@openssh\.com)[[:space:]]+[A-Za-z0-9+/=]+' "$auth_file" 2>/dev/null; then
             return 0
         fi
     fi
@@ -6869,8 +6902,30 @@ has_authorized_keys() {
 }
 
 add_authorized_key() {
-    local key_data="$1"
+    local raw_input="$1"
     local target_user="${2:-root}"
+    [ -n "$raw_input" ] || return 1
+
+    # Очистка от внешних пробелов и кавычек
+    raw_input=$(echo "$raw_input" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+    raw_input=$(echo "$raw_input" | sed -E 's/^["'"'"'](.*)["'"'"']$/\1/')
+    raw_input=$(echo "$raw_input" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+
+    # Проверка: передан ли путь к файлу публичного ключа
+    local key_file="$raw_input"
+    if [[ "$key_file" == ~* ]]; then
+        key_file="${key_file/#\~/$HOME}"
+    fi
+    if [ -f "$key_file" ] && [ -r "$key_file" ]; then
+        local extracted_key
+        extracted_key=$(grep -m 1 -E '(^|[[:space:]])(ssh-rsa|ssh-ed25519|ecdsa-sha2-[a-z0-9]+|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-[a-z0-9]+@openssh\.com|ssh-dss)' "$key_file" 2>/dev/null || cat "$key_file" 2>/dev/null)
+        if [ -n "$extracted_key" ]; then
+            raw_input="$extracted_key"
+        fi
+    fi
+
+    local key_data
+    key_data=$(echo "$raw_input" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
     [ -n "$key_data" ] || return 1
 
     local user_home
@@ -6887,12 +6942,28 @@ add_authorized_key() {
     touch "$auth_file"
     chmod 600 "$auth_file" 2>/dev/null || true
 
-    # Проверка, не добавлен ли уже этот ключ
+    # Снятие cloud-init блокировки, если она есть
+    if grep -qE 'command=".*Please login as' "$auth_file" 2>/dev/null; then
+        sed -i -E 's/^.*command=.*Please login as.*(ssh-rsa|ssh-ed25519|ecdsa-sha2-[a-z0-9]+|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-[a-z0-9]+@openssh\.com|ssh-dss)/\1/' "$auth_file" 2>/dev/null || true
+    fi
+
+    # Выделение сигнатуры ключа (тип + base64) для надежного поиска дубликатов
     local clean_key
-    clean_key=$(echo "$key_data" | awk '{print $1" "$2}')
+    clean_key=$(echo "$key_data" | awk '{for(i=1;i<=NF;i++){if($i ~ /^(ssh-|ecdsa-|sk-)/){print $i" "$(i+1); break}}}')
+    [ -n "$clean_key" ] || clean_key=$(echo "$key_data" | awk '{print $1" "$2}')
+
     if [ -n "$clean_key" ] && grep -Fq "$clean_key" "$auth_file" 2>/dev/null; then
         ok "SSH-ключ уже присутствует в $auth_file."
         return 0
+    fi
+
+    # Гарантия перевода строки перед добавлением нового ключа
+    if [ -s "$auth_file" ]; then
+        local last_char
+        last_char=$(tail -c 1 "$auth_file" 2>/dev/null || true)
+        if [ -n "$last_char" ]; then
+            echo "" >> "$auth_file"
+        fi
     fi
 
     echo "$key_data" >> "$auth_file"
@@ -17163,6 +17234,12 @@ normalize_node_token_config() {
     local enabled="${CLI_ENABLE_NODE_TOKEN:-${ENABLE_NODE_TOKEN:-y}}"
     NODE_TOKEN="${NODE_TOKEN:-}"
     NODE_TOKEN_NAME="${CLI_NODE_TOKEN_NAME:-${NODE_TOKEN_NAME:-}}"
+    NODE_TOKEN_SCOPE="${CLI_NODE_TOKEN_SCOPE:-${NODE_TOKEN_SCOPE:-node-sync}}"
+    case "${NODE_TOKEN_SCOPE,,}" in
+        admin) NODE_TOKEN_SCOPE="admin" ;;
+        node-admin) NODE_TOKEN_SCOPE="node-admin" ;;
+        *) NODE_TOKEN_SCOPE="node-sync" ;;
+    esac
     case "${enabled,,}" in y|1|true) ENABLE_NODE_TOKEN=y ;; *) ENABLE_NODE_TOKEN=n; return 0 ;; esac
     case "${AUTO_SETUP_3XUI:-y}" in n|0|false) ENABLE_NODE_TOKEN=n; return 0 ;; esac
     if [ -z "$NODE_TOKEN_NAME" ]; then
@@ -17192,7 +17269,7 @@ load_node_token_result() {
     local double_quote='^"(.*)"$' single_quote="^'(.*)'\$"
     while IFS= read -r line || [ -n "$line" ]; do
         line="${line%$'\r'}"
-        [[ "$line" =~ ^(NODE_TOKEN_NAME|NODE_TOKEN)=(.*)$ ]] || continue
+        [[ "$line" =~ ^(NODE_TOKEN_NAME|NODE_TOKEN|NODE_TOKEN_SCOPE)=(.*)$ ]] || continue
         key="${BASH_REMATCH[1]}"; value="${BASH_REMATCH[2]}"
         if [[ "$value" =~ $double_quote ]] || [[ "$value" =~ $single_quote ]]; then value="${BASH_REMATCH[1]}"; fi
         printf -v "$key" '%s' "$value"
@@ -17219,7 +17296,7 @@ def connect(path):
     return sqlite3.connect(Path(path).resolve().as_uri() + "?mode=rw", uri=True, timeout=10)
 
 
-def verify(path, name, token):
+def verify(path, name, token, required_scope=None):
     if not token:
         return False
     try:
@@ -17234,21 +17311,31 @@ def verify(path, name, token):
                 expiry //= 1000
             if expiry and expiry <= int(time.time()):
                 return False
-        if "scope" in row.keys() and row["scope"] not in ("admin", "node-admin", "node-sync"):
-            return False
+        if "scope" in row.keys():
+            if row["scope"] not in ("admin", "node-admin", "node-sync"):
+                return False
+            if required_scope and row["scope"] != required_scope:
+                return False
         return hmac.compare_digest(hashlib.sha256(token.encode()).hexdigest(), row["token"])
     except (sqlite3.Error, ValueError, TypeError):
         return False
 
 
-def create(path, name):
+def create(path, name, scope="node-sync"):
     with closing(connect(path)) as conn, conn:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(api_tokens)")}
         if not {"name", "token", "enabled"} <= columns:
             raise ValueError("Unsupported 3X-UI API-token schema")
         token = secrets.token_hex(32)
         values = {"name": name, "token": hashlib.sha256(token.encode()).hexdigest(), "enabled": 1}
-        for column, value in (("scope", "node-admin"), ("created_at", int(time.time())), ("expires_at", 0)):
+        target_scope = scope if scope else "node-sync"
+        scope_map = {
+            "node-sync": ("scope", "node-sync"),
+            "node-admin": ("scope", "node-admin"),
+            "admin": ("scope", "admin"),
+        }
+        scope_entry = scope_map.get(target_scope, ("scope", target_scope))
+        for column, value in (scope_entry, ("created_at", int(time.time())), ("expires_at", 0)):
             if column in columns:
                 values[column] = value
         if conn.execute("SELECT 1 FROM api_tokens WHERE name=?", (name,)).fetchone():
@@ -17274,8 +17361,10 @@ def atomic_write(path, text):
             os.unlink(temporary)
 
 
-def persist(runtime_path, config_path, name, token):
+def persist(runtime_path, config_path, name, token, scope=None):
     values = {"ENABLE_NODE_TOKEN": "y", "NODE_TOKEN_NAME": name, "NODE_TOKEN": token}
+    if scope:
+        values["NODE_TOKEN_SCOPE"] = scope
     if any("\n" in value or "\r" in value for value in values.values()):
         raise ValueError("Node-token values must be single-line strings")
     # These files are read as literal KEY=value data, never evaluated as shell code.
@@ -17312,6 +17401,13 @@ EOF_NODE_TOKEN_PY
 ensure_node_token() {
     case "${ENABLE_NODE_TOKEN:-y}" in n|0|false) return 0 ;; esac
     NODE_TOKEN="${NODE_TOKEN:-}"
+    local target_scope="${NODE_TOKEN_SCOPE:-node-sync}"
+    case "${target_scope,,}" in
+        admin) target_scope="admin" ;;
+        node-admin) target_scope="node-admin" ;;
+        *) target_scope="node-sync" ;;
+    esac
+
     if node_token_operation verify "$DB_PATH" "$NODE_TOKEN_NAME" "$NODE_TOKEN"; then
         ok "Действующий API-ключ ноды '$NODE_TOKEN_NAME' сохранён."
     else
@@ -17319,10 +17415,18 @@ ensure_node_token() {
         local token_out="" attempt
         local -a arguments=()
         if [ -n "${XUI_BIN:-}" ]; then
-            for attempt in 1 2; do
+            for attempt in 1 2 3; do
                 case "$attempt" in
-                    1) arguments=(-tokenName "$NODE_TOKEN_NAME" -tokenScope admin) ;;
-                    2) arguments=(-tokenName "$NODE_TOKEN_NAME") ;;
+                    1) arguments=(-tokenName "$NODE_TOKEN_NAME" -tokenScope "$target_scope") ;;
+                    2)
+                        # Fallback if 3X-UI version does not support node-sync for -tokenScope
+                        if [ "$target_scope" != "admin" ]; then
+                            arguments=(-tokenName "$NODE_TOKEN_NAME" -tokenScope admin)
+                        else
+                            arguments=(-tokenName "$NODE_TOKEN_NAME")
+                        fi
+                        ;;
+                    3) arguments=(-tokenName "$NODE_TOKEN_NAME") ;;
                 esac
                 token_out=$("$XUI_BIN" setting -getApiToken "${arguments[@]}" 2>&1 || true)
                 NODE_TOKEN=$(printf '%s\n' "$token_out" | awk '$1 == "apiToken:" {gsub(/\r/, "", $2); print $2; exit}')
@@ -17331,14 +17435,16 @@ ensure_node_token() {
         fi
         # Also handles CLI versions without named-token flags, without renaming other tokens.
         if ! node_token_operation verify "$DB_PATH" "$NODE_TOKEN_NAME" "$NODE_TOKEN"; then
-            NODE_TOKEN=$(node_token_operation create "$DB_PATH" "$NODE_TOKEN_NAME") || die "Не удалось создать API-ключ ноды 3X-UI."
+            NODE_TOKEN=$(node_token_operation create "$DB_PATH" "$NODE_TOKEN_NAME" "$target_scope") || die "Не удалось создать API-ключ ноды 3X-UI."
         fi
         [ -n "$NODE_TOKEN" ] || die "3X-UI не вернул API-ключ ноды."
-        ok "API-ключ ноды '$NODE_TOKEN_NAME' создан."
+        local scope_title="Синхронизация узла"
+        [ "$target_scope" = "admin" ] && scope_title="Администратор"
+        ok "API-ключ ноды '$NODE_TOKEN_NAME' создан (область доступа: $scope_title)."
     fi
     local runtime_file
     runtime_file=$(node_token_runtime_file)
-    node_token_operation persist "$runtime_file" "${CONFIG_FILE:-}" "$NODE_TOKEN_NAME" "$NODE_TOKEN" || die "Не удалось сохранить API-ключ ноды."
+    node_token_operation persist "$runtime_file" "${CONFIG_FILE:-}" "$NODE_TOKEN_NAME" "$NODE_TOKEN" "$target_scope" || die "Не удалось сохранить API-ключ ноды."
 }
 # SQLite WAL-safe live database backup and verification
 get_sqlite_backup_python() {
@@ -18507,6 +18613,7 @@ configure_3xui_panel() {
   --node-token            Создать API-токен для подключения сервера как узла (3X-UI Node)
   --no-node-token         Не создавать API-токен для подключения сервера как узла
   --node-token-name <NAME> Название API-токена ноды (по умолчанию: <SERVER_PREFIX>-Node)
+  --node-token-scope <SCOPE> Тип API-токена ноды: node-sync (по умолчанию) или admin
   -y, --yes               Неинтерактивное выполнение (без подтверждений)
   -h, --help              Показать эту справку и выйти
 
@@ -18529,6 +18636,7 @@ EOF_HELP
     local CLI_WARP_KEY=""
     local CLI_ENABLE_NODE_TOKEN=""
     local CLI_NODE_TOKEN_NAME=""
+    local CLI_NODE_TOKEN_SCOPE=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -18585,6 +18693,11 @@ EOF_HELP
                 CLI_NODE_TOKEN_NAME="$2"
                 shift 2
                 ;;
+            --node-token-scope)
+                [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: тип (scope) токена ноды."
+                CLI_NODE_TOKEN_SCOPE="$2"
+                shift 2
+                ;;
             -y|--yes)
                 NON_INTERACTIVE=1
                 shift
@@ -18630,6 +18743,8 @@ EOF_HELP
     [ -n "$CLI_WARP_KEY" ] && WARP_LICENSE_KEY="$CLI_WARP_KEY"
     [ -n "$CLI_ENABLE_NODE_TOKEN" ] && ENABLE_NODE_TOKEN="$CLI_ENABLE_NODE_TOKEN"
     [ -n "$CLI_NODE_TOKEN_NAME" ] && NODE_TOKEN_NAME="$CLI_NODE_TOKEN_NAME"
+    [ -n "$CLI_NODE_TOKEN_SCOPE" ] && NODE_TOKEN_SCOPE="$CLI_NODE_TOKEN_SCOPE"
+    NODE_TOKEN_SCOPE="${NODE_TOKEN_SCOPE:-node-sync}"
 
     # Дефолтные значения переменных, если не определены в .env
     PRIMARY_DOMAIN="${PRIMARY_DOMAIN:-yourdomain.online}"
@@ -22376,6 +22491,7 @@ install_step_panel() {
             export UPDATE_XRAY_CORE="${UPDATE_XRAY_CORE:-y}"
             export ENABLE_NODE_TOKEN
             export NODE_TOKEN_NAME
+            export NODE_TOKEN_SCOPE
             export NODE_ENV_FILE
             export AWG_PRIMARY_DNS
             export AWG_SECONDARY_DNS
@@ -22805,7 +22921,9 @@ if is_true "${ENABLE_AGH:-n}"; then
     fi
 fi
 if is_true "${ENABLE_NODE_TOKEN:-n}"; then
-    echo -e "  3X-UI Node API Token:        ${GREEN}${NODE_TOKEN:-Не получен}${NC} (${WHITE}${NODE_TOKEN_NAME:-Node}${NC})"
+    node_scope_title="Синхронизация ноды"
+    [ "${NODE_TOKEN_SCOPE:-node-sync}" = "admin" ] && node_scope_title="Администратор"
+    echo -e "  3X-UI Node API Token:        ${GREEN}${NODE_TOKEN:-Не получен}${NC} (${WHITE}${NODE_TOKEN_NAME:-Node}${NC}, ${CYAN}${node_scope_title}${NC})"
 fi
 
 # Сохранение учетных данных в защищенный файл
@@ -22838,10 +22956,13 @@ URL DoH для роутера:   $([ "${AGH_MODE:-1}" = "2" ] && echo "https://$
 EOF_AGH_CRED
     fi
     if is_true "${ENABLE_NODE_TOKEN:-n}"; then
+        node_scope_title="Синхронизация ноды"
+        [ "${NODE_TOKEN_SCOPE:-node-sync}" = "admin" ] && node_scope_title="Администратор"
         cat << EOF_NODE_CRED >> "$CRED_FILE"
 =====================================================================
 ПОДКЛЮЧЕНИЕ СЕРВЕРА КАК УЗЛА (3X-UI NODE)
 Имя узла (Node Name):  ${NODE_TOKEN_NAME}
+Тип ключа (Scope):    ${node_scope_title} (${NODE_TOKEN_SCOPE:-node-sync})
 Адрес хоста (Host):    ${PRIMARY_DOMAIN}
 Порт (Port):           443 (HTTPS через Nginx L4/L7)
 Базовый путь:          ${PANEL_PATH}
@@ -23025,6 +23146,9 @@ fi
         echo
         echo -e "${YELLOW}ПОДКЛЮЧЕНИЕ СЕРВЕРА КАК УЗЛА (3X-UI NODE):${NC}"
         echo -e "  - ${YELLOW}Имя узла (Node Name):${NC}       ${GREEN}${NODE_TOKEN_NAME:-Node}${NC}"
+        node_scope_title="Синхронизация узла (Node Sync)"
+        [ "${NODE_TOKEN_SCOPE:-node-sync}" = "admin" ] && node_scope_title="Администратор (Admin)"
+        echo -e "  - ${YELLOW}Область доступа (Scope):${NC}    ${CYAN}${node_scope_title}${NC}"
         echo -e "  - ${YELLOW}Адрес хоста (Host):${NC}         ${CYAN}${PRIMARY_DOMAIN}${NC}"
         echo -e "  - ${YELLOW}Порт (Port):${NC}                ${GREEN}443${NC} (HTTPS через Nginx L4/L7 маскировку)"
         echo -e "  - ${YELLOW}Базовый путь (Base Path):${NC}   ${CYAN}${PANEL_PATH}${NC}"
@@ -23305,6 +23429,8 @@ else
                     ENABLE_AWG_V2=""
                     ENABLE_AGH=""
                     ENABLE_NODE_TOKEN=""
+                    NODE_TOKEN_NAME=""
+                    NODE_TOKEN_SCOPE=""
                     ENABLE_WARP=""
                     AUTO_SETUP_3XUI=""
                     STEAL_DOMAINS=()
@@ -24388,9 +24514,11 @@ EOF_REALITY_SCANNER
                 fi
                 NODE_TOKEN_NAME="$def_token_name"
             fi
+            NODE_TOKEN_SCOPE="${NODE_TOKEN_SCOPE:-node-sync}"
         else
             ENABLE_NODE_TOKEN="n"
             NODE_TOKEN_NAME=""
+            NODE_TOKEN_SCOPE=""
         fi
         if [[ "${ENABLE_WARP,,}" == "y" || "${ENABLE_WARP:-}" == "1" ]]; then
             ENABLE_WARP="y"
@@ -25631,18 +25759,30 @@ EOF_PARSE_PROBE
                 fi
                 if [[ "${EXPERT_MODE:-0}" == "1" ]] && declare -F prompt_default >/dev/null; then
                     prompt_default "  Имя API-токена ноды" "${NODE_TOKEN_NAME:-$def_token_name}" NODE_TOKEN_NAME || return $?
+                    if declare -F prompt_select >/dev/null; then
+                        local scope_keys=("node-sync" "admin")
+                        local scope_labels=("Синхронизация узла (Node Sync - рекомендуется)" "Администратор (Admin - полный доступ)")
+                        prompt_select "  Область доступа (тип) API-ключа ноды" NODE_TOKEN_SCOPE "${NODE_TOKEN_SCOPE:-node-sync}" scope_keys scope_labels || return $?
+                    else
+                        NODE_TOKEN_SCOPE="${NODE_TOKEN_SCOPE:-node-sync}"
+                    fi
                 else
                     NODE_TOKEN_NAME="${NODE_TOKEN_NAME:-$def_token_name}"
+                    NODE_TOKEN_SCOPE="${NODE_TOKEN_SCOPE:-node-sync}"
                 fi
-                ok "API-токен ноды будет создан с именем: ${WHITE}$NODE_TOKEN_NAME${NC}"
+                local scope_display="Синхронизация узла"
+                [ "${NODE_TOKEN_SCOPE:-node-sync}" = "admin" ] && scope_display="Администратор"
+                ok "API-токен ноды будет создан с именем: ${WHITE}$NODE_TOKEN_NAME${NC} (область доступа: ${CYAN}$scope_display${NC})"
             else
                 ENABLE_NODE_TOKEN="n"
                 NODE_TOKEN_NAME=""
+                NODE_TOKEN_SCOPE=""
             fi
         else
             AUTO_SETUP_3XUI="n"
             ENABLE_NODE_TOKEN="n"
             NODE_TOKEN_NAME=""
+            NODE_TOKEN_SCOPE=""
         fi
         return 0
     }
@@ -25751,13 +25891,22 @@ EOF_PARSE_PROBE
                 k_choice="${k_choice:-1}"
                 case "$k_choice" in
                     1)
-                        echo -e "  ${CYAN}Вставьте ваш публичный ключ (начинается с ssh-ed25519, ssh-rsa или ecdsa):${NC}"
+                        echo -e "  ${CYAN}Вставьте ваш публичный ключ (начинается с ssh-ed25519, ssh-rsa или ecdsa) или укажите путь к .pub файлу:${NC}"
                         local pub_in=""
                         read -r pub_in </dev/tty 2>/dev/null || read -r pub_in 2>/dev/null || true
                         pub_in=$(echo "$pub_in" | tr -d '\r\n')
                         if [ -n "$pub_in" ]; then
-                            add_authorized_key "$pub_in" "root"
-                            SSH_PUBLIC_KEY="$pub_in"
+                            local resolved_key="$pub_in"
+                            local check_f="$pub_in"
+                            [[ "$check_f" == ~* ]] && check_f="${check_f/#\~/$HOME}"
+                            if [ -f "$check_f" ] && [ -r "$check_f" ]; then
+                                local f_extracted
+                                f_extracted=$(grep -m 1 -E '(^|[[:space:]])(ssh-rsa|ssh-ed25519|ecdsa-sha2-[a-z0-9]+|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-[a-z0-9]+@openssh\.com|ssh-dss)' "$check_f" 2>/dev/null || cat "$check_f" 2>/dev/null)
+                                [ -n "$f_extracted" ] && resolved_key="$f_extracted"
+                            fi
+                            resolved_key=$(echo "$resolved_key" | sed -E 's/^["'"'"'](.*)["'"'"']$/\1/')
+                            add_authorized_key "$resolved_key" "root"
+                            SSH_PUBLIC_KEY="$resolved_key"
                         else
                             warn "Публичный ключ не введен, пропуск."
                         fi
@@ -25940,7 +26089,9 @@ EOF_PARSE_PROBE
         local auto_3xui_str="${GREEN}Да${NC}"
         is_true "${AUTO_SETUP_3XUI:-y}" || auto_3xui_str="${RED}Нет${NC}"
         if is_true "${ENABLE_NODE_TOKEN:-n}"; then
-            auto_3xui_str="${auto_3xui_str} ${DIM}(+ Node Token: ${WHITE}${NODE_TOKEN_NAME}${DIM})${NC}"
+            local scope_display="Синхронизация узла"
+            [ "${NODE_TOKEN_SCOPE:-node-sync}" = "admin" ] && scope_display="Администратор"
+            auto_3xui_str="${auto_3xui_str} ${DIM}(+ Node Token: ${WHITE}${NODE_TOKEN_NAME}${DIM} [${scope_display}])${NC}"
         fi
         echo -e "  ${CYAN}[8]${NC} ${BOLD}3X-UI автонастройка:${NC}  $auto_3xui_str"
 

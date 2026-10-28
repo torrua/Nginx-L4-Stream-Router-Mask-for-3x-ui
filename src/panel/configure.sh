@@ -24,6 +24,9 @@ configure_3xui_panel() {
 Опции:
   -c, --config <FILE>     Путь к файлу параметров (.env) (по умолчанию: ./server-setup.env)
   --db <PATH>             Путь к файлу базы данных SQLite 3X-UI (по умолчанию: /etc/x-ui/x-ui.db)
+  --domain <DOMAIN>       Основной домен сервера (например, example.com)
+  --sub-domain <DOMAIN>   Домен для раздачи подписок (например, sub.example.com)
+  --panel-domain <DOMAIN> Домен веб-панели управления (например, panel.example.com)
   --dry-run               Только аудит и проверка (без внесения изменений)
   --force-sub             Принудительно перезаписать кастомные параметры подписки из .env
   --force-remarks         Принудительно сбросить названия инбаундов к стандартным из .env

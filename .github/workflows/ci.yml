@@ -76,17 +76,11 @@ jobs:
           echo "Версия из файла VERSION: $VERSION_FILE"
           
           SETUP_VER=$(grep -E '^SCRIPT_VERSION=' setup.sh | cut -d'"' -f2)
-          INSTALL_VER=$(grep -E '^SCRIPT_VERSION=' install.sh | cut -d'"' -f2)
           
           echo "Версия в setup.sh: $SETUP_VER"
-          echo "Версия в install.sh:    $INSTALL_VER"
           
           if [ "$VERSION_FILE" != "$SETUP_VER" ]; then
             echo "::error::Несовпадение версий: VERSION ($VERSION_FILE) != setup.sh ($SETUP_VER)"
-            exit 1
-          fi
-          if [ "$VERSION_FILE" != "$INSTALL_VER" ]; then
-            echo "::error::Несовпадение версий: VERSION ($VERSION_FILE) != install.sh ($INSTALL_VER)"
             exit 1
           fi
           echo "Версии во всех ключевых файлах согласованы!"

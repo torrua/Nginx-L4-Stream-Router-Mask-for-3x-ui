@@ -164,6 +164,7 @@ services:
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    entrypoint: ["/usr/bin/dumb-init", "--", "/home/app/wstunnel"]
     command:
       - "server"
       - "--restrict-to=host.docker.internal:51820,host.docker.internal:8388,host.docker.internal:10443,127.0.0.1:51820,127.0.0.1:8388,127.0.0.1:10443"

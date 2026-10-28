@@ -224,6 +224,7 @@ services:
     image: ghcr.io/erebe/wstunnel:latest
     container_name: wstunnel-dokploy
     restart: unless-stopped
+    entrypoint: ["/usr/bin/dumb-init", "--", "/home/app/wstunnel"]
     command:
       - "server"
       - "--restrict-to=3x-ui-dokploy:8443,3x-ui-dokploy:51820,3x-ui-dokploy:8388,host.docker.internal:51820"

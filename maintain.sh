@@ -2904,7 +2904,10 @@ except Exception as _e_ext_scan:
     pass
 
 domain = os.environ.get("PRIMARY_DOMAIN") or existing_settings.get("subDomain") or "localhost"
-panel_port = os.environ.get("PANEL_PORT") or existing_settings.get("webPort") or "10443"
+is_docker_env = os.environ.get("IS_DOCKER_XUI", "0") == "1"
+def_p_port = "2053" if is_docker_env else "10443"
+def_s_port = "2096" if is_docker_env else "55443"
+panel_port = os.environ.get("PANEL_PORT") or existing_settings.get("webPort") or def_p_port
 """Path resolution shared by the standalone configuration and repair tools."""
 import secrets
 import shlex
@@ -2936,7 +2939,7 @@ def resolve_wstunnel_prefix(configured, service_file="/etc/systemd/system/wstunn
 
 panel_path = resolve_panel_path(os.environ.get("PANEL_PATH"), existing_settings.get("webBasePath"))
 
-sub_port = os.environ.get("SUB_PORT") or existing_settings.get("subPort") or "55443"
+sub_port = os.environ.get("SUB_PORT") or existing_settings.get("subPort") or def_s_port
 sub_env = (os.environ.get("SUB_PATH") or "").strip("/")
 if sub_env and sub_env != "my-post-key":
     sub_path = sub_env

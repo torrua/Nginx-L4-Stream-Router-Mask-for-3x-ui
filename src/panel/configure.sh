@@ -27,6 +27,8 @@ configure_3xui_panel() {
   --domain <DOMAIN>       Основной домен сервера (например, example.com)
   --sub-domain <DOMAIN>   Домен для раздачи подписок (например, sub.example.com)
   --panel-domain <DOMAIN> Домен веб-панели управления (например, panel.example.com)
+  --panel-port <PORT>     Внутренний порт веб-панели (по умолчанию: 2053 для Docker, 10443 для хоста)
+  --sub-port <PORT>       Внутренний порт сервера подписок (по умолчанию: 2096 для Docker, 55443 для хоста)
   --hy2-domain <DOMAIN>   Домен для протокола Hysteria 2 (например, hy2.example.com)
   --no-hy2                Отключить Hysteria 2 (не требует SSL-сертификата)
   --dry-run               Только аудит и проверка (без внесения изменений)
@@ -64,6 +66,8 @@ EOF_HELP
     local CLI_NODE_TOKEN_SCOPE=""
     local CLI_ENABLE_HY2=""
     local CLI_HY2_DOMAIN=""
+    local CLI_PANEL_PORT=""
+    local CLI_SUB_PORT=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -90,6 +94,16 @@ EOF_HELP
             --panel-domain)
                 [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: домен панели."
                 PANEL_DOMAIN="$2"
+                shift 2
+                ;;
+            --panel-port)
+                [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: порт панели."
+                CLI_PANEL_PORT="$2"
+                shift 2
+                ;;
+            --sub-port)
+                [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: порт подписок."
+                CLI_SUB_PORT="$2"
                 shift 2
                 ;;
             --hy2-domain)
@@ -197,12 +211,14 @@ EOF_HELP
     NODE_TOKEN_SCOPE="${NODE_TOKEN_SCOPE:-node-sync}"
     [ -n "$CLI_ENABLE_HY2" ] && ENABLE_HY2="$CLI_ENABLE_HY2"
     [ -n "$CLI_HY2_DOMAIN" ] && HY2_DOMAIN="$CLI_HY2_DOMAIN"
+    [ -n "$CLI_PANEL_PORT" ] && PANEL_PORT="$CLI_PANEL_PORT"
+    [ -n "$CLI_SUB_PORT" ] && SUB_PORT="$CLI_SUB_PORT"
 
     # Дефолтные значения переменных, если не определены в .env
     PRIMARY_DOMAIN="${PRIMARY_DOMAIN:-yourdomain.online}"
-    PANEL_PORT="${PANEL_PORT:-10443}"
+    PANEL_PORT="${PANEL_PORT:-}"
     PANEL_PATH="${PANEL_PATH:-}"
-    SUB_PORT="${SUB_PORT:-55443}"
+    SUB_PORT="${SUB_PORT:-}"
     SUB_PATH="${SUB_PATH:-}"
     SUB_CLASH_PATH="${SUB_CLASH_PATH:-${SUB_PATH%/}/clash}"
     if [ -n "${SERVER_PREFIX:-}" ] && [ "${SERVER_PREFIX,,}" = "auto" ]; then
@@ -405,6 +421,14 @@ EOF_HELP
         fi
     fi
 
+    if [ "${IS_DOCKER_XUI:-0}" -eq 1 ]; then
+        PANEL_PORT="${PANEL_PORT:-2053}"
+        SUB_PORT="${SUB_PORT:-2096}"
+    else
+        PANEL_PORT="${PANEL_PORT:-10443}"
+        SUB_PORT="${SUB_PORT:-55443}"
+    fi
+
     export DB_PATH
     export DRY_RUN
     export FORCE_SUB
@@ -414,6 +438,7 @@ EOF_HELP
     export PANEL_PORT
     export PANEL_PATH
     export SUB_PORT
+    export IS_DOCKER_XUI
     export SUB_PATH
     export SUB_CLASH_PATH
     export ENABLE_STEAL

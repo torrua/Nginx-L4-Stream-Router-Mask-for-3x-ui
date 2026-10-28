@@ -172,6 +172,13 @@ class TestComposeConfigs(unittest.TestCase):
             content = cpath.read_text(encoding="utf-8")
             self.assertIn("TLS=", content, "Shadow-TLS must receive TLS env var for upstream entrypoint.sh")
 
+    def test_wstunnel_entrypoint_in_compose(self):
+        """wstunnel in compose files must specify entrypoint with /home/app/wstunnel to avoid dumb-init missing binary error."""
+        for cname in ["docker-compose.dokploy-all-in-one.yml", "docker-compose.dokploy.yml", "docker-compose.nextgen.yml"]:
+            cpath = ROOT / "compose" / cname
+            content = cpath.read_text(encoding="utf-8")
+            self.assertIn("/home/app/wstunnel", content, f"{cname} must specify /home/app/wstunnel for wstunnel")
+
     def test_dokploy_coexistence_forces_web_stack_off(self):
         """When DOKPLOY_COEXISTENCE=y, reconstruct_arrays_from_vars forces ENABLE_WEB_STACK=0."""
         res = run_shell("""

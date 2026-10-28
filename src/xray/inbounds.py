@@ -1,4 +1,4 @@
-def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, default_stream, listen="127.0.0.1"):
+def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, default_stream, listen="127.0.0.1", enabled=True):
     inb_cols = globals().get("inbounds_cols")
     if inb_cols is None:
         try:
@@ -45,7 +45,7 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
                 "down": 0,
                 "total": 0,
                 "remark": remark,
-                "enable": 1,
+                "enable": 1 if enabled else 0,
                 "expiry_time": 0,
                 "listen": listen,
                 "port": port,
@@ -685,7 +685,8 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             "protocol = ?", "tag = ?", "remark = ?", "settings = ?",
             "stream_settings = ?", "listen = ?", "sniffing = ?", "enable = ?"
         ]
-        update_vals = [protocol, tag, final_remark, settings_json, stream_json, listen, sniffing_json, cur_enable]
+        effective_enable = (0 if not enabled else cur_enable)
+        update_vals = [protocol, tag, final_remark, settings_json, stream_json, listen, sniffing_json, effective_enable]
         if tr_col and tr_col in inb_cols:
             update_fields.append(f"{tr_col} = ?")
             update_vals.append(final_tr)

@@ -151,7 +151,8 @@ def resolve_cert_key_paths(target_dom: str, env_cert: str = "", env_key: str = "
     """
     Unified SSL certificate resolver: returns (cert_path, key_path).
     Prioritizes explicit valid files, then Let's Encrypt (/etc/letsencrypt/live),
-    then ACME (/etc/ssl/acme for Cloudflare DNS-01 API).
+    then ACME (/etc/ssl/acme for Cloudflare DNS-01 API),
+    then container persistent storage (/etc/x-ui/server.crt or db_dir).
     """
     if env_cert and env_key and os.path.isfile(env_cert) and os.path.isfile(env_key):
         return env_cert, env_key
@@ -163,6 +164,31 @@ def resolve_cert_key_paths(target_dom: str, env_cert: str = "", env_key: str = "
     acme_key = f"/etc/ssl/acme/{target_dom}/privkey.pem"
     if os.path.isfile(acme_cert) and os.path.isfile(acme_key):
         return acme_cert, acme_key
+
+    # Проверка наличия сертификата в каталоге базы (персистентный том /etc/x-ui)
+    _db_d = os.path.dirname(os.path.abspath(db_path)) if "db_path" in globals() else "/etc/x-ui"
+    _h_c = os.path.join(_db_d, "server.crt")
+    _h_k = os.path.join(_db_d, "server.key")
+    if os.path.isfile(_h_c) and os.path.isfile(_h_k):
+        return "/etc/x-ui/server.crt", "/etc/x-ui/server.key"
+    if os.path.isfile("/etc/x-ui/server.crt") and os.path.isfile("/etc/x-ui/server.key"):
+        return "/etc/x-ui/server.crt", "/etc/x-ui/server.key"
+
+    # Автогенерация самоподписанного сертификата в каталоге x-ui, если openssl доступен
+    try:
+        import subprocess
+        subprocess.run(
+            ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+             "-keyout", _h_k, "-out", _h_c, "-days", "3650",
+             "-subj", f"/CN={target_dom}"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True
+        )
+        if os.path.isfile(_h_c) and os.path.isfile(_h_k):
+            print(f"  [СОЗДАНО] Автоматически сгенерирован самоподписанный SSL для {target_dom}: /etc/x-ui/server.crt")
+            return "/etc/x-ui/server.crt", "/etc/x-ui/server.key"
+    except Exception:
+        pass
+
     return env_cert or le_cert, env_key or le_key
 
 
@@ -1288,6 +1314,19 @@ if not unified_vless_enkey:
 
 # 4. Hysteria 2 (443)
 if enable_hy2:
+    hy2_has_cert = False
+    _db_d = os.path.dirname(os.path.abspath(db_path)) if "db_path" in globals() else "/etc/x-ui"
+    _h_c = os.path.join(_db_d, "server.crt")
+    _h_k = os.path.join(_db_d, "server.key")
+    if os.path.isfile(hy2_cert) and os.path.isfile(hy2_key):
+        hy2_has_cert = True
+    elif (os.path.isfile(_h_c) and os.path.isfile(_h_k)) or (os.path.isfile("/etc/x-ui/server.crt") and os.path.isfile("/etc/x-ui/server.key")):
+        hy2_cert = "/etc/x-ui/server.crt"
+        hy2_key = "/etc/x-ui/server.key"
+        hy2_has_cert = True
+    elif hy2_cert.startswith("/etc/x-ui/") and os.path.isfile(_h_c) and os.path.isfile(_h_k):
+        hy2_has_cert = True
+
     h_set = {"clients": [{"id": unified_hy2_pass, "auth": unified_hy2_pass, "password": unified_hy2_pass, "email": unified_email, "subId": unified_sub_id, "enable": True}], "version": 2}
     h_str = {
         "network": "hysteria",
@@ -1300,7 +1339,10 @@ if enable_hy2:
         "externalProxy": [{"dest": hy2_domain, "port": hy2_port, "forceTls": "tls", "remark": make_remark("Hysteria 2")}]
     }
     hy2_remark = make_remark("Hysteria 2")
-    smart_reconcile_inbound(hy2_port, "hysteria", "in-hysteria2", hy2_remark, h_set, h_str, listen="0.0.0.0")
+    if not hy2_has_cert:
+        print(f"  [ПРЕДУПРЕЖДЕНИЕ] SSL-сертификат для Hysteria 2 ({hy2_cert}) не найден на диске.")
+        print(f"  Инбаунд Hysteria 2 создан в отключенном состоянии (enable: 0) во избежание сбоя Xray-core.")
+    smart_reconcile_inbound(hy2_port, "hysteria", "in-hysteria2", hy2_remark, h_set, h_str, listen="0.0.0.0", enabled=hy2_has_cert)
 
 # 5. AmneziaWG v3.1 (8443)
 if enable_awg_v3:

@@ -161,6 +161,9 @@ jobs:
           check-latest: true
           allow-prereleases: true
 
+      - name: Ensure executable permissions on shell scripts
+        run: chmod +x *.sh
+
       - name: Run audit regression checks
         run: |
           python -m unittest discover -s tests -p "test_*.py" -v

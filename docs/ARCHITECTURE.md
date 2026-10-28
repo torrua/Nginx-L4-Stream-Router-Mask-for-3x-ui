@@ -87,7 +87,7 @@ net.netfilter.nf_conntrack_tcp_timeout_time_wait = 30
 * **Защита от сброса параметров облаком:** Добавляется задание Cron (`@reboot sleep 10 && sysctl --system`), повторно накатывающее параметры sysctl через 10 секунд после старта сети виртуализации.
 
 ### 1.2. Безопасность SSH
-* Перенос порта демона SSH со стандартного 22 на нестандартный порт (по умолчанию в диапазоне `22–65535`, рекомендуется `2222`).
+* Перенос порта демона SSH со стандартного 22 на нестандартный порт (по умолчанию в диапазоне `22–65535`, рекомендуется `1984`).
 * Генерация или добавление криптостойких ключей Ed25519 (`ssh-keygen -t ed25519`).
 * Возможность полного отключения аутентификации по паролю (`PasswordAuthentication no`) после добавления публичного ключа.
 
@@ -407,7 +407,7 @@ graph TD
 
 ```bash
 # 1. Разрешаем внешние рабочие порты: SSH, Веб, Hysteria 2, AmneziaWG, TUIC, Shadowsocks, MTProxy
-sudo ufw allow 2222/tcp comment 'Custom SSH'
+sudo ufw allow 1984/tcp comment 'Custom SSH'
 sudo ufw allow 80/tcp comment 'HTTP ACME'
 sudo ufw allow 443/tcp comment 'Nginx HTTPS & Stream'
 sudo ufw allow 443/udp comment 'Hysteria 2 QUIC'

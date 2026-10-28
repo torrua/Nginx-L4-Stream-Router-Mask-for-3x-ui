@@ -466,6 +466,8 @@ run_uninstall() {
     if [ "$nginx_preexisted" -eq 1 ]; then
         # Nginx существовал до нас: восстанавливаем исходную конфигурацию
         rm -f "${target_root}/etc/nginx/conf.d/00-acme.conf" \
+              "${target_root}/etc/nginx/http.d/00-acme.conf" \
+              "${target_root}/etc/nginx/conf.d/stream.conf" \
               "${target_root}/etc/nginx/conf.d/01-main.conf" \
               "${target_root}/etc/nginx/conf.d/02-"*.conf \
               "${target_root}/etc/nginx/conf.d/03-adguard.conf" \
@@ -486,6 +488,8 @@ run_uninstall() {
     else
         # Nginx был установлен нами: удаляем только файлы стека, сохраняя пользовательские конфиги
         rm -f "${target_root}/etc/nginx/conf.d/00-acme.conf" \
+              "${target_root}/etc/nginx/http.d/00-acme.conf" \
+              "${target_root}/etc/nginx/conf.d/stream.conf" \
               "${target_root}/etc/nginx/conf.d/01-main.conf" \
               "${target_root}/etc/nginx/conf.d/02-"*.conf \
               "${target_root}/etc/nginx/conf.d/03-adguard.conf" \

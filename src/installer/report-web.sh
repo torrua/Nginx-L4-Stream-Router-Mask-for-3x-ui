@@ -15,6 +15,9 @@ fi
 echo -e "  Канал подписок:              ${GREEN}https://${PRIMARY_DOMAIN}${SUB_PATH}${NC}"
 echo -e "  Канал подписок (JSON):       ${GREEN}https://${PRIMARY_DOMAIN}${SUB_JSON_PATH}${NC}"
 echo -e "  Канал подписок (Clash):      ${GREEN}https://${PRIMARY_DOMAIN}${SUB_CLASH_PATH}${NC}"
+if [ "${HAS_SELF_SIGNED_CERTS:-0}" -eq 1 ] || [ -f /etc/nginx/.self_signed_warning ]; then
+    echo -e "  Статус SSL-сертификата:      ${YELLOW}${BOLD}⚠️  ВРЕМЕННЫЙ САМОПОДПИСАННЫЙ (ТРЕБУЕТСЯ ЗАМЕНА!)${NC}"
+fi
 if is_true "${ENABLE_WARP:-n}"; then
     echo -e "  Cloudflare WARP Outbound:    ${GREEN}АКТИВИРОВАН (Google, Gemini, ChatGPT / MTU 1280)${NC}"
 fi
@@ -48,6 +51,7 @@ $([ -n "${DIAG_TOKEN:-}" ] && echo "Веб-диагностика (SSO):     htt
 $([ -n "${DIAG_TOKEN:-}" ] && echo "Токен диагностики:         ${DIAG_TOKEN}")
 Логин администратора:       ${ADMIN_USERNAME:-admin}
 Пароль администратора:      ${ADMIN_PASSWORD}
+$([ "${HAS_SELF_SIGNED_CERTS:-0}" -eq 1 ] || [ -f /etc/nginx/.self_signed_warning ] && echo "Статус SSL:                ⚠️ ВРЕМЕННЫЙ САМОПОДПИСАННЫЙ (ТРЕБУЕТСЯ ЗАМЕНА!)")
 
 Ссылка на подписку:        https://${PRIMARY_DOMAIN}${SUB_PATH}
 Ссылка на подписку (JSON): https://${PRIMARY_DOMAIN}${SUB_JSON_PATH}
@@ -65,6 +69,10 @@ EOF_AGH_CRED
     if is_true "${ENABLE_NODE_TOKEN:-n}"; then
         node_scope_title="Синхронизация ноды"
         [ "${NODE_TOKEN_SCOPE:-node-sync}" = "admin" ] && node_scope_title="Администратор"
+        node_tls_status="Действительный (Let's Encrypt / acme.sh)"
+        if [ "${HAS_SELF_SIGNED_CERTS:-0}" -eq 1 ] || [ -f /etc/nginx/.self_signed_warning ]; then
+            node_tls_status="⚠️ ВРЕМЕННЫЙ САМОПОДПИСАННЫЙ (ТРЕБУЕТСЯ ЗАМЕНА!)"
+        fi
         cat << EOF_NODE_CRED >> "$CRED_FILE"
 =====================================================================
 ПОДКЛЮЧЕНИЕ СЕРВЕРА КАК УЗЛА (3X-UI NODE)
@@ -76,8 +84,25 @@ EOF_AGH_CRED
 API Token:             ${NODE_TOKEN:-Не получен}
 Логин администратора:  ${ADMIN_USERNAME:-admin}
 Пароль администратора: ${ADMIN_PASSWORD}
-TLS сертификат:        Действительный (Let's Encrypt / acme.sh)
+TLS сертификат:        ${node_tls_status}
 EOF_NODE_CRED
+    fi
+    if [ "${HAS_SELF_SIGNED_CERTS:-0}" -eq 1 ] || [ -f /etc/nginx/.self_signed_warning ]; then
+        cat << 'EOF_SSL_WARN_CRED' >> "$CRED_FILE"
+=====================================================================
+⚠️  ВНИМАНИЕ: ИСПОЛЬЗУЕТСЯ ВРЕМЕННЫЙ САМОПОДПИСАННЫЙ SSL-СЕРТИФИКАТ
+Для одного или нескольких доменов не удалось выпустить Let's Encrypt SSL.
+• Браузер при входе в панель 3X-UI будет выдавать предупреждение безопасности.
+• Клиентские подписки, VLESS xHTTP и Hysteria 2 не будут подключаться,
+  пока не будет получен доверенный публичный сертификат.
+• Инбаунды REALITY, AmneziaWG и Shadowsocks-2022 работают штатно.
+
+КОМАНДА ДЛЯ ПЕРЕВЫПУСКА СЕРТИФИКАТА (после настройки DNS A-записей):
+• Рекомендуемый быстрый способ (только SSL, без простоя VPN):
+  bash maintain.sh -ssl
+• Полный перезапуск мастера установки (если установка прерывалась):
+  bash setup.sh -r
+EOF_SSL_WARN_CRED
     fi
     cat << 'EOF_UNINST_CRED' >> "$CRED_FILE"
 =====================================================================
@@ -94,6 +119,22 @@ echo
 
 echo -e "${YELLOW}[SSL] ВЫПУЩЕННЫЕ СЕРТИФИКАТЫ (Базовый путь: ${SSL_BASE_DIR}):${NC}"
 echo -e "$SSL_CERT_REPORT"
+
+if [ "${HAS_SELF_SIGNED_CERTS:-0}" -eq 1 ] || [ -f /etc/nginx/.self_signed_warning ]; then
+    echo -e "${YELLOW}┌────────────────────────────────────────────────────────────────────────┐${NC}"
+    echo -e "${YELLOW}│  ⚠️  ВНИМАНИЕ: ИСПОЛЬЗУЕТСЯ ВРЕМЕННЫЙ САМОПОДПИСАННЫЙ SSL-СЕРТИФИКАТ   │${NC}"
+    echo -e "${YELLOW}├────────────────────────────────────────────────────────────────────────┤${NC}"
+    echo -e "${YELLOW}│  Для части доменов не удалось выпустить доверенный Let's Encrypt SSL. │${NC}"
+    echo -e "${YELLOW}│  • Браузер при входе в панель 3X-UI покажет предупреждение безопасности│${NC}"
+    echo -e "${YELLOW}│  • Обновление подписок, VLESS xHTTP и Hysteria 2 на клиентах не будут │${NC}"
+    echo -e "${YELLOW}│    работать, пока не будет получен доверенный публичный сертификат.    │${NC}"
+    echo -e "${YELLOW}│                                                                        │${NC}"
+    echo -e "${YELLOW}│  После настройки DNS (A-записи на IP сервера) запустите:               │${NC}"
+    echo -e "${YELLOW}│  • Быстро обновить SSL (без простоя VPN):  ${GREEN}bash maintain.sh -ssl${YELLOW}       │${NC}"
+    echo -e "${YELLOW}│  • Перезапуск всей установки с чекпоинта:  ${GREEN}bash setup.sh -r${YELLOW}            │${NC}"
+    echo -e "${YELLOW}└────────────────────────────────────────────────────────────────────────┘${NC}"
+    echo
+fi
 
 if [[ "${SHOW_MANUAL_STEPS:-0}" == "1" ]]; then
 echo -e "${YELLOW}ШАГ 1: Настройка файервола UFW (Защита локальных сокетов и открытие VPN):${NC}"
@@ -117,7 +158,7 @@ echo -e "  - ${YELLOW}Вкладка «Безопасность»:${NC} ${RED}Н
 echo -e "  - ${YELLOW}Вкладка «Сниффинг»:${NC} Включить (${GREEN}HTTP, TLS, QUIC, FAKEDNS${NC})"
 echo
 
-if [[ "${ENABLE_HY2:-}" == "1" || "${ENABLE_HY2,,}" == "y" ]] && [ -n "${HY2_PORT:-}" ]; then
+if is_true "${ENABLE_HY2:-n}" && [ -n "${HY2_PORT:-}" ]; then
 hy2_active_dom="${HY2_DOMAIN:-$PRIMARY_DOMAIN}"
 echo -e "${YELLOW}ШАГ 4: Инбаунд Hysteria 2 (UDP $HY2_PORT):${NC}"
 echo -e "  - ${YELLOW}Вкладка «Основное»:${NC} Протокол: ${GREEN}hysteria (v2)${NC} | Адрес: ${GREEN}0.0.0.0${NC} | Порт: ${GREEN}$HY2_PORT${NC} (UDP)"
@@ -125,14 +166,14 @@ echo -e "  - ${YELLOW}Вкладка «Поток»:${NC} Masquerade: тип ${G
 echo -e "  - ${YELLOW}Вкладка «Безопасность»:${NC} ${GREEN}TLS${NC} | SNI: ${CYAN}${hy2_active_dom}${NC} | ALPN: ${GREEN}h3${NC}"
 echo -e "    * Публичный ключ: ${CYAN}${SSL_BASE_DIR}/${hy2_active_dom}/fullchain.pem${NC}"
 echo -e "    * Приватный ключ: ${CYAN}${SSL_BASE_DIR}/${hy2_active_dom}/privkey.pem${NC}"
-if [[ "${HY2_PORT_HOPPING,,}" == "y" || "${HY2_PORT_HOPPING:-}" == "1" ]] && [ -n "${HY2_PORT_HOPPING_RANGE:-}" ]; then
+if is_true "${HY2_PORT_HOPPING:-n}" && [ -n "${HY2_PORT_HOPPING_RANGE:-}" ]; then
 echo -e "  - ${YELLOW}Port Hopping:${NC} ${GREEN}Активирован${NC} | Диапазон: ${CYAN}UDP ${HY2_PORT_HOPPING_RANGE//:/-}${NC} → порт ${GREEN}${HY2_PORT}${NC}"
 echo -e "    * Адрес подключения клиента: ${CYAN}${hy2_active_dom}:${HY2_PORT},${HY2_PORT_HOPPING_RANGE//:/-}${NC}"
 fi
 echo
 fi
 
-if [[ "${ENABLE_AWG_V3:-}" == "1" || "${ENABLE_AWG_V3,,}" == "y" ]] && [ -n "${AWG_V3_PORT:-}" ]; then
+if is_true "${ENABLE_AWG_V3:-n}" && [ -n "${AWG_V3_PORT:-}" ]; then
 echo -e "${YELLOW}ШАГ 5: Инбаунд AmneziaWG v3.1 (WG3 — UDP $AWG_V3_PORT):${NC}"
 echo -e "  - ${YELLOW}Вкладка «Основное»:${NC}"
 echo -e "    * Включить: ${GREEN}Включено${NC} | Примечание: ${GREEN}WG3${NC} | Протокол: ${GREEN}amneziawg${NC}"
@@ -159,7 +200,7 @@ fi
 fi
 
     if [[ "${SHOW_MANUAL_STEPS:-0}" == "1" ]]; then
-        if [[ "${ENABLE_AWG_V2:-}" == "1" || "${ENABLE_AWG_V2,,}" == "y" ]] && [ -n "${AWG_V2_PORT:-}" ]; then
+        if is_true "${ENABLE_AWG_V2:-n}" && [ -n "${AWG_V2_PORT:-}" ]; then
             echo -e "${YELLOW}ШАГ 6: Инбаунд AmneziaWG v2.0 (UDP $AWG_V2_PORT):${NC}"
             echo -e "  - ${YELLOW}Вкладка «Основное»:${NC} Протокол: ${GREEN}amneziawg / wireguard${NC} | Адрес: ${GREEN}0.0.0.0${NC} | Порт: ${GREEN}$AWG_V2_PORT${NC} (UDP)"
             echo -e "  - ${YELLOW}Вкладка «Параметры AWG» (Для роутеров Keenetic / OpenWrt):${NC}"
@@ -171,7 +212,7 @@ fi
         fi
     fi
 
-    if [[ "${ENABLE_AWG_STANDALONE:-}" == "1" || "${ENABLE_AWG_STANDALONE,,}" == "y" ]]; then
+    if is_true "${ENABLE_AWG_STANDALONE:-n}"; then
         echo -e "${YELLOW}СЕРВЕРНЫЙ КОНТРОЛЛЕР AMNEZIAWG (awg-mgr):${NC}"
         echo -e "  - ${YELLOW}Утилита управления:${NC}      ${GREEN}awg-mgr${NC} (или ${GREEN}awg-cli${NC})"
         echo -e "  - ${YELLOW}Первичный конфиг админа:${NC} ${CYAN}/root/awg/client-1.conf${NC}"
@@ -222,7 +263,7 @@ fi
         echo -e "    2) ${BOLD}XHTTP_TLS_443:${NC} Инбаунд: ${CYAN}${SERVER_PREFIX} (VLESS xHTTP)${NC} -> Порт: ${GREEN}443${NC} | Безопасность: ${GREEN}tls${NC} (SNI: ${CYAN}$PRIMARY_DOMAIN${NC})"
     fi
 
-    if [[ "${ENABLE_AGH,,}" == "y" || "${ENABLE_AGH:-}" == "1" ]]; then
+    if is_true "${ENABLE_AGH:-n}"; then
         local_agh_panel_url=""
         local_agh_doh_url=""
         local_server_ip="${WAN_IP:-$(get_wan_ip)}"
@@ -243,7 +284,7 @@ fi
         echo -e "  - ${YELLOW}Split-DNS зоны:${NC}      ${CYAN}.ru, .рф, .su, .kz, .by${NC} → ${GREEN}Яндекс DNS (77.88.8.8)${NC}"
         echo -e "  - ${YELLOW}Блокировка рекламы:${NC}  ${GREEN}OISD Small (активен, автообновление каждые 24ч)${NC}"
         echo -e "  - ${YELLOW}Upstream DNS:${NC}        ${CYAN}Control D (p2 Ads/Malware), Google H3, Cloudflare, DoQ${NC}"
-        if [[ "${AGH_XRAY_DNS,,}" == "y" || "${AGH_XRAY_DNS:-}" == "1" ]]; then
+        if is_true "${AGH_XRAY_DNS:-n}"; then
             echo -e "  - ${YELLOW}Интеграция с Xray:${NC}   ${GREEN}127.0.0.1 (Все VPN-клиенты фильтруются через AGH)${NC}"
         fi
         echo
@@ -273,5 +314,9 @@ fi
             echo -e "  - ${YELLOW}API Token:${NC}                  ${GREEN}Не получен${NC}"
         fi
         echo -e "  - ${YELLOW}Авторизация (Fallback):${NC}     Логин: ${WHITE}${ADMIN_USERNAME:-admin}${NC}, Пароль: ${YELLOW}${ADMIN_PASSWORD}${NC}"
-        echo -e "  - ${YELLOW}Проверка сертификата (TLS):${NC}  ${GREEN}Включена (Действительный сертификат Let's Encrypt)${NC}"
+        if [ "${HAS_SELF_SIGNED_CERTS:-0}" -eq 1 ] || [ -f /etc/nginx/.self_signed_warning ]; then
+            echo -e "  - ${YELLOW}Проверка сертификата (TLS):${NC}  ${YELLOW}⚠️  ВРЕМЕННЫЙ САМОПОДПИСАННЫЙ (ТРЕБУЕТСЯ ЗАМЕНА!)${NC}"
+        else
+            echo -e "  - ${YELLOW}Проверка сертификата (TLS):${NC}  ${GREEN}Включена (Действительный сертификат Let's Encrypt)${NC}"
+        fi
     fi

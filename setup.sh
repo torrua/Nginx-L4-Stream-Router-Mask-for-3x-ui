@@ -2730,6 +2730,9 @@ WEB_LISTEN="${WEB_LISTEN:-127.0.0.1}"
 SUB_LISTEN="${SUB_LISTEN:-127.0.0.1}"
 
 DOKPLOY_COEXISTENCE="$dokploy_coexist_save"
+PANEL_DOMAIN="${PANEL_DOMAIN:-}"
+SUB_DOMAIN="${SUB_DOMAIN:-}"
+VLESS_DOMAIN="${VLESS_DOMAIN:-}"
 ENABLE_MASQUE="$masque_save"
 MASQUE_PORT="${MASQUE_PORT:-8449}"
 MASQUE_USER="${MASQUE_USER:-client}"
@@ -3834,6 +3837,8 @@ run_uninstall() {
     if [ "$nginx_preexisted" -eq 1 ]; then
         # Nginx существовал до нас: восстанавливаем исходную конфигурацию
         rm -f "${target_root}/etc/nginx/conf.d/00-acme.conf" \
+              "${target_root}/etc/nginx/http.d/00-acme.conf" \
+              "${target_root}/etc/nginx/conf.d/stream.conf" \
               "${target_root}/etc/nginx/conf.d/01-main.conf" \
               "${target_root}/etc/nginx/conf.d/02-"*.conf \
               "${target_root}/etc/nginx/conf.d/03-adguard.conf" \
@@ -3854,6 +3859,8 @@ run_uninstall() {
     else
         # Nginx был установлен нами: удаляем только файлы стека, сохраняя пользовательские конфиги
         rm -f "${target_root}/etc/nginx/conf.d/00-acme.conf" \
+              "${target_root}/etc/nginx/http.d/00-acme.conf" \
+              "${target_root}/etc/nginx/conf.d/stream.conf" \
               "${target_root}/etc/nginx/conf.d/01-main.conf" \
               "${target_root}/etc/nginx/conf.d/02-"*.conf \
               "${target_root}/etc/nginx/conf.d/03-adguard.conf" \
@@ -5348,6 +5355,30 @@ while [[ $# -gt 0 ]]; do
             CLI_PRIMARY_DOMAIN="$2"
             shift 2
             ;;
+        --panel-domain)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: домен панели 3X-UI."
+            PANEL_DOMAIN="$2"
+            CLI_PANEL_DOMAIN="$2"
+            shift 2
+            ;;
+        --sub-domain)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: домен сервера подписок."
+            SUB_DOMAIN="$2"
+            CLI_SUB_DOMAIN="$2"
+            shift 2
+            ;;
+        --vless-domain)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: домен VLESS xHTTP."
+            VLESS_DOMAIN="$2"
+            CLI_VLESS_DOMAIN="$2"
+            shift 2
+            ;;
+        --wstunnel-domain)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: домен Wstunnel."
+            WSTUNNEL_DOMAIN="$2"
+            CLI_WSTUNNEL_DOMAIN="$2"
+            shift 2
+            ;;
         --add-www)
             ADD_WWW="y"
             CLI_ADD_WWW="y"
@@ -5897,6 +5928,10 @@ fi
 [ -n "${CLI_MTPROTO_ADTAG:-}" ]   && MTPROTO_ADTAG="$CLI_MTPROTO_ADTAG"
 [ -n "${CLI_ENABLE_WEB_STACK:-}" ] && ENABLE_WEB_STACK="$CLI_ENABLE_WEB_STACK"
 [ -n "${CLI_DOKPLOY_COEXISTENCE:-}" ] && DOKPLOY_COEXISTENCE="$CLI_DOKPLOY_COEXISTENCE"
+[ -n "${CLI_PANEL_DOMAIN:-}" ]        && PANEL_DOMAIN="$CLI_PANEL_DOMAIN"
+[ -n "${CLI_SUB_DOMAIN:-}" ]          && SUB_DOMAIN="$CLI_SUB_DOMAIN"
+[ -n "${CLI_VLESS_DOMAIN:-}" ]        && VLESS_DOMAIN="$CLI_VLESS_DOMAIN"
+[ -n "${CLI_WSTUNNEL_DOMAIN:-}" ]     && WSTUNNEL_DOMAIN="$CLI_WSTUNNEL_DOMAIN"
 
 if [ -z "${CLI_DOKPLOY_COEXISTENCE:-}" ] && [ "${DOKPLOY_COEXISTENCE:-n}" != "y" ]; then
     if docker network inspect dokploy-network >/dev/null 2>&1 || (command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' 2>/dev/null | grep -qi 'dokploy'); then
@@ -6428,14 +6463,16 @@ check_required_service() {
             ok "Service $1: active"
             return 0
         fi
-    elif command -v systemctl >/dev/null 2>&1; then
+    fi
+    if command -v svc_is_active >/dev/null 2>&1 && svc_is_active "$svc"; then
+        ok "Service $1: active"
+        return 0
+    fi
+    if command -v systemctl >/dev/null 2>&1; then
         if systemctl is-active --quiet "$svc" 2>/dev/null; then
             ok "Service $1: active"
             return 0
         fi
-    elif command -v svc_is_active >/dev/null 2>&1 && svc_is_active "$svc"; then
-        ok "Service $1: active"
-        return 0
     fi
     warn "Service $1: inactive"
     return 1
@@ -7350,7 +7387,7 @@ deploy_ssh_transition_watcher() {
 #!/usr/bin/env bash
 # SSH Port Transition Watcher — безопасное закрытие старого порта при первом успешном входе на новый
 set -u
-TARGET_PORT="${1:-2222}"
+TARGET_PORT="${1:-1984}"
 ACTIVE_PORT="${2:-22}"
 TTL_HOURS="${3:-24}"
 
@@ -7762,7 +7799,10 @@ setup_vpn_diagnostics() {
         cp -a "$src_diag/speedtest.js" "$diag_dir/" 2>/dev/null || true
         cp -a "$src_diag/speedtest_worker.js" "$diag_dir/" 2>/dev/null || true
         cp -a "$src_diag/mtr-backend.py" "$bin_dir/" 2>/dev/null || true
-        cp -a "$src_diag/vpn-diagnostics.service" "$svc_file" 2>/dev/null || true
+        if ! is_openrc; then
+            mkdir -p /etc/systemd/system 2>/dev/null || true
+            cp -a "$src_diag/vpn-diagnostics.service" "$svc_file" 2>/dev/null || true
+        fi
     fi
 
     # Автономный fallback: развертывание встроенных ресурсов при отсутствии папки diagnostics на сервере
@@ -9731,7 +9771,8 @@ if __name__ == "__main__":
     main()
 EOF_DIAG_MTR
     fi
-    if [ ! -f "$svc_file" ]; then
+    if ! is_openrc && [ ! -f "$svc_file" ]; then
+        mkdir -p /etc/systemd/system 2>/dev/null || true
         cat << 'EOF_DIAG_SVC' > "$svc_file"
 [Unit]
 Description=VPN Diagnostic and MTR Backend
@@ -10204,6 +10245,41 @@ obtain_cf_cert() {
         --key-file       "/etc/ssl/acme/$dom/privkey.pem" \
         --fullchain-file "/etc/ssl/acme/$dom/fullchain.pem" \
         --reloadcmd     "chmod 750 /etc/ssl/acme /etc/ssl/acme/$dom 2>/dev/null || true; chmod 640 /etc/ssl/acme/$dom/*.pem 2>/dev/null || true; chmod 600 /etc/ssl/acme/$dom/privkey*.pem 2>/dev/null || true; chown -R root:${ng_usr} /etc/ssl/acme 2>/dev/null || true; svc_reload nginx 2>/dev/null || systemctl reload nginx 2>/dev/null || rc-service nginx reload 2>/dev/null || true"
+}
+
+generate_self_signed_cert() {
+    local dom="$1"
+    local base_dir="${SSL_BASE_DIR:-/etc/letsencrypt/live}"
+    local target_dir="${base_dir}/${dom}"
+    local ng_usr="www-data"
+    if command -v get_nginx_user >/dev/null 2>&1; then
+        ng_usr="$(get_nginx_user)"
+    elif [ -f /etc/os-release ]; then
+        local os_id=""
+        os_id=$(. /etc/os-release 2>/dev/null; echo "${ID:-}")
+        [ "$os_id" = "alpine" ] && ng_usr="nginx"
+    fi
+
+    mkdir -p "$target_dir"
+    warn "Генерация временного самоподписанного сертификата (Self-Signed SSL) для $dom..."
+    if openssl req -x509 -nodes -newkey rsa:2048 -days 365 \
+        -keyout "${target_dir}/privkey.pem" \
+        -out "${target_dir}/fullchain.pem" \
+        -subj "/CN=${dom}" >/dev/null 2>&1; then
+
+        chmod 755 "$base_dir" "$target_dir" 2>/dev/null || true
+        chmod 644 "${target_dir}/fullchain.pem" 2>/dev/null || true
+        chmod 600 "${target_dir}/privkey.pem" 2>/dev/null || true
+        chown -R root:"${ng_usr}" "$target_dir" 2>/dev/null || true
+        mkdir -p /etc/nginx 2>/dev/null || true
+        touch /etc/nginx/.self_signed_warning 2>/dev/null || true
+        export HAS_SELF_SIGNED_CERTS=1
+        ok "Временный самоподписанный SSL для $dom успешно создан: ${target_dir}."
+        return 0
+    else
+        warn "Не удалось сгенерировать самоподписанный SSL для $dom."
+        return 1
+    fi
 }
 
 nginx_reload_task() {
@@ -12888,7 +12964,7 @@ setup_zapret_service() {
     local iptables_bin
     iptables_bin="$(command -v iptables 2>/dev/null || echo "/usr/sbin/iptables")"
 
-    local pre_cmd="${iptables_bin} -t mangle -D POSTROUTING -p tcp -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original -m mark ! --mark 0x40000000/0x40000000 -j NFQUEUE --queue-num ${qnum} --queue-bypass 2>/dev/null || true; ${iptables_bin} -t mangle -I POSTROUTING -p tcp -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original -m mark ! --mark 0x40000000/0x40000000 -j NFQUEUE --queue-num ${qnum} --queue-bypass"
+    local pre_cmd="${iptables_bin} -t mangle -D POSTROUTING -p tcp -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original -m mark ! --mark 0x40000000/0x40000000 -j NFQUEUE --queue-num ${qnum} --queue-bypass 2>/dev/null || true; ${iptables_bin} -t mangle -I POSTROUTING -p tcp -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original -m mark ! --mark 0x40000000/0x40000000 -j NFQUEUE --queue-num ${qnum} --queue-bypass 2>/dev/null || true"
     local post_cmd="${iptables_bin} -t mangle -D POSTROUTING -p tcp -m connbytes --connbytes 1:6 --connbytes-mode packets --connbytes-dir original -m mark ! --mark 0x40000000/0x40000000 -j NFQUEUE --queue-num ${qnum} --queue-bypass 2>/dev/null || true"
 
     if is_openrc; then
@@ -14920,15 +14996,24 @@ EOF
         svc_disable apache2 2>/dev/null || systemctl disable apache2 2>/dev/null || true
 
         # Удаляем дефолтные конфигурации сайтов с [::]:80, которые приводят к сбою запуска при выключенном IPv6
-        rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-available/default /etc/nginx/conf.d/default.conf 2>/dev/null || true
-        mkdir -p /etc/nginx/sites-enabled /etc/nginx/conf.d /etc/nginx/modules-enabled "$WEBROOT/.well-known/acme-challenge" 2>/dev/null || true
+        rm -f /etc/nginx/sites-enabled/default \
+              /etc/nginx/sites-available/default \
+              /etc/nginx/conf.d/default.conf \
+              /etc/nginx/http.d/default.conf \
+              /etc/nginx/conf.d/00-acme.conf \
+              /etc/nginx/http.d/00-acme.conf 2>/dev/null || true
+        mkdir -p /etc/nginx/sites-enabled /etc/nginx/conf.d /etc/nginx/http.d /etc/nginx/modules-enabled "$WEBROOT/.well-known/acme-challenge" 2>/dev/null || true
         chown -R "$NGINX_USER:$NGINX_USER" "$WEBROOT" 2>/dev/null || true
 
-        # Удаляем директивы listen [::]: из существующих файлов conf.d
-        sed -i '/\[::\]/d' /etc/nginx/conf.d/*.conf 2>/dev/null || true
+        # Удаляем директивы listen [::]: из существующих файлов conf.d и http.d
+        sed -i '/\[::\]/d' /etc/nginx/conf.d/*.conf /etc/nginx/http.d/*.conf 2>/dev/null || true
 
         log "Создание стартового HTTP-сервера для валидации домена..."
-        cat << EOF > "/etc/nginx/conf.d/00-acme.conf"
+        local acme_conf="/etc/nginx/conf.d/00-acme.conf"
+        if [ -d /etc/nginx/http.d ] && grep -q 'include /etc/nginx/http.d/' /etc/nginx/nginx.conf 2>/dev/null; then
+            acme_conf="/etc/nginx/http.d/00-acme.conf"
+        fi
+        cat << EOF > "$acme_conf"
 server {
     listen 80;
     server_name $NGINX_80_SERVER_NAMES;
@@ -14983,7 +15068,22 @@ EOF
             fi
 
             for dom in "${ALL_DOMAINS[@]}"; do
-                issue_required_certificate "$dom" || die "Certificate issuance failed: $dom"
+                if ! issue_required_certificate "$dom"; then
+                    warn "Не удалось выпустить сертификат Let's Encrypt для $dom."
+                    warn "Возможные причины: DNS еще не обновился, порт 80 заблокирован хостером или включено проксирование Cloudflare."
+                    local allow_fallback="n"
+                    if [ "${NON_INTERACTIVE:-0}" -eq 1 ] || [ "${EXPRESS_MODE:-0}" -eq 1 ]; then
+                        allow_fallback="y"
+                    else
+                        prompt_yes_no "Желаете создать временный Self-Signed SSL для $dom, чтобы продолжить установку?" "y" allow_fallback || true
+                    fi
+
+                    if is_true "$allow_fallback"; then
+                        generate_self_signed_cert "$dom" || die "Сбой создания аварийного SSL-сертификата для $dom."
+                    else
+                        die "Certificate issuance failed: $dom"
+                    fi
+                fi
             done
 
             mkdir -p /etc/letsencrypt/renewal-hooks/deploy/
@@ -15015,7 +15115,22 @@ EOF
             chmod 755 /etc/ssl /etc/ssl/acme
 
             for dom in "${ALL_DOMAINS[@]}"; do
-                issue_required_certificate "$dom" || die "Certificate issuance failed: $dom"
+                if ! issue_required_certificate "$dom"; then
+                    warn "Не удалось выпустить сертификат acme.sh для $dom."
+                    warn "Возможные причины: неверные API-ключи Cloudflare или ошибка DNS-01 проверки."
+                    local allow_fallback="n"
+                    if [ "${NON_INTERACTIVE:-0}" -eq 1 ] || [ "${EXPRESS_MODE:-0}" -eq 1 ]; then
+                        allow_fallback="y"
+                    else
+                        prompt_yes_no "Желаете создать временный Self-Signed SSL для $dom, чтобы продолжить установку?" "y" allow_fallback || true
+                    fi
+
+                    if is_true "$allow_fallback"; then
+                        generate_self_signed_cert "$dom" || die "Сбой создания аварийного SSL-сертификата для $dom."
+                    else
+                        die "Certificate issuance failed: $dom"
+                    fi
+                fi
             done
         fi
 
@@ -15854,6 +15969,10 @@ install_step_nginx_config() {
     rm -f /etc/nginx/sites-enabled/default \
           /etc/nginx/sites-available/default \
           /etc/nginx/conf.d/default.conf \
+          /etc/nginx/http.d/default.conf \
+          /etc/nginx/conf.d/stream.conf \
+          /etc/nginx/conf.d/00-acme.conf \
+          /etc/nginx/http.d/00-acme.conf \
           /etc/nginx/conf.d/01-main.conf \
           /etc/nginx/conf.d/02-external-*.conf \
           /etc/nginx/conf.d/03-adguard.conf \
@@ -15889,11 +16008,17 @@ install_step_nginx_config() {
         wstunnel_badbot_bypass="        ~^1:[01]:/${wstunnel_clean_prefix}/ 0;"$'\n'
     fi
 
+    local nginx_pid_file="/run/nginx.pid"
+    if is_openrc || [ -f /etc/alpine-release ]; then
+        nginx_pid_file="/run/nginx/nginx.pid"
+        mkdir -p /run/nginx 2>/dev/null || true
+    fi
+
     # 1. Глобальный файл конфигурации /etc/nginx/nginx.conf
     cat << EOF > /etc/nginx/nginx.conf
 user $NGINX_USER;
 worker_processes auto;
-pid /run/nginx.pid;
+pid ${nginx_pid_file};
 worker_rlimit_nofile 524288;
 ${modules_load_block}
 
@@ -19340,16 +19465,20 @@ EOF_HELP
     WAS_ACTIVE=0
     cleanup_xui() {
         if [ "${WAS_ACTIVE:-0}" -eq 1 ]; then
-            systemctl start x-ui 2>/dev/null || true
+            svc_start x-ui 2>/dev/null || systemctl start x-ui 2>/dev/null || true
         fi
         command -v release_stack_lock >/dev/null 2>&1 && release_stack_lock
     }
     trap cleanup_xui EXIT
 
+    if [ -f /etc/init.d/x-ui ] && ! grep -q 'directory=' /etc/init.d/x-ui 2>/dev/null; then
+        sed -i '/command=/a directory="/usr/local/x-ui"' /etc/init.d/x-ui 2>/dev/null || true
+    fi
+
     if [ "$DRY_RUN" -eq 0 ]; then
-        if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet x-ui 2>/dev/null; then
+        if svc_is_active x-ui 2>/dev/null || (command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet x-ui 2>/dev/null); then
             log "Приостановка службы 3X-UI на время обновления конфигурации базы..."
-            systemctl stop x-ui
+            svc_stop x-ui 2>/dev/null || systemctl stop x-ui 2>/dev/null || true
             WAS_ACTIVE=1
         fi
     fi
@@ -22537,9 +22666,9 @@ EOF_CLEAN_JSON
         fi
 
         # Возобновление/перезапуск службы 3X-UI
-        if [ "${WAS_ACTIVE:-0}" -eq 1 ] || (command -v systemctl >/dev/null 2>&1 && systemctl is-enabled --quiet x-ui 2>/dev/null); then
+        if [ "${WAS_ACTIVE:-0}" -eq 1 ] || svc_is_active x-ui 2>/dev/null || (command -v systemctl >/dev/null 2>&1 && systemctl is-enabled --quiet x-ui 2>/dev/null); then
             log "Перезапуск службы 3X-UI..."
-            systemctl restart x-ui && ok "Служба 3X-UI успешно перезапущена." || warn "Не удалось перезапустить службу x-ui."
+            (svc_restart x-ui || svc_start x-ui || systemctl restart x-ui) && ok "Служба 3X-UI успешно перезапущена." || warn "Не удалось перезапустить службу x-ui."
         fi
 
         # Проверка Nginx на наличие мертвого SNI и мягкий reload
@@ -22658,6 +22787,9 @@ EOF_CLEAN_JSON
             echo -e "  - ${BOLD}3X-UI Node API:${NC}         ${GREEN}${NODE_TOKEN_NAME:-Node}${NC} (Host: ${CYAN}${PRIMARY_DOMAIN}:443${NC}, Path: ${CYAN}/${PANEL_PATH#/}/${NC})"
             echo -e "  - ${BOLD}API Bearer Token:${NC}       ${YELLOW}${NODE_TOKEN}${NC}"
         fi
+        if [ "${HAS_SELF_SIGNED_CERTS:-0}" -eq 1 ] || [ -f /etc/nginx/.self_signed_warning ]; then
+            echo -e "  - ${BOLD}Статус SSL:${NC}             ${YELLOW}${BOLD}⚠️  ВРЕМЕННЫЙ САМОПОДПИСАННЫЙ (ТРЕБУЕТСЯ ЗАМЕНА!)${NC}"
+        fi
     fi
 
     # Сохранение учетных данных в защищенный файл
@@ -22675,6 +22807,7 @@ $([ -n "${DIAG_TOKEN:-}" ] && echo "Токен диагностики:     ${DIA
 Логин администратора:   ${ADMIN_USERNAME:-admin}
 Пароль администратора:  ${ADMIN_PASSWORD}
 $([ -n "$INSTALLED_XRAY_VER" ] && echo "Ядро Xray-core:        ${INSTALLED_XRAY_VER}")
+$([ "${HAS_SELF_SIGNED_CERTS:-0}" -eq 1 ] || [ -f /etc/nginx/.self_signed_warning ] && echo "Статус SSL:            ⚠️ ВРЕМЕННЫЙ САМОПОДПИСАННЫЙ (ТРЕБУЕТСЯ ЗАМЕНА!)")
 
 Единый клиент:          ${UNIFIED_CLIENT_TAG:-Client}
 Канал подписок:        https://${PRIMARY_DOMAIN}/${SUB_PATH#/}/
@@ -22698,8 +22831,44 @@ $([ -n "${NODE_TOKEN:-}" ] && printf "3X-UI Node Token:      %s\nИмя ноды
 Команда для удаления:  vpn-uninstall (или curl -sSL "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/uninstall.sh" | sudo bash)
 =====================================================================
 EOF_CRED
+            if [ "${HAS_SELF_SIGNED_CERTS:-0}" -eq 1 ] || [ -f /etc/nginx/.self_signed_warning ]; then
+                cat << 'EOF_SSL_WARN_CRED' >> "$CRED_FILE"
+=====================================================================
+⚠️  ВНИМАНИЕ: ИСПОЛЬЗУЕТСЯ ВРЕМЕННЫЙ САМОПОДПИСАННЫЙ SSL-СЕРТИФИКАТ
+Для одного или нескольких доменов не удалось выпустить Let's Encrypt SSL.
+• Браузер при входе в панель 3X-UI будет выдавать предупреждение безопасности.
+• Клиентские подписки, VLESS xHTTP и Hysteria 2 не будут подключаться,
+  пока не будет получен доверенный публичный сертификат.
+• Инбаунды REALITY, AmneziaWG и Shadowsocks-2022 работают штатно.
+
+КОМАНДА ДЛЯ ПЕРЕВЫПУСКА СЕРТИФИКАТА (после настройки DNS A-записей):
+• Рекомендуемый быстрый способ (только SSL, без простоя VPN):
+  bash maintain.sh -ssl
+• Полный перезапуск мастера установки (если установка прерывалась):
+  bash setup.sh -r
+EOF_SSL_WARN_CRED
+            fi
             echo -e "  - ${BOLD}Файл с паролями:${NC}        ${CYAN}$CRED_FILE${NC} (chmod 600)"
         elif [ -f "$CRED_FILE" ]; then
+            if [ "${HAS_SELF_SIGNED_CERTS:-0}" -eq 1 ] || [ -f /etc/nginx/.self_signed_warning ]; then
+                if ! grep -q "САМОПОДПИСАННЫЙ SSL-СЕРТИФИКАТ" "$CRED_FILE" 2>/dev/null; then
+                    cat << 'EOF_SSL_WARN_CRED' >> "$CRED_FILE"
+=====================================================================
+⚠️  ВНИМАНИЕ: ИСПОЛЬЗУЕТСЯ ВРЕМЕННЫЙ САМОПОДПИСАННЫЙ SSL-СЕРТИФИКАТ
+Для одного или нескольких доменов не удалось выпустить Let's Encrypt SSL.
+• Браузер при входе в панель 3X-UI будет выдавать предупреждение безопасности.
+• Клиентские подписки, VLESS xHTTP и Hysteria 2 не будут подключаться,
+  пока не будет получен доверенный публичный сертификат.
+• Инбаунды REALITY, AmneziaWG и Shadowsocks-2022 работают штатно.
+
+КОМАНДА ДЛЯ ПЕРЕВЫПУСКА СЕРТИФИКАТА (после настройки DNS A-записей):
+• Рекомендуемый быстрый способ (только SSL, без простоя VPN):
+  bash maintain.sh -ssl
+• Полный перезапуск мастера установки (если установка прерывалась):
+  bash setup.sh -r
+EOF_SSL_WARN_CRED
+                fi
+            fi
             if [ -n "${MASQUE_URI:-}" ] && ! grep -q "MASQUE (RFC 9484):" "$CRED_FILE" 2>/dev/null; then
                 echo "MASQUE (RFC 9484):       ${MASQUE_URI}" >> "$CRED_FILE"
             fi
@@ -22727,6 +22896,16 @@ EOF_CRED
             echo -e "  - ${BOLD}Файл с паролями:${NC}        ${CYAN}$CRED_FILE${NC} (обновлен, chmod 600)"
         fi
         chmod 600 "$CRED_FILE" 2>/dev/null || true
+    fi
+    if [ "${HAS_SELF_SIGNED_CERTS:-0}" -eq 1 ] || [ -f /etc/nginx/.self_signed_warning ]; then
+        echo -e "${YELLOW}┌────────────────────────────────────────────────────────────────────────┐${NC}"
+        echo -e "${YELLOW}│  ⚠️  НАПОМИНАНИЕ: НЕОБХОДИМО ЗАМЕНИТЬ САМОПОДПИСАННЫЙ SSL-СЕРТИФИКАТ  │${NC}"
+        echo -e "${YELLOW}├────────────────────────────────────────────────────────────────────────┤${NC}"
+        echo -e "${YELLOW}│  Для работы подписок и VLESS xHTTP / Hysteria 2 на клиентах привяжите  │${NC}"
+        echo -e "${YELLOW}│  домен и запустите перевыпуск:                                         │${NC}"
+        echo -e "${YELLOW}│  • Быстро обновить SSL (без простоя VPN):  ${GREEN}bash maintain.sh -ssl${YELLOW}       │${NC}"
+        echo -e "${YELLOW}│  • Перезапуск всей установки с чекпоинта:  ${GREEN}bash setup.sh -r${YELLOW}            │${NC}"
+        echo -e "${YELLOW}└────────────────────────────────────────────────────────────────────────┘${NC}"
     fi
     echo -e "${GREEN}=====================================================================${NC}"
     echo
@@ -22831,6 +23010,32 @@ install_step_panel() {
             fi
         }
         run_with_spinner "Автоматическая настройка базы 3X-UI и создание инбаундов" run_configure_3xui_task || die "Ошибка настройки базы 3X-UI."
+
+        if is_true "${DOKPLOY_COEXISTENCE:-n}"; then
+            local dokploy_dynamic_dir="/etc/dokploy/traefik/dynamic"
+            if [ -d "$dokploy_dynamic_dir" ] || [ -d "/etc/dokploy" ]; then
+                mkdir -p "$dokploy_dynamic_dir"
+                local py_script="${SCRIPT_DIR:-.}/src/panel/dokploy_traefik.py"
+                [ -f "$py_script" ] || py_script="${ROOT_DIR:-.}/src/panel/dokploy_traefik.py"
+                local py_bin="python3"
+                if command -v python >/dev/null 2>&1 && python -c "import sys" >/dev/null 2>&1; then
+                    py_bin="python"
+                fi
+                if [ -f "$py_script" ]; then
+                    local extra_args=()
+                    [ -n "${PANEL_DOMAIN:-}" ] && extra_args+=(--panel-domain "$PANEL_DOMAIN")
+                    [ -n "${SUB_DOMAIN:-}" ] && extra_args+=(--sub-domain "$SUB_DOMAIN")
+                    [ -n "${VLESS_DOMAIN:-}" ] && extra_args+=(--vless-domain "$VLESS_DOMAIN")
+                    "$py_bin" "$py_script" --domain "${PRIMARY_DOMAIN:-example.com}" \
+                        "${extra_args[@]}" \
+                        --panel-port "${PANEL_PORT:-10443}" \
+                        --sub-port "${SUB_PORT:-55443}" \
+                        --xhttp-port "${XHTTP_STREAM_PORT:-50443}" \
+                        --output "$dokploy_dynamic_dir/vpn.yml" 2>/dev/null || true
+                    ok "Маршруты Dokploy Traefik автоматически применены: $dokploy_dynamic_dir/vpn.yml"
+                fi
+            fi
+        fi
 
         if is_true "${ENABLE_NODE_TOKEN:-y}"; then
             load_node_token_result "$NODE_ENV_FILE" || die "API-ключ ноды не получен от 3X-UI."
@@ -23087,42 +23292,42 @@ for port in "${ALL_REALITY_PORTS[@]:-}"; do
 done
 
 UFW_ALLOW_LIST="ufw allow 80/tcp && ufw allow 443/tcp"
-if [[ "${ENABLE_HY2:-}" == "1" || "${ENABLE_HY2,,}" == "y" ]] && [ -n "${HY2_PORT:-}" ]; then
+if is_true "${ENABLE_HY2:-n}" && [ -n "${HY2_PORT:-}" ]; then
     if [ "${HY2_PORT}" != "443" ]; then
         UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${HY2_PORT}/udp"
     else
         UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow 443/udp"
     fi
     # Port Hopping: открываем диапазон UDP-портов
-    if [[ "${HY2_PORT_HOPPING,,}" == "y" || "${HY2_PORT_HOPPING:-}" == "1" ]] && [ -n "${HY2_PORT_HOPPING_RANGE:-}" ]; then
+    if is_true "${HY2_PORT_HOPPING:-n}" && [ -n "${HY2_PORT_HOPPING_RANGE:-}" ]; then
         UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${HY2_PORT_HOPPING_RANGE//:/ }/udp"
     fi
 fi
-if [[ "${ENABLE_AWG_V3:-}" == "1" || "${ENABLE_AWG_V3,,}" == "y" ]] && [ -n "${AWG_V3_PORT:-}" ]; then
+if is_true "${ENABLE_AWG_V3:-n}" && [ -n "${AWG_V3_PORT:-}" ]; then
     UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${AWG_V3_PORT}/udp"
 fi
-if [[ "${ENABLE_AWG_V2:-}" == "1" || "${ENABLE_AWG_V2,,}" == "y" ]] && [ -n "${AWG_V2_PORT:-}" ]; then
+if is_true "${ENABLE_AWG_V2:-n}" && [ -n "${AWG_V2_PORT:-}" ]; then
     UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${AWG_V2_PORT}/udp"
 fi
-if [[ "${ENABLE_AWG_STANDALONE:-}" == "1" || "${ENABLE_AWG_STANDALONE,,}" == "y" ]] && [ -n "${AWG_STANDALONE_PORT:-}" ]; then
+if is_true "${ENABLE_AWG_STANDALONE:-n}" && [ -n "${AWG_STANDALONE_PORT:-}" ]; then
     UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${AWG_STANDALONE_PORT}/udp"
 fi
-if [[ "${ENABLE_SS2022:-}" == "1" || "${ENABLE_SS2022,,}" == "y" ]] && [ -n "${SS2022_PORT:-}" ]; then
+if is_true "${ENABLE_SS2022:-n}" && [ -n "${SS2022_PORT:-}" ]; then
     UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${SS2022_PORT}/tcp && ufw allow ${SS2022_PORT}/udp"
 fi
-if [[ "${ENABLE_TUIC:-}" == "1" || "${ENABLE_TUIC,,}" == "y" ]] && [ -n "${TUIC_PORT:-}" ]; then
+if is_true "${ENABLE_TUIC:-n}" && [ -n "${TUIC_PORT:-}" ]; then
     UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${TUIC_PORT}/udp"
 fi
-if [[ "${ENABLE_MTPROTO:-}" == "1" || "${ENABLE_MTPROTO,,}" == "y" ]] && [ -n "${MTPROTO_PORT:-}" ]; then
+if is_true "${ENABLE_MTPROTO:-n}" && [ -n "${MTPROTO_PORT:-}" ]; then
     UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${MTPROTO_PORT}/tcp"
 fi
-if [[ "${ENABLE_MASQUE:-}" == "1" || "${ENABLE_MASQUE,,}" == "y" ]] && [ -n "${MASQUE_PORT:-}" ]; then
+if is_true "${ENABLE_MASQUE:-n}" && [ -n "${MASQUE_PORT:-}" ]; then
     UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${MASQUE_PORT}/udp"
 fi
-if [[ "${ENABLE_DNSTT:-}" == "1" || "${ENABLE_DNSTT,,}" == "y" ]] && [ -n "${DNSTT_PORT:-}" ]; then
+if is_true "${ENABLE_DNSTT:-n}" && [ -n "${DNSTT_PORT:-}" ]; then
     UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${DNSTT_PORT}/udp"
 fi
-if [[ "${ENABLE_MIERU:-}" == "1" || "${ENABLE_MIERU,,}" == "y" ]] && [ -n "${MIERU_PORT:-}" ]; then
+if is_true "${ENABLE_MIERU:-n}" && [ -n "${MIERU_PORT:-}" ]; then
     _ufw_m_p="${MIERU_PORT//-/:}"
     UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${_ufw_m_p}/tcp && ufw allow ${_ufw_m_p}/udp"
 fi
@@ -23130,7 +23335,22 @@ fi
 SSL_CERT_REPORT=""
 for dom in "${ALL_DOMAINS[@]}"; do
     if [ -f "${SSL_BASE_DIR}/$dom/fullchain.pem" ]; then
-        SSL_CERT_REPORT+="  - Домен: ${CYAN}${dom}${NC}\n"
+        local is_self_signed=0
+        local issuer_s=""
+        local subject_s=""
+        if command -v openssl >/dev/null 2>&1; then
+            issuer_s="$(openssl x509 -in "${SSL_BASE_DIR}/$dom/fullchain.pem" -noout -issuer 2>/dev/null || true)"
+            subject_s="$(openssl x509 -in "${SSL_BASE_DIR}/$dom/fullchain.pem" -noout -subject 2>/dev/null || true)"
+            if [ -n "$issuer_s" ] && [ "$issuer_s" = "$subject_s" ]; then
+                is_self_signed=1
+            fi
+        fi
+        if [ "$is_self_signed" -eq 1 ] || [ "${HAS_SELF_SIGNED_CERTS:-0}" -eq 1 ]; then
+            HAS_SELF_SIGNED_CERTS=1
+            SSL_CERT_REPORT+="  - Домен: ${CYAN}${dom}${NC} ${YELLOW}[ВРЕМЕННЫЙ САМОПОДПИСАННЫЙ / SELF-SIGNED]${NC}\n"
+        else
+            SSL_CERT_REPORT+="  - Домен: ${CYAN}${dom}${NC}\n"
+        fi
         SSL_CERT_REPORT+="    Cert: ${GREEN}${SSL_BASE_DIR}/${dom}/fullchain.pem${NC}\n"
         SSL_CERT_REPORT+="    Key:  ${GREEN}${SSL_BASE_DIR}/${dom}/privkey.pem${NC}\n\n"
     fi
@@ -23201,6 +23421,9 @@ fi
 echo -e "  Канал подписок:              ${GREEN}https://${PRIMARY_DOMAIN}${SUB_PATH}${NC}"
 echo -e "  Канал подписок (JSON):       ${GREEN}https://${PRIMARY_DOMAIN}${SUB_JSON_PATH}${NC}"
 echo -e "  Канал подписок (Clash):      ${GREEN}https://${PRIMARY_DOMAIN}${SUB_CLASH_PATH}${NC}"
+if [ "${HAS_SELF_SIGNED_CERTS:-0}" -eq 1 ] || [ -f /etc/nginx/.self_signed_warning ]; then
+    echo -e "  Статус SSL-сертификата:      ${YELLOW}${BOLD}⚠️  ВРЕМЕННЫЙ САМОПОДПИСАННЫЙ (ТРЕБУЕТСЯ ЗАМЕНА!)${NC}"
+fi
 if is_true "${ENABLE_WARP:-n}"; then
     echo -e "  Cloudflare WARP Outbound:    ${GREEN}АКТИВИРОВАН (Google, Gemini, ChatGPT / MTU 1280)${NC}"
 fi
@@ -23234,6 +23457,7 @@ $([ -n "${DIAG_TOKEN:-}" ] && echo "Веб-диагностика (SSO):     htt
 $([ -n "${DIAG_TOKEN:-}" ] && echo "Токен диагностики:         ${DIAG_TOKEN}")
 Логин администратора:       ${ADMIN_USERNAME:-admin}
 Пароль администратора:      ${ADMIN_PASSWORD}
+$([ "${HAS_SELF_SIGNED_CERTS:-0}" -eq 1 ] || [ -f /etc/nginx/.self_signed_warning ] && echo "Статус SSL:                ⚠️ ВРЕМЕННЫЙ САМОПОДПИСАННЫЙ (ТРЕБУЕТСЯ ЗАМЕНА!)")
 
 Ссылка на подписку:        https://${PRIMARY_DOMAIN}${SUB_PATH}
 Ссылка на подписку (JSON): https://${PRIMARY_DOMAIN}${SUB_JSON_PATH}
@@ -23251,6 +23475,10 @@ EOF_AGH_CRED
     if is_true "${ENABLE_NODE_TOKEN:-n}"; then
         node_scope_title="Синхронизация ноды"
         [ "${NODE_TOKEN_SCOPE:-node-sync}" = "admin" ] && node_scope_title="Администратор"
+        node_tls_status="Действительный (Let's Encrypt / acme.sh)"
+        if [ "${HAS_SELF_SIGNED_CERTS:-0}" -eq 1 ] || [ -f /etc/nginx/.self_signed_warning ]; then
+            node_tls_status="⚠️ ВРЕМЕННЫЙ САМОПОДПИСАННЫЙ (ТРЕБУЕТСЯ ЗАМЕНА!)"
+        fi
         cat << EOF_NODE_CRED >> "$CRED_FILE"
 =====================================================================
 ПОДКЛЮЧЕНИЕ СЕРВЕРА КАК УЗЛА (3X-UI NODE)
@@ -23262,8 +23490,25 @@ EOF_AGH_CRED
 API Token:             ${NODE_TOKEN:-Не получен}
 Логин администратора:  ${ADMIN_USERNAME:-admin}
 Пароль администратора: ${ADMIN_PASSWORD}
-TLS сертификат:        Действительный (Let's Encrypt / acme.sh)
+TLS сертификат:        ${node_tls_status}
 EOF_NODE_CRED
+    fi
+    if [ "${HAS_SELF_SIGNED_CERTS:-0}" -eq 1 ] || [ -f /etc/nginx/.self_signed_warning ]; then
+        cat << 'EOF_SSL_WARN_CRED' >> "$CRED_FILE"
+=====================================================================
+⚠️  ВНИМАНИЕ: ИСПОЛЬЗУЕТСЯ ВРЕМЕННЫЙ САМОПОДПИСАННЫЙ SSL-СЕРТИФИКАТ
+Для одного или нескольких доменов не удалось выпустить Let's Encrypt SSL.
+• Браузер при входе в панель 3X-UI будет выдавать предупреждение безопасности.
+• Клиентские подписки, VLESS xHTTP и Hysteria 2 не будут подключаться,
+  пока не будет получен доверенный публичный сертификат.
+• Инбаунды REALITY, AmneziaWG и Shadowsocks-2022 работают штатно.
+
+КОМАНДА ДЛЯ ПЕРЕВЫПУСКА СЕРТИФИКАТА (после настройки DNS A-записей):
+• Рекомендуемый быстрый способ (только SSL, без простоя VPN):
+  bash maintain.sh -ssl
+• Полный перезапуск мастера установки (если установка прерывалась):
+  bash setup.sh -r
+EOF_SSL_WARN_CRED
     fi
     cat << 'EOF_UNINST_CRED' >> "$CRED_FILE"
 =====================================================================
@@ -23280,6 +23525,22 @@ echo
 
 echo -e "${YELLOW}[SSL] ВЫПУЩЕННЫЕ СЕРТИФИКАТЫ (Базовый путь: ${SSL_BASE_DIR}):${NC}"
 echo -e "$SSL_CERT_REPORT"
+
+if [ "${HAS_SELF_SIGNED_CERTS:-0}" -eq 1 ] || [ -f /etc/nginx/.self_signed_warning ]; then
+    echo -e "${YELLOW}┌────────────────────────────────────────────────────────────────────────┐${NC}"
+    echo -e "${YELLOW}│  ⚠️  ВНИМАНИЕ: ИСПОЛЬЗУЕТСЯ ВРЕМЕННЫЙ САМОПОДПИСАННЫЙ SSL-СЕРТИФИКАТ   │${NC}"
+    echo -e "${YELLOW}├────────────────────────────────────────────────────────────────────────┤${NC}"
+    echo -e "${YELLOW}│  Для части доменов не удалось выпустить доверенный Let's Encrypt SSL. │${NC}"
+    echo -e "${YELLOW}│  • Браузер при входе в панель 3X-UI покажет предупреждение безопасности│${NC}"
+    echo -e "${YELLOW}│  • Обновление подписок, VLESS xHTTP и Hysteria 2 на клиентах не будут │${NC}"
+    echo -e "${YELLOW}│    работать, пока не будет получен доверенный публичный сертификат.    │${NC}"
+    echo -e "${YELLOW}│                                                                        │${NC}"
+    echo -e "${YELLOW}│  После настройки DNS (A-записи на IP сервера) запустите:               │${NC}"
+    echo -e "${YELLOW}│  • Быстро обновить SSL (без простоя VPN):  ${GREEN}bash maintain.sh -ssl${YELLOW}       │${NC}"
+    echo -e "${YELLOW}│  • Перезапуск всей установки с чекпоинта:  ${GREEN}bash setup.sh -r${YELLOW}            │${NC}"
+    echo -e "${YELLOW}└────────────────────────────────────────────────────────────────────────┘${NC}"
+    echo
+fi
 
 if [[ "${SHOW_MANUAL_STEPS:-0}" == "1" ]]; then
 echo -e "${YELLOW}ШАГ 1: Настройка файервола UFW (Защита локальных сокетов и открытие VPN):${NC}"
@@ -23303,7 +23564,7 @@ echo -e "  - ${YELLOW}Вкладка «Безопасность»:${NC} ${RED}Н
 echo -e "  - ${YELLOW}Вкладка «Сниффинг»:${NC} Включить (${GREEN}HTTP, TLS, QUIC, FAKEDNS${NC})"
 echo
 
-if [[ "${ENABLE_HY2:-}" == "1" || "${ENABLE_HY2,,}" == "y" ]] && [ -n "${HY2_PORT:-}" ]; then
+if is_true "${ENABLE_HY2:-n}" && [ -n "${HY2_PORT:-}" ]; then
 hy2_active_dom="${HY2_DOMAIN:-$PRIMARY_DOMAIN}"
 echo -e "${YELLOW}ШАГ 4: Инбаунд Hysteria 2 (UDP $HY2_PORT):${NC}"
 echo -e "  - ${YELLOW}Вкладка «Основное»:${NC} Протокол: ${GREEN}hysteria (v2)${NC} | Адрес: ${GREEN}0.0.0.0${NC} | Порт: ${GREEN}$HY2_PORT${NC} (UDP)"
@@ -23311,14 +23572,14 @@ echo -e "  - ${YELLOW}Вкладка «Поток»:${NC} Masquerade: тип ${G
 echo -e "  - ${YELLOW}Вкладка «Безопасность»:${NC} ${GREEN}TLS${NC} | SNI: ${CYAN}${hy2_active_dom}${NC} | ALPN: ${GREEN}h3${NC}"
 echo -e "    * Публичный ключ: ${CYAN}${SSL_BASE_DIR}/${hy2_active_dom}/fullchain.pem${NC}"
 echo -e "    * Приватный ключ: ${CYAN}${SSL_BASE_DIR}/${hy2_active_dom}/privkey.pem${NC}"
-if [[ "${HY2_PORT_HOPPING,,}" == "y" || "${HY2_PORT_HOPPING:-}" == "1" ]] && [ -n "${HY2_PORT_HOPPING_RANGE:-}" ]; then
+if is_true "${HY2_PORT_HOPPING:-n}" && [ -n "${HY2_PORT_HOPPING_RANGE:-}" ]; then
 echo -e "  - ${YELLOW}Port Hopping:${NC} ${GREEN}Активирован${NC} | Диапазон: ${CYAN}UDP ${HY2_PORT_HOPPING_RANGE//:/-}${NC} → порт ${GREEN}${HY2_PORT}${NC}"
 echo -e "    * Адрес подключения клиента: ${CYAN}${hy2_active_dom}:${HY2_PORT},${HY2_PORT_HOPPING_RANGE//:/-}${NC}"
 fi
 echo
 fi
 
-if [[ "${ENABLE_AWG_V3:-}" == "1" || "${ENABLE_AWG_V3,,}" == "y" ]] && [ -n "${AWG_V3_PORT:-}" ]; then
+if is_true "${ENABLE_AWG_V3:-n}" && [ -n "${AWG_V3_PORT:-}" ]; then
 echo -e "${YELLOW}ШАГ 5: Инбаунд AmneziaWG v3.1 (WG3 — UDP $AWG_V3_PORT):${NC}"
 echo -e "  - ${YELLOW}Вкладка «Основное»:${NC}"
 echo -e "    * Включить: ${GREEN}Включено${NC} | Примечание: ${GREEN}WG3${NC} | Протокол: ${GREEN}amneziawg${NC}"
@@ -23345,7 +23606,7 @@ fi
 fi
 
     if [[ "${SHOW_MANUAL_STEPS:-0}" == "1" ]]; then
-        if [[ "${ENABLE_AWG_V2:-}" == "1" || "${ENABLE_AWG_V2,,}" == "y" ]] && [ -n "${AWG_V2_PORT:-}" ]; then
+        if is_true "${ENABLE_AWG_V2:-n}" && [ -n "${AWG_V2_PORT:-}" ]; then
             echo -e "${YELLOW}ШАГ 6: Инбаунд AmneziaWG v2.0 (UDP $AWG_V2_PORT):${NC}"
             echo -e "  - ${YELLOW}Вкладка «Основное»:${NC} Протокол: ${GREEN}amneziawg / wireguard${NC} | Адрес: ${GREEN}0.0.0.0${NC} | Порт: ${GREEN}$AWG_V2_PORT${NC} (UDP)"
             echo -e "  - ${YELLOW}Вкладка «Параметры AWG» (Для роутеров Keenetic / OpenWrt):${NC}"
@@ -23357,7 +23618,7 @@ fi
         fi
     fi
 
-    if [[ "${ENABLE_AWG_STANDALONE:-}" == "1" || "${ENABLE_AWG_STANDALONE,,}" == "y" ]]; then
+    if is_true "${ENABLE_AWG_STANDALONE:-n}"; then
         echo -e "${YELLOW}СЕРВЕРНЫЙ КОНТРОЛЛЕР AMNEZIAWG (awg-mgr):${NC}"
         echo -e "  - ${YELLOW}Утилита управления:${NC}      ${GREEN}awg-mgr${NC} (или ${GREEN}awg-cli${NC})"
         echo -e "  - ${YELLOW}Первичный конфиг админа:${NC} ${CYAN}/root/awg/client-1.conf${NC}"
@@ -23408,7 +23669,7 @@ fi
         echo -e "    2) ${BOLD}XHTTP_TLS_443:${NC} Инбаунд: ${CYAN}${SERVER_PREFIX} (VLESS xHTTP)${NC} -> Порт: ${GREEN}443${NC} | Безопасность: ${GREEN}tls${NC} (SNI: ${CYAN}$PRIMARY_DOMAIN${NC})"
     fi
 
-    if [[ "${ENABLE_AGH,,}" == "y" || "${ENABLE_AGH:-}" == "1" ]]; then
+    if is_true "${ENABLE_AGH:-n}"; then
         local_agh_panel_url=""
         local_agh_doh_url=""
         local_server_ip="${WAN_IP:-$(get_wan_ip)}"
@@ -23429,7 +23690,7 @@ fi
         echo -e "  - ${YELLOW}Split-DNS зоны:${NC}      ${CYAN}.ru, .рф, .su, .kz, .by${NC} → ${GREEN}Яндекс DNS (77.88.8.8)${NC}"
         echo -e "  - ${YELLOW}Блокировка рекламы:${NC}  ${GREEN}OISD Small (активен, автообновление каждые 24ч)${NC}"
         echo -e "  - ${YELLOW}Upstream DNS:${NC}        ${CYAN}Control D (p2 Ads/Malware), Google H3, Cloudflare, DoQ${NC}"
-        if [[ "${AGH_XRAY_DNS,,}" == "y" || "${AGH_XRAY_DNS:-}" == "1" ]]; then
+        if is_true "${AGH_XRAY_DNS:-n}"; then
             echo -e "  - ${YELLOW}Интеграция с Xray:${NC}   ${GREEN}127.0.0.1 (Все VPN-клиенты фильтруются через AGH)${NC}"
         fi
         echo
@@ -23459,7 +23720,11 @@ fi
             echo -e "  - ${YELLOW}API Token:${NC}                  ${GREEN}Не получен${NC}"
         fi
         echo -e "  - ${YELLOW}Авторизация (Fallback):${NC}     Логин: ${WHITE}${ADMIN_USERNAME:-admin}${NC}, Пароль: ${YELLOW}${ADMIN_PASSWORD}${NC}"
-        echo -e "  - ${YELLOW}Проверка сертификата (TLS):${NC}  ${GREEN}Включена (Действительный сертификат Let's Encrypt)${NC}"
+        if [ "${HAS_SELF_SIGNED_CERTS:-0}" -eq 1 ] || [ -f /etc/nginx/.self_signed_warning ]; then
+            echo -e "  - ${YELLOW}Проверка сертификата (TLS):${NC}  ${YELLOW}⚠️  ВРЕМЕННЫЙ САМОПОДПИСАННЫЙ (ТРЕБУЕТСЯ ЗАМЕНА!)${NC}"
+        else
+            echo -e "  - ${YELLOW}Проверка сертификата (TLS):${NC}  ${GREEN}Включена (Действительный сертификат Let's Encrypt)${NC}"
+        fi
     fi
     else
         :
@@ -23558,6 +23823,18 @@ fi
     # Предложение запуска YABS бенчмарка производительности
     if command -v offer_yabs_benchmark >/dev/null 2>&1; then
         offer_yabs_benchmark
+    fi
+
+    if [ "${HAS_SELF_SIGNED_CERTS:-0}" -eq 1 ] || [ -f /etc/nginx/.self_signed_warning ]; then
+        echo -e "  ${YELLOW}┌────────────────────────────────────────────────────────────────────────┐${NC}"
+        echo -e "  ${YELLOW}│  ⚠️  НАПОМИНАНИЕ: НЕОБХОДИМО ЗАМЕНИТЬ САМОПОДПИСАННЫЙ SSL-СЕРТИФИКАТ  │${NC}"
+        echo -e "  ${YELLOW}├────────────────────────────────────────────────────────────────────────┤${NC}"
+        echo -e "  ${YELLOW}│  Сервер временно использует самоподписанный SSL. Для работы подписок,  │${NC}"
+        echo -e "  ${YELLOW}│  VLESS xHTTP и Hysteria 2 на клиентах привяжите домен и запустите:     │${NC}"
+        echo -e "  ${YELLOW}│  • Быстро обновить SSL (без простоя VPN):  ${GREEN}bash maintain.sh -ssl${YELLOW}       │${NC}"
+        echo -e "  ${YELLOW}│  • Перезапуск всей установки с чекпоинта:  ${GREEN}bash setup.sh -r${YELLOW}            │${NC}"
+        echo -e "  ${YELLOW}└────────────────────────────────────────────────────────────────────────┘${NC}"
+        echo ""
     fi
 }
 
@@ -26154,18 +26431,20 @@ EOF_PARSE_PROBE
 
             # Вопрос 1: Порт SSH
             echo
-            local keep_ssh="y"
-            if [ "$current_configured_port" -ne "$SSH_ACTIVE_PORT" ]; then
-                keep_ssh="n"
+            local change_ssh="y"
+            local ssh_prompt="  Сменить стандартный порт SSH (${SSH_ACTIVE_PORT}) для защиты от сканеров?"
+            if [ "$SSH_ACTIVE_PORT" -ne 22 ] && [ "$current_configured_port" -eq "$SSH_ACTIVE_PORT" ]; then
+                change_ssh="n"
+                ssh_prompt="  Сменить текущий порт SSH (${SSH_ACTIVE_PORT})?"
             fi
-            prompt_yes_no "  Оставить текущий порт SSH (${SSH_ACTIVE_PORT})?" "$keep_ssh" KEEP_SSH || return $?
-            if is_true "$KEEP_SSH"; then
+            prompt_yes_no "$ssh_prompt" "$change_ssh" CHANGE_SSH || return $?
+            if ! is_true "$CHANGE_SSH"; then
                 SSH_PORT="$SSH_ACTIVE_PORT"
                 ok "Используется текущий порт SSH: ${WHITE}$SSH_PORT${NC}"
             else
                 while true; do
                     local custom_p="${current_configured_port}"
-                    [ "$custom_p" -eq "$SSH_ACTIVE_PORT" ] && custom_p=2222
+                    [ "$custom_p" -eq "$SSH_ACTIVE_PORT" ] && custom_p=1984
                     prompt_default "  Введите новый порт SSH (1024-65535)" "$custom_p" custom_p || return $?
                     if [[ "$custom_p" =~ ^[0-9]+$ ]] && [ "$custom_p" -ge 1024 ] && [ "$custom_p" -le 65535 ]; then
                         # Проверка на конфликт с известными портами сервисов

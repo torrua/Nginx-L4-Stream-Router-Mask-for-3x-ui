@@ -1952,18 +1952,20 @@ EOF_PARSE_PROBE
 
             # Вопрос 1: Порт SSH
             echo
-            local keep_ssh="y"
-            if [ "$current_configured_port" -ne "$SSH_ACTIVE_PORT" ]; then
-                keep_ssh="n"
+            local change_ssh="y"
+            local ssh_prompt="  Сменить стандартный порт SSH (${SSH_ACTIVE_PORT}) для защиты от сканеров?"
+            if [ "$SSH_ACTIVE_PORT" -ne 22 ] && [ "$current_configured_port" -eq "$SSH_ACTIVE_PORT" ]; then
+                change_ssh="n"
+                ssh_prompt="  Сменить текущий порт SSH (${SSH_ACTIVE_PORT})?"
             fi
-            prompt_yes_no "  Оставить текущий порт SSH (${SSH_ACTIVE_PORT})?" "$keep_ssh" KEEP_SSH || return $?
-            if is_true "$KEEP_SSH"; then
+            prompt_yes_no "$ssh_prompt" "$change_ssh" CHANGE_SSH || return $?
+            if ! is_true "$CHANGE_SSH"; then
                 SSH_PORT="$SSH_ACTIVE_PORT"
                 ok "Используется текущий порт SSH: ${WHITE}$SSH_PORT${NC}"
             else
                 while true; do
                     local custom_p="${current_configured_port}"
-                    [ "$custom_p" -eq "$SSH_ACTIVE_PORT" ] && custom_p=2222
+                    [ "$custom_p" -eq "$SSH_ACTIVE_PORT" ] && custom_p=1984
                     prompt_default "  Введите новый порт SSH (1024-65535)" "$custom_p" custom_p || return $?
                     if [[ "$custom_p" =~ ^[0-9]+$ ]] && [ "$custom_p" -ge 1024 ] && [ "$custom_p" -le 65535 ]; then
                         # Проверка на конфликт с известными портами сервисов

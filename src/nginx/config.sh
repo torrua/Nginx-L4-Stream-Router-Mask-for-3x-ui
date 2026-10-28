@@ -47,6 +47,10 @@
     rm -f /etc/nginx/sites-enabled/default \
           /etc/nginx/sites-available/default \
           /etc/nginx/conf.d/default.conf \
+          /etc/nginx/http.d/default.conf \
+          /etc/nginx/conf.d/stream.conf \
+          /etc/nginx/conf.d/00-acme.conf \
+          /etc/nginx/http.d/00-acme.conf \
           /etc/nginx/conf.d/01-main.conf \
           /etc/nginx/conf.d/02-external-*.conf \
           /etc/nginx/conf.d/03-adguard.conf \
@@ -82,11 +86,17 @@
         wstunnel_badbot_bypass="        ~^1:[01]:/${wstunnel_clean_prefix}/ 0;"$'\n'
     fi
 
+    local nginx_pid_file="/run/nginx.pid"
+    if is_openrc || [ -f /etc/alpine-release ]; then
+        nginx_pid_file="/run/nginx/nginx.pid"
+        mkdir -p /run/nginx 2>/dev/null || true
+    fi
+
     # 1. Глобальный файл конфигурации /etc/nginx/nginx.conf
     cat << EOF > /etc/nginx/nginx.conf
 user $NGINX_USER;
 worker_processes auto;
-pid /run/nginx.pid;
+pid ${nginx_pid_file};
 worker_rlimit_nofile 524288;
 ${modules_load_block}
 

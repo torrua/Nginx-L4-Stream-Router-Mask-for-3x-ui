@@ -129,6 +129,41 @@ obtain_cf_cert() {
         --reloadcmd     "chmod 750 /etc/ssl/acme /etc/ssl/acme/$dom 2>/dev/null || true; chmod 640 /etc/ssl/acme/$dom/*.pem 2>/dev/null || true; chmod 600 /etc/ssl/acme/$dom/privkey*.pem 2>/dev/null || true; chown -R root:${ng_usr} /etc/ssl/acme 2>/dev/null || true; svc_reload nginx 2>/dev/null || systemctl reload nginx 2>/dev/null || rc-service nginx reload 2>/dev/null || true"
 }
 
+generate_self_signed_cert() {
+    local dom="$1"
+    local base_dir="${SSL_BASE_DIR:-/etc/letsencrypt/live}"
+    local target_dir="${base_dir}/${dom}"
+    local ng_usr="www-data"
+    if command -v get_nginx_user >/dev/null 2>&1; then
+        ng_usr="$(get_nginx_user)"
+    elif [ -f /etc/os-release ]; then
+        local os_id=""
+        os_id=$(. /etc/os-release 2>/dev/null; echo "${ID:-}")
+        [ "$os_id" = "alpine" ] && ng_usr="nginx"
+    fi
+
+    mkdir -p "$target_dir"
+    warn "Генерация временного самоподписанного сертификата (Self-Signed SSL) для $dom..."
+    if openssl req -x509 -nodes -newkey rsa:2048 -days 365 \
+        -keyout "${target_dir}/privkey.pem" \
+        -out "${target_dir}/fullchain.pem" \
+        -subj "/CN=${dom}" >/dev/null 2>&1; then
+
+        chmod 755 "$base_dir" "$target_dir" 2>/dev/null || true
+        chmod 644 "${target_dir}/fullchain.pem" 2>/dev/null || true
+        chmod 600 "${target_dir}/privkey.pem" 2>/dev/null || true
+        chown -R root:"${ng_usr}" "$target_dir" 2>/dev/null || true
+        mkdir -p /etc/nginx 2>/dev/null || true
+        touch /etc/nginx/.self_signed_warning 2>/dev/null || true
+        export HAS_SELF_SIGNED_CERTS=1
+        ok "Временный самоподписанный SSL для $dom успешно создан: ${target_dir}."
+        return 0
+    else
+        warn "Не удалось сгенерировать самоподписанный SSL для $dom."
+        return 1
+    fi
+}
+
 nginx_reload_task() {
     nginx -t || return 1
     svc_enable nginx 2>/dev/null || systemctl enable nginx 2>/dev/null || true

@@ -424,6 +424,102 @@ grep -q 'extra1.example.com' "$TEST_WORK/config.env" && echo EXTRA_OK
         self.assertIn("FALLBACK_OK", result.stdout)
         self.assertIn("EXTRA_OK", result.stdout)
 
+    def test_generate_self_signed_cert_creates_valid_cert_and_key(self):
+        result = self.shell(r'''
+SSL_BASE_DIR="$TEST_WORK/ssl"
+mkdir -p "$SSL_BASE_DIR"
+generate_self_signed_cert "test.example.com"
+[ -f "$SSL_BASE_DIR/test.example.com/fullchain.pem" ] && echo CERT_OK
+[ -f "$SSL_BASE_DIR/test.example.com/privkey.pem" ] && echo KEY_OK
+[ "${HAS_SELF_SIGNED_CERTS:-0}" -eq 1 ] && echo FLAG_OK
+openssl x509 -in "$SSL_BASE_DIR/test.example.com/fullchain.pem" -noout -subject | grep -q "test.example.com" && echo SUBJ_OK
+''', "ssl/certs.sh")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("CERT_OK", result.stdout)
+        self.assertIn("KEY_OK", result.stdout)
+        self.assertIn("FLAG_OK", result.stdout)
+        self.assertIn("SUBJ_OK", result.stdout)
+
+    def test_default_ssh_port_is_1984(self):
+        result = self.shell(r'''
+TARGET_PORT="${1:-1984}"
+[ "$TARGET_PORT" -eq 1984 ] && echo PORT_1984_OK
+SSH_ACTIVE_PORT=22
+current_configured_port=22
+change_ssh="y"
+if [ "$SSH_ACTIVE_PORT" -ne 22 ] && [ "$current_configured_port" -eq "$SSH_ACTIVE_PORT" ]; then
+    change_ssh="n"
+fi
+[ "$change_ssh" = "y" ] && echo CHANGE_SSH_DEFAULT_Y_OK
+custom_p=22
+[ "$custom_p" -eq "$SSH_ACTIVE_PORT" ] && custom_p=1984
+[ "$custom_p" -eq 1984 ] && echo WIZARD_1984_OK
+''', "system/security.sh")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("PORT_1984_OK", result.stdout)
+        self.assertIn("CHANGE_SSH_DEFAULT_Y_OK", result.stdout)
+        self.assertIn("WIZARD_1984_OK", result.stdout)
+
+    def test_final_report_duplicates_self_signed_ssl_warning_in_credentials_and_terminal(self):
+        report = bundle_file(ROOT / "src/installer/report-web.sh", SRC_DIR)
+        report = report.replace('"/root/vpn_credentials.txt"', '"$TEST_WORK/credentials.txt"')
+
+        # 1. With self-signed certificates
+        result_warn = self.shell(r'''
+PRIMARY_DOMAIN=vpn.example.com
+ALL_DOMAINS=("vpn.example.com")
+PANEL_PATH=/secret-panel/
+SUB_PATH=/sub/
+SUB_JSON_PATH=/sub-json/
+SUB_CLASH_PATH=/sub-clash/
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=SecretPass123
+ENABLE_NODE_TOKEN=y
+NODE_TOKEN="abc123token"
+NODE_TOKEN_NAME="Node-1"
+NODE_TOKEN_SCOPE="node-sync"
+HAS_SELF_SIGNED_CERTS=1
+SHOW_MANUAL_STEPS=0
+SSL_BASE_DIR="$TEST_WORK/certs"
+mkdir -p "$SSL_BASE_DIR"
+''' + report + r'''
+printf '\nCREDS_CONTENT_START\n%s\nCREDS_CONTENT_END\n' "$(cat "$TEST_WORK/credentials.txt")"
+''', "common/colors.sh")
+        self.assertEqual(result_warn.returncode, 0, result_warn.stderr)
+        self.assertIn("ВРЕМЕННЫЙ САМОПОДПИСАННЫЙ (ТРЕБУЕТСЯ ЗАМЕНА!)", result_warn.stdout)
+        self.assertIn("bash maintain.sh -ssl", result_warn.stdout)
+        self.assertIn("CREDS_CONTENT_START", result_warn.stdout)
+        creds_warn = result_warn.stdout.split("CREDS_CONTENT_START\n")[1].split("\nCREDS_CONTENT_END")[0]
+        self.assertIn("⚠️  ВНИМАНИЕ: ИСПОЛЬЗУЕТСЯ ВРЕМЕННЫЙ САМОПОДПИСАННЫЙ SSL-СЕРТИФИКАТ", creds_warn)
+        self.assertIn("bash maintain.sh -ssl", creds_warn)
+        self.assertIn("TLS сертификат:        ⚠️ ВРЕМЕННЫЙ САМОПОДПИСАННЫЙ (ТРЕБУЕТСЯ ЗАМЕНА!)", creds_warn)
+
+        # 2. With valid trusted certificates (no warning)
+        result_ok = self.shell(r'''
+PRIMARY_DOMAIN=vpn.example.com
+ALL_DOMAINS=("vpn.example.com")
+PANEL_PATH=/secret-panel/
+SUB_PATH=/sub/
+SUB_JSON_PATH=/sub-json/
+SUB_CLASH_PATH=/sub-clash/
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=SecretPass123
+ENABLE_NODE_TOKEN=y
+NODE_TOKEN="abc123token"
+NODE_TOKEN_NAME="Node-1"
+NODE_TOKEN_SCOPE="node-sync"
+HAS_SELF_SIGNED_CERTS=0
+SHOW_MANUAL_STEPS=0
+SSL_BASE_DIR="$TEST_WORK/certs"
+mkdir -p "$SSL_BASE_DIR"
+''' + report + r'''
+printf '\nCREDS_CONTENT_START\n%s\nCREDS_CONTENT_END\n' "$(cat "$TEST_WORK/credentials.txt")"
+''', "common/colors.sh")
+        self.assertEqual(result_ok.returncode, 0, result_ok.stderr)
+        creds_ok = result_ok.stdout.split("CREDS_CONTENT_START\n")[1].split("\nCREDS_CONTENT_END")[0]
+        self.assertNotIn("САМОПОДПИСАННЫЙ", creds_ok)
+        self.assertIn("TLS сертификат:        Действительный (Let's Encrypt / acme.sh)", creds_ok)
+
 
 if __name__ == "__main__":
     unittest.main()

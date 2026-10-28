@@ -413,14 +413,16 @@ check_required_service() {
             ok "Service $1: active"
             return 0
         fi
-    elif command -v systemctl >/dev/null 2>&1; then
+    fi
+    if command -v svc_is_active >/dev/null 2>&1 && svc_is_active "$svc"; then
+        ok "Service $1: active"
+        return 0
+    fi
+    if command -v systemctl >/dev/null 2>&1; then
         if systemctl is-active --quiet "$svc" 2>/dev/null; then
             ok "Service $1: active"
             return 0
         fi
-    elif command -v svc_is_active >/dev/null 2>&1 && svc_is_active "$svc"; then
-        ok "Service $1: active"
-        return 0
     fi
     warn "Service $1: inactive"
     return 1

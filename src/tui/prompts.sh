@@ -846,6 +846,30 @@ while [[ $# -gt 0 ]]; do
             CLI_PRIMARY_DOMAIN="$2"
             shift 2
             ;;
+        --panel-domain)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: домен панели 3X-UI."
+            PANEL_DOMAIN="$2"
+            CLI_PANEL_DOMAIN="$2"
+            shift 2
+            ;;
+        --sub-domain)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: домен сервера подписок."
+            SUB_DOMAIN="$2"
+            CLI_SUB_DOMAIN="$2"
+            shift 2
+            ;;
+        --vless-domain)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: домен VLESS xHTTP."
+            VLESS_DOMAIN="$2"
+            CLI_VLESS_DOMAIN="$2"
+            shift 2
+            ;;
+        --wstunnel-domain)
+            [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: домен Wstunnel."
+            WSTUNNEL_DOMAIN="$2"
+            CLI_WSTUNNEL_DOMAIN="$2"
+            shift 2
+            ;;
         --add-www)
             ADD_WWW="y"
             CLI_ADD_WWW="y"
@@ -1395,6 +1419,10 @@ fi
 [ -n "${CLI_MTPROTO_ADTAG:-}" ]   && MTPROTO_ADTAG="$CLI_MTPROTO_ADTAG"
 [ -n "${CLI_ENABLE_WEB_STACK:-}" ] && ENABLE_WEB_STACK="$CLI_ENABLE_WEB_STACK"
 [ -n "${CLI_DOKPLOY_COEXISTENCE:-}" ] && DOKPLOY_COEXISTENCE="$CLI_DOKPLOY_COEXISTENCE"
+[ -n "${CLI_PANEL_DOMAIN:-}" ]        && PANEL_DOMAIN="$CLI_PANEL_DOMAIN"
+[ -n "${CLI_SUB_DOMAIN:-}" ]          && SUB_DOMAIN="$CLI_SUB_DOMAIN"
+[ -n "${CLI_VLESS_DOMAIN:-}" ]        && VLESS_DOMAIN="$CLI_VLESS_DOMAIN"
+[ -n "${CLI_WSTUNNEL_DOMAIN:-}" ]     && WSTUNNEL_DOMAIN="$CLI_WSTUNNEL_DOMAIN"
 
 if [ -z "${CLI_DOKPLOY_COEXISTENCE:-}" ] && [ "${DOKPLOY_COEXISTENCE:-n}" != "y" ]; then
     if docker network inspect dokploy-network >/dev/null 2>&1 || (command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' 2>/dev/null | grep -qi 'dokploy'); then

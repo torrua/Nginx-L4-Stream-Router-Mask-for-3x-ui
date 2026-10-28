@@ -59,4 +59,16 @@ report_installation() {
     if command -v offer_yabs_benchmark >/dev/null 2>&1; then
         offer_yabs_benchmark
     fi
+
+    if [ "${HAS_SELF_SIGNED_CERTS:-0}" -eq 1 ] || [ -f /etc/nginx/.self_signed_warning ]; then
+        echo -e "  ${YELLOW}┌────────────────────────────────────────────────────────────────────────┐${NC}"
+        echo -e "  ${YELLOW}│  ⚠️  НАПОМИНАНИЕ: НЕОБХОДИМО ЗАМЕНИТЬ САМОПОДПИСАННЫЙ SSL-СЕРТИФИКАТ  │${NC}"
+        echo -e "  ${YELLOW}├────────────────────────────────────────────────────────────────────────┤${NC}"
+        echo -e "  ${YELLOW}│  Сервер временно использует самоподписанный SSL. Для работы подписок,  │${NC}"
+        echo -e "  ${YELLOW}│  VLESS xHTTP и Hysteria 2 на клиентах привяжите домен и запустите:     │${NC}"
+        echo -e "  ${YELLOW}│  • Быстро обновить SSL (без простоя VPN):  ${GREEN}bash maintain.sh -ssl${YELLOW}       │${NC}"
+        echo -e "  ${YELLOW}│  • Перезапуск всей установки с чекпоинта:  ${GREEN}bash setup.sh -r${YELLOW}            │${NC}"
+        echo -e "  ${YELLOW}└────────────────────────────────────────────────────────────────────────┘${NC}"
+        echo ""
+    fi
 }

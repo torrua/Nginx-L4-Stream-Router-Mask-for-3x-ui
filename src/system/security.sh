@@ -316,7 +316,7 @@ deploy_ssh_transition_watcher() {
 #!/usr/bin/env bash
 # SSH Port Transition Watcher — безопасное закрытие старого порта при первом успешном входе на новый
 set -u
-TARGET_PORT="${1:-2222}"
+TARGET_PORT="${1:-1984}"
 ACTIVE_PORT="${2:-22}"
 TTL_HOURS="${3:-24}"
 
@@ -728,7 +728,10 @@ setup_vpn_diagnostics() {
         cp -a "$src_diag/speedtest.js" "$diag_dir/" 2>/dev/null || true
         cp -a "$src_diag/speedtest_worker.js" "$diag_dir/" 2>/dev/null || true
         cp -a "$src_diag/mtr-backend.py" "$bin_dir/" 2>/dev/null || true
-        cp -a "$src_diag/vpn-diagnostics.service" "$svc_file" 2>/dev/null || true
+        if ! is_openrc; then
+            mkdir -p /etc/systemd/system 2>/dev/null || true
+            cp -a "$src_diag/vpn-diagnostics.service" "$svc_file" 2>/dev/null || true
+        fi
     fi
 
     # Автономный fallback: развертывание встроенных ресурсов при отсутствии папки diagnostics на сервере
@@ -752,7 +755,8 @@ EOF_DIAG_STW
 # @include "diagnostics/mtr-backend.py"
 EOF_DIAG_MTR
     fi
-    if [ ! -f "$svc_file" ]; then
+    if ! is_openrc && [ ! -f "$svc_file" ]; then
+        mkdir -p /etc/systemd/system 2>/dev/null || true
         cat << 'EOF_DIAG_SVC' > "$svc_file"
 # @include "diagnostics/vpn-diagnostics.service"
 EOF_DIAG_SVC

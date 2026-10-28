@@ -184,7 +184,7 @@ chmod +x "$mock_runner"
 export TEST_YABS_RUNNER="$mock_runner"
 
 # Тестируем вызов maintain.sh с командой bench
-./maintain.sh bench -7 -r
+bash maintain.sh bench -7 -r
 ''')
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn("MAINTAIN_BENCH_FLAGS flags=[-7 -r]", res.stdout)

@@ -99,6 +99,32 @@ install_step_panel() {
         }
         run_with_spinner "Автоматическая настройка базы 3X-UI и создание инбаундов" run_configure_3xui_task || die "Ошибка настройки базы 3X-UI."
 
+        if is_true "${DOKPLOY_COEXISTENCE:-n}"; then
+            local dokploy_dynamic_dir="/etc/dokploy/traefik/dynamic"
+            if [ -d "$dokploy_dynamic_dir" ] || [ -d "/etc/dokploy" ]; then
+                mkdir -p "$dokploy_dynamic_dir"
+                local py_script="${SCRIPT_DIR:-.}/src/panel/dokploy_traefik.py"
+                [ -f "$py_script" ] || py_script="${ROOT_DIR:-.}/src/panel/dokploy_traefik.py"
+                local py_bin="python3"
+                if command -v python >/dev/null 2>&1 && python -c "import sys" >/dev/null 2>&1; then
+                    py_bin="python"
+                fi
+                if [ -f "$py_script" ]; then
+                    local extra_args=()
+                    [ -n "${PANEL_DOMAIN:-}" ] && extra_args+=(--panel-domain "$PANEL_DOMAIN")
+                    [ -n "${SUB_DOMAIN:-}" ] && extra_args+=(--sub-domain "$SUB_DOMAIN")
+                    [ -n "${VLESS_DOMAIN:-}" ] && extra_args+=(--vless-domain "$VLESS_DOMAIN")
+                    "$py_bin" "$py_script" --domain "${PRIMARY_DOMAIN:-example.com}" \
+                        "${extra_args[@]}" \
+                        --panel-port "${PANEL_PORT:-10443}" \
+                        --sub-port "${SUB_PORT:-55443}" \
+                        --xhttp-port "${XHTTP_STREAM_PORT:-50443}" \
+                        --output "$dokploy_dynamic_dir/vpn.yml" 2>/dev/null || true
+                    ok "Маршруты Dokploy Traefik автоматически применены: $dokploy_dynamic_dir/vpn.yml"
+                fi
+            fi
+        fi
+
         if is_true "${ENABLE_NODE_TOKEN:-y}"; then
             load_node_token_result "$NODE_ENV_FILE" || die "API-ключ ноды не получен от 3X-UI."
             rm -f -- "$NODE_ENV_FILE"

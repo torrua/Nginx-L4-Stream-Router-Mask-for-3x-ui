@@ -36,6 +36,7 @@ show_help() {
   restore, --restore <АРХИВ>    Безопасно восстановить конфигурацию с валидацией SSL и автооткатом
   extract, --extract <АРХ> <DIR> Аварийно распаковать архив без прав root (PEP 706 Path Traversal safe)
   bench, --bench, --yabs [FLG]  Запустить тестирование производительности сервера (YABS)
+  ssl, -ssl, --ssl              Перевыпустить или обновить SSL-сертификаты Let's Encrypt / acme.sh
 
 Опции обслуживания:
   -c, --config <FILE>     Путь к файлу конфигурации (.env) (по умолчанию: ./server-setup.env)
@@ -110,6 +111,10 @@ while [[ $# -gt 0 ]]; do
             COMMAND_ARGS=("$@")
             break
             ;;
+        -ssl|--ssl|--renew-ssl|ssl)
+            COMMAND="ssl"
+            shift
+            ;;
         -c|--config)
             [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: путь к файлу конфигурации."
             CONFIG_FILE="$2"
@@ -177,6 +182,76 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+renew_all_ssl_certificates() {
+    log "Проверка и перевыпуск SSL-сертификатов..."
+    local webroot="/var/www/html"
+    local cfg="${CONFIG_FILE:-/root/server-setup.env}"
+    [ -f "$cfg" ] || cfg="./server-setup.env"
+    local prim_dom=""
+    local all_doms=()
+    if [ -f "$cfg" ]; then
+        prim_dom="$(grep -E '^PRIMARY_DOMAIN=' "$cfg" 2>/dev/null | cut -d= -f2- | tr -d '"'\'' ' || true)"
+        local raw_doms
+        raw_doms="$(grep -E '^ALL_DOMAINS=' "$cfg" 2>/dev/null | cut -d= -f2- | tr -d '"'\'' ' || true)"
+        if [ -n "$raw_doms" ]; then
+            read -r -a all_doms <<< "$raw_doms"
+        fi
+    fi
+    [ -n "$prim_dom" ] || prim_dom="$(grep -E 'server_name' /etc/nginx/conf.d/*.conf 2>/dev/null | head -n1 | awk '{print $2}' | tr -d ';' || true)"
+
+    local success=0
+    if command -v certbot >/dev/null 2>&1; then
+        if [ -n "$prim_dom" ]; then
+            log "Выпуск доверенного сертификата Let's Encrypt для $prim_dom..."
+            if certbot certonly --webroot -w "$webroot" -d "$prim_dom" --non-interactive --keep-until-expiring; then
+                success=1
+                ok "Сертификат для $prim_dom успешно подтвержден!"
+            else
+                warn "Попытка верификации через Webroot завершилась с ошибкой. Пробуем certbot renew..."
+                if certbot renew --non-interactive; then
+                    success=1
+                fi
+            fi
+        else
+            if certbot renew --non-interactive; then
+                success=1
+            fi
+        fi
+    elif [ -f "${HOME:-/root}/.acme.sh/acme.sh" ]; then
+        if "${HOME:-/root}/.acme.sh/acme.sh" --cron --home "${HOME:-/root}/.acme.sh"; then
+            success=1
+        fi
+    else
+        warn "Подсистема управления сертификатами (Certbot / acme.sh) не обнаружена."
+    fi
+
+    if command -v nginx >/dev/null 2>&1; then
+        if nginx -t >/dev/null 2>&1; then
+            systemctl reload nginx 2>/dev/null || rc-service nginx reload 2>/dev/null || true
+            ok "Nginx успешно перезагружен с обновленными сертификатами."
+            rm -f /etc/nginx/.self_signed_warning 2>/dev/null || true
+        else
+            warn "Ошибка синтаксиса конфигурации Nginx. Перезагрузка веб-сервера отменена."
+        fi
+    fi
+
+    if [ "$success" -eq 1 ]; then
+        echo -e "${GREEN}=====================================================================${NC}"
+        echo -e "${GREEN}    СЕРТИФИКАТЫ УСПЕШНО ОБНОВЛЕНЫ И ПРИМЕНЕНЫ В NGINX!             ${NC}"
+        echo -e "${GREEN}=====================================================================${NC}"
+        rm -f /etc/nginx/.self_signed_warning 2>/dev/null || true
+        if [ -f "/root/vpn_credentials.txt" ]; then
+            sed -i '/⚠️.*ВРЕМЕННЫЙ САМОПОДПИСАННЫЙ/d' /root/vpn_credentials.txt 2>/dev/null || true
+            sed -i '/ИСПОЛЬЗУЕТСЯ ВРЕМЕННЫЙ САМОПОДПИСАННЫЙ/d' /root/vpn_credentials.txt 2>/dev/null || true
+            sed -i "s|TLS сертификат:.*|TLS сертификат:        Действительный (Let's Encrypt / acme.sh)|" /root/vpn_credentials.txt 2>/dev/null || true
+        fi
+        return 0
+    else
+        warn "Не все сертификаты удалось обновить. Проверьте записи DNS и доступность порта 80."
+        return 1
+    fi
+}
+
 if [ -n "$COMMAND" ]; then
     case "$COMMAND" in
         backup)
@@ -212,6 +287,11 @@ if [ -n "$COMMAND" ]; then
             else
                 offer_yabs_benchmark
             fi
+            exit $?
+            ;;
+        ssl)
+            acquire_stack_lock "${VPN_STACK_LOCK_TIMEOUT:-10}" "maintain-ssl" || exit $?
+            renew_all_ssl_certificates
             exit $?
             ;;
     esac
@@ -598,6 +678,23 @@ else
         if [ -n "${MIERU_PORT:-}" ] && [ -n "${MIERU_USER:-}" ] && ! grep -q "Mieru Proxy" /root/vpn_credentials.txt 2>/dev/null; then
             echo "Mieru Proxy (XChaCha20, :${MIERU_PORT}): user: ${MIERU_USER}, pass: ${MIERU_PASS}" >> /root/vpn_credentials.txt
             echo "  Клиентский конфиг: /root/mieru-client.json (Управление пользователями: mieru-mgr list|add|del)" >> /root/vpn_credentials.txt
+        fi
+        if [ -f /etc/nginx/.self_signed_warning ] && ! grep -q "САМОПОДПИСАННЫЙ SSL-СЕРТИФИКАТ" /root/vpn_credentials.txt 2>/dev/null; then
+            cat << 'EOF_SSL_WARN_CRED' >> /root/vpn_credentials.txt
+=====================================================================
+⚠️  ВНИМАНИЕ: ИСПОЛЬЗУЕТСЯ ВРЕМЕННЫЙ САМОПОДПИСАННЫЙ SSL-СЕРТИФИКАТ
+Для одного или нескольких доменов не удалось выпустить Let's Encrypt SSL.
+• Браузер при входе в панель 3X-UI будет выдавать предупреждение безопасности.
+• Клиентские подписки, VLESS xHTTP и Hysteria 2 не будут подключаться,
+  пока не будет получен доверенный публичный сертификат.
+• Инбаунды REALITY, AmneziaWG и Shadowsocks-2022 работают штатно.
+
+КОМАНДА ДЛЯ ПЕРЕВЫПУСКА СЕРТИФИКАТА (после настройки DNS A-записей):
+• Рекомендуемый быстрый способ (только SSL, без простоя VPN):
+  bash maintain.sh -ssl
+• Полный перезапуск мастера установки (если установка прерывалась):
+  bash setup.sh -r
+EOF_SSL_WARN_CRED
         fi
     fi
 fi

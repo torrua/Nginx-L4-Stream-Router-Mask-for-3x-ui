@@ -46,15 +46,24 @@ EOF
         svc_disable apache2 2>/dev/null || systemctl disable apache2 2>/dev/null || true
 
         # Удаляем дефолтные конфигурации сайтов с [::]:80, которые приводят к сбою запуска при выключенном IPv6
-        rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-available/default /etc/nginx/conf.d/default.conf 2>/dev/null || true
-        mkdir -p /etc/nginx/sites-enabled /etc/nginx/conf.d /etc/nginx/modules-enabled "$WEBROOT/.well-known/acme-challenge" 2>/dev/null || true
+        rm -f /etc/nginx/sites-enabled/default \
+              /etc/nginx/sites-available/default \
+              /etc/nginx/conf.d/default.conf \
+              /etc/nginx/http.d/default.conf \
+              /etc/nginx/conf.d/00-acme.conf \
+              /etc/nginx/http.d/00-acme.conf 2>/dev/null || true
+        mkdir -p /etc/nginx/sites-enabled /etc/nginx/conf.d /etc/nginx/http.d /etc/nginx/modules-enabled "$WEBROOT/.well-known/acme-challenge" 2>/dev/null || true
         chown -R "$NGINX_USER:$NGINX_USER" "$WEBROOT" 2>/dev/null || true
 
-        # Удаляем директивы listen [::]: из существующих файлов conf.d
-        sed -i '/\[::\]/d' /etc/nginx/conf.d/*.conf 2>/dev/null || true
+        # Удаляем директивы listen [::]: из существующих файлов conf.d и http.d
+        sed -i '/\[::\]/d' /etc/nginx/conf.d/*.conf /etc/nginx/http.d/*.conf 2>/dev/null || true
 
         log "Создание стартового HTTP-сервера для валидации домена..."
-        cat << EOF > "/etc/nginx/conf.d/00-acme.conf"
+        local acme_conf="/etc/nginx/conf.d/00-acme.conf"
+        if [ -d /etc/nginx/http.d ] && grep -q 'include /etc/nginx/http.d/' /etc/nginx/nginx.conf 2>/dev/null; then
+            acme_conf="/etc/nginx/http.d/00-acme.conf"
+        fi
+        cat << EOF > "$acme_conf"
 server {
     listen 80;
     server_name $NGINX_80_SERVER_NAMES;
@@ -109,7 +118,22 @@ EOF
             fi
 
             for dom in "${ALL_DOMAINS[@]}"; do
-                issue_required_certificate "$dom" || die "Certificate issuance failed: $dom"
+                if ! issue_required_certificate "$dom"; then
+                    warn "Не удалось выпустить сертификат Let's Encrypt для $dom."
+                    warn "Возможные причины: DNS еще не обновился, порт 80 заблокирован хостером или включено проксирование Cloudflare."
+                    local allow_fallback="n"
+                    if [ "${NON_INTERACTIVE:-0}" -eq 1 ] || [ "${EXPRESS_MODE:-0}" -eq 1 ]; then
+                        allow_fallback="y"
+                    else
+                        prompt_yes_no "Желаете создать временный Self-Signed SSL для $dom, чтобы продолжить установку?" "y" allow_fallback || true
+                    fi
+
+                    if is_true "$allow_fallback"; then
+                        generate_self_signed_cert "$dom" || die "Сбой создания аварийного SSL-сертификата для $dom."
+                    else
+                        die "Certificate issuance failed: $dom"
+                    fi
+                fi
             done
 
             mkdir -p /etc/letsencrypt/renewal-hooks/deploy/
@@ -141,7 +165,22 @@ EOF
             chmod 755 /etc/ssl /etc/ssl/acme
 
             for dom in "${ALL_DOMAINS[@]}"; do
-                issue_required_certificate "$dom" || die "Certificate issuance failed: $dom"
+                if ! issue_required_certificate "$dom"; then
+                    warn "Не удалось выпустить сертификат acme.sh для $dom."
+                    warn "Возможные причины: неверные API-ключи Cloudflare или ошибка DNS-01 проверки."
+                    local allow_fallback="n"
+                    if [ "${NON_INTERACTIVE:-0}" -eq 1 ] || [ "${EXPRESS_MODE:-0}" -eq 1 ]; then
+                        allow_fallback="y"
+                    else
+                        prompt_yes_no "Желаете создать временный Self-Signed SSL для $dom, чтобы продолжить установку?" "y" allow_fallback || true
+                    fi
+
+                    if is_true "$allow_fallback"; then
+                        generate_self_signed_cert "$dom" || die "Сбой создания аварийного SSL-сертификата для $dom."
+                    else
+                        die "Certificate issuance failed: $dom"
+                    fi
+                fi
             done
         fi
 

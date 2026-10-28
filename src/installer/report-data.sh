@@ -9,42 +9,42 @@ for port in "${ALL_REALITY_PORTS[@]:-}"; do
 done
 
 UFW_ALLOW_LIST="ufw allow 80/tcp && ufw allow 443/tcp"
-if [[ "${ENABLE_HY2:-}" == "1" || "${ENABLE_HY2,,}" == "y" ]] && [ -n "${HY2_PORT:-}" ]; then
+if is_true "${ENABLE_HY2:-n}" && [ -n "${HY2_PORT:-}" ]; then
     if [ "${HY2_PORT}" != "443" ]; then
         UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${HY2_PORT}/udp"
     else
         UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow 443/udp"
     fi
     # Port Hopping: открываем диапазон UDP-портов
-    if [[ "${HY2_PORT_HOPPING,,}" == "y" || "${HY2_PORT_HOPPING:-}" == "1" ]] && [ -n "${HY2_PORT_HOPPING_RANGE:-}" ]; then
+    if is_true "${HY2_PORT_HOPPING:-n}" && [ -n "${HY2_PORT_HOPPING_RANGE:-}" ]; then
         UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${HY2_PORT_HOPPING_RANGE//:/ }/udp"
     fi
 fi
-if [[ "${ENABLE_AWG_V3:-}" == "1" || "${ENABLE_AWG_V3,,}" == "y" ]] && [ -n "${AWG_V3_PORT:-}" ]; then
+if is_true "${ENABLE_AWG_V3:-n}" && [ -n "${AWG_V3_PORT:-}" ]; then
     UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${AWG_V3_PORT}/udp"
 fi
-if [[ "${ENABLE_AWG_V2:-}" == "1" || "${ENABLE_AWG_V2,,}" == "y" ]] && [ -n "${AWG_V2_PORT:-}" ]; then
+if is_true "${ENABLE_AWG_V2:-n}" && [ -n "${AWG_V2_PORT:-}" ]; then
     UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${AWG_V2_PORT}/udp"
 fi
-if [[ "${ENABLE_AWG_STANDALONE:-}" == "1" || "${ENABLE_AWG_STANDALONE,,}" == "y" ]] && [ -n "${AWG_STANDALONE_PORT:-}" ]; then
+if is_true "${ENABLE_AWG_STANDALONE:-n}" && [ -n "${AWG_STANDALONE_PORT:-}" ]; then
     UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${AWG_STANDALONE_PORT}/udp"
 fi
-if [[ "${ENABLE_SS2022:-}" == "1" || "${ENABLE_SS2022,,}" == "y" ]] && [ -n "${SS2022_PORT:-}" ]; then
+if is_true "${ENABLE_SS2022:-n}" && [ -n "${SS2022_PORT:-}" ]; then
     UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${SS2022_PORT}/tcp && ufw allow ${SS2022_PORT}/udp"
 fi
-if [[ "${ENABLE_TUIC:-}" == "1" || "${ENABLE_TUIC,,}" == "y" ]] && [ -n "${TUIC_PORT:-}" ]; then
+if is_true "${ENABLE_TUIC:-n}" && [ -n "${TUIC_PORT:-}" ]; then
     UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${TUIC_PORT}/udp"
 fi
-if [[ "${ENABLE_MTPROTO:-}" == "1" || "${ENABLE_MTPROTO,,}" == "y" ]] && [ -n "${MTPROTO_PORT:-}" ]; then
+if is_true "${ENABLE_MTPROTO:-n}" && [ -n "${MTPROTO_PORT:-}" ]; then
     UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${MTPROTO_PORT}/tcp"
 fi
-if [[ "${ENABLE_MASQUE:-}" == "1" || "${ENABLE_MASQUE,,}" == "y" ]] && [ -n "${MASQUE_PORT:-}" ]; then
+if is_true "${ENABLE_MASQUE:-n}" && [ -n "${MASQUE_PORT:-}" ]; then
     UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${MASQUE_PORT}/udp"
 fi
-if [[ "${ENABLE_DNSTT:-}" == "1" || "${ENABLE_DNSTT,,}" == "y" ]] && [ -n "${DNSTT_PORT:-}" ]; then
+if is_true "${ENABLE_DNSTT:-n}" && [ -n "${DNSTT_PORT:-}" ]; then
     UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${DNSTT_PORT}/udp"
 fi
-if [[ "${ENABLE_MIERU:-}" == "1" || "${ENABLE_MIERU,,}" == "y" ]] && [ -n "${MIERU_PORT:-}" ]; then
+if is_true "${ENABLE_MIERU:-n}" && [ -n "${MIERU_PORT:-}" ]; then
     _ufw_m_p="${MIERU_PORT//-/:}"
     UFW_ALLOW_LIST="${UFW_ALLOW_LIST} && ufw allow ${_ufw_m_p}/tcp && ufw allow ${_ufw_m_p}/udp"
 fi
@@ -52,7 +52,22 @@ fi
 SSL_CERT_REPORT=""
 for dom in "${ALL_DOMAINS[@]}"; do
     if [ -f "${SSL_BASE_DIR}/$dom/fullchain.pem" ]; then
-        SSL_CERT_REPORT+="  - Домен: ${CYAN}${dom}${NC}\n"
+        local is_self_signed=0
+        local issuer_s=""
+        local subject_s=""
+        if command -v openssl >/dev/null 2>&1; then
+            issuer_s="$(openssl x509 -in "${SSL_BASE_DIR}/$dom/fullchain.pem" -noout -issuer 2>/dev/null || true)"
+            subject_s="$(openssl x509 -in "${SSL_BASE_DIR}/$dom/fullchain.pem" -noout -subject 2>/dev/null || true)"
+            if [ -n "$issuer_s" ] && [ "$issuer_s" = "$subject_s" ]; then
+                is_self_signed=1
+            fi
+        fi
+        if [ "$is_self_signed" -eq 1 ] || [ "${HAS_SELF_SIGNED_CERTS:-0}" -eq 1 ]; then
+            HAS_SELF_SIGNED_CERTS=1
+            SSL_CERT_REPORT+="  - Домен: ${CYAN}${dom}${NC} ${YELLOW}[ВРЕМЕННЫЙ САМОПОДПИСАННЫЙ / SELF-SIGNED]${NC}\n"
+        else
+            SSL_CERT_REPORT+="  - Домен: ${CYAN}${dom}${NC}\n"
+        fi
         SSL_CERT_REPORT+="    Cert: ${GREEN}${SSL_BASE_DIR}/${dom}/fullchain.pem${NC}\n"
         SSL_CERT_REPORT+="    Key:  ${GREEN}${SSL_BASE_DIR}/${dom}/privkey.pem${NC}\n\n"
     fi

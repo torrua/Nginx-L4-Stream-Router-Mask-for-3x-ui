@@ -3960,16 +3960,20 @@ EOF_HELP
     WAS_ACTIVE=0
     cleanup_xui() {
         if [ "${WAS_ACTIVE:-0}" -eq 1 ]; then
-            systemctl start x-ui 2>/dev/null || true
+            svc_start x-ui 2>/dev/null || systemctl start x-ui 2>/dev/null || true
         fi
         command -v release_stack_lock >/dev/null 2>&1 && release_stack_lock
     }
     trap cleanup_xui EXIT
 
+    if [ -f /etc/init.d/x-ui ] && ! grep -q 'directory=' /etc/init.d/x-ui 2>/dev/null; then
+        sed -i '/command=/a directory="/usr/local/x-ui"' /etc/init.d/x-ui 2>/dev/null || true
+    fi
+
     if [ "$DRY_RUN" -eq 0 ]; then
-        if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet x-ui 2>/dev/null; then
+        if svc_is_active x-ui 2>/dev/null || (command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet x-ui 2>/dev/null); then
             log "Приостановка службы 3X-UI на время обновления конфигурации базы..."
-            systemctl stop x-ui
+            svc_stop x-ui 2>/dev/null || systemctl stop x-ui 2>/dev/null || true
             WAS_ACTIVE=1
         fi
     fi
@@ -7157,9 +7161,9 @@ EOF_CLEAN_JSON
         fi
 
         # Возобновление/перезапуск службы 3X-UI
-        if [ "${WAS_ACTIVE:-0}" -eq 1 ] || (command -v systemctl >/dev/null 2>&1 && systemctl is-enabled --quiet x-ui 2>/dev/null); then
+        if [ "${WAS_ACTIVE:-0}" -eq 1 ] || svc_is_active x-ui 2>/dev/null || (command -v systemctl >/dev/null 2>&1 && systemctl is-enabled --quiet x-ui 2>/dev/null); then
             log "Перезапуск службы 3X-UI..."
-            systemctl restart x-ui && ok "Служба 3X-UI успешно перезапущена." || warn "Не удалось перезапустить службу x-ui."
+            (svc_restart x-ui || svc_start x-ui || systemctl restart x-ui) && ok "Служба 3X-UI успешно перезапущена." || warn "Не удалось перезапустить службу x-ui."
         fi
 
         # Проверка Nginx на наличие мертвого SNI и мягкий reload
@@ -7278,6 +7282,9 @@ EOF_CLEAN_JSON
             echo -e "  - ${BOLD}3X-UI Node API:${NC}         ${GREEN}${NODE_TOKEN_NAME:-Node}${NC} (Host: ${CYAN}${PRIMARY_DOMAIN}:443${NC}, Path: ${CYAN}/${PANEL_PATH#/}/${NC})"
             echo -e "  - ${BOLD}API Bearer Token:${NC}       ${YELLOW}${NODE_TOKEN}${NC}"
         fi
+        if [ "${HAS_SELF_SIGNED_CERTS:-0}" -eq 1 ] || [ -f /etc/nginx/.self_signed_warning ]; then
+            echo -e "  - ${BOLD}Статус SSL:${NC}             ${YELLOW}${BOLD}⚠️  ВРЕМЕННЫЙ САМОПОДПИСАННЫЙ (ТРЕБУЕТСЯ ЗАМЕНА!)${NC}"
+        fi
     fi
 
     # Сохранение учетных данных в защищенный файл
@@ -7295,6 +7302,7 @@ $([ -n "${DIAG_TOKEN:-}" ] && echo "Токен диагностики:     ${DIA
 Логин администратора:   ${ADMIN_USERNAME:-admin}
 Пароль администратора:  ${ADMIN_PASSWORD}
 $([ -n "$INSTALLED_XRAY_VER" ] && echo "Ядро Xray-core:        ${INSTALLED_XRAY_VER}")
+$([ "${HAS_SELF_SIGNED_CERTS:-0}" -eq 1 ] || [ -f /etc/nginx/.self_signed_warning ] && echo "Статус SSL:            ⚠️ ВРЕМЕННЫЙ САМОПОДПИСАННЫЙ (ТРЕБУЕТСЯ ЗАМЕНА!)")
 
 Единый клиент:          ${UNIFIED_CLIENT_TAG:-Client}
 Канал подписок:        https://${PRIMARY_DOMAIN}/${SUB_PATH#/}/
@@ -7318,8 +7326,44 @@ $([ -n "${NODE_TOKEN:-}" ] && printf "3X-UI Node Token:      %s\nИмя ноды
 Команда для удаления:  vpn-uninstall (или curl -sSL "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/uninstall.sh" | sudo bash)
 =====================================================================
 EOF_CRED
+            if [ "${HAS_SELF_SIGNED_CERTS:-0}" -eq 1 ] || [ -f /etc/nginx/.self_signed_warning ]; then
+                cat << 'EOF_SSL_WARN_CRED' >> "$CRED_FILE"
+=====================================================================
+⚠️  ВНИМАНИЕ: ИСПОЛЬЗУЕТСЯ ВРЕМЕННЫЙ САМОПОДПИСАННЫЙ SSL-СЕРТИФИКАТ
+Для одного или нескольких доменов не удалось выпустить Let's Encrypt SSL.
+• Браузер при входе в панель 3X-UI будет выдавать предупреждение безопасности.
+• Клиентские подписки, VLESS xHTTP и Hysteria 2 не будут подключаться,
+  пока не будет получен доверенный публичный сертификат.
+• Инбаунды REALITY, AmneziaWG и Shadowsocks-2022 работают штатно.
+
+КОМАНДА ДЛЯ ПЕРЕВЫПУСКА СЕРТИФИКАТА (после настройки DNS A-записей):
+• Рекомендуемый быстрый способ (только SSL, без простоя VPN):
+  bash maintain.sh -ssl
+• Полный перезапуск мастера установки (если установка прерывалась):
+  bash setup.sh -r
+EOF_SSL_WARN_CRED
+            fi
             echo -e "  - ${BOLD}Файл с паролями:${NC}        ${CYAN}$CRED_FILE${NC} (chmod 600)"
         elif [ -f "$CRED_FILE" ]; then
+            if [ "${HAS_SELF_SIGNED_CERTS:-0}" -eq 1 ] || [ -f /etc/nginx/.self_signed_warning ]; then
+                if ! grep -q "САМОПОДПИСАННЫЙ SSL-СЕРТИФИКАТ" "$CRED_FILE" 2>/dev/null; then
+                    cat << 'EOF_SSL_WARN_CRED' >> "$CRED_FILE"
+=====================================================================
+⚠️  ВНИМАНИЕ: ИСПОЛЬЗУЕТСЯ ВРЕМЕННЫЙ САМОПОДПИСАННЫЙ SSL-СЕРТИФИКАТ
+Для одного или нескольких доменов не удалось выпустить Let's Encrypt SSL.
+• Браузер при входе в панель 3X-UI будет выдавать предупреждение безопасности.
+• Клиентские подписки, VLESS xHTTP и Hysteria 2 не будут подключаться,
+  пока не будет получен доверенный публичный сертификат.
+• Инбаунды REALITY, AmneziaWG и Shadowsocks-2022 работают штатно.
+
+КОМАНДА ДЛЯ ПЕРЕВЫПУСКА СЕРТИФИКАТА (после настройки DNS A-записей):
+• Рекомендуемый быстрый способ (только SSL, без простоя VPN):
+  bash maintain.sh -ssl
+• Полный перезапуск мастера установки (если установка прерывалась):
+  bash setup.sh -r
+EOF_SSL_WARN_CRED
+                fi
+            fi
             if [ -n "${MASQUE_URI:-}" ] && ! grep -q "MASQUE (RFC 9484):" "$CRED_FILE" 2>/dev/null; then
                 echo "MASQUE (RFC 9484):       ${MASQUE_URI}" >> "$CRED_FILE"
             fi
@@ -7347,6 +7391,16 @@ EOF_CRED
             echo -e "  - ${BOLD}Файл с паролями:${NC}        ${CYAN}$CRED_FILE${NC} (обновлен, chmod 600)"
         fi
         chmod 600 "$CRED_FILE" 2>/dev/null || true
+    fi
+    if [ "${HAS_SELF_SIGNED_CERTS:-0}" -eq 1 ] || [ -f /etc/nginx/.self_signed_warning ]; then
+        echo -e "${YELLOW}┌────────────────────────────────────────────────────────────────────────┐${NC}"
+        echo -e "${YELLOW}│  ⚠️  НАПОМИНАНИЕ: НЕОБХОДИМО ЗАМЕНИТЬ САМОПОДПИСАННЫЙ SSL-СЕРТИФИКАТ  │${NC}"
+        echo -e "${YELLOW}├────────────────────────────────────────────────────────────────────────┤${NC}"
+        echo -e "${YELLOW}│  Для работы подписок и VLESS xHTTP / Hysteria 2 на клиентах привяжите  │${NC}"
+        echo -e "${YELLOW}│  домен и запустите перевыпуск:                                         │${NC}"
+        echo -e "${YELLOW}│  • Быстро обновить SSL (без простоя VPN):  ${GREEN}bash maintain.sh -ssl${YELLOW}       │${NC}"
+        echo -e "${YELLOW}│  • Перезапуск всей установки с чекпоинта:  ${GREEN}bash setup.sh -r${YELLOW}            │${NC}"
+        echo -e "${YELLOW}└────────────────────────────────────────────────────────────────────────┘${NC}"
     fi
     echo -e "${GREEN}=====================================================================${NC}"
     echo

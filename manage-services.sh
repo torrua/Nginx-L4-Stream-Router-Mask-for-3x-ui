@@ -739,7 +739,12 @@ cmd_dokploy_traefik() {
         py_bin="python3"
     fi
     if [ -f "$py_script" ]; then
+        local extra_args=()
+        [ -n "${PANEL_DOMAIN:-}" ] && extra_args+=(--panel-domain "$PANEL_DOMAIN")
+        [ -n "${SUB_DOMAIN:-}" ] && extra_args+=(--sub-domain "$SUB_DOMAIN")
+        [ -n "${VLESS_DOMAIN:-}" ] && extra_args+=(--vless-domain "$VLESS_DOMAIN")
         "$py_bin" "$py_script" --domain "${PRIMARY_DOMAIN:-example.com}" \
+            "${extra_args[@]}" \
             --panel-port "${PANEL_PORT:-10443}" \
             --sub-port "${SUB_PORT:-55443}" \
             --xhttp-port "${XHTTP_STREAM_PORT:-50443}"

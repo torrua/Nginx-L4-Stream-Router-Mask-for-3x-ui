@@ -75,6 +75,16 @@ EOF_HELP
                 PRIMARY_DOMAIN="$2"
                 shift 2
                 ;;
+            --sub-domain)
+                [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: домен подписок."
+                SUB_DOMAIN="$2"
+                shift 2
+                ;;
+            --panel-domain)
+                [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: домен панели."
+                PANEL_DOMAIN="$2"
+                shift 2
+                ;;
             --dry-run)
                 DRY_RUN=1
                 shift
@@ -377,6 +387,8 @@ EOF_HELP
     export DRY_RUN
     export FORCE_SUB
     export PRIMARY_DOMAIN
+    export SUB_DOMAIN="${SUB_DOMAIN:-}"
+    export PANEL_DOMAIN="${PANEL_DOMAIN:-}"
     export PANEL_PORT
     export PANEL_PATH
     export SUB_PORT
@@ -727,16 +739,25 @@ EOF_CLEAN_JSON
         if [ -n "$INSTALLED_XRAY_VER" ]; then
             echo -e "  - ${BOLD}Ядро Xray-core:${NC}        ${GREEN}${INSTALLED_XRAY_VER}${NC} (Latest Official Release)"
         fi
-        echo -e "  - ${BOLD}Панель управления:${NC}      ${CYAN}https://${PRIMARY_DOMAIN}/${PANEL_PATH}/${NC}"
+        local disp_sub_host="${SUB_DOMAIN:-$PRIMARY_DOMAIN}"
+        local disp_panel_host="${PANEL_DOMAIN:-$PRIMARY_DOMAIN}"
+        local clean_p_path="${PANEL_PATH#/}"
+        local clean_s_path="${SUB_PATH#/}"
+        local clean_sc_path="${SUB_CLASH_PATH#/}"
+        [ -n "$clean_p_path" ] && clean_p_path="${clean_p_path%/}/"
+        [ -n "$clean_s_path" ] && clean_s_path="${clean_s_path%/}/"
+        [ -n "$clean_sc_path" ] && clean_sc_path="${clean_sc_path%/}/"
+
+        echo -e "  - ${BOLD}Панель управления:${NC}      ${CYAN}https://${disp_panel_host}/${clean_p_path}${NC}"
         echo -e "  - ${BOLD}Логин панели:${NC}           ${WHITE}${ADMIN_USERNAME:-admin}${NC}"
         if [ -n "${ADMIN_PASSWORD:-}" ]; then
             echo -e "  - ${BOLD}Пароль панели:${NC}          ${WHITE}${ADMIN_PASSWORD}${NC}"
         fi
-        echo -e "  - ${BOLD}Канал подписок:${NC}        ${CYAN}https://${PRIMARY_DOMAIN}/${SUB_PATH#/}/${NC}"
-        echo -e "  - ${BOLD}Канал подписок (Clash):${NC}  ${CYAN}https://${PRIMARY_DOMAIN}/${SUB_CLASH_PATH#/}/${NC}"
+        echo -e "  - ${BOLD}Канал подписок:${NC}        ${CYAN}https://${disp_sub_host}/${clean_s_path}${NC}"
+        echo -e "  - ${BOLD}Канал подписок (Clash):${NC}  ${CYAN}https://${disp_sub_host}/${clean_sc_path}${NC}"
         if [ -n "${UNIFIED_SUB_ID:-}" ]; then
-            echo -e "  - ${BOLD}Прямая подписка:${NC}       ${GREEN}https://${PRIMARY_DOMAIN}/${SUB_PATH#/}/${UNIFIED_SUB_ID}${NC}"
-            echo -e "  - ${BOLD}Прямая подписка (Clash):${NC} ${GREEN}https://${PRIMARY_DOMAIN}/${SUB_CLASH_PATH#/}/${UNIFIED_SUB_ID}${NC}"
+            echo -e "  - ${BOLD}Прямая подписка:${NC}       ${GREEN}https://${disp_sub_host}/${clean_s_path}${UNIFIED_SUB_ID}${NC}"
+            echo -e "  - ${BOLD}Прямая подписка (Clash):${NC} ${GREEN}https://${disp_sub_host}/${clean_sc_path}${UNIFIED_SUB_ID}${NC}"
         fi
         if [ -n "${UNIFIED_VLESS_ENKEY:-}" ]; then
             echo -e "  - ${BOLD}VLESS xHTTP EnKey:${NC}     ${YELLOW}${UNIFIED_VLESS_ENKEY}${NC} (ML-KEM-768)"

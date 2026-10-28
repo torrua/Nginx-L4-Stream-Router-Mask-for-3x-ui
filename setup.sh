@@ -19071,6 +19071,16 @@ EOF_HELP
                 PRIMARY_DOMAIN="$2"
                 shift 2
                 ;;
+            --sub-domain)
+                [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: домен подписок."
+                SUB_DOMAIN="$2"
+                shift 2
+                ;;
+            --panel-domain)
+                [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: домен панели."
+                PANEL_DOMAIN="$2"
+                shift 2
+                ;;
             --dry-run)
                 DRY_RUN=1
                 shift
@@ -19373,6 +19383,8 @@ EOF_HELP
     export DRY_RUN
     export FORCE_SUB
     export PRIMARY_DOMAIN
+    export SUB_DOMAIN="${SUB_DOMAIN:-}"
+    export PANEL_DOMAIN="${PANEL_DOMAIN:-}"
     export PANEL_PORT
     export PANEL_PATH
     export SUB_PORT
@@ -20326,30 +20338,45 @@ old_sub_domain = existing_settings.get("subDomain", "").strip()
 old_sub_uri = existing_settings.get("subURI", "").strip()
 old_sub_path = existing_settings.get("subPath", "").strip()
 
+requested_sub_domain = (os.environ.get("SUB_DOMAIN") or "").strip()
+sub_host = requested_sub_domain or domain
+
 # Проверка: настроена ли кастомная подписка
 is_custom_sub = bool(old_sub_uri and (old_sub_domain != domain or (old_sub_path.strip("/") != sub_path and old_sub_path.strip("/") != "my-post-key")))
 
-if is_custom_sub and not force_sub:
+if requested_sub_domain and requested_sub_domain != old_sub_domain:
+    # Явно запрошена смена домена подписок через CLI/Env
+    clean_sub_p = sub_path.strip("/")
+    target_sub_domain = requested_sub_domain
+    target_sub_path = f"/{clean_sub_p}/" if clean_sub_p else "/"
+    target_sub_uri = f"https://{requested_sub_domain}{target_sub_path}"
+    target_sub_json_path = f"/{clean_sub_p}/json/" if clean_sub_p else "/json/"
+    target_sub_json_uri = f"https://{requested_sub_domain}{target_sub_json_path}"
+    target_sub_clash_path = f"/{sub_clash_path.strip('/')}/" if sub_clash_path.strip('/') else "/clash/"
+    target_sub_clash_uri = f"https://{requested_sub_domain}{target_sub_clash_path}"
+    print(f"  [ОБНОВЛЕНО] Домен подписок установлен: {target_sub_uri}")
+elif is_custom_sub and not force_sub:
     print(f"  [СОХРАНЕНО] Кастомная подписка сохранена: {old_sub_uri}")
     target_sub_uri = old_sub_uri
     target_sub_domain = old_sub_domain
     target_sub_path = old_sub_path
-    target_sub_json_path = existing_settings.get("subJsonPath") or f"/{sub_path.strip('/')}/json/"
-    target_sub_json_uri = existing_settings.get("subJsonURI") or f"https://{domain}{target_sub_json_path}"
-    target_sub_clash_path = existing_settings.get("subClashPath") or f"/{sub_clash_path.strip('/')}/"
+    target_sub_json_path = existing_settings.get("subJsonPath") or (f"/{sub_path.strip('/')}/json/" if sub_path.strip('/') else "/json/")
+    target_sub_json_uri = existing_settings.get("subJsonURI") or f"https://{sub_host}{target_sub_json_path}"
+    target_sub_clash_path = existing_settings.get("subClashPath") or (f"/{sub_clash_path.strip('/')}/" if sub_clash_path.strip('/') else "/clash/")
     if target_sub_clash_path.strip("/") == f"{sub_path}clash":
-        target_sub_clash_path = f"/{sub_clash_path.strip('/')}/"
-    target_sub_clash_uri = existing_settings.get("subClashURI") or f"https://{domain}{target_sub_clash_path}"
+        target_sub_clash_path = f"/{sub_clash_path.strip('/')}/" if sub_clash_path.strip('/') else "/clash/"
+    target_sub_clash_uri = existing_settings.get("subClashURI") or f"https://{sub_host}{target_sub_clash_path}"
     if target_sub_clash_uri.endswith(f"{sub_path}clash/"):
-        target_sub_clash_uri = f"https://{domain}{target_sub_clash_path}"
+        target_sub_clash_uri = f"https://{sub_host}{target_sub_clash_path}"
 else:
-    target_sub_uri = f"https://{domain}/{sub_path}/"
-    target_sub_domain = domain
-    target_sub_path = f"/{sub_path}/"
-    target_sub_json_path = f"/{sub_path.strip('/')}/json/"
-    target_sub_json_uri = f"https://{domain}{target_sub_json_path}"
-    target_sub_clash_path = f"/{sub_clash_path.strip('/')}/"
-    target_sub_clash_uri = f"https://{domain}{target_sub_clash_path}"
+    clean_sub_p = sub_path.strip("/")
+    target_sub_domain = sub_host
+    target_sub_path = f"/{clean_sub_p}/" if clean_sub_p else "/"
+    target_sub_uri = f"https://{sub_host}{target_sub_path}"
+    target_sub_json_path = f"/{clean_sub_p}/json/" if clean_sub_p else "/json/"
+    target_sub_json_uri = f"https://{sub_host}{target_sub_json_path}"
+    target_sub_clash_path = f"/{sub_clash_path.strip('/')}/" if sub_clash_path.strip('/') else "/clash/"
+    target_sub_clash_uri = f"https://{sub_host}{target_sub_clash_path}"
 
 time_location = os.environ.get("TIME_LOCATION", "Europe/Moscow").strip()
 sub_updates = os.environ.get("SUB_UPDATES", "1").strip()
@@ -22759,16 +22786,25 @@ EOF_CLEAN_JSON
         if [ -n "$INSTALLED_XRAY_VER" ]; then
             echo -e "  - ${BOLD}Ядро Xray-core:${NC}        ${GREEN}${INSTALLED_XRAY_VER}${NC} (Latest Official Release)"
         fi
-        echo -e "  - ${BOLD}Панель управления:${NC}      ${CYAN}https://${PRIMARY_DOMAIN}/${PANEL_PATH}/${NC}"
+        local disp_sub_host="${SUB_DOMAIN:-$PRIMARY_DOMAIN}"
+        local disp_panel_host="${PANEL_DOMAIN:-$PRIMARY_DOMAIN}"
+        local clean_p_path="${PANEL_PATH#/}"
+        local clean_s_path="${SUB_PATH#/}"
+        local clean_sc_path="${SUB_CLASH_PATH#/}"
+        [ -n "$clean_p_path" ] && clean_p_path="${clean_p_path%/}/"
+        [ -n "$clean_s_path" ] && clean_s_path="${clean_s_path%/}/"
+        [ -n "$clean_sc_path" ] && clean_sc_path="${clean_sc_path%/}/"
+
+        echo -e "  - ${BOLD}Панель управления:${NC}      ${CYAN}https://${disp_panel_host}/${clean_p_path}${NC}"
         echo -e "  - ${BOLD}Логин панели:${NC}           ${WHITE}${ADMIN_USERNAME:-admin}${NC}"
         if [ -n "${ADMIN_PASSWORD:-}" ]; then
             echo -e "  - ${BOLD}Пароль панели:${NC}          ${WHITE}${ADMIN_PASSWORD}${NC}"
         fi
-        echo -e "  - ${BOLD}Канал подписок:${NC}        ${CYAN}https://${PRIMARY_DOMAIN}/${SUB_PATH#/}/${NC}"
-        echo -e "  - ${BOLD}Канал подписок (Clash):${NC}  ${CYAN}https://${PRIMARY_DOMAIN}/${SUB_CLASH_PATH#/}/${NC}"
+        echo -e "  - ${BOLD}Канал подписок:${NC}        ${CYAN}https://${disp_sub_host}/${clean_s_path}${NC}"
+        echo -e "  - ${BOLD}Канал подписок (Clash):${NC}  ${CYAN}https://${disp_sub_host}/${clean_sc_path}${NC}"
         if [ -n "${UNIFIED_SUB_ID:-}" ]; then
-            echo -e "  - ${BOLD}Прямая подписка:${NC}       ${GREEN}https://${PRIMARY_DOMAIN}/${SUB_PATH#/}/${UNIFIED_SUB_ID}${NC}"
-            echo -e "  - ${BOLD}Прямая подписка (Clash):${NC} ${GREEN}https://${PRIMARY_DOMAIN}/${SUB_CLASH_PATH#/}/${UNIFIED_SUB_ID}${NC}"
+            echo -e "  - ${BOLD}Прямая подписка:${NC}       ${GREEN}https://${disp_sub_host}/${clean_s_path}${UNIFIED_SUB_ID}${NC}"
+            echo -e "  - ${BOLD}Прямая подписка (Clash):${NC} ${GREEN}https://${disp_sub_host}/${clean_sc_path}${UNIFIED_SUB_ID}${NC}"
         fi
         if [ -n "${UNIFIED_VLESS_ENKEY:-}" ]; then
             echo -e "  - ${BOLD}VLESS xHTTP EnKey:${NC}     ${YELLOW}${UNIFIED_VLESS_ENKEY}${NC} (ML-KEM-768)"

@@ -3644,30 +3644,45 @@ old_sub_domain = existing_settings.get("subDomain", "").strip()
 old_sub_uri = existing_settings.get("subURI", "").strip()
 old_sub_path = existing_settings.get("subPath", "").strip()
 
+requested_sub_domain = (os.environ.get("SUB_DOMAIN") or "").strip()
+sub_host = requested_sub_domain or domain
+
 # Проверка: настроена ли кастомная подписка
 is_custom_sub = bool(old_sub_uri and (old_sub_domain != domain or (old_sub_path.strip("/") != sub_path and old_sub_path.strip("/") != "my-post-key")))
 
-if is_custom_sub and not force_sub:
+if requested_sub_domain and requested_sub_domain != old_sub_domain:
+    # Явно запрошена смена домена подписок через CLI/Env
+    clean_sub_p = sub_path.strip("/")
+    target_sub_domain = requested_sub_domain
+    target_sub_path = f"/{clean_sub_p}/" if clean_sub_p else "/"
+    target_sub_uri = f"https://{requested_sub_domain}{target_sub_path}"
+    target_sub_json_path = f"/{clean_sub_p}/json/" if clean_sub_p else "/json/"
+    target_sub_json_uri = f"https://{requested_sub_domain}{target_sub_json_path}"
+    target_sub_clash_path = f"/{sub_clash_path.strip('/')}/" if sub_clash_path.strip('/') else "/clash/"
+    target_sub_clash_uri = f"https://{requested_sub_domain}{target_sub_clash_path}"
+    print(f"  [ОБНОВЛЕНО] Домен подписок установлен: {target_sub_uri}")
+elif is_custom_sub and not force_sub:
     print(f"  [СОХРАНЕНО] Кастомная подписка сохранена: {old_sub_uri}")
     target_sub_uri = old_sub_uri
     target_sub_domain = old_sub_domain
     target_sub_path = old_sub_path
-    target_sub_json_path = existing_settings.get("subJsonPath") or f"/{sub_path.strip('/')}/json/"
-    target_sub_json_uri = existing_settings.get("subJsonURI") or f"https://{domain}{target_sub_json_path}"
-    target_sub_clash_path = existing_settings.get("subClashPath") or f"/{sub_clash_path.strip('/')}/"
+    target_sub_json_path = existing_settings.get("subJsonPath") or (f"/{sub_path.strip('/')}/json/" if sub_path.strip('/') else "/json/")
+    target_sub_json_uri = existing_settings.get("subJsonURI") or f"https://{sub_host}{target_sub_json_path}"
+    target_sub_clash_path = existing_settings.get("subClashPath") or (f"/{sub_clash_path.strip('/')}/" if sub_clash_path.strip('/') else "/clash/")
     if target_sub_clash_path.strip("/") == f"{sub_path}clash":
-        target_sub_clash_path = f"/{sub_clash_path.strip('/')}/"
-    target_sub_clash_uri = existing_settings.get("subClashURI") or f"https://{domain}{target_sub_clash_path}"
+        target_sub_clash_path = f"/{sub_clash_path.strip('/')}/" if sub_clash_path.strip('/') else "/clash/"
+    target_sub_clash_uri = existing_settings.get("subClashURI") or f"https://{sub_host}{target_sub_clash_path}"
     if target_sub_clash_uri.endswith(f"{sub_path}clash/"):
-        target_sub_clash_uri = f"https://{domain}{target_sub_clash_path}"
+        target_sub_clash_uri = f"https://{sub_host}{target_sub_clash_path}"
 else:
-    target_sub_uri = f"https://{domain}/{sub_path}/"
-    target_sub_domain = domain
-    target_sub_path = f"/{sub_path}/"
-    target_sub_json_path = f"/{sub_path.strip('/')}/json/"
-    target_sub_json_uri = f"https://{domain}{target_sub_json_path}"
-    target_sub_clash_path = f"/{sub_clash_path.strip('/')}/"
-    target_sub_clash_uri = f"https://{domain}{target_sub_clash_path}"
+    clean_sub_p = sub_path.strip("/")
+    target_sub_domain = sub_host
+    target_sub_path = f"/{clean_sub_p}/" if clean_sub_p else "/"
+    target_sub_uri = f"https://{sub_host}{target_sub_path}"
+    target_sub_json_path = f"/{clean_sub_p}/json/" if clean_sub_p else "/json/"
+    target_sub_json_uri = f"https://{sub_host}{target_sub_json_path}"
+    target_sub_clash_path = f"/{sub_clash_path.strip('/')}/" if sub_clash_path.strip('/') else "/clash/"
+    target_sub_clash_uri = f"https://{sub_host}{target_sub_clash_path}"
 
 time_location = os.environ.get("TIME_LOCATION", "Europe/Moscow").strip()
 sub_updates = os.environ.get("SUB_UPDATES", "1").strip()

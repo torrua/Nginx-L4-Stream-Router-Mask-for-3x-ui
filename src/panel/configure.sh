@@ -27,6 +27,7 @@ configure_3xui_panel() {
   --domain <DOMAIN>       Основной домен сервера (например, example.com)
   --sub-domain <DOMAIN>   Домен для раздачи подписок (например, sub.example.com)
   --panel-domain <DOMAIN> Домен веб-панели управления (например, panel.example.com)
+  --vless-domain <DOMAIN> Домен для протокола VLESS xHTTP (например, vless.example.com)
   --panel-port <PORT>     Внутренний порт веб-панели (по умолчанию: 2053 для Docker, 10443 для хоста)
   --sub-port <PORT>       Внутренний порт сервера подписок (по умолчанию: 2096 для Docker, 55443 для хоста)
   --hy2-domain <DOMAIN>   Домен для протокола Hysteria 2 (например, hy2.example.com)
@@ -66,6 +67,7 @@ EOF_HELP
     local CLI_NODE_TOKEN_SCOPE=""
     local CLI_ENABLE_HY2=""
     local CLI_HY2_DOMAIN=""
+    local CLI_VLESS_DOMAIN=""
     local CLI_PANEL_PORT=""
     local CLI_SUB_PORT=""
 
@@ -94,6 +96,11 @@ EOF_HELP
             --panel-domain)
                 [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: домен панели."
                 PANEL_DOMAIN="$2"
+                shift 2
+                ;;
+            --vless-domain)
+                [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: домен VLESS xHTTP."
+                CLI_VLESS_DOMAIN="$2"
                 shift 2
                 ;;
             --panel-port)
@@ -211,6 +218,7 @@ EOF_HELP
     NODE_TOKEN_SCOPE="${NODE_TOKEN_SCOPE:-node-sync}"
     [ -n "$CLI_ENABLE_HY2" ] && ENABLE_HY2="$CLI_ENABLE_HY2"
     [ -n "$CLI_HY2_DOMAIN" ] && HY2_DOMAIN="$CLI_HY2_DOMAIN"
+    [ -n "$CLI_VLESS_DOMAIN" ] && VLESS_DOMAIN="$CLI_VLESS_DOMAIN"
     [ -n "$CLI_PANEL_PORT" ] && PANEL_PORT="$CLI_PANEL_PORT"
     [ -n "$CLI_SUB_PORT" ] && SUB_PORT="$CLI_SUB_PORT"
 
@@ -435,6 +443,7 @@ EOF_HELP
     export PRIMARY_DOMAIN
     export SUB_DOMAIN="${SUB_DOMAIN:-}"
     export PANEL_DOMAIN="${PANEL_DOMAIN:-}"
+    export VLESS_DOMAIN="${VLESS_DOMAIN:-}"
     export PANEL_PORT
     export PANEL_PATH
     export SUB_PORT

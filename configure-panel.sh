@@ -3718,6 +3718,7 @@ configure_3xui_panel() {
   --domain <DOMAIN>       Основной домен сервера (например, example.com)
   --sub-domain <DOMAIN>   Домен для раздачи подписок (например, sub.example.com)
   --panel-domain <DOMAIN> Домен веб-панели управления (например, panel.example.com)
+  --vless-domain <DOMAIN> Домен для протокола VLESS xHTTP (например, vless.example.com)
   --panel-port <PORT>     Внутренний порт веб-панели (по умолчанию: 2053 для Docker, 10443 для хоста)
   --sub-port <PORT>       Внутренний порт сервера подписок (по умолчанию: 2096 для Docker, 55443 для хоста)
   --hy2-domain <DOMAIN>   Домен для протокола Hysteria 2 (например, hy2.example.com)
@@ -3757,6 +3758,7 @@ EOF_HELP
     local CLI_NODE_TOKEN_SCOPE=""
     local CLI_ENABLE_HY2=""
     local CLI_HY2_DOMAIN=""
+    local CLI_VLESS_DOMAIN=""
     local CLI_PANEL_PORT=""
     local CLI_SUB_PORT=""
 
@@ -3785,6 +3787,11 @@ EOF_HELP
             --panel-domain)
                 [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: домен панели."
                 PANEL_DOMAIN="$2"
+                shift 2
+                ;;
+            --vless-domain)
+                [[ -n "${2:-}" ]] || die "Параметр $1 требует аргумент: домен VLESS xHTTP."
+                CLI_VLESS_DOMAIN="$2"
                 shift 2
                 ;;
             --panel-port)
@@ -3902,6 +3909,7 @@ EOF_HELP
     NODE_TOKEN_SCOPE="${NODE_TOKEN_SCOPE:-node-sync}"
     [ -n "$CLI_ENABLE_HY2" ] && ENABLE_HY2="$CLI_ENABLE_HY2"
     [ -n "$CLI_HY2_DOMAIN" ] && HY2_DOMAIN="$CLI_HY2_DOMAIN"
+    [ -n "$CLI_VLESS_DOMAIN" ] && VLESS_DOMAIN="$CLI_VLESS_DOMAIN"
     [ -n "$CLI_PANEL_PORT" ] && PANEL_PORT="$CLI_PANEL_PORT"
     [ -n "$CLI_SUB_PORT" ] && SUB_PORT="$CLI_SUB_PORT"
 
@@ -4126,6 +4134,7 @@ EOF_HELP
     export PRIMARY_DOMAIN
     export SUB_DOMAIN="${SUB_DOMAIN:-}"
     export PANEL_DOMAIN="${PANEL_DOMAIN:-}"
+    export VLESS_DOMAIN="${VLESS_DOMAIN:-}"
     export PANEL_PORT
     export PANEL_PATH
     export SUB_PORT
@@ -6823,10 +6832,12 @@ if vless_dekey and vless_enkey:
     x_set = {"clients": [xhttp_client], "decryption": vless_dekey, "encryption": vless_enkey}
 else:
     x_set = {"clients": [xhttp_client], "decryption": "none"}
+vless_target_dom = (os.environ.get("VLESS_DOMAIN") or os.environ.get("SUB_DOMAIN") or domain).strip()
+xhttp_listen = "0.0.0.0" if is_docker_env else "127.0.0.1"
 x_str = {
     "network": "xhttp",
     "xhttpSettings": {
-        "path": f"/{xhttp_path.strip('/')}/", "host": domain, "mode": "stream-one",
+        "path": f"/{xhttp_path.strip('/')}/", "host": vless_target_dom, "mode": "stream-one",
         "noSSEHeader": True,
         "xPaddingBytes": "100-500", "xPaddingObfsMode": False, "xPaddingKey": "",
         "xmux": {
@@ -6839,10 +6850,10 @@ x_str = {
         }
     },
     "security": "none",
-    "externalProxy": [{"dest": domain, "port": 443, "forceTls": "tls", "sni": domain, "fingerprint": reality_fingerprint, "alpn": ["h2"], "remark": make_remark("VLESS xHTTP")}]
+    "externalProxy": [{"dest": vless_target_dom, "port": 443, "forceTls": "tls", "sni": vless_target_dom, "fingerprint": reality_fingerprint, "alpn": ["h2"], "remark": make_remark("VLESS xHTTP")}]
 }
 xhttp_remark = make_remark("VLESS xHTTP")
-xhttp_ib_id = smart_reconcile_inbound(xhttp_port, "vless", "in-xhttp-stream", xhttp_remark, x_set, x_str, listen="127.0.0.1")
+xhttp_ib_id = smart_reconcile_inbound(xhttp_port, "vless", "in-xhttp-stream", xhttp_remark, x_set, x_str, listen=xhttp_listen)
 
 unified_vless_enkey = ""
 cur.execute("SELECT settings FROM inbounds WHERE id = ? OR port = ?", (xhttp_ib_id, xhttp_port))

@@ -5387,10 +5387,12 @@ if vless_dekey and vless_enkey:
     x_set = {"clients": [xhttp_client], "decryption": vless_dekey, "encryption": vless_enkey}
 else:
     x_set = {"clients": [xhttp_client], "decryption": "none"}
+vless_target_dom = (os.environ.get("VLESS_DOMAIN") or os.environ.get("SUB_DOMAIN") or domain).strip()
+xhttp_listen = "0.0.0.0" if is_docker_env else "127.0.0.1"
 x_str = {
     "network": "xhttp",
     "xhttpSettings": {
-        "path": f"/{xhttp_path.strip('/')}/", "host": domain, "mode": "stream-one",
+        "path": f"/{xhttp_path.strip('/')}/", "host": vless_target_dom, "mode": "stream-one",
         "noSSEHeader": True,
         "xPaddingBytes": "100-500", "xPaddingObfsMode": False, "xPaddingKey": "",
         "xmux": {
@@ -5403,10 +5405,10 @@ x_str = {
         }
     },
     "security": "none",
-    "externalProxy": [{"dest": domain, "port": 443, "forceTls": "tls", "sni": domain, "fingerprint": reality_fingerprint, "alpn": ["h2"], "remark": make_remark("VLESS xHTTP")}]
+    "externalProxy": [{"dest": vless_target_dom, "port": 443, "forceTls": "tls", "sni": vless_target_dom, "fingerprint": reality_fingerprint, "alpn": ["h2"], "remark": make_remark("VLESS xHTTP")}]
 }
 xhttp_remark = make_remark("VLESS xHTTP")
-xhttp_ib_id = smart_reconcile_inbound(xhttp_port, "vless", "in-xhttp-stream", xhttp_remark, x_set, x_str, listen="127.0.0.1")
+xhttp_ib_id = smart_reconcile_inbound(xhttp_port, "vless", "in-xhttp-stream", xhttp_remark, x_set, x_str, listen=xhttp_listen)
 
 unified_vless_enkey = ""
 cur.execute("SELECT settings FROM inbounds WHERE id = ? OR port = ?", (xhttp_ib_id, xhttp_port))

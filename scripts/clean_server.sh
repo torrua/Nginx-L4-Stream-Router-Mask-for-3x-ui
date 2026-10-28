@@ -110,7 +110,16 @@ USELESS_SERVICES=(
     udisks2
     rsyslog
     fwupd
+    fwupd-refresh.timer
     open-vm-tools
+    networkd-dispatcher
+    unattended-upgrades
+    ssh-transition-watcher
+    sysstat
+    sysstat-collect.timer
+    sysstat-rotate.timer
+    sysstat-summary.timer
+    getty@tty1
 )
 
 for svc in "${USELESS_SERVICES[@]}"; do
@@ -120,13 +129,21 @@ for svc in "${USELESS_SERVICES[@]}"; do
     systemctl disable "$svc" 2>/dev/null || true
     systemctl mask "$svc" 2>/dev/null || true
 done
+rm -f /etc/systemd/system/ssh-transition-watcher.service /usr/local/bin/ssh-transition-watcher.sh 2>/dev/null || true
+rm -rf /var/log/sysstat/* 2>/dev/null || true
 
 echo "=========================================================="
 echo " [3/9] Удаление snapd и облачного балласта"
 echo "=========================================================="
 if dpkg -l | grep -qE '^ii\s+snapd\s'; then
-    apt-get purge -y snapd ubuntu-advantage-tools 2>/dev/null || true
-    rm -rf /root/snap /var/snap /var/lib/snapd /usr/lib/snapd /home/*/snap
+    apt-get purge -y snapd 2>/dev/null || true
+    rm -rf /root/snap /var/snap /var/lib/snapd /usr/lib/snapd /home/*/snap /var/cache/snapd /snap 2>/dev/null || true
+fi
+
+# Заменяем раздутую GTK/X11-версию mtr на легковесный headless mtr-tiny
+if dpkg -l | grep -qE '^ii\s+mtr\s' && ! dpkg -l | grep -qE '^ii\s+mtr-tiny\s'; then
+    apt-get install -y --no-install-recommends mtr-tiny 2>/dev/null || true
+    apt-get purge -y mtr 2>/dev/null || true
 fi
 
 PACKAGES_TO_PURGE=(
@@ -139,6 +156,11 @@ PACKAGES_TO_PURGE=(
     sos
     bpftrace
     ubuntu-kernel-accessories
+    fwupd
+    linux-perf
+    g++
+    adwaita-icon-theme
+    glycin-loaders
 )
 
 INSTALLED_PURGE=()

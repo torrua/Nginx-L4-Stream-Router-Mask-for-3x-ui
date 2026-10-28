@@ -60,7 +60,16 @@ optimize_vps_storage() {
         udisks2
         rsyslog
         fwupd
+        fwupd-refresh.timer
         open-vm-tools
+        networkd-dispatcher
+        unattended-upgrades
+        ssh-transition-watcher
+        sysstat
+        sysstat-collect.timer
+        sysstat-rotate.timer
+        sysstat-summary.timer
+        getty@tty1
     )
     for svc in "${useless_services[@]}"; do
         if systemctl is-active --quiet "$svc" 2>/dev/null; then
@@ -69,12 +78,21 @@ optimize_vps_storage() {
         systemctl disable "$svc" 2>/dev/null || true
         systemctl mask "$svc" 2>/dev/null || true
     done
+    rm -f /etc/systemd/system/ssh-transition-watcher.service /usr/local/bin/ssh-transition-watcher.sh 2>/dev/null || true
+    rm -rf /var/log/sysstat/* 2>/dev/null || true
 
     # 2. Удаление snapd
     if dpkg -l | grep -qE '^ii\s+snapd\s' 2>/dev/null; then
         echo "  - Удаление snapd..."
-        apt-get purge -y snapd ubuntu-advantage-tools 2>/dev/null || true
-        rm -rf /root/snap /var/snap /var/lib/snapd /usr/lib/snapd /home/*/snap 2>/dev/null || true
+        apt-get purge -y snapd 2>/dev/null || true
+        rm -rf /root/snap /var/snap /var/lib/snapd /usr/lib/snapd /home/*/snap /var/cache/snapd /snap 2>/dev/null || true
+    fi
+
+    # Замена раздутой GTK/X11-версии mtr на легковесный headless mtr-tiny
+    if dpkg -l | grep -qE '^ii\s+mtr\s' 2>/dev/null && ! dpkg -l | grep -qE '^ii\s+mtr-tiny\s' 2>/dev/null; then
+        echo "  - Замена mtr на mtr-tiny (без GUI/X11 зависимостей)..."
+        apt-get install -y --no-install-recommends mtr-tiny 2>/dev/null || true
+        apt-get purge -y mtr 2>/dev/null || true
     fi
 
     # 3. Удаление облачных SDK и неиспользуемых библиотек
@@ -88,6 +106,11 @@ optimize_vps_storage() {
         sos
         bpftrace
         ubuntu-kernel-accessories
+        fwupd
+        linux-perf
+        g++
+        adwaita-icon-theme
+        glycin-loaders
     )
     local installed_purge=()
     for pkg in "${packages_to_purge[@]}"; do

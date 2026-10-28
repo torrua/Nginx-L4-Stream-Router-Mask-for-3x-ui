@@ -182,7 +182,7 @@ fi
         echo -e "    * Создать клиента:   ${CYAN}awg-mgr add <имя> [--preset=stealth|fast|base] [--expires=30d]${NC}"
         echo -e "    * Ссылка Amnezia:    ${CYAN}awg-mgr uri <имя>${NC}"
         echo -e "    * Показать список:   ${CYAN}awg-mgr list${NC}"
-        echo -e "    * QR-код в терминал: ${CYAN}awg-mgr qr <имя>${NC}"
+        echo -e "    * Показать QR-коды:  ${CYAN}awg-mgr qr <имя> [--wg | --amnezia | --all]${NC}"
         echo -e "    * Удалить клиента:   ${CYAN}awg-mgr remove <имя>${NC}"
         echo -e "    * Резервная копия:   ${CYAN}awg-mgr backup${NC} / ${CYAN}awg-mgr restore <файл>${NC}"
         echo -e "    * Очистка истекших:  ${CYAN}awg-mgr purge-expired${NC} (также настроен в cron)"
@@ -192,7 +192,7 @@ fi
             local qr_out=""
             qr_out=$(/root/awg/manage-clients.sh qr client-1 2>/dev/null || true)
             if [ -n "$qr_out" ] && [[ "$qr_out" != "{"* ]]; then
-                echo -e "  ${WHITE}${BOLD}QR-код для подключения первого клиента (client-1):${NC}"
+                echo -e "  ${WHITE}${BOLD}QR-коды для подключения первого клиента (client-1):${NC}"
                 echo "$qr_out"
                 echo
             fi

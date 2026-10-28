@@ -283,6 +283,63 @@ Endpoint = 198.51.100.1:443
             )
             self.assertEqual(res_qr_raw.stdout.strip(), expected_uri)
 
+    def test_manage_clients_show_qr_dual_formats_and_cli_flags(self):
+        """Verify show_qr supports dual formats (AmneziaWG .conf & AmneziaVPN vpn://) and CLI flags."""
+        import subprocess, sys
+        with tempfile.TemporaryDirectory() as td:
+            tmp_awg = Path(td)
+            expected_conf = "[Interface]\nAddress = 10.8.0.5/32\nPrivateKey = privkey123\n\n[Peer]\nPublicKey = pubkey123\n"
+            expected_uri = "vpn://dual_format_test_uri_abc123"
+            (tmp_awg / "client-dual.conf").write_text(expected_conf, encoding="utf-8")
+            (tmp_awg / "client-dual.vpnuri").write_text(expected_uri, encoding="utf-8")
+
+            env = os.environ.copy()
+            env["AWG_DIR"] = str(tmp_awg)
+
+            # 1. JSON mode returns both conf and vpnuri info
+            res_json = subprocess.run(
+                [sys.executable, str(ROOT / "src/awg/manage_clients.py"), "qr", "client-dual", "--json"],
+                env=env, capture_output=True, text=True, check=True
+            )
+            data = json.loads(res_json.stdout)
+            self.assertTrue(data.get("ok"))
+            self.assertEqual(data.get("conf"), expected_conf.strip())
+            self.assertEqual(data.get("vpnuri"), expected_uri)
+            self.assertEqual(data.get("format"), "all")
+
+            # 2. Raw mode with --conf / --wg returns conf
+            res_conf = subprocess.run(
+                [sys.executable, str(ROOT / "src/awg/manage_clients.py"), "qr", "client-dual", "--conf", "--raw"],
+                env=env, capture_output=True, text=True, check=True
+            )
+            self.assertEqual(res_conf.stdout.strip(), expected_conf.strip())
+
+            # 3. Raw mode with --amnezia / --vpnuri returns vpnuri
+            res_vpnuri = subprocess.run(
+                [sys.executable, str(ROOT / "src/awg/manage_clients.py"), "qr", "client-dual", "--amnezia", "--raw"],
+                env=env, capture_output=True, text=True, check=True
+            )
+            self.assertEqual(res_vpnuri.stdout.strip(), expected_uri)
+
+            # 4. show_qr programmatic API call
+            sys.path.insert(0, str((ROOT / "src/awg").resolve()))
+            import manage_clients as mgr
+            orig_awg_dir = mgr.AWG_DIR
+            try:
+                mgr.AWG_DIR = tmp_awg
+                qr_all = mgr.show_qr("client-dual", target_format="all")
+                self.assertTrue(qr_all["ok"])
+                self.assertEqual(qr_all["conf"], expected_conf.strip())
+                self.assertEqual(qr_all["vpnuri"], expected_uri)
+
+                qr_wg = mgr.show_qr("client-dual", target_format="wg")
+                self.assertEqual(qr_wg["format"], "conf")
+
+                qr_amz = mgr.show_qr("client-dual", target_format="amnezia")
+                self.assertEqual(qr_amz["format"], "vpnuri")
+            finally:
+                mgr.AWG_DIR = orig_awg_dir
+
 
 class TestDatabaseBackupSafety(unittest.TestCase):
     def setUp(self):

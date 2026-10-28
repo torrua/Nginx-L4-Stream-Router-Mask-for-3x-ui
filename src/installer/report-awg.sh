@@ -17,7 +17,7 @@
     echo -e "    * Создать нового клиента:   ${CYAN}awg-mgr add <имя> [--preset=stealth|fast|base] [--expires=30d]${NC}"
     echo -e "    * Получить ссылку vpn://:   ${CYAN}awg-mgr uri <имя>${NC}"
     echo -e "    * Список всех клиентов:     ${CYAN}awg-mgr list${NC}"
-    echo -e "    * Показать QR-код клиента:  ${CYAN}awg-mgr qr <имя>${NC}"
+    echo -e "    * Показать QR-коды клиента: ${CYAN}awg-mgr qr <имя> [--wg | --amnezia | --all]${NC}"
     echo -e "    * Отозвать / удалить:       ${CYAN}awg-mgr remove <имя>${NC}"
     echo -e "    * Резервная копия:          ${CYAN}awg-mgr backup${NC} / ${CYAN}awg-mgr restore <файл>${NC}"
     echo -e "    * Автоочистка истекших:     ${CYAN}awg-mgr purge-expired${NC} (активна в cron)"
@@ -27,7 +27,7 @@
         local qr_out=""
         qr_out=$(/root/awg/manage-clients.sh qr client-1 2>/dev/null || true)
         if [ -n "$qr_out" ] && [[ "$qr_out" != "{"* ]]; then
-            echo -e "  ${WHITE}${BOLD}QR-код для подключения первого клиента (client-1):${NC}"
+            echo -e "  ${WHITE}${BOLD}QR-коды для подключения первого клиента (client-1):${NC}"
             echo "$qr_out"
             echo
         fi

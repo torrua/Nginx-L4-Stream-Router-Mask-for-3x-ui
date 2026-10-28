@@ -1121,7 +1121,7 @@ def remove_client(client_name):
                 write_backend_file(get_conf_path(), content)
 
         if canonical_name and is_valid_client_name(canonical_name):
-            for ext in (".conf", ".vpnuri", ".png", ".vpnuri.png"):
+            for ext in (".conf", ".vpnuri", ".png", ".vpnuri.png", ".conf.png"):
                 f = (AWG_DIR / f"{canonical_name}{ext}").resolve()
                 try:
                     if f.is_relative_to(AWG_DIR.resolve()) and f.exists() and not f.is_symlink():
@@ -1300,41 +1300,96 @@ def purge_expired():
         "purged_clients": purged
     }
 
-def show_qr(client_name):
-    """Outputs QR code for client .vpnuri or .conf."""
+def generate_single_qr(content: str, png_dest: Path | None = None) -> tuple[str, str | None]:
+    """Generates ASCII ANSI QR and optional PNG for given text content using qrencode."""
+    if not content or not shutil.which("qrencode"):
+        return "", None
+
+    png_str = None
+    if png_dest:
+        run_cmd(f"qrencode -s 6 -l M -o '{png_dest}' 2>/dev/null || true", input_data=content)
+        if safe_exists(png_dest):
+            png_str = str(png_dest)
+
+    stdout, _, rc = run_cmd("qrencode -t ANSIUTF8 -l M 2>/dev/null", input_data=content)
+    if rc == 0 and stdout and stdout.strip():
+        ansi_qr = stdout
+    else:
+        stdout, _, rc = run_cmd("qrencode -t UTF8 -l M 2>/dev/null", input_data=content)
+        ansi_qr = stdout if (rc == 0 and stdout and stdout.strip()) else ""
+
+    return ansi_qr, png_str
+
+def show_qr(client_name: str, target_format: str = "all"):
+    """Outputs QR code for client .vpnuri or .conf in dual formats (AmneziaWG .conf & AmneziaVPN vpn://)."""
     uri_file = AWG_DIR / f"{client_name}.vpnuri"
     conf_file = AWG_DIR / f"{client_name}.conf"
 
-    content = ""
-    if safe_exists(uri_file):
-        content = uri_file.read_text(encoding="utf-8").strip()
-    elif safe_exists(conf_file):
-        content = conf_file.read_text(encoding="utf-8").strip()
-    else:
+    vpnuri_content = uri_file.read_text(encoding="utf-8").strip() if safe_exists(uri_file) else ""
+    conf_content = conf_file.read_text(encoding="utf-8").strip() if safe_exists(conf_file) else ""
+
+    if not vpnuri_content and not conf_content:
         return {"ok": False, "error": f"Profile for client '{client_name}' not found in {AWG_DIR}"}
 
-    # Generate PNG if qrencode exists
-    png_path = AWG_DIR / f"{client_name}.png"
-    if shutil.which("qrencode"):
-        run_cmd(f"qrencode -s 6 -l H -o '{png_path}' '{content}' 2>/dev/null || true")
+    fmt = (target_format or "all").lower().strip()
+    if fmt in ("wg", "conf", "wireguard"):
+        fmt = "conf"
+    elif fmt in ("amnezia", "vpnuri", "uri"):
+        fmt = "vpnuri"
+    else:
+        fmt = "all"
 
-    # Generate terminal ASCII QR
-    ansi_qr = ""
-    if shutil.which("qrencode"):
-        stdout, _, rc = run_cmd(f"qrencode -t ANSIUTF8 '{content}' 2>/dev/null")
-        if rc == 0 and stdout and stdout.strip():
-            ansi_qr = stdout
-        else:
-            stdout, _, rc = run_cmd(f"qrencode -t UTF8 '{content}' 2>/dev/null")
-            if rc == 0 and stdout and stdout.strip():
-                ansi_qr = stdout
+    # Destination paths for PNGs
+    conf_png_path = AWG_DIR / f"{client_name}.conf.png"
+    vpnuri_png_path = AWG_DIR / f"{client_name}.vpnuri.png"
+    legacy_png_path = AWG_DIR / f"{client_name}.png"
+
+    # Generate PNG and ASCII for both formats if available
+    conf_qr_ascii, conf_png = generate_single_qr(conf_content, conf_png_path) if conf_content else ("", None)
+    vpnuri_qr_ascii, vpnuri_png = generate_single_qr(vpnuri_content, vpnuri_png_path) if vpnuri_content else ("", None)
+
+    # Legacy PNG: if vpnuri exists, use it, else conf
+    primary_content = vpnuri_content or conf_content
+    if primary_content and shutil.which("qrencode"):
+        run_cmd(f"qrencode -s 6 -l M -o '{legacy_png_path}' 2>/dev/null || true", input_data=primary_content)
+
+    # Assemble display ascii output based on requested format
+    combined_ascii = ""
+    if fmt == "conf":
+        combined_ascii = conf_qr_ascii
+    elif fmt == "vpnuri":
+        combined_ascii = vpnuri_qr_ascii
+    else:
+        # Both formats requested (default)
+        blocks = []
+        if conf_qr_ascii:
+            blocks.append(
+                f"\033[1;36m[1] QR-код для приложения AmneziaWG (нативный WireGuard .conf):\033[0m\n"
+                f"\033[2m    Файл: {conf_file}\033[0m\n"
+                f"{conf_qr_ascii}"
+            )
+        if vpnuri_qr_ascii:
+            blocks.append(
+                f"\033[1;32m[2] QR-код для приложения AmneziaVPN (формат vpn://):\033[0m\n"
+                f"\033[2m    Ссылка: {vpnuri_content}\033[0m\n"
+                f"{vpnuri_qr_ascii}"
+            )
+        combined_ascii = "\n\n".join(blocks) if blocks else (conf_qr_ascii or vpnuri_qr_ascii)
 
     return {
         "ok": True,
         "client": client_name,
-        "qr_ascii": ansi_qr,
-        "png_file": str(png_path) if safe_exists(png_path) else None,
-        "vpnuri": content if content.startswith("vpn://") else None
+        "format": fmt,
+        "qr_ascii": combined_ascii,
+        "qr_conf_ascii": conf_qr_ascii,
+        "qr_vpnuri_ascii": vpnuri_qr_ascii,
+        "png_file": str(legacy_png_path) if safe_exists(legacy_png_path) else None,
+        "png_conf": str(conf_png_path) if safe_exists(conf_png_path) else None,
+        "png_vpnuri": str(vpnuri_png_path) if safe_exists(vpnuri_png_path) else None,
+        "conf_file": str(conf_file) if safe_exists(conf_file) else None,
+        "vpnuri_file": str(uri_file) if safe_exists(uri_file) else None,
+        "vpnuri": vpnuri_content if vpnuri_content.startswith("vpn://") else None,
+        "conf": conf_content or None
     }
 
 def backup_configs():
@@ -1491,6 +1546,7 @@ def main():
 
     raw_mode = False
     json_mode = False
+    target_format = "all"
 
     args = sys.argv[1:]
     for arg in args:
@@ -1524,6 +1580,14 @@ def main():
             json_mode = True
         elif arg in ("--qr", "-q"):
             qr_mode = True
+        elif arg in ("--wg", "--conf", "--wireguard"):
+            target_format = "conf"
+        elif arg in ("--amnezia", "--vpnuri", "--uri"):
+            target_format = "vpnuri"
+        elif arg in ("--all", "--both"):
+            target_format = "all"
+        elif arg.startswith("--format="):
+            target_format = arg.split("=", 1)[1].strip()
         elif arg in ("--i1", "--i1=dns", "--cps"):
             custom_i1 = DNS_I1_TEMPLATE
         elif arg.startswith("--i1="):
@@ -1561,7 +1625,7 @@ def main():
                 preset=preset
             )
             if qr_mode and res.get("ok"):
-                qr_info = show_qr(res["client"])
+                qr_info = show_qr(res["client"], target_format=target_format)
                 if qr_info.get("qr_ascii"):
                     print(qr_info["qr_ascii"], file=sys.stderr)
         elif action in ("remove", "del", "delete"):
@@ -1573,9 +1637,14 @@ def main():
         elif action in ("purge-expired", "check-expired"):
             res = purge_expired()
         elif action in ("qr", "show-qr"):
-            res = show_qr(client_name or "client-1")
-            if raw_mode and res.get("ok") and res.get("vpnuri"):
-                print(res["vpnuri"])
+            res = show_qr(client_name or "client-1", target_format=target_format)
+            if raw_mode and res.get("ok"):
+                if target_format == "conf" and res.get("conf"):
+                    print(res["conf"])
+                elif res.get("vpnuri"):
+                    print(res["vpnuri"])
+                elif res.get("conf"):
+                    print(res["conf"])
                 sys.exit(0)
             if not json_mode and res.get("ok") and res.get("qr_ascii"):
                 print(res["qr_ascii"])

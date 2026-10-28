@@ -2828,7 +2828,7 @@ elif server_prefix.lower() == "auto":
 
 def make_remark(method):
     if server_prefix:
-        return f"{server_prefix} ({method})"
+        return f"{server_prefix} {method}"
     return method
 
 hashed_pass = None

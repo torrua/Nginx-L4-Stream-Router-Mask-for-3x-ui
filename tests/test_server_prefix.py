@@ -116,6 +116,26 @@ printf "%s" "$SERVER_PREFIX"
             else:
                 os.environ.pop("SERVER_PREFIX", None)
 
+    def test_make_remark_formatting_without_parentheses(self):
+        """Verify that inbound remarks format protocol without parentheses."""
+        reconcile_path = ROOT / "src/panel/reconcile.py"
+        content = reconcile_path.read_text(encoding="utf-8")
+        self.assertIn('return f"{server_prefix} {method}"', content)
+        self.assertNotIn('return f"{server_prefix} ({method})"', content)
+
+        ns = {"server_prefix": "🇳🇱 NL-AMS"}
+        start = content.find("def make_remark(method):")
+        end = content.find("\n\n", start)
+        exec(content[start:end], ns)
+        make_remark = ns["make_remark"]
+
+        self.assertEqual(make_remark("VLESS Steal"), "🇳🇱 NL-AMS VLESS Steal")
+        self.assertEqual(make_remark("Hysteria 2"), "🇳🇱 NL-AMS Hysteria 2")
+        self.assertEqual(make_remark("AmneziaWG v3"), "🇳🇱 NL-AMS AmneziaWG v3")
+
+        ns["server_prefix"] = ""
+        self.assertEqual(make_remark("VLESS Steal"), "VLESS Steal")
+
 
 if __name__ == "__main__":
     unittest.main()

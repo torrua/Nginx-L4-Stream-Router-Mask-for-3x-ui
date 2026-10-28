@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  UNINSTALL ENTRYPOINT (v9.6.4)
+#  UNINSTALL ENTRYPOINT (v9.7.0)
 # ==============================================================================
 #  Standalone tool to revert server to initial state using initial snapshot.
 # ==============================================================================
@@ -1753,7 +1753,7 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         -v|--version)
-            echo "uninstall.sh (Nginx L4 Stream Router Mask for 3X-UI) v9.6.4"
+            echo "uninstall.sh (Nginx L4 Stream Router Mask for 3X-UI) v9.7.0"
             exit 0
             ;;
         -h|--help)

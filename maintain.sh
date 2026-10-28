@@ -859,7 +859,7 @@ def create_manifest(staging_dir: Union[str, Path], output_path: Optional[Union[s
     created_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     data = {
         "format_version": "2.0",
-        "project_version": os.environ.get("SCRIPT_VERSION", "v9.6.4"),
+        "project_version": os.environ.get("SCRIPT_VERSION", "v9.7.0"),
         "created_at": created_iso,
         "db_path": os.environ.get("DB_PATH", "/etc/x-ui/x-ui.db"),
         "files": files_map,
@@ -2439,7 +2439,7 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         -v|--version)
-            echo "maintain.sh (Nginx L4 Stream Router Mask for 3X-UI) v9.6.4"
+            echo "maintain.sh (Nginx L4 Stream Router Mask for 3X-UI) v9.7.0"
             exit 0
             ;;
         *)

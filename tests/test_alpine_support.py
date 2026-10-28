@@ -235,11 +235,13 @@ ubuntu_user=$(get_nginx_user)
 echo "UBUNTU_USER: $ubuntu_user"
 
 # Test ensure_nginx_stream_module on Alpine
+ID="alpine"
 apk_calls=""
 apk() {{ apk_calls+="apk:$* "; }}
 nginx() {{ return 1; }}
 command() {{
     if [ "$2" = "apk" ] || [ "$2" = "nginx" ]; then return 0; fi
+    if [ "$2" = "apt-get" ]; then return 1; fi
     builtin command "$@"
 }}
 
@@ -333,12 +335,14 @@ rc-update() {{ rc_calls+="rc-update:$* "; }}
 sysctl() {{ :; }}
 
 MOCK_ROOT="{mock_root.as_posix()}"
-mkdir -p "$MOCK_ROOT/etc/local.d" "$MOCK_ROOT/etc/sysctl.d" "$MOCK_ROOT/etc/security/limits.d"
+mkdir -p "$MOCK_ROOT/etc/local.d" "$MOCK_ROOT/etc/sysctl.d" "$MOCK_ROOT/etc/security/limits.d" "$MOCK_ROOT/etc/modules-load.d" "$MOCK_ROOT/etc/default"
 
 eval "$(declare -f apply_sysctl_and_limits | \
     sed "s|/etc/local.d|$MOCK_ROOT/etc/local.d|g" | \
     sed "s|/etc/sysctl.d|$MOCK_ROOT/etc/sysctl.d|g" | \
-    sed "s|/etc/security/limits.d|$MOCK_ROOT/etc/security/limits.d|g")"
+    sed "s|/etc/security/limits.d|$MOCK_ROOT/etc/security/limits.d|g" | \
+    sed "s|/etc/modules-load.d|$MOCK_ROOT/etc/modules-load.d|g" | \
+    sed "s|/etc/default|$MOCK_ROOT/etc/default|g")"
 
 apply_sysctl_and_limits
 echo "RC_UPDATE_CALLS: $rc_calls"

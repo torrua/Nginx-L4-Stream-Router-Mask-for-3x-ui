@@ -198,6 +198,8 @@ htmlcov/
 .DS_Store
 Thumbs.db
 .antigravity/
+.agents/
+skills-lock.json
 AGENTS.md
 *.env.state
 *.env.state.tmp.*

@@ -117,8 +117,23 @@ EOF
     rm -f "$test_conf" 2>/dev/null || true
 
     # 7. Fail-safe fallback: если Nginx по-прежнему не распознает stream (например, бинарник несовместим с модулем),
-    # выполняем чистую переустановку дистрибутивного Nginx с libnginx-mod-stream
-    if command -v apt-get >/dev/null 2>&1; then
+    # выполняем чистую переустановку дистрибутивного Nginx с libnginx-mod-stream / nginx-mod-stream
+    if command -v apk >/dev/null 2>&1; then
+        warn "Сбой загрузки модуля Stream в текущей версии Nginx. Экстренное восстановление через apk..."
+        apk add --no-cache --force-overwrite nginx nginx-mod-stream 2>/dev/null || apk add --no-cache nginx nginx-mod-stream 2>/dev/null || true
+        for cand in /etc/nginx/modules/ngx_stream_module.so \
+                    /usr/lib/nginx/modules/ngx_stream_module.so; do
+            if [ -f "$cand" ]; then
+                mod_so="$cand"
+                break
+            fi
+        done
+        if [ -n "$mod_so" ] && ! grep -rqs "ngx_stream_module" /etc/nginx/modules-enabled/ 2>/dev/null; then
+            cat << EOF > /etc/nginx/modules-enabled/50-mod-stream.conf
+load_module $mod_so;
+EOF
+        fi
+    elif command -v apt-get >/dev/null 2>&1; then
         local os_id="${ID:-ubuntu}"
         if [ -f /etc/os-release ]; then . /etc/os-release; os_id="${ID:-ubuntu}"; fi
         warn "Сбой загрузки модуля Stream в текущей версии Nginx. Экстренное восстановление системного Nginx..."

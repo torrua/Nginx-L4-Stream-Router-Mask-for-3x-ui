@@ -6628,14 +6628,15 @@ fi
 apply_sysctl_and_limits() {
     # Загрузка модуля nf_conntrack и сохранение для автозагрузки при старте ОС
     modprobe nf_conntrack 2>/dev/null || true
-    if [ -d /etc/modules-load.d ]; then
-        echo "nf_conntrack" > /etc/modules-load.d/99-vless-conntrack.conf 2>/dev/null || true
-    elif [ -f /etc/modules ]; then
+    if [ -d /etc/modules-load.d ] && [ -w /etc/modules-load.d ]; then
+        { echo "nf_conntrack" > /etc/modules-load.d/99-vless-conntrack.conf; } 2>/dev/null || true
+    elif [ -f /etc/modules ] && [ -w /etc/modules ]; then
         if ! grep -q "^nf_conntrack" /etc/modules 2>/dev/null; then
-            echo "nf_conntrack" >> /etc/modules 2>/dev/null || true
+            { echo "nf_conntrack" >> /etc/modules; } 2>/dev/null || true
         fi
     fi
 
+    mkdir -p /etc/sysctl.d 2>/dev/null || true
     cat << 'EOF' > /etc/sysctl.d/99-vless-tuning.conf
 net.ipv4.ip_forward = 1
 net.core.default_qdisc = fq
@@ -6697,13 +6698,13 @@ EOF
     sysctl --system >/dev/null 2>&1 || true
 
     # Оптимизация резолвера gai.conf (приоритет IPv4 для исключения таймаутов mtg/Go QUIC)
-    if [ -f /etc/gai.conf ]; then
+    if [ -f /etc/gai.conf ] && [ -w /etc/gai.conf ]; then
         sed -i 's/#precedence ::ffff:0:0\/96  100/precedence ::ffff:0:0\/96  100/' /etc/gai.conf 2>/dev/null || true
     fi
 
     # Хранение системных логов journald в RAM (Storage=volatile, без записи на диск)
     if is_systemd; then
-        mkdir -p /etc/systemd/journald.conf.d/
+        mkdir -p /etc/systemd/journald.conf.d/ 2>/dev/null || true
         cat << 'EOF' > /etc/systemd/journald.conf.d/00-volatile.conf
 [Journal]
 Storage=volatile
@@ -6721,13 +6722,13 @@ EOF
     fi
 
     # Hardware/Kernel level disable via GRUB (survives cloud network resets upon reboot)
-    if [ -f /etc/default/grub ]; then
+    if [ -f /etc/default/grub ] && [ -w /etc/default/grub ]; then
         if ! grep -q "ipv6.disable=1" /etc/default/grub; then
             cp /etc/default/grub /etc/default/grub.bak 2>/dev/null || true
-            sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="/GRUB_CMDLINE_LINUX_DEFAULT="ipv6.disable=1 /' /etc/default/grub
-            sed -i "s/GRUB_CMDLINE_LINUX_DEFAULT='/GRUB_CMDLINE_LINUX_DEFAULT='ipv6.disable=1 /" /etc/default/grub
-            sed -i 's/GRUB_CMDLINE_LINUX="/GRUB_CMDLINE_LINUX="ipv6.disable=1 /' /etc/default/grub
-            sed -i "s/GRUB_CMDLINE_LINUX='/GRUB_CMDLINE_LINUX='ipv6.disable=1 /" /etc/default/grub
+            sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="/GRUB_CMDLINE_LINUX_DEFAULT="ipv6.disable=1 /' /etc/default/grub 2>/dev/null || true
+            sed -i "s/GRUB_CMDLINE_LINUX_DEFAULT='/GRUB_CMDLINE_LINUX_DEFAULT='ipv6.disable=1 /" /etc/default/grub 2>/dev/null || true
+            sed -i 's/GRUB_CMDLINE_LINUX="/GRUB_CMDLINE_LINUX="ipv6.disable=1 /' /etc/default/grub 2>/dev/null || true
+            sed -i "s/GRUB_CMDLINE_LINUX='/GRUB_CMDLINE_LINUX='ipv6.disable=1 /" /etc/default/grub 2>/dev/null || true
             if command -v update-grub &>/dev/null; then
                 update-grub >/dev/null 2>&1 || true
             elif command -v grub-mkconfig &>/dev/null; then
@@ -6738,12 +6739,12 @@ EOF
 
     # Boot guard against cloud-init / network daemon sysctl overrides on boot
     if is_openrc; then
-        mkdir -p /etc/local.d
+        mkdir -p /etc/local.d 2>/dev/null || true
         cat << 'EOF_LOCAL' > /etc/local.d/99-sysctl.start
 #!/bin/sh
 sleep 10 && sysctl --system
 EOF_LOCAL
-        chmod +x /etc/local.d/99-sysctl.start
+        chmod +x /etc/local.d/99-sysctl.start 2>/dev/null || true
         rc-update add local default 2>/dev/null || true
     elif command -v crontab &>/dev/null; then
         local cron_job="@reboot sleep 10 && sysctl --system"
@@ -6753,7 +6754,7 @@ EOF_LOCAL
     fi
 
     # Disable IPv6 in UFW configuration
-    if [ -f /etc/default/ufw ]; then
+    if [ -f /etc/default/ufw ] && [ -w /etc/default/ufw ]; then
         if grep -q "^IPV6=" /etc/default/ufw; then
             sed -i 's/^IPV6=.*/IPV6=no/' /etc/default/ufw 2>/dev/null || true
         else
@@ -6761,6 +6762,7 @@ EOF_LOCAL
         fi
     fi
 
+    mkdir -p /etc/security/limits.d 2>/dev/null || true
     cat << 'EOF' > /etc/security/limits.d/99-proxy-limits.conf
 * soft nofile 524288
 * hard nofile 524288
@@ -6784,18 +6786,18 @@ EOF
     fi
 
     # Персистентность MSS Clamping через /etc/ufw/before.rules и before6.rules
-    if [ -f /etc/ufw/before.rules ] && ! grep -q 'TCPMSS --clamp-mss-to-pmtu' /etc/ufw/before.rules 2>/dev/null; then
+    if [ -f /etc/ufw/before.rules ] && [ -w /etc/ufw/before.rules ] && ! grep -q 'TCPMSS --clamp-mss-to-pmtu' /etc/ufw/before.rules 2>/dev/null; then
         if ! grep -q '^\*mangle' /etc/ufw/before.rules 2>/dev/null; then
-            sed -i '/^\*filter/i\# TCP MSS Clamping - prevents PMTU blackhole (added by setup.sh)\n*mangle\n:FORWARD ACCEPT [0:0]\n-A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu\nCOMMIT\n' /etc/ufw/before.rules
+            sed -i '/^\*filter/i\# TCP MSS Clamping - prevents PMTU blackhole (added by setup.sh)\n*mangle\n:FORWARD ACCEPT [0:0]\n-A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu\nCOMMIT\n' /etc/ufw/before.rules 2>/dev/null || true
         else
-            sed -i '/^\*mangle/a\-A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu' /etc/ufw/before.rules
+            sed -i '/^\*mangle/a\-A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu' /etc/ufw/before.rules 2>/dev/null || true
         fi
     fi
-    if [ -f /etc/ufw/before6.rules ] && ! grep -q 'TCPMSS --clamp-mss-to-pmtu' /etc/ufw/before6.rules 2>/dev/null; then
+    if [ -f /etc/ufw/before6.rules ] && [ -w /etc/ufw/before6.rules ] && ! grep -q 'TCPMSS --clamp-mss-to-pmtu' /etc/ufw/before6.rules 2>/dev/null; then
         if ! grep -q '^\*mangle' /etc/ufw/before6.rules 2>/dev/null; then
-            sed -i '/^\*filter/i\# TCP MSS Clamping IPv6 - prevents PMTU blackhole (added by setup.sh)\n*mangle\n:FORWARD ACCEPT [0:0]\n-A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu\nCOMMIT\n' /etc/ufw/before6.rules
+            sed -i '/^\*filter/i\# TCP MSS Clamping IPv6 - prevents PMTU blackhole (added by setup.sh)\n*mangle\n:FORWARD ACCEPT [0:0]\n-A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu\nCOMMIT\n' /etc/ufw/before6.rules 2>/dev/null || true
         else
-            sed -i '/^\*mangle/a\-A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu' /etc/ufw/before6.rules
+            sed -i '/^\*mangle/a\-A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu' /etc/ufw/before6.rules 2>/dev/null || true
         fi
     fi
 }
@@ -9666,8 +9668,23 @@ EOF
     rm -f "$test_conf" 2>/dev/null || true
 
     # 7. Fail-safe fallback: если Nginx по-прежнему не распознает stream (например, бинарник несовместим с модулем),
-    # выполняем чистую переустановку дистрибутивного Nginx с libnginx-mod-stream
-    if command -v apt-get >/dev/null 2>&1; then
+    # выполняем чистую переустановку дистрибутивного Nginx с libnginx-mod-stream / nginx-mod-stream
+    if command -v apk >/dev/null 2>&1; then
+        warn "Сбой загрузки модуля Stream в текущей версии Nginx. Экстренное восстановление через apk..."
+        apk add --no-cache --force-overwrite nginx nginx-mod-stream 2>/dev/null || apk add --no-cache nginx nginx-mod-stream 2>/dev/null || true
+        for cand in /etc/nginx/modules/ngx_stream_module.so \
+                    /usr/lib/nginx/modules/ngx_stream_module.so; do
+            if [ -f "$cand" ]; then
+                mod_so="$cand"
+                break
+            fi
+        done
+        if [ -n "$mod_so" ] && ! grep -rqs "ngx_stream_module" /etc/nginx/modules-enabled/ 2>/dev/null; then
+            cat << EOF > /etc/nginx/modules-enabled/50-mod-stream.conf
+load_module $mod_so;
+EOF
+        fi
+    elif command -v apt-get >/dev/null 2>&1; then
         local os_id="${ID:-ubuntu}"
         if [ -f /etc/os-release ]; then . /etc/os-release; os_id="${ID:-ubuntu}"; fi
         warn "Сбой загрузки модуля Stream в текущей версии Nginx. Экстренное восстановление системного Nginx..."

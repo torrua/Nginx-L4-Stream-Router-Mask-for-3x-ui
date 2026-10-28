@@ -2226,13 +2226,16 @@ echo "AGH_CLIENT_ID=$AGH_CLIENT_ID"
         self.assertIn('[qrencode]="qrencode"', packages_sh)
         self.assertIn('qrencode', awg_setup_sh)
 
-        # 9. report-web.sh and report-awg.sh suppress raw JSON QR output
+        # 9. report-web.sh and report-awg.sh suppress raw JSON QR output and provide on-demand CLI commands
         report_web = (ROOT / "src/installer/report-web.sh").read_text(encoding="utf-8")
         report_awg = (ROOT / "src/installer/report-awg.sh").read_text(encoding="utf-8")
         for rep in (report_web, report_awg):
             self.assertIn('qr_out=$(/root/awg/manage-clients.sh qr client-1 2>/dev/null', rep)
             self.assertIn('"$qr_out" != "{"*', rep)
             self.assertIn('echo "$qr_out"', rep)
+            self.assertIn('awg-mgr qr client-1 --wg', rep)
+            self.assertIn('awg-mgr qr client-1 --amnezia', rep)
+            self.assertIn('awg-mgr qr client-1', rep)
 
         # 10. manage_clients.py prints QR directly to stdout and supports --json
         mgr_py = (ROOT / "src/awg/manage_clients.py").read_text(encoding="utf-8")

@@ -5123,6 +5123,7 @@ CLI_MTPROTO_PORT=""
 CLI_MTPROTO_FAKETLS_DOMAIN=""
 CLI_MTPROTO_ADTAG=""
 CLI_ENABLE_WEB_STACK=""
+CLI_DOKPLOY_COEXISTENCE=""
 CLI_AWG_SERVER_HOST=""
 CLI_ENABLE_MASQUE=""
 CLI_MASQUE_PORT=""
@@ -5383,6 +5384,16 @@ while [[ $# -gt 0 ]]; do
             SHADOWTLS_PASSWORD="$2"
             CLI_SHADOWTLS_PASSWORD="$2"
             shift 2
+            ;;
+        --dokploy|--enable-dokploy)
+            DOKPLOY_COEXISTENCE="y"
+            CLI_DOKPLOY_COEXISTENCE="y"
+            shift
+            ;;
+        --no-dokploy|--disable-dokploy)
+            DOKPLOY_COEXISTENCE="n"
+            CLI_DOKPLOY_COEXISTENCE="n"
+            shift
             ;;
         --wstunnel|--enable-wstunnel)
             ENABLE_WSTUNNEL="y"
@@ -5734,6 +5745,14 @@ fi
 [ -n "${CLI_MTPROTO_FAKETLS_DOMAIN:-}" ] && MTPROTO_FAKETLS_DOMAIN="$CLI_MTPROTO_FAKETLS_DOMAIN"
 [ -n "${CLI_MTPROTO_ADTAG:-}" ]   && MTPROTO_ADTAG="$CLI_MTPROTO_ADTAG"
 [ -n "${CLI_ENABLE_WEB_STACK:-}" ] && ENABLE_WEB_STACK="$CLI_ENABLE_WEB_STACK"
+[ -n "${CLI_DOKPLOY_COEXISTENCE:-}" ] && DOKPLOY_COEXISTENCE="$CLI_DOKPLOY_COEXISTENCE"
+
+if [ -z "${CLI_DOKPLOY_COEXISTENCE:-}" ] && [ "${DOKPLOY_COEXISTENCE:-n}" != "y" ]; then
+    if docker network inspect dokploy-network >/dev/null 2>&1 || (command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' 2>/dev/null | grep -qi 'dokploy'); then
+        DOKPLOY_COEXISTENCE="y"
+        ok "Автоматически обнаружен Dokploy! Включен режим бесконфликтного сосуществования (DOKPLOY_COEXISTENCE=y)."
+    fi
+fi
 [ -n "${CLI_AWG_SERVER_HOST:-}" ]  && AWG_SERVER_HOST="$CLI_AWG_SERVER_HOST"
 [ -n "${CLI_ENABLE_MASQUE:-}" ]      && ENABLE_MASQUE="$CLI_ENABLE_MASQUE"
 [ -n "${CLI_MASQUE_PORT:-}" ]        && MASQUE_PORT="$CLI_MASQUE_PORT"
@@ -14501,6 +14520,9 @@ build_installation_plan() {
         INSTALLATION_PLAN+=(nginx certificates decoy nginx_config firewall)
         if is_true "${AUTO_SETUP_3XUI:-y}"; then INSTALLATION_PLAN+=(panel); fi
         if is_true "${ENABLE_AGH:-n}"; then INSTALLATION_PLAN+=(adguard); fi
+    elif is_true "${DOKPLOY_COEXISTENCE:-n}"; then
+        if is_true "${AUTO_SETUP_3XUI:-y}"; then INSTALLATION_PLAN+=(panel); fi
+        INSTALLATION_PLAN+=(firewall)
     fi
     if is_true "${ENABLE_AWG_STANDALONE:-n}"; then INSTALLATION_PLAN+=(awg); fi
     INSTALLATION_PLAN+=(verify)
@@ -14548,13 +14570,17 @@ confirm_installation_plan() {
 }
 
 validate_installation_config() {
-    if ! is_true "${ENABLE_WEB_STACK:-y}" && ! is_true "${ENABLE_AWG_STANDALONE:-n}"; then
+    if ! is_true "${ENABLE_WEB_STACK:-y}" && ! is_true "${ENABLE_AWG_STANDALONE:-n}" && ! is_true "${DOKPLOY_COEXISTENCE:-n}"; then
         die "Не выбран ни один компонент установки."
     fi
     if is_true "${ENABLE_WEB_STACK:-y}"; then
         [[ "${PRIMARY_DOMAIN:-}" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]] || die "Некорректный основной домен."
         if [ -z "${LE_EMAIL:-}" ]; then
             LE_EMAIL="admin@${PRIMARY_DOMAIN}"
+        fi
+    elif is_true "${DOKPLOY_COEXISTENCE:-n}"; then
+        if [ -n "${PRIMARY_DOMAIN:-}" ]; then
+            [[ "${PRIMARY_DOMAIN:-}" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]] || die "Некорректный основной домен."
         fi
     else
         [ -n "${AWG_SERVER_HOST:-}" ] || die "Не задан Endpoint автономного AmneziaWG."
@@ -23150,13 +23176,21 @@ fi
         echo -e "    * Очистка истекших:  ${CYAN}awg-mgr purge-expired${NC} (также настроен в cron)"
         echo
 
-        if [ -f "/root/awg/client-1.conf" ] && command -v /root/awg/manage-clients.sh >/dev/null 2>&1; then
-            local qr_out=""
-            qr_out=$(/root/awg/manage-clients.sh qr client-1 2>/dev/null || true)
-            if [ -n "$qr_out" ] && [[ "$qr_out" != "{"* ]]; then
-                echo -e "  ${WHITE}${BOLD}QR-коды для подключения первого клиента (client-1):${NC}"
-                echo "$qr_out"
-                echo
+        if [ -f "/root/awg/client-1.conf" ]; then
+            echo -e "  ${WHITE}${BOLD}Подключение первого клиента (client-1):${NC}"
+            echo -e "    * Для приложения AmneziaWG (нативный WireGuard QR):  ${CYAN}awg-mgr qr client-1 --wg${NC}"
+            echo -e "    * Для приложения AmneziaVPN (QR ссылки vpn://):      ${CYAN}awg-mgr qr client-1 --amnezia${NC}"
+            echo -e "    * Вывести оба QR-кода на экран:                      ${CYAN}awg-mgr qr client-1${NC}"
+            echo -e "    * Графические файлы QR (.png):                       ${CYAN}/root/awg/client-1.conf.png${NC} | ${CYAN}/root/awg/client-1.vpnuri.png${NC}"
+            echo
+            if [[ "${SHOW_AWG_QR:-0}" == "1" ]] && command -v /root/awg/manage-clients.sh >/dev/null 2>&1; then
+                local qr_out=""
+                qr_out=$(/root/awg/manage-clients.sh qr client-1 2>/dev/null || true)
+                if [ -n "$qr_out" ] && [[ "$qr_out" != "{"* ]]; then
+                    echo -e "  ${WHITE}${BOLD}QR-коды для подключения первого клиента (client-1):${NC}"
+                    echo "$qr_out"
+                    echo
+                fi
             fi
         fi
     fi
@@ -23256,13 +23290,21 @@ fi
     echo -e "    * Автоочистка истекших:     ${CYAN}awg-mgr purge-expired${NC} (активна в cron)"
     echo
 
-    if [ -f "/root/awg/client-1.conf" ] && command -v /root/awg/manage-clients.sh >/dev/null 2>&1; then
-        local qr_out=""
-        qr_out=$(/root/awg/manage-clients.sh qr client-1 2>/dev/null || true)
-        if [ -n "$qr_out" ] && [[ "$qr_out" != "{"* ]]; then
-            echo -e "  ${WHITE}${BOLD}QR-коды для подключения первого клиента (client-1):${NC}"
-            echo "$qr_out"
-            echo
+    if [ -f "/root/awg/client-1.conf" ]; then
+        echo -e "  ${WHITE}${BOLD}Подключение первого клиента (client-1):${NC}"
+        echo -e "    * Для приложения AmneziaWG (нативный WireGuard QR):  ${CYAN}awg-mgr qr client-1 --wg${NC}"
+        echo -e "    * Для приложения AmneziaVPN (QR ссылки vpn://):      ${CYAN}awg-mgr qr client-1 --amnezia${NC}"
+        echo -e "    * Вывести оба QR-кода на экран:                      ${CYAN}awg-mgr qr client-1${NC}"
+        echo -e "    * Графические файлы QR (.png):                       ${CYAN}/root/awg/client-1.conf.png${NC} | ${CYAN}/root/awg/client-1.vpnuri.png${NC}"
+        echo
+        if [[ "${SHOW_AWG_QR:-0}" == "1" ]] && command -v /root/awg/manage-clients.sh >/dev/null 2>&1; then
+            local qr_out=""
+            qr_out=$(/root/awg/manage-clients.sh qr client-1 2>/dev/null || true)
+            if [ -n "$qr_out" ] && [[ "$qr_out" != "{"* ]]; then
+                echo -e "  ${WHITE}${BOLD}QR-коды для подключения первого клиента (client-1):${NC}"
+                echo "$qr_out"
+                echo
+            fi
         fi
     fi
     fi
@@ -26039,6 +26081,9 @@ EOF_PARSE_PROBE
         local sub_tit="${SUB_TITLE:-$srv_pref}"
         local add_w="${ADD_WWW:-n}"
         echo -e "  ${CYAN}[1]${NC} ${BOLD}Основной домен:${NC}       ${WHITE}$dom_disp${NC} (Префикс: ${GREEN}$srv_pref${NC}, Подписка: ${GREEN}$sub_tit${NC}, www: ${add_w})"
+        if is_true "${DOKPLOY_COEXISTENCE:-0}"; then
+            echo -e "      ${DIM}• Режим Dokploy:${NC}        ${GREEN}ВКЛЮЧЕН${NC} (Порты 80/443 зарезервированы за Traefik)"
+        fi
 
         local port_mode_str="Автоматический (по умолчанию)"
         [ "${PORTS_SETUP_MODE:-0}" = "1" ] && port_mode_str="Ручной (все порты)"

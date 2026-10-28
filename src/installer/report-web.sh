@@ -188,13 +188,21 @@ fi
         echo -e "    * Очистка истекших:  ${CYAN}awg-mgr purge-expired${NC} (также настроен в cron)"
         echo
 
-        if [ -f "/root/awg/client-1.conf" ] && command -v /root/awg/manage-clients.sh >/dev/null 2>&1; then
-            local qr_out=""
-            qr_out=$(/root/awg/manage-clients.sh qr client-1 2>/dev/null || true)
-            if [ -n "$qr_out" ] && [[ "$qr_out" != "{"* ]]; then
-                echo -e "  ${WHITE}${BOLD}QR-коды для подключения первого клиента (client-1):${NC}"
-                echo "$qr_out"
-                echo
+        if [ -f "/root/awg/client-1.conf" ]; then
+            echo -e "  ${WHITE}${BOLD}Подключение первого клиента (client-1):${NC}"
+            echo -e "    * Для приложения AmneziaWG (нативный WireGuard QR):  ${CYAN}awg-mgr qr client-1 --wg${NC}"
+            echo -e "    * Для приложения AmneziaVPN (QR ссылки vpn://):      ${CYAN}awg-mgr qr client-1 --amnezia${NC}"
+            echo -e "    * Вывести оба QR-кода на экран:                      ${CYAN}awg-mgr qr client-1${NC}"
+            echo -e "    * Графические файлы QR (.png):                       ${CYAN}/root/awg/client-1.conf.png${NC} | ${CYAN}/root/awg/client-1.vpnuri.png${NC}"
+            echo
+            if [[ "${SHOW_AWG_QR:-0}" == "1" ]] && command -v /root/awg/manage-clients.sh >/dev/null 2>&1; then
+                local qr_out=""
+                qr_out=$(/root/awg/manage-clients.sh qr client-1 2>/dev/null || true)
+                if [ -n "$qr_out" ] && [[ "$qr_out" != "{"* ]]; then
+                    echo -e "  ${WHITE}${BOLD}QR-коды для подключения первого клиента (client-1):${NC}"
+                    echo "$qr_out"
+                    echo
+                fi
             fi
         fi
     fi

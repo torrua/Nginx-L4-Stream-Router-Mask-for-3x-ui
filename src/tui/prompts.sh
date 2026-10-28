@@ -772,6 +772,7 @@ CLI_MTPROTO_PORT=""
 CLI_MTPROTO_FAKETLS_DOMAIN=""
 CLI_MTPROTO_ADTAG=""
 CLI_ENABLE_WEB_STACK=""
+CLI_DOKPLOY_COEXISTENCE=""
 CLI_AWG_SERVER_HOST=""
 CLI_ENABLE_MASQUE=""
 CLI_MASQUE_PORT=""
@@ -1032,6 +1033,16 @@ while [[ $# -gt 0 ]]; do
             SHADOWTLS_PASSWORD="$2"
             CLI_SHADOWTLS_PASSWORD="$2"
             shift 2
+            ;;
+        --dokploy|--enable-dokploy)
+            DOKPLOY_COEXISTENCE="y"
+            CLI_DOKPLOY_COEXISTENCE="y"
+            shift
+            ;;
+        --no-dokploy|--disable-dokploy)
+            DOKPLOY_COEXISTENCE="n"
+            CLI_DOKPLOY_COEXISTENCE="n"
+            shift
             ;;
         --wstunnel|--enable-wstunnel)
             ENABLE_WSTUNNEL="y"
@@ -1383,6 +1394,14 @@ fi
 [ -n "${CLI_MTPROTO_FAKETLS_DOMAIN:-}" ] && MTPROTO_FAKETLS_DOMAIN="$CLI_MTPROTO_FAKETLS_DOMAIN"
 [ -n "${CLI_MTPROTO_ADTAG:-}" ]   && MTPROTO_ADTAG="$CLI_MTPROTO_ADTAG"
 [ -n "${CLI_ENABLE_WEB_STACK:-}" ] && ENABLE_WEB_STACK="$CLI_ENABLE_WEB_STACK"
+[ -n "${CLI_DOKPLOY_COEXISTENCE:-}" ] && DOKPLOY_COEXISTENCE="$CLI_DOKPLOY_COEXISTENCE"
+
+if [ -z "${CLI_DOKPLOY_COEXISTENCE:-}" ] && [ "${DOKPLOY_COEXISTENCE:-n}" != "y" ]; then
+    if docker network inspect dokploy-network >/dev/null 2>&1 || (command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' 2>/dev/null | grep -qi 'dokploy'); then
+        DOKPLOY_COEXISTENCE="y"
+        ok "Автоматически обнаружен Dokploy! Включен режим бесконфликтного сосуществования (DOKPLOY_COEXISTENCE=y)."
+    fi
+fi
 [ -n "${CLI_AWG_SERVER_HOST:-}" ]  && AWG_SERVER_HOST="$CLI_AWG_SERVER_HOST"
 [ -n "${CLI_ENABLE_MASQUE:-}" ]      && ENABLE_MASQUE="$CLI_ENABLE_MASQUE"
 [ -n "${CLI_MASQUE_PORT:-}" ]        && MASQUE_PORT="$CLI_MASQUE_PORT"

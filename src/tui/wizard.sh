@@ -2082,6 +2082,9 @@ EOF_PARSE_PROBE
         local sub_tit="${SUB_TITLE:-$srv_pref}"
         local add_w="${ADD_WWW:-n}"
         echo -e "  ${CYAN}[1]${NC} ${BOLD}Основной домен:${NC}       ${WHITE}$dom_disp${NC} (Префикс: ${GREEN}$srv_pref${NC}, Подписка: ${GREEN}$sub_tit${NC}, www: ${add_w})"
+        if is_true "${DOKPLOY_COEXISTENCE:-0}"; then
+            echo -e "      ${DIM}• Режим Dokploy:${NC}        ${GREEN}ВКЛЮЧЕН${NC} (Порты 80/443 зарезервированы за Traefik)"
+        fi
 
         local port_mode_str="Автоматический (по умолчанию)"
         [ "${PORTS_SETUP_MODE:-0}" = "1" ] && port_mode_str="Ручной (все порты)"

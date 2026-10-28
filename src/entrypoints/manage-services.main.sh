@@ -248,6 +248,26 @@ cmd_dokploy_export() {
     fi
 }
 
+cmd_dokploy_traefik() {
+    load_config_data_safe "$ENV_FILE" 2>/dev/null || true
+    local py_script="${SCRIPT_DIR}/src/panel/dokploy_traefik.py"
+    [ -f "$py_script" ] || py_script="${SCRIPT_DIR}/dokploy_traefik.py"
+    local py_bin="python3"
+    if command -v python >/dev/null 2>&1 && python -c "import sys" >/dev/null 2>&1; then
+        py_bin="python"
+    elif command -v python3 >/dev/null 2>&1; then
+        py_bin="python3"
+    fi
+    if [ -f "$py_script" ]; then
+        "$py_bin" "$py_script" --domain "${PRIMARY_DOMAIN:-example.com}" \
+            --panel-port "${PANEL_PORT:-10443}" \
+            --sub-port "${SUB_PORT:-55443}" \
+            --xhttp-port "${XHTTP_STREAM_PORT:-50443}"
+    else
+        die "Скрипт генератора Traefik не найден: $py_script"
+    fi
+}
+
 cmd_clients() {
     ensure_configs
     # Чтение переменных из .env
@@ -376,11 +396,14 @@ case "${1:-status}" in
     dokploy-export)
         cmd_dokploy_export
         ;;
+    dokploy-traefik)
+        cmd_dokploy_traefik
+        ;;
     clients)
         cmd_clients
         ;;
     *)
-        echo "Использование: $0 {status|up|down|restart|logs|clients|dokploy-export} [service]"
+        echo "Использование: $0 {status|up|down|restart|logs|clients|dokploy-export|dokploy-traefik} [service]"
         exit 1
         ;;
 esac

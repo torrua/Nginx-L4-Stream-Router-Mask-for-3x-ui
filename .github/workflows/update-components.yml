@@ -1,0 +1,64 @@
+name: External Components Auto-Updater
+
+on:
+  schedule:
+    # Запуск каждый понедельник в 04:00 UTC
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: update-components-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-and-update-components:
+    name: Check & Auto-PR External Components
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Audit & Update Components
+        id: update_step
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python scripts/check_components_manifest.py --update --pr-body-file pr_body.md
+
+      - name: Verify Working Tree Drift & Run Unit Tests
+        id: verify_step
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            echo "Обнаружены изменения версий компонентов. Запуск верификационных тестов..."
+            python tests/test_builder.py
+            python scripts/build.py --check --lint
+          else
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            echo "Все компоненты уже на актуальных версиях. Изменений нет."
+          fi
+
+      - name: Create Pull Request
+        if: steps.verify_step.outputs.has_changes == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: auto-update/components-manifest
+          delete-branch: true
+          title: "chore(deps): bump external components to latest upstream releases"
+          commit-message: "chore(deps): update external components manifest & sync fallbacks"
+          body-path: pr_body.md
+          labels: |
+            dependencies
+            automated pr

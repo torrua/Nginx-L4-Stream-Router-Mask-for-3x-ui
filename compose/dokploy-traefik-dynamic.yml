@@ -1,0 +1,48 @@
+# ==============================================================================
+# DOKPLOY TRAEFIK DYNAMIC CONFIGURATION FOR 3X-UI & VPN SERVICES
+# ==============================================================================
+# Поместите этот файл в директорию dynamic-конфигурации Traefik на сервере:
+# /etc/dokploy/traefik/dynamic/vpn.yml
+# Traefik автоматически подхватит его без перезагрузки и выпустит SSL!
+
+http:
+  routers:
+    xui-panel:
+      rule: "Host(`panel.yourdomain.online`)"
+      entryPoints:
+        - "websecure"
+      service: "xui-panel-service"
+      tls:
+        certResolver: "letsencrypt"
+
+    xui-sub:
+      rule: "Host(`sub.yourdomain.online`)"
+      entryPoints:
+        - "websecure"
+      service: "xui-sub-service"
+      tls:
+        certResolver: "letsencrypt"
+
+    xray-xhttp:
+      rule: "Host(`vless.yourdomain.online`)"
+      entryPoints:
+        - "websecure"
+      service: "xray-xhttp-service"
+      tls:
+        certResolver: "letsencrypt"
+
+  services:
+    xui-panel-service:
+      loadBalancer:
+        servers:
+          - url: "http://host.docker.internal:10443"
+
+    xui-sub-service:
+      loadBalancer:
+        servers:
+          - url: "http://host.docker.internal:55443"
+
+    xray-xhttp-service:
+      loadBalancer:
+        servers:
+          - url: "h2c://host.docker.internal:50443"

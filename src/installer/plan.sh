@@ -28,6 +28,9 @@ build_installation_plan() {
         INSTALLATION_PLAN+=(nginx certificates decoy nginx_config firewall)
         if is_true "${AUTO_SETUP_3XUI:-y}"; then INSTALLATION_PLAN+=(panel); fi
         if is_true "${ENABLE_AGH:-n}"; then INSTALLATION_PLAN+=(adguard); fi
+    elif is_true "${DOKPLOY_COEXISTENCE:-n}"; then
+        if is_true "${AUTO_SETUP_3XUI:-y}"; then INSTALLATION_PLAN+=(panel); fi
+        INSTALLATION_PLAN+=(firewall)
     fi
     if is_true "${ENABLE_AWG_STANDALONE:-n}"; then INSTALLATION_PLAN+=(awg); fi
     INSTALLATION_PLAN+=(verify)
@@ -75,13 +78,17 @@ confirm_installation_plan() {
 }
 
 validate_installation_config() {
-    if ! is_true "${ENABLE_WEB_STACK:-y}" && ! is_true "${ENABLE_AWG_STANDALONE:-n}"; then
+    if ! is_true "${ENABLE_WEB_STACK:-y}" && ! is_true "${ENABLE_AWG_STANDALONE:-n}" && ! is_true "${DOKPLOY_COEXISTENCE:-n}"; then
         die "Не выбран ни один компонент установки."
     fi
     if is_true "${ENABLE_WEB_STACK:-y}"; then
         [[ "${PRIMARY_DOMAIN:-}" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]] || die "Некорректный основной домен."
         if [ -z "${LE_EMAIL:-}" ]; then
             LE_EMAIL="admin@${PRIMARY_DOMAIN}"
+        fi
+    elif is_true "${DOKPLOY_COEXISTENCE:-n}"; then
+        if [ -n "${PRIMARY_DOMAIN:-}" ]; then
+            [[ "${PRIMARY_DOMAIN:-}" =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]] || die "Некорректный основной домен."
         fi
     else
         [ -n "${AWG_SERVER_HOST:-}" ] || die "Не задан Endpoint автономного AmneziaWG."

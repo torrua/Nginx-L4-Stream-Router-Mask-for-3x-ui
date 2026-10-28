@@ -4003,6 +4003,7 @@ EOF_HELP
     fi
 
     # Проверка наличия базы данных 3X-UI
+    IS_DOCKER_XUI=0
     if [ ! -f "$DB_PATH" ]; then
         alt_paths=("/usr/local/x-ui/bin/x-ui.db" "/etc/x-ui/db/x-ui.db")
         found=0
@@ -4013,6 +4014,20 @@ EOF_HELP
                 break
             fi
         done
+        if [ "$found" -eq 0 ] && command -v docker >/dev/null 2>&1; then
+            local doc_vol=""
+            doc_vol=$(docker volume ls -q 2>/dev/null | grep 'xui_data' | head -n1 || true)
+            if [ -n "$doc_vol" ]; then
+                local mnt=""
+                mnt=$(docker volume inspect "$doc_vol" --format '{{.Mountpoint}}' 2>/dev/null || true)
+                if [ -n "$mnt" ] && [ -f "$mnt/x-ui.db" ]; then
+                    DB_PATH="$mnt/x-ui.db"
+                    found=1
+                    IS_DOCKER_XUI=1
+                    ok "Обнаружена база данных 3X-UI в Docker Volume ($doc_vol): $DB_PATH"
+                fi
+            fi
+        fi
         if [ "$found" -eq 0 ]; then
             if [ "$DRY_RUN" -eq 1 ]; then
                 die "База данных 3X-UI ($DB_PATH) не найдена. Убедитесь, что панель 3X-UI установлена."
@@ -4160,7 +4175,11 @@ EOF_HELP
     WAS_ACTIVE=0
     cleanup_xui() {
         if [ "${WAS_ACTIVE:-0}" -eq 1 ]; then
-            svc_start x-ui 2>/dev/null || systemctl start x-ui 2>/dev/null || true
+            if [ "${IS_DOCKER_XUI:-0}" -eq 1 ]; then
+                docker start 3x-ui-dokploy >/dev/null 2>&1 || true
+            else
+                svc_start x-ui 2>/dev/null || systemctl start x-ui 2>/dev/null || true
+            fi
         fi
         command -v release_stack_lock >/dev/null 2>&1 && release_stack_lock
     }
@@ -4171,7 +4190,11 @@ EOF_HELP
     fi
 
     if [ "$DRY_RUN" -eq 0 ]; then
-        if svc_is_active x-ui 2>/dev/null || (command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet x-ui 2>/dev/null); then
+        if [ "${IS_DOCKER_XUI:-0}" -eq 1 ]; then
+            log "Остановка контейнера 3X-UI на время обновления конфигурации базы..."
+            docker stop 3x-ui-dokploy >/dev/null 2>&1 || true
+            WAS_ACTIVE=1
+        elif svc_is_active x-ui 2>/dev/null || (command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet x-ui 2>/dev/null); then
             log "Приостановка службы 3X-UI на время обновления конфигурации базы..."
             svc_stop x-ui 2>/dev/null || systemctl stop x-ui 2>/dev/null || true
             WAS_ACTIVE=1
@@ -7362,7 +7385,11 @@ EOF_CLEAN_JSON
 
         # Активация службы 3X-UI
         log "Активация службы 3X-UI..."
-        (svc_restart x-ui 2>/dev/null || svc_start x-ui 2>/dev/null || systemctl restart x-ui 2>/dev/null || rc-service x-ui restart 2>/dev/null || rc-service x-ui start 2>/dev/null) && ok "Служба 3X-UI успешно активирована." || warn "Не удалось активировать службу x-ui."
+        if [ "${IS_DOCKER_XUI:-0}" -eq 1 ]; then
+            (docker start 3x-ui-dokploy >/dev/null 2>&1 || docker start $(docker ps -aq --filter ancestor=ghcr.io/mhsanaei/3x-ui | head -n1) >/dev/null 2>&1) && ok "Контейнер 3X-UI успешно запущен." || warn "Не удалось запустить контейнер 3X-UI."
+        else
+            (svc_restart x-ui 2>/dev/null || svc_start x-ui 2>/dev/null || systemctl restart x-ui 2>/dev/null || rc-service x-ui restart 2>/dev/null || rc-service x-ui start 2>/dev/null) && ok "Служба 3X-UI успешно активирована." || warn "Не удалось активировать службу x-ui."
+        fi
         sleep 2
 
         # Проверка Nginx на наличие мертвого SNI и мягкий reload

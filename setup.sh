@@ -22772,6 +22772,59 @@ if not dry_run and (is_docker_env or os.path.isdir("/etc/dokploy/traefik/dynamic
             "        servers:",
             f"          - url: \"h2c://{backend_name}:{xhttp_port}\"",
         ]
+        if enable_steal or enable_classic:
+            _vpn_lines.extend([
+                "",
+                "tcp:",
+                "  routers:",
+            ])
+            if enable_steal:
+                _vpn_lines.extend([
+                    "    reality-steal:",
+                    "      entryPoints:",
+                    "        - \"websecure\"",
+                    f"      rule: \"HostSNI(`reality.{domain}`)\"",
+                    "      service: \"reality-steal-service\"",
+                    "      tls:",
+                    "        passthrough: true",
+                    "",
+                ])
+            if enable_classic:
+                _classic_snis = ["www.uni-frankfurt.de", "www.sap.com", "download.videolan.org", "www.siemens.com", "mirror.leaseweb.com"]
+                if _parsed_snis:
+                    for _ps in _parsed_snis:
+                        if _ps not in _classic_snis:
+                            _classic_snis.append(_ps)
+                _sni_cond = " || ".join([f"HostSNI(`{_s}`)" for _s in _classic_snis])
+                _vpn_lines.extend([
+                    "    reality-classic:",
+                    "      entryPoints:",
+                    "        - \"websecure\"",
+                    f"      rule: \"{_sni_cond}\"",
+                    "      service: \"reality-classic-service\"",
+                    "      tls:",
+                    "        passthrough: true",
+                    "",
+                ])
+            _vpn_lines.extend([
+                "  services:",
+            ])
+            if enable_steal:
+                _vpn_lines.extend([
+                    "    reality-steal-service:",
+                    "      loadBalancer:",
+                    "        servers:",
+                    f"          - address: \"{backend_name}:{steal_port}\"",
+                    "",
+                ])
+            if enable_classic:
+                _vpn_lines.extend([
+                    "    reality-classic-service:",
+                    "      loadBalancer:",
+                    "        servers:",
+                    f"          - address: \"{backend_name}:{classic_port}\"",
+                    "",
+                ])
         _vpn_yml_path.write_text("\n".join(_vpn_lines) + "\n", encoding="utf-8")
         print(f"  [OK] Маршруты Dokploy Traefik dynamic применены ({backend_name}:{xhttp_port} -> {_v_host}): {_vpn_yml_path}")
     except Exception as _e_dok:

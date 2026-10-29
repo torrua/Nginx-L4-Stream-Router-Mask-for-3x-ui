@@ -46,3 +46,33 @@ http:
       loadBalancer:
         servers:
           - url: "h2c://host.docker.internal:50443"
+
+tcp:
+  routers:
+    reality-steal:
+      entryPoints:
+        - "websecure"
+      rule: "HostSNI(`reality.yourdomain.online`)"
+      service: "reality-steal-service"
+      tls:
+        passthrough: true
+
+    reality-classic:
+      entryPoints:
+        - "websecure"
+      rule: "HostSNI(`www.uni-frankfurt.de`) || HostSNI(`www.sap.com`) || HostSNI(`download.videolan.org`) || HostSNI(`www.siemens.com`) || HostSNI(`mirror.leaseweb.com`)"
+      service: "reality-classic-service"
+      tls:
+        passthrough: true
+
+  services:
+    reality-steal-service:
+      loadBalancer:
+        servers:
+          - address: "host.docker.internal:45443"
+
+    reality-classic-service:
+      loadBalancer:
+        servers:
+          - address: "host.docker.internal:46443"
+

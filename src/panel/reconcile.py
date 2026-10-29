@@ -38,6 +38,7 @@ db_path = os.environ["DB_PATH"]
 dry_run = os.environ.get("DRY_RUN", "0") == "1"
 force_sub = os.environ.get("FORCE_SUB", "0") == "1"
 force_remarks = os.environ.get("FORCE_REMARKS", "0") == "1"
+regen_server_keys = os.environ.get("REGEN_SERVER_KEYS", "0") == "1"
 
 conn = sqlite3.connect(db_path, timeout=30.0)
 cur = conn.cursor()
@@ -410,7 +411,7 @@ if not sub_title and domain and domain not in ("localhost", "127.0.0.1", "0.0.0.
 
 settings_updates = {
     "webPort": panel_port,
-    "webBasePath": f"/{panel_path}/",
+    "webBasePath": f"/{panel_path}/" if panel_path else "/",
     "subEnable": "true",
     "subPort": sub_port,
     "subPath": target_sub_path,
@@ -1145,12 +1146,14 @@ unified_hy2_pass = harvested_hy2_pass or secrets.token_hex(12)
 
 # Реквизиты Shadowsocks 2022
 ss_method = "2022-blake3-aes-256-gcm"
-if harvested_ss_server_pass and validate_ss2022_key(harvested_ss_server_pass, ss_method):
+if not regen_server_keys and harvested_ss_server_pass and validate_ss2022_key(harvested_ss_server_pass, ss_method):
     unified_ss_server_pass = harvested_ss_server_pass
 else:
     unified_ss_server_pass = generate_ss2022_key(ss_method)
+    if regen_server_keys:
+        print(f"  [ОБНОВЛЕНО] Сгенерирован новый серверный мастер-ключ Shadowsocks-2022")
 
-if harvested_ss_client_pass and validate_ss2022_key(harvested_ss_client_pass, ss_method):
+if not regen_server_keys and harvested_ss_client_pass and validate_ss2022_key(harvested_ss_client_pass, ss_method):
     unified_ss_client_pass = harvested_ss_client_pass
 else:
     unified_ss_client_pass = generate_ss2022_key(ss_method)
@@ -1163,16 +1166,18 @@ unified_tuic_pass = unified_ss_client_pass
 tuic_cert, tuic_key = resolve_cert_key_paths(domain, os.environ.get("TUIC_CERT_PATH", ""), os.environ.get("TUIC_KEY_PATH", ""))
 
 # Реквизиты Telegram MTProxy
-if harvested_mtp_secret and validate_mtproto_secret(harvested_mtp_secret):
+if not regen_server_keys and harvested_mtp_secret and validate_mtproto_secret(harvested_mtp_secret):
     unified_mtp_secret = harvested_mtp_secret
 else:
     unified_mtp_secret = generate_mtproto_secret(mtproto_faketls_domain)
+    if regen_server_keys:
+        print(f"  [ОБНОВЛЕНО] Сгенерирован новый FakeTLS секрет Telegram MTProxy")
 
 unified_mtp_adtag = mtproto_adtag or harvested_mtp_adtag or ""
 if unified_mtp_adtag and not validate_mtproto_adtag(unified_mtp_adtag):
     unified_mtp_adtag = ""
 
-if harvested_reality_priv:
+if harvested_reality_priv and not regen_server_keys:
     def_reality_priv = harvested_reality_priv
     def_reality_pub = harvested_reality_pub or curve25519_reality_pubkey(def_reality_priv)
     def_reality_sids = harvested_reality_sids or ([unified_sub_id] + [secrets.token_hex(n) for n in (1, 2, 3, 6)])
@@ -1181,6 +1186,8 @@ else:
     def_reality_priv, def_reality_pub = generate_reality_keypair()
     def_reality_sid = unified_sub_id
     def_reality_sids = [def_reality_sid] + [secrets.token_hex(n) for n in (1, 2, 3, 6)]
+    if regen_server_keys:
+        print(f"  [ОБНОВЛЕНО] Сгенерированы новые серверные ключи VLESS-REALITY (x25519)")
 
 def_wg_s_priv, def_wg_s_pub = generate_wg_keypair()
 if harvested_wg_c_priv and harvested_wg_c_pub:

@@ -35,6 +35,7 @@ configure_3xui_panel() {
   --dry-run               Только аудит и проверка (без внесения изменений)
   --force-sub             Принудительно перезаписать кастомные параметры подписки из .env
   --force-remarks         Принудительно сбросить названия инбаундов к стандартным из .env
+  --regen-keys            Принудительно перегенерировать серверные ключи шифрования (REALITY, SS-2022, MTProxy)
   --warp                  Включить исходящий туннель Cloudflare WARP (обход капч и AI)
   --no-warp               Отключить исходящий туннель Cloudflare WARP
   --warp-key <KEY>        Указать лицензионный ключ WARP+
@@ -59,6 +60,7 @@ EOF_HELP
     local DRY_RUN=0
     local FORCE_SUB=0
     local FORCE_REMARKS=0
+    local REGEN_KEYS=0
     local NON_INTERACTIVE=0
     local CLI_ENABLE_WARP=""
     local CLI_WARP_KEY=""
@@ -136,6 +138,10 @@ EOF_HELP
                 ;;
             --force-remarks)
                 FORCE_REMARKS=1
+                shift
+                ;;
+            --regen-keys|--rotate-keys)
+                REGEN_KEYS=1
                 shift
                 ;;
             --warp)
@@ -579,6 +585,7 @@ EOF_HELP
     fi
 
     log "Конфигурирование таблиц settings и inbounds (Smart Reconcile Engine)..."
+    export REGEN_SERVER_KEYS="${REGEN_KEYS:-${REGEN_SERVER_KEYS:-0}}"
 
     "$PYTHON_CMD" - << 'EOF_PYTHON_CONFIG'
 # @include "panel/reconcile.py"

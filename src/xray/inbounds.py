@@ -153,19 +153,28 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
                     if "resetDay" not in merged_c or not merged_c.get("resetDay"):
                         merged_c["resetDay"] = target_tr_day
                     if protocol == "shadowsocks" and ec.get("password"):
-                        if "validate_ss2022_key" in globals() and validate_ss2022_key(ec["password"], target_settings.get("method", "2022-blake3-aes-256-gcm")):
+                        if not globals().get("regen_server_keys", False) and "validate_ss2022_key" in globals() and validate_ss2022_key(ec["password"], target_settings.get("method", "2022-blake3-aes-256-gcm")):
                             merged_c["password"] = ec["password"]
                         else:
-                            repairs.append("исправлен невалидный ключ единого клиента SS-2022")
+                            merged_c["password"] = globals().get("unified_ss_client_pass") or (generate_ss2022_key(target_settings.get("method", "2022-blake3-aes-256-gcm")) if "generate_ss2022_key" in globals() else ec.get("password"))
+                            if globals().get("regen_server_keys", False):
+                                repairs.append("обновлен ключ единого клиента SS-2022")
+                            else:
+                                repairs.append("исправлен невалидный ключ единого клиента SS-2022")
                     elif protocol == "tuic":
                         if ec.get("uuid"): merged_c["uuid"] = ec["uuid"]
                         if ec.get("password"): merged_c["password"] = ec["password"]
                     elif protocol == "mtproto":
-                        if ec.get("secret"):
+                        if ec.get("secret") and not globals().get("regen_server_keys", False):
                             if "validate_mtproto_secret" not in globals() or validate_mtproto_secret(ec["secret"]):
                                 merged_c["secret"] = ec["secret"]
                             else:
+                                merged_c["secret"] = globals().get("unified_mtp_secret") or (generate_mtproto_secret(globals().get("mtproto_faketls_domain", "gateway.icloud.com")) if "generate_mtproto_secret" in globals() else ec.get("secret"))
                                 repairs.append("исправлен невалидный FakeTLS секрет MTProto единого клиента")
+                        else:
+                            merged_c["secret"] = globals().get("unified_mtp_secret") or (generate_mtproto_secret(globals().get("mtproto_faketls_domain", "gateway.icloud.com")) if "generate_mtproto_secret" in globals() else ec.get("secret"))
+                            if globals().get("regen_server_keys", False):
+                                repairs.append("обновлен FakeTLS секрет MTProto единого клиента")
                         if ec.get("adTag") or ec.get("ad_tag"):
                             ad_cand = ec.get("adTag") or ec.get("ad_tag")
                             if "validate_mtproto_adtag" in globals() and not validate_mtproto_adtag(ad_cand):
@@ -209,19 +218,23 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
         
         # Сохранение privateKey
         priv = cur_reality.get("privateKey")
-        if priv:
+        if priv and not globals().get("regen_server_keys", False):
             target_stream["realitySettings"]["privateKey"] = priv
             preserved.append("privateKey Reality")
+        elif priv and globals().get("regen_server_keys", False):
+            repairs.append("обновлен серверный privateKey Reality")
         
         # Сохранение shortIds
         sids = cur_reality.get("shortIds")
-        if sids:
+        if sids and not globals().get("regen_server_keys", False):
             target_stream["realitySettings"]["shortIds"] = sids
             preserved.append("shortIds")
+        elif sids and globals().get("regen_server_keys", False):
+            repairs.append("обновлен пул shortIds Reality")
 
         # Ремонт / сохранение settings.publicKey
         pub = cur_reality.get("settings", {}).get("publicKey") or cur_reality.get("publicKey")
-        if pub:
+        if pub and not globals().get("regen_server_keys", False):
             target_stream["realitySettings"]["settings"]["publicKey"] = pub
             if not cur_reality.get("settings", {}).get("publicKey"):
                 repairs.append("исправлен отсутствующий settings.publicKey (устранена ошибка empty password)")
@@ -231,7 +244,10 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             derived_pub = curve25519_reality_pubkey(target_stream["realitySettings"]["privateKey"])
             if derived_pub:
                 target_stream["realitySettings"]["settings"]["publicKey"] = derived_pub
-                repairs.append("восстановлен settings.publicKey по x25519")
+                if globals().get("regen_server_keys", False):
+                    repairs.append("обновлен серверный publicKey Reality")
+                else:
+                    repairs.append("восстановлен settings.publicKey по x25519")
 
         # settings.fingerprint
         tgt_fp = target_stream.get("realitySettings", {}).get("settings", {}).get("fingerprint")
@@ -465,12 +481,15 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
 
         # Валидация / сохранение серверного пароля (PSK)
         cur_srv_pwd = cur_settings.get("password")
-        if cur_srv_pwd and "validate_ss2022_key" in globals() and validate_ss2022_key(cur_srv_pwd, ss_method):
+        if cur_srv_pwd and not globals().get("regen_server_keys", False) and "validate_ss2022_key" in globals() and validate_ss2022_key(cur_srv_pwd, ss_method):
             target_settings["password"] = cur_srv_pwd
             preserved.append("серверный ключ SS-2022")
         elif "generate_ss2022_key" in globals():
-            target_settings["password"] = generate_ss2022_key(ss_method)
-            repairs.append("сгенерирован валидный серверный ключ SS-2022 (исправлена ошибка длины)")
+            target_settings["password"] = target_settings.get("password") or generate_ss2022_key(ss_method)
+            if globals().get("regen_server_keys", False):
+                repairs.append("обновлен серверный мастер-ключ SS-2022")
+            else:
+                repairs.append("сгенерирован валидный серверный ключ SS-2022 (исправлена ошибка длины)")
 
         # Аудит клиентов: валидация ключей и очистка устаревшего поля 'method'
         c_repaired = False

@@ -5,10 +5,16 @@ from pathlib import Path
 
 
 def resolve_panel_path(configured, existing):
-    """Preserve explicit and existing paths, including legacy installation paths."""
-    return ((configured or "").strip().strip("/")
-            or (existing or "").strip().strip("/")
-            or "panel-" + secrets.token_hex(16))
+    """Preserve explicit and existing paths, including root '/' and legacy installation paths."""
+    if configured is not None and configured.strip() in ("/", "root", "none", "off"):
+        return ""
+    if configured and configured.strip():
+        return configured.strip().strip("/")
+    if existing is not None and existing.strip() == "/":
+        return ""
+    if existing and existing.strip().strip("/"):
+        return existing.strip().strip("/")
+    return "panel-" + secrets.token_hex(16)
 
 
 def resolve_wstunnel_prefix(configured, service_file="/etc/systemd/system/wstunnel.service"):

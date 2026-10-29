@@ -2909,6 +2909,14 @@ is_docker_env = os.environ.get("IS_DOCKER_XUI", "0") == "1"
 def_p_port = "2053" if is_docker_env else "10443"
 def_s_port = "2096" if is_docker_env else "55443"
 panel_port = os.environ.get("PANEL_PORT") or existing_settings.get("webPort") or def_p_port
+if "resolve_panel_path" not in globals():
+    try:
+        from xray.paths import resolve_panel_path
+    except Exception:
+        try:
+            from src.xray.paths import resolve_panel_path
+        except Exception:
+            pass
 """Path resolution shared by the standalone configuration and repair tools."""
 import secrets
 import shlex
@@ -3129,16 +3137,26 @@ cur.execute("SELECT id, username, password FROM users LIMIT 1")
 user_row = cur.fetchone()
 if user_row:
     admin_id, curr_user, curr_pass = user_row
-    new_user = admin_user if admin_user else curr_user
+    # Не менять логин администратора, если он отличается от 'admin'
+    if curr_user and curr_user.strip() != "admin":
+        new_user = curr_user
+    else:
+        new_user = admin_user if admin_user else curr_user
     new_pass = hashed_pass if hashed_pass else curr_pass
-    if admin_user or hashed_pass:
+    user_changed = (new_user != curr_user)
+    pass_changed = bool(hashed_pass)
+    if user_changed or pass_changed:
         if not dry_run:
-            if hashed_pass:
+            if pass_changed:
                 cur.execute("UPDATE users SET username = ?, password = ? WHERE id = ?", (new_user, new_pass, admin_id))
             else:
                 cur.execute("UPDATE users SET username = ? WHERE id = ?", (new_user, admin_id))
-        status_msg = "пароль обновлен (bcrypt)" if hashed_pass else "пароль будет синхронизирован через CLI x-ui"
-        print(f"  [ИСПРАВЛЕНО] Администратор (ID {admin_id}): логин='{new_user}', {status_msg}.")
+        status_parts = []
+        if user_changed:
+            status_parts.append(f"логин='{new_user}'")
+        if pass_changed:
+            status_parts.append("пароль обновлен (bcrypt)")
+        print(f"  [ИСПРАВЛЕНО] Администратор (ID {admin_id}): {', '.join(status_parts)}.")
     elif admin_pass:
         print(f"  [ИНФО] Администратор (ID {admin_id}): логин='{new_user}', пароль ожидает хэширования через CLI x-ui.")
 else:

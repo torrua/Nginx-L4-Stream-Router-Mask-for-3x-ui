@@ -2160,6 +2160,35 @@ EOF_PANEL_PATH
     done
 }
 
+read_existing_admin_username() {
+    local db candidate python_cmd=""
+    for db in "${DB_PATH:-/etc/x-ui/x-ui.db}" /usr/local/x-ui/bin/x-ui.db /etc/x-ui/db/x-ui.db /var/lib/docker/volumes/*_xui_data/_data/x-ui.db; do
+        [ -f "$db" ] || continue
+        for candidate in "${PYTHON_CMD:-python3}" python; do
+            if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c 'import sqlite3' >/dev/null 2>&1; then
+                python_cmd="$candidate"
+                break
+            fi
+        done
+        [ -n "$python_cmd" ] || return 1
+        "$python_cmd" - "$db" << 'EOF_ADMIN_USER'
+import sqlite3
+import sys
+from pathlib import Path
+
+try:
+    with sqlite3.connect(Path(sys.argv[1]).resolve().as_uri() + "?mode=ro", uri=True) as conn:
+        row = conn.execute("SELECT username FROM users LIMIT 1").fetchone()
+        u = (row[0] if row else "") or ""
+        if u and u.strip() != "admin":
+            print(u.strip())
+except Exception:
+    pass
+EOF_ADMIN_USER
+        return $?
+    done
+}
+
 ensure_agh_client_id() {
     if [ -z "${AGH_CLIENT_ID:-}" ]; then
         AGH_CLIENT_ID="client-$(generate_secret_token)" || return 1
@@ -2332,7 +2361,18 @@ reconstruct_arrays_from_vars() {
     fi
     SERVER_PREFIX="${SERVER_PREFIX:-Server}"
     SUB_TITLE="${SUB_TITLE:-$SERVER_PREFIX}"
-    ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
+    local existing_admin
+    existing_admin="$(read_existing_admin_username 2>/dev/null || true)"
+    if [ -n "$existing_admin" ] && [ "$existing_admin" != "admin" ]; then
+        ADMIN_USERNAME="$existing_admin"
+    else
+            _existing_admin="$(read_existing_admin_username 2>/dev/null || true)"
+    if [ -n "$_existing_admin" ] && [ "$_existing_admin" != "admin" ]; then
+        ADMIN_USERNAME="$_existing_admin"
+    else
+        ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
+    fi
+    fi
     ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
     DECOY_MODE="${DECOY_MODE:-1}"
     SSL_ENGINE_CHOICE="${SSL_ENGINE_CHOICE:-1}"
@@ -2499,7 +2539,18 @@ finalize_installation_config() {
         normalize_node_token_config
         ensure_panel_path || return 1
         ensure_diag_path || return 1
+        local existing_admin
+    existing_admin="$(read_existing_admin_username 2>/dev/null || true)"
+    if [ -n "$existing_admin" ] && [ "$existing_admin" != "admin" ]; then
+        ADMIN_USERNAME="$existing_admin"
+    else
+            _existing_admin="$(read_existing_admin_username 2>/dev/null || true)"
+    if [ -n "$_existing_admin" ] && [ "$_existing_admin" != "admin" ]; then
+        ADMIN_USERNAME="$_existing_admin"
+    else
         ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
+    fi
+    fi
         ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
         if is_true "${AUTO_SETUP_3XUI:-y}" && [ -z "$ADMIN_PASSWORD" ] &&
            [ ! -s "${DB_PATH:-/etc/x-ui/x-ui.db}" ] && [ ! -s /usr/local/x-ui/bin/x-ui.db ]; then
@@ -2655,7 +2706,12 @@ REALITY_FALLBACK_PORT="${REALITY_FALLBACK_PORT:-9443}"
 
 PANEL_PORT="${PANEL_PORT:-10443}"
 PANEL_PATH="${_save_panel_path}"
-ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
+    _existing_admin="$(read_existing_admin_username 2>/dev/null || true)"
+    if [ -n "$_existing_admin" ] && [ "$_existing_admin" != "admin" ]; then
+        ADMIN_USERNAME="$_existing_admin"
+    else
+        ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
+    fi
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
 SERVER_PREFIX="${SERVER_PREFIX:-Server}"
 SUB_PORT="${SUB_PORT:-55443}"
@@ -19235,7 +19291,12 @@ EOF_HELP
         SERVER_PREFIX="$(detect_server_location_prefix 2>/dev/null || echo "$PRIMARY_DOMAIN")"
     fi
     SERVER_PREFIX="${SERVER_PREFIX:-$PRIMARY_DOMAIN}"
-    ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
+    _existing_admin="$(read_existing_admin_username 2>/dev/null || true)"
+    if [ -n "$_existing_admin" ] && [ "$_existing_admin" != "admin" ]; then
+        ADMIN_USERNAME="$_existing_admin"
+    else
+        ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
+    fi
     ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
     NODE_TOKEN_NAME="${NODE_TOKEN_NAME:-${SERVER_PREFIX}-Node}"
     DIAG_TOKEN="${DIAG_TOKEN:-}"
@@ -19666,6 +19727,14 @@ is_docker_env = os.environ.get("IS_DOCKER_XUI", "0") == "1"
 def_p_port = "2053" if is_docker_env else "10443"
 def_s_port = "2096" if is_docker_env else "55443"
 panel_port = os.environ.get("PANEL_PORT") or existing_settings.get("webPort") or def_p_port
+if "resolve_panel_path" not in globals():
+    try:
+        from xray.paths import resolve_panel_path
+    except Exception:
+        try:
+            from src.xray.paths import resolve_panel_path
+        except Exception:
+            pass
 """Path resolution shared by the standalone configuration and repair tools."""
 import secrets
 import shlex
@@ -19886,16 +19955,26 @@ cur.execute("SELECT id, username, password FROM users LIMIT 1")
 user_row = cur.fetchone()
 if user_row:
     admin_id, curr_user, curr_pass = user_row
-    new_user = admin_user if admin_user else curr_user
+    # Не менять логин администратора, если он отличается от 'admin'
+    if curr_user and curr_user.strip() != "admin":
+        new_user = curr_user
+    else:
+        new_user = admin_user if admin_user else curr_user
     new_pass = hashed_pass if hashed_pass else curr_pass
-    if admin_user or hashed_pass:
+    user_changed = (new_user != curr_user)
+    pass_changed = bool(hashed_pass)
+    if user_changed or pass_changed:
         if not dry_run:
-            if hashed_pass:
+            if pass_changed:
                 cur.execute("UPDATE users SET username = ?, password = ? WHERE id = ?", (new_user, new_pass, admin_id))
             else:
                 cur.execute("UPDATE users SET username = ? WHERE id = ?", (new_user, admin_id))
-        status_msg = "пароль обновлен (bcrypt)" if hashed_pass else "пароль будет синхронизирован через CLI x-ui"
-        print(f"  [ИСПРАВЛЕНО] Администратор (ID {admin_id}): логин='{new_user}', {status_msg}.")
+        status_parts = []
+        if user_changed:
+            status_parts.append(f"логин='{new_user}'")
+        if pass_changed:
+            status_parts.append("пароль обновлен (bcrypt)")
+        print(f"  [ИСПРАВЛЕНО] Администратор (ID {admin_id}): {', '.join(status_parts)}.")
     elif admin_pass:
         print(f"  [ИНФО] Администратор (ID {admin_id}): логин='{new_user}', пароль ожидает хэширования через CLI x-ui.")
 else:

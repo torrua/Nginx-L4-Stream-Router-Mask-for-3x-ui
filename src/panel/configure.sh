@@ -239,7 +239,12 @@ EOF_HELP
         SERVER_PREFIX="$(detect_server_location_prefix 2>/dev/null || echo "$PRIMARY_DOMAIN")"
     fi
     SERVER_PREFIX="${SERVER_PREFIX:-$PRIMARY_DOMAIN}"
-    ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
+    _existing_admin="$(read_existing_admin_username 2>/dev/null || true)"
+    if [ -n "$_existing_admin" ] && [ "$_existing_admin" != "admin" ]; then
+        ADMIN_USERNAME="$_existing_admin"
+    else
+        ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
+    fi
     ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
     NODE_TOKEN_NAME="${NODE_TOKEN_NAME:-${SERVER_PREFIX}-Node}"
     DIAG_TOKEN="${DIAG_TOKEN:-}"

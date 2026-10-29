@@ -57,6 +57,35 @@ EOF_PANEL_PATH
     done
 }
 
+read_existing_admin_username() {
+    local db candidate python_cmd=""
+    for db in "${DB_PATH:-/etc/x-ui/x-ui.db}" /usr/local/x-ui/bin/x-ui.db /etc/x-ui/db/x-ui.db /var/lib/docker/volumes/*_xui_data/_data/x-ui.db; do
+        [ -f "$db" ] || continue
+        for candidate in "${PYTHON_CMD:-python3}" python; do
+            if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c 'import sqlite3' >/dev/null 2>&1; then
+                python_cmd="$candidate"
+                break
+            fi
+        done
+        [ -n "$python_cmd" ] || return 1
+        "$python_cmd" - "$db" << 'EOF_ADMIN_USER'
+import sqlite3
+import sys
+from pathlib import Path
+
+try:
+    with sqlite3.connect(Path(sys.argv[1]).resolve().as_uri() + "?mode=ro", uri=True) as conn:
+        row = conn.execute("SELECT username FROM users LIMIT 1").fetchone()
+        u = (row[0] if row else "") or ""
+        if u and u.strip() != "admin":
+            print(u.strip())
+except Exception:
+    pass
+EOF_ADMIN_USER
+        return $?
+    done
+}
+
 ensure_agh_client_id() {
     if [ -z "${AGH_CLIENT_ID:-}" ]; then
         AGH_CLIENT_ID="client-$(generate_secret_token)" || return 1
@@ -229,7 +258,18 @@ reconstruct_arrays_from_vars() {
     fi
     SERVER_PREFIX="${SERVER_PREFIX:-Server}"
     SUB_TITLE="${SUB_TITLE:-$SERVER_PREFIX}"
-    ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
+    local existing_admin
+    existing_admin="$(read_existing_admin_username 2>/dev/null || true)"
+    if [ -n "$existing_admin" ] && [ "$existing_admin" != "admin" ]; then
+        ADMIN_USERNAME="$existing_admin"
+    else
+            _existing_admin="$(read_existing_admin_username 2>/dev/null || true)"
+    if [ -n "$_existing_admin" ] && [ "$_existing_admin" != "admin" ]; then
+        ADMIN_USERNAME="$_existing_admin"
+    else
+        ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
+    fi
+    fi
     ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
     DECOY_MODE="${DECOY_MODE:-1}"
     SSL_ENGINE_CHOICE="${SSL_ENGINE_CHOICE:-1}"
@@ -396,7 +436,18 @@ finalize_installation_config() {
         normalize_node_token_config
         ensure_panel_path || return 1
         ensure_diag_path || return 1
+        local existing_admin
+    existing_admin="$(read_existing_admin_username 2>/dev/null || true)"
+    if [ -n "$existing_admin" ] && [ "$existing_admin" != "admin" ]; then
+        ADMIN_USERNAME="$existing_admin"
+    else
+            _existing_admin="$(read_existing_admin_username 2>/dev/null || true)"
+    if [ -n "$_existing_admin" ] && [ "$_existing_admin" != "admin" ]; then
+        ADMIN_USERNAME="$_existing_admin"
+    else
         ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
+    fi
+    fi
         ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
         if is_true "${AUTO_SETUP_3XUI:-y}" && [ -z "$ADMIN_PASSWORD" ] &&
            [ ! -s "${DB_PATH:-/etc/x-ui/x-ui.db}" ] && [ ! -s /usr/local/x-ui/bin/x-ui.db ]; then
@@ -552,7 +603,12 @@ REALITY_FALLBACK_PORT="${REALITY_FALLBACK_PORT:-9443}"
 
 PANEL_PORT="${PANEL_PORT:-10443}"
 PANEL_PATH="${_save_panel_path}"
-ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
+    _existing_admin="$(read_existing_admin_username 2>/dev/null || true)"
+    if [ -n "$_existing_admin" ] && [ "$_existing_admin" != "admin" ]; then
+        ADMIN_USERNAME="$_existing_admin"
+    else
+        ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
+    fi
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
 SERVER_PREFIX="${SERVER_PREFIX:-Server}"
 SUB_PORT="${SUB_PORT:-55443}"

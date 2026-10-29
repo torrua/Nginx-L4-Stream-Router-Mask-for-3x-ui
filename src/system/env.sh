@@ -263,12 +263,7 @@ reconstruct_arrays_from_vars() {
     if [ -n "$existing_admin" ] && [ "$existing_admin" != "admin" ]; then
         ADMIN_USERNAME="$existing_admin"
     else
-            _existing_admin="$(read_existing_admin_username 2>/dev/null || true)"
-    if [ -n "$_existing_admin" ] && [ "$_existing_admin" != "admin" ]; then
-        ADMIN_USERNAME="$_existing_admin"
-    else
         ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
-    fi
     fi
     ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
     DECOY_MODE="${DECOY_MODE:-1}"
@@ -441,12 +436,7 @@ finalize_installation_config() {
     if [ -n "$existing_admin" ] && [ "$existing_admin" != "admin" ]; then
         ADMIN_USERNAME="$existing_admin"
     else
-            _existing_admin="$(read_existing_admin_username 2>/dev/null || true)"
-    if [ -n "$_existing_admin" ] && [ "$_existing_admin" != "admin" ]; then
-        ADMIN_USERNAME="$_existing_admin"
-    else
         ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
-    fi
     fi
         ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
         if is_true "${AUTO_SETUP_3XUI:-y}" && [ -z "$ADMIN_PASSWORD" ] &&
@@ -562,6 +552,14 @@ save_session_state() {
         SERVER_PREFIX="$(detect_server_location_prefix 2>/dev/null || echo "Server")"
     fi
 
+    local existing_admin
+    existing_admin="$(read_existing_admin_username 2>/dev/null || true)"
+    if [ -n "$existing_admin" ] && [ "$existing_admin" != "admin" ]; then
+        ADMIN_USERNAME="$existing_admin"
+    else
+        ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
+    fi
+
     local save_tmp
     save_tmp=$(mktemp "${save_path}.tmp.XXXXXX") || { umask "$old_umask"; return 1; }
     if ! cat << EOF_SAVE > "$save_tmp"
@@ -603,12 +601,7 @@ REALITY_FALLBACK_PORT="${REALITY_FALLBACK_PORT:-9443}"
 
 PANEL_PORT="${PANEL_PORT:-10443}"
 PANEL_PATH="${_save_panel_path}"
-    _existing_admin="$(read_existing_admin_username 2>/dev/null || true)"
-    if [ -n "$_existing_admin" ] && [ "$_existing_admin" != "admin" ]; then
-        ADMIN_USERNAME="$_existing_admin"
-    else
-        ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
-    fi
+ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
 SERVER_PREFIX="${SERVER_PREFIX:-Server}"
 SUB_PORT="${SUB_PORT:-55443}"

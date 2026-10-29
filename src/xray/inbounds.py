@@ -309,7 +309,7 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             preserved.append(f"path (/{cur_p}/)")
         elif cur_p and tgt_p != cur_p:
             repairs.append(f"синхронизирован path xHTTP: /{cur_p}/ -> /{tgt_p}/")
-        target_stream["xhttpSettings"]["mode"] = "stream-one"
+        target_stream["xhttpSettings"]["mode"] = cur_xh.get("mode") or target_stream["xhttpSettings"].get("mode") or "auto"
         if cur_settings.get("decryption") and cur_settings["decryption"] != "none":
             target_settings["decryption"] = cur_settings["decryption"]
             preserved.append("decryption xHTTP")

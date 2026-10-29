@@ -4913,7 +4913,7 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             preserved.append(f"path (/{cur_p}/)")
         elif cur_p and tgt_p != cur_p:
             repairs.append(f"синхронизирован path xHTTP: /{cur_p}/ -> /{tgt_p}/")
-        target_stream["xhttpSettings"]["mode"] = "stream-one"
+        target_stream["xhttpSettings"]["mode"] = cur_xh.get("mode") or target_stream["xhttpSettings"].get("mode") or "auto"
         if cur_settings.get("decryption") and cur_settings["decryption"] != "none":
             target_settings["decryption"] = cur_settings["decryption"]
             preserved.append("decryption xHTTP")
@@ -5942,32 +5942,32 @@ if not dry_run and (is_docker_env or os.path.isdir("/etc/dokploy/traefik/dynamic
         dokploy_dyn_dir.mkdir(parents=True, exist_ok=True)
         # Определение имени контейнера backend для Traefik
         backend_name = "3x-ui-dokploy"
-        if dokploy_dyn_dir.is_dir():
+        try:
+            import subprocess
+            _ps_res = subprocess.run(["docker", "ps", "--format", "{{.Names}}"], capture_output=True, text=True, timeout=5)
+            if _ps_res.returncode == 0:
+                for _n in _ps_res.stdout.splitlines():
+                    _n = _n.strip()
+                    if "3x-ui" in _n or "x-ui" in _n:
+                        backend_name = _n
+                        break
+        except Exception:
+            pass
+
+        if backend_name == "3x-ui-dokploy" and dokploy_dyn_dir.is_dir():
             for _yf in dokploy_dyn_dir.glob("*.y*ml"):
-                if _yf.name == "vpn.yml":
+                if _yf.name in ("vpn.yml", "dokploy.yml", "middlewares.yml"):
                     continue
                 try:
                     _txt = _yf.read_text(encoding="utf-8", errors="ignore")
-                    _m = re.search(r'url:\s*["\']?https?://([^:/ \'"\n]+)(?::(?:2053|2096|10443|55443|50443|\d+))?', _txt)
+                    _m = re.search(r'url:\s*["\']?(?:https?|h2c)://([^:/ \'"\n]+)(?::(?:2053|2096|10443|55443|50443|\d+))?', _txt)
                     if _m:
                         _c = _m.group(1).strip()
-                        if _c and _c not in ("127.0.0.1", "localhost", "0.0.0.0"):
+                        if _c and _c not in ("127.0.0.1", "localhost", "0.0.0.0", "dokploy", "traefik"):
                             backend_name = _c
                             break
                 except Exception:
                     pass
-        if backend_name == "3x-ui-dokploy":
-            try:
-                import subprocess
-                _ps_res = subprocess.run(["docker", "ps", "--format", "{{.Names}}"], capture_output=True, text=True, timeout=5)
-                if _ps_res.returncode == 0:
-                    for _n in _ps_res.stdout.splitlines():
-                        _n = _n.strip()
-                        if "3x-ui" in _n or "x-ui" in _n:
-                            backend_name = _n
-                            break
-            except Exception:
-                pass
 
         _p_host = (os.environ.get("PANEL_DOMAIN") or f"panel.{domain}").strip()
         _s_host = (os.environ.get("SUB_DOMAIN") or f"sub.{domain}").strip()

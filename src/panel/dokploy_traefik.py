@@ -17,23 +17,7 @@ from pathlib import Path
 
 def detect_dokploy_backend_host() -> str:
     """Auto-detects the Docker container name or host for 3X-UI on Dokploy."""
-    # 1. Search existing /etc/dokploy/traefik/dynamic/*.{yml,yaml} for upstream container name
-    dyn_dir = Path("/etc/dokploy/traefik/dynamic")
-    if dyn_dir.is_dir():
-        for f in dyn_dir.glob("*.y*ml"):
-            if f.name == "vpn.yml":
-                continue
-            try:
-                txt = f.read_text(encoding="utf-8", errors="ignore")
-                m = re.search(r'url:\s*["\']?https?://([^:/ \'"\n]+)(?::(?:2053|2096|10443|55443|50443|\d+))?', txt)
-                if m:
-                    cand = m.group(1).strip()
-                    if cand and cand not in ("127.0.0.1", "localhost", "0.0.0.0"):
-                        return cand
-            except Exception:
-                pass
-
-    # 2. Inspect docker ps if docker CLI is available
+    # 1. Inspect docker ps if docker CLI is available (most accurate on VPS)
     try:
         import subprocess
         res = subprocess.run(
@@ -47,6 +31,22 @@ def detect_dokploy_backend_host() -> str:
                     return name
     except Exception:
         pass
+
+    # 2. Search existing /etc/dokploy/traefik/dynamic/*.{yml,yaml} for upstream container name
+    dyn_dir = Path("/etc/dokploy/traefik/dynamic")
+    if dyn_dir.is_dir():
+        for f in dyn_dir.glob("*.y*ml"):
+            if f.name in ("vpn.yml", "dokploy.yml", "middlewares.yml"):
+                continue
+            try:
+                txt = f.read_text(encoding="utf-8", errors="ignore")
+                m = re.search(r'url:\s*["\']?(?:https?|h2c)://([^:/ \'"\n]+)(?::(?:2053|2096|10443|55443|50443|\d+))?', txt)
+                if m:
+                    cand = m.group(1).strip()
+                    if cand and cand not in ("127.0.0.1", "localhost", "0.0.0.0", "dokploy", "traefik"):
+                        return cand
+            except Exception:
+                pass
 
     return "3x-ui-dokploy"
 

@@ -22149,7 +22149,7 @@ xhttp_listen = "0.0.0.0" if is_docker_env else "127.0.0.1"
 x_str = {
     "network": "xhttp",
     "xhttpSettings": {
-        "path": f"/{xhttp_path.strip('/')}/", "host": vless_target_dom, "mode": "stream-one",
+        "path": f"/{xhttp_path.strip('/')}/", "host": vless_target_dom, "mode": "auto",
         "noSSEHeader": True,
         "xPaddingBytes": "100-500", "xPaddingObfsMode": False, "xPaddingKey": "",
         "xmux": {
@@ -22409,7 +22409,7 @@ def insert_host_entry(ib_id, host_remark, addr, host_port, sec, host_sni="", hos
         "inbound_id": ib_id, "inboundId": ib_id,
         "sort_order": sort_order, "sortOrder": sort_order,
         "remark": host_remark, "address": addr, "port": host_port, "security": sec,
-        "sni": host_sni, "host_header": "", "hostHeader": "", "path": host_path,
+        "sni": host_sni, "host_header": host_sni or addr, "hostHeader": host_sni or addr, "path": host_path,
         "alpn": host_alpn, "fingerprint": host_fp, "allow_insecure": 0, "allowInsecure": 0,
         "is_disabled": 0, "isDisabled": 0, "is_hidden": 0, "isHidden": 0,
         "tags": "", "ech_config_list": "", "mux_params": "", "sockopt_params": "",
@@ -22487,7 +22487,9 @@ if x_iid:
     cur.execute("SELECT remark FROM inbounds WHERE id = ?", (x_iid,))
     r_rem = cur.fetchone()
     x_rem = r_rem[0] if r_rem and r_rem[0] else xhttp_remark
-    sync_host_entry(x_iid, x_rem, domain, 443, "tls", host_sni=domain, host_path=f"/{xhttp_path.strip('/')}/", host_alpn=json.dumps(["h2"]), host_fp=reality_fp, sort_order=2)
+    if not dry_run:
+        cur.execute(f"DELETE FROM hosts WHERE {inbound_col} = ?", (x_iid,))
+    insert_host_entry(x_iid, x_rem, vless_target_dom, 443, "tls", host_sni=vless_target_dom, host_path=f"/{xhttp_path.strip('/')}/", host_alpn=json.dumps(["h2"]), host_fp=reality_fp, sort_order=2)
 
 
 # Формирование клиентских ссылок для новых протоколов
@@ -22681,6 +22683,98 @@ if not dry_run:
         os.umask(old_umask)
         os.chmod(run_file, 0o600)
     except Exception:
+        pass
+
+# Автоматическая генерация / обновление маршрутов Dokploy Traefik Dynamic Configuration
+if not dry_run and (is_docker_env or os.path.isdir("/etc/dokploy/traefik/dynamic") or os.path.isdir("/etc/dokploy")):
+    try:
+        dokploy_dyn_dir = Path("/etc/dokploy/traefik/dynamic")
+        dokploy_dyn_dir.mkdir(parents=True, exist_ok=True)
+        # Определение имени контейнера backend для Traefik
+        backend_name = "3x-ui-dokploy"
+        if dokploy_dyn_dir.is_dir():
+            for _yf in dokploy_dyn_dir.glob("*.y*ml"):
+                if _yf.name == "vpn.yml":
+                    continue
+                try:
+                    _txt = _yf.read_text(encoding="utf-8", errors="ignore")
+                    _m = re.search(r'url:\s*["\']?https?://([^:/ \'"\n]+)(?::(?:2053|2096|10443|55443|50443|\d+))?', _txt)
+                    if _m:
+                        _c = _m.group(1).strip()
+                        if _c and _c not in ("127.0.0.1", "localhost", "0.0.0.0"):
+                            backend_name = _c
+                            break
+                except Exception:
+                    pass
+        if backend_name == "3x-ui-dokploy":
+            try:
+                import subprocess
+                _ps_res = subprocess.run(["docker", "ps", "--format", "{{.Names}}"], capture_output=True, text=True, timeout=5)
+                if _ps_res.returncode == 0:
+                    for _n in _ps_res.stdout.splitlines():
+                        _n = _n.strip()
+                        if "3x-ui" in _n or "x-ui" in _n:
+                            backend_name = _n
+                            break
+            except Exception:
+                pass
+
+        _p_host = (os.environ.get("PANEL_DOMAIN") or f"panel.{domain}").strip()
+        _s_host = (os.environ.get("SUB_DOMAIN") or f"sub.{domain}").strip()
+        _v_host = vless_target_dom
+
+        _vpn_yml_path = dokploy_dyn_dir / "vpn.yml"
+        _vpn_lines = [
+            "# ==============================================================================",
+            "# DOKPLOY TRAEFIK DYNAMIC CONFIGURATION FOR 3X-UI & VPN SERVICES",
+            "# Automatically managed by Smart Reconcile Engine",
+            "# ==============================================================================",
+            "http:",
+            "  routers:",
+            "    xui-panel:",
+            f"      rule: \"Host(`{_p_host}`)\"",
+            "      entryPoints:",
+            "        - \"websecure\"",
+            "      service: \"xui-panel-service\"",
+            "      tls:",
+            "        certResolver: \"letsencrypt\"",
+            "",
+            "    xui-sub:",
+            f"      rule: \"Host(`{_s_host}`)\"",
+            "      entryPoints:",
+            "        - \"websecure\"",
+            "      service: \"xui-sub-service\"",
+            "      tls:",
+            "        certResolver: \"letsencrypt\"",
+            "",
+            "    xray-xhttp:",
+            f"      rule: \"Host(`{_v_host}`)\"",
+            "      entryPoints:",
+            "        - \"websecure\"",
+            "      priority: 1000",
+            "      service: \"xray-xhttp-service\"",
+            "      tls:",
+            "        certResolver: \"letsencrypt\"",
+            "",
+            "  services:",
+            "    xui-panel-service:",
+            "      loadBalancer:",
+            "        servers:",
+            f"          - url: \"http://{backend_name}:{panel_port}\"",
+            "",
+            "    xui-sub-service:",
+            "      loadBalancer:",
+            "        servers:",
+            f"          - url: \"http://{backend_name}:{sub_port}\"",
+            "",
+            "    xray-xhttp-service:",
+            "      loadBalancer:",
+            "        servers:",
+            f"          - url: \"h2c://{backend_name}:{xhttp_port}\"",
+        ]
+        _vpn_yml_path.write_text("\n".join(_vpn_lines) + "\n", encoding="utf-8")
+        print(f"  [OK] Маршруты Dokploy Traefik dynamic применены ({backend_name}:{xhttp_port} -> {_v_host}): {_vpn_yml_path}")
+    except Exception as _e_dok:
         pass
 
 conn.close()

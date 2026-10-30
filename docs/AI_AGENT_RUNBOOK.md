@@ -299,3 +299,15 @@ When an error occurs, the agent MUST consult this deterministic decision matrix 
 | `502 Bad Gateway` on `panel.<DOMAIN>` | 3X-UI is not listening on `10443`, or `cloudflared` daemon has crashed. | 1. Check `netstat -tlpn \| grep 10443`.<br/>2. Check `rc-service cloudflared status`.<br/>3. Verify Cloudflare Public Hostname routes to `localhost:10443`. |
 | SSH connection timeout / banner drop | Excessive concurrent connections or rate-limiting by NAT provider. | Use single long-running SSH commands or persistent connections (`ControlMaster`). Ensure `ConnectTimeout=10`. |
 | `sqlite3: database table is locked` | Uncommitted write transaction during Python preparation. | Ensure `con.commit()` is called prior to `PRAGMA wal_checkpoint` or `VACUUM`. |
+| `HTTP 405 Method Not Allowed` on xHTTP | Path mismatch between Xray `xhttpSettings.path`, Nginx `01-main.conf` location, or Nginx `$badbot` map. | 1. Check Xray path: `sqlite3 /etc/x-ui/x-ui.db "SELECT stream_settings FROM inbounds WHERE tag='in-xhttp-stream'"`<br/>2. Add `location ^~ <path>` to `/etc/nginx/conf.d/01-main.conf` with `proxy_pass http://xray_xhttp_stream;`<br/>3. Add `~^1:[01]:<path> 0;` to `$badbot` in `/etc/nginx/nginx.conf`<br/>4. Reload: `nginx -t && nginx -s reload`. |
+| `Multiple duplicate server links in subscription (e.g. 8x VLESS Classic)` | Multi-SNI pool in `CLASSIC_SNI` populated multiple rows in table `hosts` and `externalProxy` array. | 1. In `hosts` table, keep ONLY the primary row: `DELETE FROM hosts WHERE inbound_id = ? AND sni != ?`<br/>2. In `externalProxy` array in `inbounds.stream_settings`, keep only 1 primary object.<br/>3. Preserve the full pool of fallback domains in `realitySettings.serverNames` for server handshake validation.<br/>4. Restart x-ui on master node to refresh the subscription payload. |
+
+---
+
+## 6. Multi-SNI Configuration & Link Deduplication Policy
+
+When configuring VLESS REALITY with multiple SNI domains (e.g. `appengine.google.com`, `dmi.dk`, `uio.no`, `dl.google.com`):
+1. **Server-Side Validation:** The Xray inbound configuration `realitySettings.serverNames` MUST contain all allowed domains so the server accepts TLS handshakes from clients targeting any of them.
+2. **Reverse Proxy (L4):** If Nginx or Traefik handles port 443, every allowed SNI must route to the Classic backend (`reality_backend_46443;`).
+3. **Client Subscriptions (Deduplication):** The public subscription generator reads from the SQLite `hosts` table and the `externalProxy` JSON array. To prevent polluting client apps with multiple identical server entries, **EXACTLY ONE primary entry** must be exported to `hosts` and `externalProxy`. Alternative domains remain strictly server-side fallback aliases.
+

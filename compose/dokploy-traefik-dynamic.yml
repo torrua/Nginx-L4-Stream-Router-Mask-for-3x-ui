@@ -52,8 +52,16 @@ tcp:
     reality-steal:
       entryPoints:
         - "websecure"
-      rule: "HostSNI(`reality.yourdomain.online`)"
+      rule: "HostSNI(`cdn.yourdomain.online`) || HostSNI(`reality.yourdomain.online`)"
       service: "reality-steal-service"
+      tls:
+        passthrough: true
+
+    reality-steal-backup:
+      entryPoints:
+        - "websecure"
+      rule: "HostSNI(`static.yourdomain.online`)"
+      service: "reality-steal-backup-service"
       tls:
         passthrough: true
 
@@ -70,6 +78,11 @@ tcp:
       loadBalancer:
         servers:
           - address: "host.docker.internal:45443"
+
+    reality-steal-backup-service:
+      loadBalancer:
+        servers:
+          - address: "host.docker.internal:47443"
 
     reality-classic-service:
       loadBalancer:

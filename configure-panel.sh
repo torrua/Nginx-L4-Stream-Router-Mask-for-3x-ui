@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  CONFIGURE 3X-UI INBOUNDS & SETTINGS (v9.7.0 Universal Companion & Smart Reconcile)
+#  CONFIGURE 3X-UI INBOUNDS & SETTINGS (v9.7.1 Universal Companion & Smart Reconcile)
 # ==============================================================================
 #  Скрипт автоматического конфигурирования и самовосстановления базы 3X-UI.
 #  Безопасен для повторного запуска:
@@ -1058,7 +1058,7 @@ def create_manifest(staging_dir: Union[str, Path], output_path: Optional[Union[s
     created_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     data = {
         "format_version": "2.0",
-        "project_version": os.environ.get("SCRIPT_VERSION", "v9.7.0"),
+        "project_version": os.environ.get("SCRIPT_VERSION", "v9.7.1"),
         "created_at": created_iso,
         "db_path": os.environ.get("DB_PATH", "/etc/x-ui/x-ui.db"),
         "files": files_map,
@@ -2720,7 +2720,7 @@ def create_manifest(staging_dir: Union[str, Path], output_path: Optional[Union[s
     created_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     data = {
         "format_version": "2.0",
-        "project_version": os.environ.get("SCRIPT_VERSION", "v9.7.0"),
+        "project_version": os.environ.get("SCRIPT_VERSION", "v9.7.1"),
         "created_at": created_iso,
         "db_path": os.environ.get("DB_PATH", "/etc/x-ui/x-ui.db"),
         "files": files_map,
@@ -3866,6 +3866,10 @@ EOF_HELP
                 CLI_NODE_TOKEN_SCOPE="$2"
                 shift 2
                 ;;
+            --deduplicate-classic-snis)
+                CLI_DEDUPLICATE_CLASSIC_SNIS="1"
+                shift
+                ;;
             -y|--yes)
                 NON_INTERACTIVE=1
                 shift
@@ -3997,6 +4001,7 @@ EOF_HELP
     ENABLE_STEAL_COMPAT="${ENABLE_STEAL_COMPAT:-n}"
     ENABLE_XHTTP="${ENABLE_XHTTP:-y}"
     ENABLE_CLASSIC="${ENABLE_CLASSIC:-y}"
+    DEDUPLICATE_CLASSIC_SNIS="${CLI_DEDUPLICATE_CLASSIC_SNIS:-${DEDUPLICATE_CLASSIC_SNIS:-0}}"
     ENABLE_HY2="${ENABLE_HY2:-y}"
     ENABLE_AWG_V3="${ENABLE_AWG_V3:-y}"
     ENABLE_AWG_V2="${ENABLE_AWG_V2:-n}"
@@ -4167,6 +4172,7 @@ EOF_HELP
     export ENABLE_CLASSIC
     export CLASSIC_PORT
     export CLASSIC_SNI
+    export DEDUPLICATE_CLASSIC_SNIS
     export REALITY_FINGERPRINT
     export ENABLE_HY2
     export HY2_PORT
@@ -6864,6 +6870,8 @@ if enable_steal_compat:
 # 2. Classic REALITY (46443)
 if enable_classic:
     c_set = {"clients": [{"id": unified_uuid, "flow": "xtls-rprx-vision", "email": unified_email, "subId": unified_sub_id, "enable": True}], "decryption": "none", "testseed": [900, 500, 900, 256]}
+    _dedup = os.environ.get("DEDUPLICATE_CLASSIC_SNIS", "0").lower() in ("1", "true", "yes", "y")
+    target_ext_snis = [classic_sni] if _dedup else classic_snis
     c_str = {
         "network": "tcp",
         "tcpSettings": {"acceptProxyProtocol": True, "header": {"type": "none"}},
@@ -6881,9 +6889,9 @@ if enable_classic:
                 "forceTls": "same",
                 "sni": csni,
                 "fingerprint": reality_fingerprint,
-                "remark": make_remark(f"VLESS Classic ({csni})" if len(classic_snis) > 1 else "VLESS Classic")
+                "remark": make_remark(f"VLESS Classic ({csni})" if len(target_ext_snis) > 1 else "VLESS Classic")
             }
-            for csni in classic_snis
+            for csni in target_ext_snis
         ]
     }
     classic_remark = make_remark("VLESS Classic")
@@ -7235,8 +7243,12 @@ if enable_classic:
         c_rem = r_rem[0] if r_rem and r_rem[0] else classic_remark
         if not dry_run:
             cur.execute(f"DELETE FROM hosts WHERE {inbound_col} = ?", (c_iid,))
-        for idx, csni in enumerate(classic_snis, start=1):
-            h_remark = f"{c_rem} ({csni})" if len(classic_snis) > 1 else c_rem
+        _dedup = False
+        if "os" in globals() and hasattr(globals()["os"], "environ"):
+            _dedup = globals()["os"].environ.get("DEDUPLICATE_CLASSIC_SNIS", "0").lower() in ("1", "true", "yes", "y")
+        target_hosts_snis = [classic_snis[0]] if (_dedup and classic_snis) else classic_snis
+        for idx, csni in enumerate(target_hosts_snis, start=1):
+            h_remark = f"{c_rem} ({csni})" if len(target_hosts_snis) > 1 else c_rem
             insert_host_entry(c_iid, h_remark, domain, 443, "same", host_sni=csni, host_fp=reality_fp, sort_order=idx, shuffle_host=1, mihomo_x25519=1)
 
 x_iid = xhttp_ib_id if ('xhttp_ib_id' in locals() and xhttp_ib_id) else lookup_inbound_id("in-xhttp-stream", xhttp_port)
@@ -7529,19 +7541,34 @@ if not dry_run and (is_docker_env or os.path.isdir("/etc/dokploy/traefik/dynamic
             "        servers:",
             f"          - url: \"h2c://{backend_name}:{xhttp_port}\"",
         ]
-        if enable_steal or enable_classic:
+        if enable_steal or enable_steal_compat or enable_classic:
             _vpn_lines.extend([
                 "",
                 "tcp:",
                 "  routers:",
             ])
             if enable_steal:
+                _steal_rules = [f"HostSNI(`{steal_dom}`)"]
+                if steal_dom != f"reality.{domain}":
+                    _steal_rules.append(f"HostSNI(`reality.{domain}`)")
+                _steal_cond = " || ".join(_steal_rules)
                 _vpn_lines.extend([
                     "    reality-steal:",
                     "      entryPoints:",
                     "        - \"websecure\"",
-                    f"      rule: \"HostSNI(`reality.{domain}`)\"",
+                    f"      rule: \"{_steal_cond}\"",
                     "      service: \"reality-steal-service\"",
+                    "      tls:",
+                    "        passthrough: true",
+                    "",
+                ])
+            if enable_steal_compat:
+                _vpn_lines.extend([
+                    "    reality-steal-backup:",
+                    "      entryPoints:",
+                    "        - \"websecure\"",
+                    f"      rule: \"HostSNI(`{steal_compat_dom}`)\"",
+                    "      service: \"reality-steal-backup-service\"",
                     "      tls:",
                     "        passthrough: true",
                     "",
@@ -7574,6 +7601,14 @@ if not dry_run and (is_docker_env or os.path.isdir("/etc/dokploy/traefik/dynamic
                     f"          - address: \"{backend_name}:{steal_port}\"",
                     "",
                 ])
+            if enable_steal_compat:
+                _vpn_lines.extend([
+                    "    reality-steal-backup-service:",
+                    "      loadBalancer:",
+                    "        servers:",
+                    f"          - address: \"{backend_name}:{steal_compat_port}\"",
+                    "",
+                ])
             if enable_classic:
                 _vpn_lines.extend([
                     "    reality-classic-service:",
@@ -7585,6 +7620,70 @@ if not dry_run and (is_docker_env or os.path.isdir("/etc/dokploy/traefik/dynamic
         _vpn_yml_path.write_text("\n".join(_vpn_lines) + "\n", encoding="utf-8")
         print(f"  [OK] Маршруты Dokploy Traefik dynamic применены ({backend_name}:{xhttp_port} -> {_v_host}): {_vpn_yml_path}")
     except Exception as _e_dok:
+        pass
+
+# Автоматическая реконсиляция Nginx для xHTTP (H2C proxy_pass и $badbot whitelist)
+if not dry_run and os.path.isfile("/etc/nginx/conf.d/01-main.conf"):
+    try:
+        nginx_reloaded = False
+        norm_xhttp_path = f"/{xhttp_path.strip('/')}/"
+        main_conf_p = Path("/etc/nginx/conf.d/01-main.conf")
+        main_conf = main_conf_p.read_text(encoding="utf-8")
+
+        # 1. Заменяем устаревший grpc_pass на proxy_pass если он остался в 01-main.conf
+        if "grpc_pass grpc://xray_xhttp_stream;" in main_conf:
+            main_conf = main_conf.replace(
+                "grpc_read_timeout 1h;\n        grpc_send_timeout 1h;\n        grpc_socket_keepalive on;\n\n        grpc_set_header Host $http_host;\n        grpc_set_header X-Real-IP $ak_real_ip;\n        grpc_set_header X-Forwarded-For $ak_real_ip;\n        grpc_set_header X-Forwarded-Proto $scheme;\n\n        grpc_pass grpc://xray_xhttp_stream;",
+                "send_timeout 1h;\n        proxy_read_timeout 1h;\n        proxy_send_timeout 1h;\n        proxy_buffering off;\n        proxy_request_buffering off;\n        proxy_http_version 1.1;\n\n        proxy_set_header Host $http_host;\n        proxy_set_header X-Real-IP $ak_real_ip;\n        proxy_set_header X-Forwarded-For $ak_real_ip;\n        proxy_set_header X-Forwarded-Proto $scheme;\n\n        proxy_pass http://xray_xhttp_stream;"
+            )
+            main_conf_p.write_text(main_conf, encoding="utf-8")
+            nginx_reloaded = True
+            print("  [OK] Nginx 01-main.conf: обновлен grpc_pass -> H2C proxy_pass")
+
+        # 2. Проверяем наличие location для актуального xhttp_path
+        if f"location ^~ {norm_xhttp_path}" not in main_conf:
+            xhttp_loc_block = (
+                f"\n    # --- Auto-reconciled VLESS xHTTP H2C ---\n"
+                f"    location ^~ {norm_xhttp_path} {{\n"
+                f"        client_max_body_size 0;\n"
+                f"        client_body_timeout 1h;\n"
+                f"        send_timeout 1h;\n"
+                f"        proxy_read_timeout 1h;\n"
+                f"        proxy_send_timeout 1h;\n"
+                f"        proxy_buffering off;\n"
+                f"        proxy_request_buffering off;\n"
+                f"        proxy_http_version 1.1;\n"
+                f"        proxy_set_header Host $http_host;\n"
+                f"        proxy_set_header X-Real-IP $ak_real_ip;\n"
+                f"        proxy_set_header X-Forwarded-For $ak_real_ip;\n"
+                f"        proxy_set_header X-Forwarded-Proto $scheme;\n"
+                f"        proxy_pass http://xray_xhttp_stream;\n"
+                f"    }}\n"
+            )
+            last_brace_idx = main_conf.rfind("}")
+            if last_brace_idx != -1:
+                main_conf = main_conf[:last_brace_idx] + xhttp_loc_block + main_conf[last_brace_idx:]
+                main_conf_p.write_text(main_conf, encoding="utf-8")
+                nginx_reloaded = True
+                print(f"  [OK] Nginx 01-main.conf: добавлена location {norm_xhttp_path} (H2C proxy_pass)")
+
+        # 3. Проверяем whitelist в /etc/nginx/nginx.conf ($badbot map)
+        nginx_conf_p = Path("/etc/nginx/nginx.conf")
+        if nginx_conf_p.is_file():
+            nginx_conf = nginx_conf_p.read_text(encoding="utf-8")
+            badbot_entry = f"~^1:[01]:{norm_xhttp_path} 0;"
+            if badbot_entry not in nginx_conf and "$badbot {" in nginx_conf:
+                insert_pos = nginx_conf.find("$badbot {") + len("$badbot {")
+                nginx_conf = nginx_conf[:insert_pos] + f"\n        {badbot_entry}" + nginx_conf[insert_pos:]
+                nginx_conf_p.write_text(nginx_conf, encoding="utf-8")
+                nginx_reloaded = True
+                print(f"  [OK] Nginx nginx.conf: путь {norm_xhttp_path} добавлен в whitelist карты $badbot")
+
+        if nginx_reloaded:
+            import subprocess
+            subprocess.run(["nginx", "-t"], check=False)
+            subprocess.run(["nginx", "-s", "reload"], check=False)
+    except Exception as _e_ng:
         pass
 
 conn.close()

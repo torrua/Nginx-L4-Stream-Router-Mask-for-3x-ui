@@ -224,3 +224,5 @@ skills-lock.json
 AGENTS.md
 *.env.state
 *.env.state.tmp.*
+scripts/restore_*.sh
+data/

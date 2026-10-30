@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # ==============================================================================
-# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v9.7.0 Universal
+# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v9.7.1 Universal
 # Nginx L4 Stream + 3X-UI + Unix Sockets + Native proxy_http_version 2 + 3 Decoys
 # ==============================================================================
 # Архитектура:
@@ -27,7 +27,7 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="v9.7.0"
+SCRIPT_VERSION="v9.7.1"
 
 
 # Checkpoints use stable step IDs and input signatures, independent of UI numbering.
@@ -1024,7 +1024,7 @@ generate_config_template() {
     local target_file="${1:-server-setup.env.example}"
     cat << 'EOF_CONF' > "$target_file"
 # ==============================================================================
-# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP.SH (v9.7.0 Universal)
+# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP.SH (v9.7.1 Universal)
 # ==============================================================================
 # Данный файл позволяет выполнять полностью автоматическую установку:
 # ./setup.sh --config server-setup.env --non-interactive --force
@@ -6285,7 +6285,7 @@ inspect_port_conflicts() {
     PORT_AGH_WEB="${PORT_AGH_WEB:-3000}"
 
     # 1. Проверка настраиваемого веб-порта AdGuard Home (по умолчанию 3000)
-    if [[ "${ENABLE_AGH:-0}" == "1" || "${ENABLE_AGH,,}" == "y" ]]; then
+    if is_true "${ENABLE_AGH:-0}"; then
         if is_port_in_use "tcp" "$PORT_AGH_WEB"; then
             local listener
             listener=$(get_port_listener_info "tcp" "$PORT_AGH_WEB")
@@ -6318,7 +6318,7 @@ inspect_port_conflicts() {
     fi
 
     # 2. Проверка изоляции DNS (systemd-resolved DoT на 53 / AdGuard Home на PORT_AGH_DNS)
-    if [[ "${ENABLE_AGH:-0}" == "1" || "${ENABLE_AGH,,}" == "y" ]]; then
+    if is_true "${ENABLE_AGH:-0}"; then
         local agh_dns_port="${PORT_AGH_DNS:-10053}"
         if is_port_in_use "udp" "$agh_dns_port" || is_port_in_use "tcp" "$agh_dns_port"; then
             warn "Порт $agh_dns_port (AdGuard Home DNS) уже используется. Рекомендуется освободить порт."
@@ -12538,7 +12538,7 @@ EOF_AWG_CRYPTO
     # Настройка порта и хоста
     local awg_port="${AWG_SERVER_PORT:-${AWG_STANDALONE_PORT:-}}"
     if [ -z "$awg_port" ]; then
-        if [ "${AWG_V3_PORT:-}" = "8443" ] && [[ "${ENABLE_AWG_V3:-}" == "1" || "${ENABLE_AWG_V3,,}" == "y" ]]; then
+        if [ "${AWG_V3_PORT:-}" = "8443" ] && is_true "${ENABLE_AWG_V3:-0}"; then
             awg_port="8445"
         else
             awg_port="8443"
@@ -12593,7 +12593,7 @@ EOF_PERIODIC
 deploy_amneziawg_backend() {
     local awg_port="${AWG_SERVER_PORT:-${AWG_STANDALONE_PORT:-}}"
     if [ -z "$awg_port" ]; then
-        if [ "${AWG_V3_PORT:-}" = "8443" ] && [[ "${ENABLE_AWG_V3:-}" == "1" || "${ENABLE_AWG_V3,,}" == "y" ]]; then
+        if [ "${AWG_V3_PORT:-}" = "8443" ] && is_true "${ENABLE_AWG_V3:-0}"; then
             awg_port="8445"
         else
             awg_port="8443"
@@ -13448,7 +13448,7 @@ setup_naive_service() {
         local caddy_tmp="/tmp/caddy_naive_$$"
         mkdir -p "$caddy_tmp"
         local rel_ver="${SCRIPT_VERSION:-v9.1.0}"
-        [[ "$rel_ver" == "v9.7.0" ]] && rel_ver="v9.1.0"
+        [[ "$rel_ver" == "v9.7.1" ]] && rel_ver="v9.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/caddy-naive-linux-${caddy_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
@@ -13618,7 +13618,7 @@ setup_dnstt_service() {
         local dnstt_tmp="/tmp/dnstt_$$"
         mkdir -p "$dnstt_tmp"
         local rel_ver="${SCRIPT_VERSION:-v9.1.0}"
-        [[ "$rel_ver" == "v9.7.0" ]] && rel_ver="v9.1.0"
+        [[ "$rel_ver" == "v9.7.1" ]] && rel_ver="v9.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/dnstt-server-linux-${dnstt_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
@@ -16779,20 +16779,23 @@ server {
         proxy_set_header Connection \$connection_upgrade;
     }
 
-    # --- ЛОКАЦИЯ 3: VLESS xHTTP (Native gRPC / H2 Stream-One) ---
+    # --- ЛОКАЦИЯ 3: VLESS xHTTP (Native H2C Stream-One) ---
     location ^~ ${XHTTP_STREAM_PATH} {
         client_max_body_size 0;
         client_body_timeout 1h;
-        grpc_read_timeout 1h;
-        grpc_send_timeout 1h;
-        grpc_socket_keepalive on;
+        send_timeout 1h;
+        proxy_read_timeout 1h;
+        proxy_send_timeout 1h;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_http_version 1.1;
 
-        grpc_set_header Host \$http_host;
-        grpc_set_header X-Real-IP \$ak_real_ip;
-        grpc_set_header X-Forwarded-For \$ak_real_ip;
-        grpc_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Real-IP \$ak_real_ip;
+        proxy_set_header X-Forwarded-For \$ak_real_ip;
+        proxy_set_header X-Forwarded-Proto \$scheme;
 
-        grpc_pass grpc://xray_xhttp_stream;
+        proxy_pass http://xray_xhttp_stream;
     }
 
     $WSTUNNEL_LOCATION_BLOCK
@@ -17069,20 +17072,23 @@ server {
         proxy_set_header Connection \$connection_upgrade;
     }
 
-    # --- ЛОКАЦИЯ: VLESS xHTTP (Native gRPC / H2 Stream-One) ---
+    # --- ЛОКАЦИЯ: VLESS xHTTP (Native H2C Stream-One) ---
     location ^~ ${XHTTP_STREAM_PATH} {
         client_max_body_size 0;
         client_body_timeout 1h;
-        grpc_read_timeout 1h;
-        grpc_send_timeout 1h;
-        grpc_socket_keepalive on;
+        send_timeout 1h;
+        proxy_read_timeout 1h;
+        proxy_send_timeout 1h;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_http_version 1.1;
 
-        grpc_set_header Host \$http_host;
-        grpc_set_header X-Real-IP \$ak_real_ip;
-        grpc_set_header X-Forwarded-For \$ak_real_ip;
-        grpc_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Real-IP \$ak_real_ip;
+        proxy_set_header X-Forwarded-For \$ak_real_ip;
+        proxy_set_header X-Forwarded-Proto \$scheme;
 
-        grpc_pass grpc://xray_xhttp_stream;
+        proxy_pass http://xray_xhttp_stream;
     }
 
     location ~ ^/debug-[a-z0-9]+\.log\$ {
@@ -17243,8 +17249,8 @@ fi
 # =============================================================
 #  PORT HOPPING ДЛЯ HYSTERIA 2 (UDP → NAT REDIRECT)
 # =============================================================
-if [[ "${ENABLE_HY2:-0}" == "1" || "${ENABLE_HY2,,}" == "y" ]] && \
-   [[ "${HY2_PORT_HOPPING,,}" == "y" || "${HY2_PORT_HOPPING:-}" == "1" ]] && \
+if is_true "${ENABLE_HY2:-0}" && \
+   is_true "${HY2_PORT_HOPPING:-0}" && \
    [ -n "${HY2_PORT:-}" ] && [ -n "${HY2_PORT_HOPPING_RANGE:-}" ]; then
 
     PH_RANGE="${HY2_PORT_HOPPING_RANGE}"
@@ -18074,7 +18080,7 @@ def create_manifest(staging_dir: Union[str, Path], output_path: Optional[Union[s
     created_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     data = {
         "format_version": "2.0",
-        "project_version": os.environ.get("SCRIPT_VERSION", "v9.7.0"),
+        "project_version": os.environ.get("SCRIPT_VERSION", "v9.7.1"),
         "created_at": created_iso,
         "db_path": os.environ.get("DB_PATH", "/etc/x-ui/x-ui.db"),
         "files": files_map,
@@ -19220,6 +19226,10 @@ EOF_HELP
                 CLI_NODE_TOKEN_SCOPE="$2"
                 shift 2
                 ;;
+            --deduplicate-classic-snis)
+                CLI_DEDUPLICATE_CLASSIC_SNIS="1"
+                shift
+                ;;
             -y|--yes)
                 NON_INTERACTIVE=1
                 shift
@@ -19351,6 +19361,7 @@ EOF_HELP
     ENABLE_STEAL_COMPAT="${ENABLE_STEAL_COMPAT:-n}"
     ENABLE_XHTTP="${ENABLE_XHTTP:-y}"
     ENABLE_CLASSIC="${ENABLE_CLASSIC:-y}"
+    DEDUPLICATE_CLASSIC_SNIS="${CLI_DEDUPLICATE_CLASSIC_SNIS:-${DEDUPLICATE_CLASSIC_SNIS:-0}}"
     ENABLE_HY2="${ENABLE_HY2:-y}"
     ENABLE_AWG_V3="${ENABLE_AWG_V3:-y}"
     ENABLE_AWG_V2="${ENABLE_AWG_V2:-n}"
@@ -19521,6 +19532,7 @@ EOF_HELP
     export ENABLE_CLASSIC
     export CLASSIC_PORT
     export CLASSIC_SNI
+    export DEDUPLICATE_CLASSIC_SNIS
     export REALITY_FINGERPRINT
     export ENABLE_HY2
     export HY2_PORT
@@ -22218,6 +22230,8 @@ if enable_steal_compat:
 # 2. Classic REALITY (46443)
 if enable_classic:
     c_set = {"clients": [{"id": unified_uuid, "flow": "xtls-rprx-vision", "email": unified_email, "subId": unified_sub_id, "enable": True}], "decryption": "none", "testseed": [900, 500, 900, 256]}
+    _dedup = os.environ.get("DEDUPLICATE_CLASSIC_SNIS", "0").lower() in ("1", "true", "yes", "y")
+    target_ext_snis = [classic_sni] if _dedup else classic_snis
     c_str = {
         "network": "tcp",
         "tcpSettings": {"acceptProxyProtocol": True, "header": {"type": "none"}},
@@ -22235,9 +22249,9 @@ if enable_classic:
                 "forceTls": "same",
                 "sni": csni,
                 "fingerprint": reality_fingerprint,
-                "remark": make_remark(f"VLESS Classic ({csni})" if len(classic_snis) > 1 else "VLESS Classic")
+                "remark": make_remark(f"VLESS Classic ({csni})" if len(target_ext_snis) > 1 else "VLESS Classic")
             }
-            for csni in classic_snis
+            for csni in target_ext_snis
         ]
     }
     classic_remark = make_remark("VLESS Classic")
@@ -22589,8 +22603,12 @@ if enable_classic:
         c_rem = r_rem[0] if r_rem and r_rem[0] else classic_remark
         if not dry_run:
             cur.execute(f"DELETE FROM hosts WHERE {inbound_col} = ?", (c_iid,))
-        for idx, csni in enumerate(classic_snis, start=1):
-            h_remark = f"{c_rem} ({csni})" if len(classic_snis) > 1 else c_rem
+        _dedup = False
+        if "os" in globals() and hasattr(globals()["os"], "environ"):
+            _dedup = globals()["os"].environ.get("DEDUPLICATE_CLASSIC_SNIS", "0").lower() in ("1", "true", "yes", "y")
+        target_hosts_snis = [classic_snis[0]] if (_dedup and classic_snis) else classic_snis
+        for idx, csni in enumerate(target_hosts_snis, start=1):
+            h_remark = f"{c_rem} ({csni})" if len(target_hosts_snis) > 1 else c_rem
             insert_host_entry(c_iid, h_remark, domain, 443, "same", host_sni=csni, host_fp=reality_fp, sort_order=idx, shuffle_host=1, mihomo_x25519=1)
 
 x_iid = xhttp_ib_id if ('xhttp_ib_id' in locals() and xhttp_ib_id) else lookup_inbound_id("in-xhttp-stream", xhttp_port)
@@ -22883,19 +22901,34 @@ if not dry_run and (is_docker_env or os.path.isdir("/etc/dokploy/traefik/dynamic
             "        servers:",
             f"          - url: \"h2c://{backend_name}:{xhttp_port}\"",
         ]
-        if enable_steal or enable_classic:
+        if enable_steal or enable_steal_compat or enable_classic:
             _vpn_lines.extend([
                 "",
                 "tcp:",
                 "  routers:",
             ])
             if enable_steal:
+                _steal_rules = [f"HostSNI(`{steal_dom}`)"]
+                if steal_dom != f"reality.{domain}":
+                    _steal_rules.append(f"HostSNI(`reality.{domain}`)")
+                _steal_cond = " || ".join(_steal_rules)
                 _vpn_lines.extend([
                     "    reality-steal:",
                     "      entryPoints:",
                     "        - \"websecure\"",
-                    f"      rule: \"HostSNI(`reality.{domain}`)\"",
+                    f"      rule: \"{_steal_cond}\"",
                     "      service: \"reality-steal-service\"",
+                    "      tls:",
+                    "        passthrough: true",
+                    "",
+                ])
+            if enable_steal_compat:
+                _vpn_lines.extend([
+                    "    reality-steal-backup:",
+                    "      entryPoints:",
+                    "        - \"websecure\"",
+                    f"      rule: \"HostSNI(`{steal_compat_dom}`)\"",
+                    "      service: \"reality-steal-backup-service\"",
                     "      tls:",
                     "        passthrough: true",
                     "",
@@ -22928,6 +22961,14 @@ if not dry_run and (is_docker_env or os.path.isdir("/etc/dokploy/traefik/dynamic
                     f"          - address: \"{backend_name}:{steal_port}\"",
                     "",
                 ])
+            if enable_steal_compat:
+                _vpn_lines.extend([
+                    "    reality-steal-backup-service:",
+                    "      loadBalancer:",
+                    "        servers:",
+                    f"          - address: \"{backend_name}:{steal_compat_port}\"",
+                    "",
+                ])
             if enable_classic:
                 _vpn_lines.extend([
                     "    reality-classic-service:",
@@ -22939,6 +22980,70 @@ if not dry_run and (is_docker_env or os.path.isdir("/etc/dokploy/traefik/dynamic
         _vpn_yml_path.write_text("\n".join(_vpn_lines) + "\n", encoding="utf-8")
         print(f"  [OK] Маршруты Dokploy Traefik dynamic применены ({backend_name}:{xhttp_port} -> {_v_host}): {_vpn_yml_path}")
     except Exception as _e_dok:
+        pass
+
+# Автоматическая реконсиляция Nginx для xHTTP (H2C proxy_pass и $badbot whitelist)
+if not dry_run and os.path.isfile("/etc/nginx/conf.d/01-main.conf"):
+    try:
+        nginx_reloaded = False
+        norm_xhttp_path = f"/{xhttp_path.strip('/')}/"
+        main_conf_p = Path("/etc/nginx/conf.d/01-main.conf")
+        main_conf = main_conf_p.read_text(encoding="utf-8")
+
+        # 1. Заменяем устаревший grpc_pass на proxy_pass если он остался в 01-main.conf
+        if "grpc_pass grpc://xray_xhttp_stream;" in main_conf:
+            main_conf = main_conf.replace(
+                "grpc_read_timeout 1h;\n        grpc_send_timeout 1h;\n        grpc_socket_keepalive on;\n\n        grpc_set_header Host $http_host;\n        grpc_set_header X-Real-IP $ak_real_ip;\n        grpc_set_header X-Forwarded-For $ak_real_ip;\n        grpc_set_header X-Forwarded-Proto $scheme;\n\n        grpc_pass grpc://xray_xhttp_stream;",
+                "send_timeout 1h;\n        proxy_read_timeout 1h;\n        proxy_send_timeout 1h;\n        proxy_buffering off;\n        proxy_request_buffering off;\n        proxy_http_version 1.1;\n\n        proxy_set_header Host $http_host;\n        proxy_set_header X-Real-IP $ak_real_ip;\n        proxy_set_header X-Forwarded-For $ak_real_ip;\n        proxy_set_header X-Forwarded-Proto $scheme;\n\n        proxy_pass http://xray_xhttp_stream;"
+            )
+            main_conf_p.write_text(main_conf, encoding="utf-8")
+            nginx_reloaded = True
+            print("  [OK] Nginx 01-main.conf: обновлен grpc_pass -> H2C proxy_pass")
+
+        # 2. Проверяем наличие location для актуального xhttp_path
+        if f"location ^~ {norm_xhttp_path}" not in main_conf:
+            xhttp_loc_block = (
+                f"\n    # --- Auto-reconciled VLESS xHTTP H2C ---\n"
+                f"    location ^~ {norm_xhttp_path} {{\n"
+                f"        client_max_body_size 0;\n"
+                f"        client_body_timeout 1h;\n"
+                f"        send_timeout 1h;\n"
+                f"        proxy_read_timeout 1h;\n"
+                f"        proxy_send_timeout 1h;\n"
+                f"        proxy_buffering off;\n"
+                f"        proxy_request_buffering off;\n"
+                f"        proxy_http_version 1.1;\n"
+                f"        proxy_set_header Host $http_host;\n"
+                f"        proxy_set_header X-Real-IP $ak_real_ip;\n"
+                f"        proxy_set_header X-Forwarded-For $ak_real_ip;\n"
+                f"        proxy_set_header X-Forwarded-Proto $scheme;\n"
+                f"        proxy_pass http://xray_xhttp_stream;\n"
+                f"    }}\n"
+            )
+            last_brace_idx = main_conf.rfind("}")
+            if last_brace_idx != -1:
+                main_conf = main_conf[:last_brace_idx] + xhttp_loc_block + main_conf[last_brace_idx:]
+                main_conf_p.write_text(main_conf, encoding="utf-8")
+                nginx_reloaded = True
+                print(f"  [OK] Nginx 01-main.conf: добавлена location {norm_xhttp_path} (H2C proxy_pass)")
+
+        # 3. Проверяем whitelist в /etc/nginx/nginx.conf ($badbot map)
+        nginx_conf_p = Path("/etc/nginx/nginx.conf")
+        if nginx_conf_p.is_file():
+            nginx_conf = nginx_conf_p.read_text(encoding="utf-8")
+            badbot_entry = f"~^1:[01]:{norm_xhttp_path} 0;"
+            if badbot_entry not in nginx_conf and "$badbot {" in nginx_conf:
+                insert_pos = nginx_conf.find("$badbot {") + len("$badbot {")
+                nginx_conf = nginx_conf[:insert_pos] + f"\n        {badbot_entry}" + nginx_conf[insert_pos:]
+                nginx_conf_p.write_text(nginx_conf, encoding="utf-8")
+                nginx_reloaded = True
+                print(f"  [OK] Nginx nginx.conf: путь {norm_xhttp_path} добавлен в whitelist карты $badbot")
+
+        if nginx_reloaded:
+            import subprocess
+            subprocess.run(["nginx", "-t"], check=False)
+            subprocess.run(["nginx", "-s", "reload"], check=False)
+    except Exception as _e_ng:
         pass
 
 conn.close()
@@ -23658,7 +23763,7 @@ EOF_GOMEM
         svc_restart AdGuardHome 2>/dev/null || systemctl restart AdGuardHome 2>/dev/null || rc-service AdGuardHome restart 2>/dev/null || true
 
         # 7. Интеграция с Xray DNS (если выбрано AGH_XRAY_DNS=y)
-        if [[ "${AGH_XRAY_DNS,,}" == "y" || "${AGH_XRAY_DNS:-}" == "1" ]]; then
+        if is_true "${AGH_XRAY_DNS:-n}"; then
             xui_db="/etc/x-ui/x-ui.db"
             [ -f "$xui_db" ] || xui_db="/usr/local/x-ui/bin/x-ui.db"
             if [ -f "$xui_db" ]; then
@@ -24356,7 +24461,7 @@ else
         echo ""
         echo -e "  ${GREEN}${STAR} ${BOLD}Настройка автономного сервера AmneziaWG (awg-mgr)${NC}"
         echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}"
-        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+        if is_true "${SHOW_TIPS:-y}"; then
             echo -e "  ${CYAN}💡 Подключение клиентов (Endpoint):${NC}"
             echo -e "     Вы можете использовать как IP-адрес сервера, так и ваше доменное имя."
             echo -e "     ${GREEN}SSL-сертификаты НЕ требуются:${NC} WireGuard/AmneziaWG работает по UDP"
@@ -24375,6 +24480,25 @@ else
 
         ENABLE_AWG_STANDALONE=1
         ENABLE_WEB_STACK=0
+        ENABLE_AGH="${ENABLE_AGH:-n}"
+        ENABLE_AWG_V3="${ENABLE_AWG_V3:-n}"
+        ENABLE_AWG_V2="${ENABLE_AWG_V2:-n}"
+        ENABLE_HY2="${ENABLE_HY2:-n}"
+        ENABLE_STEAL="${ENABLE_STEAL:-n}"
+        ENABLE_STEAL_COMPAT="${ENABLE_STEAL_COMPAT:-n}"
+        ENABLE_CLASSIC="${ENABLE_CLASSIC:-n}"
+        ENABLE_MASQUE="${ENABLE_MASQUE:-n}"
+        ENABLE_SHADOWTLS="${ENABLE_SHADOWTLS:-n}"
+        ENABLE_NAIVE="${ENABLE_NAIVE:-n}"
+        ENABLE_DNSTT="${ENABLE_DNSTT:-n}"
+        ENABLE_MIERU="${ENABLE_MIERU:-n}"
+        ENABLE_SS2022="${ENABLE_SS2022:-n}"
+        ENABLE_TUIC="${ENABLE_TUIC:-n}"
+        ENABLE_MTPROTO="${ENABLE_MTPROTO:-n}"
+        ENABLE_WARP="${ENABLE_WARP:-n}"
+        ENABLE_NODE_TOKEN="${ENABLE_NODE_TOKEN:-n}"
+        ENABLE_ZAPRET="${ENABLE_ZAPRET:-n}"
+        AUTO_SETUP_3XUI="${AUTO_SETUP_3XUI:-n}"
 
         echo ""
         echo -e "  ${YELLOW}━━━ Подтверждение параметров AmneziaWG ━━━${NC}"
@@ -24567,7 +24691,7 @@ else
 
     rebuild_all_domains() {
         ALL_DOMAINS=("$PRIMARY_DOMAIN")
-        if [[ "${ADD_WWW,,}" == "y" && ! "$PRIMARY_DOMAIN" =~ ^www\. ]]; then
+        if is_true "${ADD_WWW:-n}" && [[ ! "$PRIMARY_DOMAIN" =~ ^www\. ]]; then
             ALL_DOMAINS+=("www.$PRIMARY_DOMAIN")
         fi
         if is_true "${STEAL_ENABLED:-0}"; then
@@ -25300,7 +25424,7 @@ EOF_REALITY_SCANNER
         ADD_WWW="${ADD_WWW:-n}"
 
         # Steal-Oneself
-        if [[ "${ENABLE_STEAL,,}" == "y" || "${ENABLE_STEAL:-}" == "1" ]]; then
+        if is_true "${ENABLE_STEAL:-n}"; then
             STEAL_ENABLED=1
             local s_port="${STEAL_PORT:-45443}"
             STEAL_PORTS_LIST+=("$s_port")
@@ -25318,7 +25442,7 @@ EOF_REALITY_SCANNER
         fi
 
         # Steal-Oneself Backup (отдельный резервный узел)
-        if [[ "${ENABLE_STEAL_COMPAT,,}" == "y" || "${ENABLE_STEAL_COMPAT:-}" == "1" ]]; then
+        if is_true "${ENABLE_STEAL_COMPAT:-n}"; then
             STEAL_COMPAT_ENABLED=1
             local sc_port="${STEAL_COMPAT_PORT:-47443}"
             local sc_dom="${STEAL_COMPAT_DOMAIN:-static.${PRIMARY_DOMAIN:-}}"
@@ -25332,7 +25456,7 @@ EOF_REALITY_SCANNER
         fi
 
         # Classic REALITY
-        if [[ "${ENABLE_CLASSIC,,}" == "y" || "${ENABLE_CLASSIC:-}" == "1" ]]; then
+        if is_true "${ENABLE_CLASSIC:-n}"; then
             CLASSIC_ENABLED=1
             local c_port="${CLASSIC_PORT:-46443}"
             CLASSIC_PORTS_LIST+=("$c_port")
@@ -25382,7 +25506,7 @@ EOF_REALITY_SCANNER
         ensure_diag_path || return 1
 
         # UDP Протоколы
-        if [[ "${ENABLE_HY2,,}" == "y" || "${ENABLE_HY2:-}" == "1" ]]; then
+        if is_true "${ENABLE_HY2:-n}"; then
             ENABLE_HY2=1
             HY2_PORT="${HY2_PORT:-443}"
             HY2_DOMAIN="${HY2_DOMAIN:-$PRIMARY_DOMAIN}"
@@ -25392,42 +25516,42 @@ EOF_REALITY_SCANNER
             ENABLE_HY2=0
         fi
 
-        if [[ "${ENABLE_AWG_V3,,}" == "y" || "${ENABLE_AWG_V3:-}" == "1" ]]; then
+        if is_true "${ENABLE_AWG_V3:-n}"; then
             ENABLE_AWG_V3=1
             AWG_V3_PORT="${AWG_V3_PORT:-8443}"
         else
             ENABLE_AWG_V3=0
         fi
 
-        if [[ "${ENABLE_AWG_V2,,}" == "y" || "${ENABLE_AWG_V2:-}" == "1" ]]; then
+        if is_true "${ENABLE_AWG_V2:-n}"; then
             ENABLE_AWG_V2=1
             AWG_V2_PORT="${AWG_V2_PORT:-8444}"
         else
             ENABLE_AWG_V2=0
         fi
 
-        if [[ "${ENABLE_AWG_STANDALONE,,}" == "y" || "${ENABLE_AWG_STANDALONE:-}" == "1" ]]; then
+        if is_true "${ENABLE_AWG_STANDALONE:-n}"; then
             ENABLE_AWG_STANDALONE=1
             AWG_STANDALONE_PORT="${AWG_STANDALONE_PORT:-8445}"
         else
             ENABLE_AWG_STANDALONE=0
         fi
 
-        if [[ "${ENABLE_SS2022,,}" == "y" || "${ENABLE_SS2022:-}" == "1" ]]; then
+        if is_true "${ENABLE_SS2022:-n}"; then
             ENABLE_SS2022=1
             SS2022_PORT="${SS2022_PORT:-8388}"
         else
             ENABLE_SS2022=0
         fi
 
-        if [[ "${ENABLE_TUIC,,}" == "y" || "${ENABLE_TUIC:-}" == "1" ]]; then
+        if is_true "${ENABLE_TUIC:-n}"; then
             ENABLE_TUIC=1
             TUIC_PORT="${TUIC_PORT:-8448}"
         else
             ENABLE_TUIC=0
         fi
 
-        if [[ "${ENABLE_MTPROTO,,}" == "y" || "${ENABLE_MTPROTO:-}" == "1" ]]; then
+        if is_true "${ENABLE_MTPROTO:-n}"; then
             ENABLE_MTPROTO=1
             MTPROTO_PORT="${MTPROTO_PORT:-8444}"
             MTPROTO_FAKETLS_DOMAIN="${MTPROTO_FAKETLS_DOMAIN:-gateway.icloud.com}"
@@ -25436,14 +25560,14 @@ EOF_REALITY_SCANNER
             ENABLE_MTPROTO=0
         fi
 
-        if [[ "${ENABLE_MASQUE,,}" == "y" || "${ENABLE_MASQUE:-}" == "1" ]]; then
+        if is_true "${ENABLE_MASQUE:-n}"; then
             ENABLE_MASQUE=1
             MASQUE_PORT="${MASQUE_PORT:-8449}"
         else
             ENABLE_MASQUE=0
         fi
 
-        if [[ "${ENABLE_SHADOWTLS,,}" == "y" || "${ENABLE_SHADOWTLS:-}" == "1" ]]; then
+        if is_true "${ENABLE_SHADOWTLS:-n}"; then
             ENABLE_SHADOWTLS=1
             SHADOWTLS_PORT="${SHADOWTLS_PORT:-8543}"
             SHADOWTLS_SNI="${SHADOWTLS_SNI:-gateway.icloud.com}"
@@ -25452,7 +25576,7 @@ EOF_REALITY_SCANNER
             ENABLE_SHADOWTLS=0
         fi
 
-        if [[ "${ENABLE_WSTUNNEL,,}" == "y" || "${ENABLE_WSTUNNEL:-}" == "1" ]]; then
+        if is_true "${ENABLE_WSTUNNEL:-n}"; then
             ENABLE_WSTUNNEL=1
             WSTUNNEL_PORT="${WSTUNNEL_PORT:-8080}"
             ensure_wstunnel_prefix || return 1
@@ -25460,14 +25584,14 @@ EOF_REALITY_SCANNER
             ENABLE_WSTUNNEL=0
         fi
 
-        if [[ "${ENABLE_ZAPRET,,}" == "y" || "${ENABLE_ZAPRET:-}" == "1" ]]; then
+        if is_true "${ENABLE_ZAPRET:-n}"; then
             ENABLE_ZAPRET=1
             ZAPRET_QNUM="${ZAPRET_QNUM:-200}"
         else
             ENABLE_ZAPRET=0
         fi
 
-        if [[ "${ENABLE_NAIVE,,}" == "y" || "${ENABLE_NAIVE:-}" == "1" ]]; then
+        if is_true "${ENABLE_NAIVE:-n}"; then
             ENABLE_NAIVE=1
             NAIVE_PORT="${NAIVE_PORT:-8446}"
             NAIVE_USER="${NAIVE_USER:-user}"
@@ -25475,7 +25599,7 @@ EOF_REALITY_SCANNER
             ENABLE_NAIVE=0
         fi
 
-        if [[ "${ENABLE_DNSTT,,}" == "y" || "${ENABLE_DNSTT:-}" == "1" ]]; then
+        if is_true "${ENABLE_DNSTT:-n}"; then
             ENABLE_DNSTT=1
             DNSTT_PORT="${DNSTT_PORT:-53053}"
             ENABLE_SS2022=1
@@ -25483,7 +25607,7 @@ EOF_REALITY_SCANNER
             ENABLE_DNSTT=0
         fi
 
-        if [[ "${ENABLE_MIERU,,}" == "y" || "${ENABLE_MIERU:-}" == "1" ]]; then
+        if is_true "${ENABLE_MIERU:-n}"; then
             ENABLE_MIERU=1
             MIERU_PORT_MODE="${MIERU_PORT_MODE:-single}"
             case "${MIERU_PORT_MODE,,}" in
@@ -25502,14 +25626,14 @@ EOF_REALITY_SCANNER
 
 
         # AdGuard Home
-        if [[ "${ENABLE_AGH,,}" == "y" || "${ENABLE_AGH:-}" == "1" ]]; then
+        if is_true "${ENABLE_AGH:-n}"; then
             ENABLE_AGH=1
             AGH_MODE="${AGH_MODE:-1}"
             [ "$AGH_MODE" = "2" ] && AGH_DOMAIN="${AGH_DOMAIN:-dns.$PRIMARY_DOMAIN}" || AGH_DOMAIN=""
             AGH_USER="${AGH_USER:-admin}"
             AGH_PASS="${AGH_PASS:-AgHome_$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 8 || echo 'Pass1234')}"
             ensure_agh_client_id || return 1
-            [[ "${AGH_XRAY_DNS,,}" == "y" || "${AGH_XRAY_DNS:-}" == "1" ]] && AGH_XRAY_DNS="y" || AGH_XRAY_DNS="n"
+            is_true "${AGH_XRAY_DNS:-n}" && AGH_XRAY_DNS="y" || AGH_XRAY_DNS="n"
         else
             ENABLE_AGH=0
             AGH_DOMAIN=""
@@ -25527,7 +25651,7 @@ EOF_REALITY_SCANNER
         LE_EMAIL="${LE_EMAIL:-}"
         CF_AUTH_METHOD="${CF_AUTH_METHOD:-1}"
         AUTO_SETUP_3XUI="${AUTO_SETUP_3XUI:-y}"
-        if [[ "${ENABLE_NODE_TOKEN,,}" == "y" || "${ENABLE_NODE_TOKEN:-}" == "1" ]]; then
+        if is_true "${ENABLE_NODE_TOKEN:-n}"; then
             ENABLE_NODE_TOKEN="y"
             if [ -z "${NODE_TOKEN_NAME:-}" ]; then
                 local def_token_name="${SERVER_PREFIX:+$SERVER_PREFIX-Node}"
@@ -25542,7 +25666,7 @@ EOF_REALITY_SCANNER
             NODE_TOKEN_NAME=""
             NODE_TOKEN_SCOPE=""
         fi
-        if [[ "${ENABLE_WARP,,}" == "y" || "${ENABLE_WARP:-}" == "1" ]]; then
+        if is_true "${ENABLE_WARP:-n}"; then
             ENABLE_WARP="y"
             WARP_LICENSE_KEY="${WARP_LICENSE_KEY:-}"
         else
@@ -25574,7 +25698,7 @@ EOF_REALITY_SCANNER
             echo -e "    Порты 80 и 443 остаются за Traefik. Панель и подписки будут подключены через Traefik."
             echo
         fi
-        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+        if is_true "${SHOW_TIPS:-y}"; then
             echo -e "  ${CYAN}💡 Что это:${NC} Ваш основной домен (например, ${BOLD}yourdomain.online${NC})."
             echo -e "     На нем будет работать веб-маска (декой-сайт), панель 3X-UI,"
             echo -e "     сервер подписок и протокол VLESS xHTTP (HTTP/2 Stream-One)."
@@ -25956,7 +26080,7 @@ EOF_PARSE_PROBE
     q_step_protocols() {
         echo
         echo -e "${YELLOW}━━━ Шаг 2/11: Выбор протоколов и транспортов (VPN / Прокси) ━━━${NC}"
-        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+        if is_true "${SHOW_TIPS:-y}"; then
             echo -e "  ${CYAN}💡 Что это:${NC} Выберите протоколы подключения, которые будут развернуты на сервере."
             echo -e "     ${BOLD}Базовые протоколы (включены по умолчанию):${NC}"
             echo -e "     • ${GREEN}VLESS REALITY (свой сайт)${NC}: маскировка под свой домен (cdn.${PRIMARY_DOMAIN:-домен})."
@@ -26340,7 +26464,7 @@ EOF_PARSE_PROBE
     q_step_ports() {
         echo
         echo -e "${YELLOW}━━━ Шаг 3/11: Настройка внутренних портов, секретных путей и учетных данных ━━━${NC}"
-        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+        if is_true "${SHOW_TIPS:-y}"; then
             echo -e "  ${CYAN}💡 Что это:${NC} Внутренние порты, секретные URI-пути для веб-панели управления,"
             echo -e "     сервера подписок, а также логины и пароли всех активных служб и протоколов."
             echo
@@ -26594,7 +26718,7 @@ EOF_PARSE_PROBE
     q_step_agh() {
         echo
         echo -e "${YELLOW}━━━ Шаг 4/11: Настройка приватного AdGuard Home DoH + Split-DNS ━━━${NC}"
-        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+        if is_true "${SHOW_TIPS:-y}"; then
             echo -e "  ${CYAN}💡 Что это:${NC} Приватный шифрованный DNS (DNS-over-HTTPS) с защитой от рекламы и трекеров."
             echo -e "     ${GREEN}Split-DNS:${NC} Запросы к российским сайтам (.ru, банки, Госуслуги) направляются"
             echo -e "     через надежные локальные DNS, предотвращая ошибки доступа и сбои авторизации."
@@ -26647,7 +26771,7 @@ EOF_PARSE_PROBE
     q_step_decoy() {
         echo
         echo -e "${YELLOW}━━━ Шаг 5/11: Выбор темы для сайта-маскировки (Decoy Site) ━━━${NC}"
-        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+        if is_true "${SHOW_TIPS:-y}"; then
             echo -e "  ${CYAN}💡 Что это:${NC} Веб-сайт, который отображается в браузере при обращении к вашему домену."
             echo -e "     Защищает сервер от выявления цензорами, активными сканерами и сетевыми ботами."
             echo
@@ -26680,7 +26804,7 @@ EOF_PARSE_PROBE
     q_step_ssl_domains() {
         echo
         echo -e "${YELLOW}━━━ Шаг 6/11: Реестр SSL-сертификатов и дополнительные домены ━━━${NC}"
-        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+        if is_true "${SHOW_TIPS:-y}"; then
             echo -e "  ${CYAN}💡 Что это:${NC} Список доменов, для которых будут автоматически получены SSL-сертификаты."
             echo -e "  ${DIM}Следующие домены уже включены автоматически из предыдущих шагов:${NC}"
         fi
@@ -26718,7 +26842,7 @@ EOF_PARSE_PROBE
     q_step_ssl_engine() {
         echo
         echo -e "${YELLOW}━━━ Шаг 7/11: Выбор метода выпуска SSL-сертификатов ━━━${NC}"
-        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+        if is_true "${SHOW_TIPS:-y}"; then
             echo -e "  ${CYAN}💡 Что это:${NC} Способ валидации владения доменом для Let's Encrypt."
             echo -e "    ${GREEN}[1] Классический Certbot (HTTP-01, Рекомендуется)${NC}"
             echo -e "        ${DIM}• Простая валидация через порт 80 Nginx. Не требует API-ключей.${NC}"
@@ -26760,7 +26884,7 @@ EOF_PARSE_PROBE
     q_step_3xui_auto() {
         echo
         echo -e "${YELLOW}━━━ Шаг 8/11: Автоматическая настройка базы данных панели 3X-UI ━━━${NC}"
-        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+        if is_true "${SHOW_TIPS:-y}"; then
             echo -e "  ${CYAN}💡 Что это:${NC} Автоматическое создание подключений (REALITY со своим сайтом, внешними сервисами, xHTTP)"
             echo -e "     в базе данных панели 3X-UI, а также настройка секретных путей и подписок."
             echo -e "     Вам не придется добавлять подключения вручную через браузер."
@@ -26770,7 +26894,7 @@ EOF_PARSE_PROBE
         prompt_yes_no "Автоматически настроить инбаунды и пути в панели 3X-UI?" "${AUTO_SETUP_3XUI:-y}" AUTO_SETUP_3XUI || return $?
         if [[ "${AUTO_SETUP_3XUI,,}" == "y" || "${AUTO_SETUP_3XUI:-}" == "1" ]]; then
             AUTO_SETUP_3XUI="y"
-            if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+            if is_true "${SHOW_TIPS:-y}"; then
                 echo
                 echo -e "  ${CYAN}💡 3X-UI Node:${NC} Генерация API-токена позволяет подключить этот сервер"
                 echo -e "     как ведомый узел (Node) к другой мастер-панели 3X-UI или внешней системе управления."
@@ -26817,7 +26941,7 @@ EOF_PARSE_PROBE
     q_step_warp() {
         echo
         echo -e "${YELLOW}━━━ Шаг 9/11: Исходящий туннель Cloudflare WARP ━━━${NC}"
-        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+        if is_true "${SHOW_TIPS:-y}"; then
             echo -e "  ${CYAN}💡 Что это:${NC} Исходящий WireGuard туннель от вашего VPS в сеть Cloudflare."
             echo -e "     ${GREEN}Преимущество:${NC} Полностью избавляет от капч Google/Cloudflare и разблокирует"
             echo -e "     доступ к зарубежным AI-сервисам (ChatGPT, Claude, Gemini). Видео YouTube и"
@@ -26841,7 +26965,7 @@ EOF_PARSE_PROBE
     q_step_security() {
         echo
         echo -e "${YELLOW}━━━ Шаг 10/11: Безопасность сервера (SSH и Fail2ban) ━━━${NC}"
-        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+        if is_true "${SHOW_TIPS:-y}"; then
             echo -e "  ${CYAN}💡 Что это:${NC} Базовая защита операционной системы хоста."
             echo -e "     ${GREEN}Преимущество:${NC} Перенос порта SSH со стандартного 22 скрывает сервер"
             echo -e "     от автоматических сканеров портов, а Fail2ban автоматически блокирует IP-адреса"
@@ -27190,7 +27314,7 @@ EOF_PARSE_PROBE
         else
             echo
             prompt_yes_no "Показывать подробные пояснения и подсказки к каждому шагу?" "${SHOW_TIPS:-y}" SHOW_TIPS
-            if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+            if is_true "${SHOW_TIPS:-y}"; then
                 ok "Включен подробный режим: для каждого протокола будут выводиться подсказки и пояснения."
             else
                 ok "Включен экспертный режим: вопросы выводятся коротко и по делу."
@@ -27237,7 +27361,7 @@ EOF_PARSE_PROBE
                         WIZARD_ALLOW_BACK=0
                         prompt_yes_no "Показывать подробные пояснения и подсказки к каждому шагу?" "${SHOW_TIPS:-y}" SHOW_TIPS
                         WIZARD_ALLOW_BACK="$old_back"
-                        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+                        if is_true "${SHOW_TIPS:-y}"; then
                             ok "Включен подробный режим: для каждого протокола будут выводиться подсказки и пояснения."
                         else
                             ok "Включен экспертный режим: вопросы выводятся коротко и по делу."

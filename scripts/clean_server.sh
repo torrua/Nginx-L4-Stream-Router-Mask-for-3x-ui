@@ -80,19 +80,37 @@ if [ -d /etc/cloud ]; then
     touch /etc/cloud/cloud-init.disabled 2>/dev/null || true
 fi
 
-# Конфигурация портов SSH
+# Конфигурация портов SSH с автоматическим обнаружением активного порта (Anti-Lockout)
 mkdir -p /etc/ssh/sshd_config.d
 SSH_PORTS_CONF="/etc/ssh/sshd_config.d/99-vps-ports.conf"
 
+DETECTED_SSH_PORT=""
+if command -v ss >/dev/null 2>&1; then
+    DETECTED_SSH_PORT=$(ss -tlnp 2>/dev/null | grep -E 'sshd|ssh' | awk '{print $4}' | grep -oE '[0-9]+$' | grep -v '^22$' | head -n1 || true)
+fi
+if [ -z "$DETECTED_SSH_PORT" ] && [ -f /etc/ssh/sshd_config ]; then
+    DETECTED_SSH_PORT=$(grep -E '^[[:space:]]*Port[[:space:]]+[0-9]+' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null | awk '{print $2}' | grep -v '^22$' | head -n1 || true)
+fi
+
+EFFECTIVE_EXTRA_PORT="${ADDITIONAL_SSH_PORT:-${DETECTED_SSH_PORT:-}}"
+
 {
     echo "Port 22"
-    if [ -n "${ADDITIONAL_SSH_PORT:-}" ] && [ "${ADDITIONAL_SSH_PORT}" != "22" ]; then
-        echo "Port ${ADDITIONAL_SSH_PORT}"
+    if [ -n "$EFFECTIVE_EXTRA_PORT" ] && [ "$EFFECTIVE_EXTRA_PORT" != "22" ]; then
+        echo "Port ${EFFECTIVE_EXTRA_PORT}"
     fi
     echo "PermitRootLogin prohibit-password"
     echo "PasswordAuthentication no"
     echo "PubkeyAuthentication yes"
 } > "$SSH_PORTS_CONF"
+
+# Проверка корректности конфигурации sshd перед применением
+if command -v sshd >/dev/null 2>&1; then
+    if ! sshd -t 2>/dev/null; then
+        echo "[-] Предупреждение: sshd -t выявил ошибку в конфигурации, откат 99-vps-ports.conf" >&2
+        rm -f "$SSH_PORTS_CONF"
+    fi
+fi
 
 # Перезапуск службы SSH с поддержкой systemd socket (Ubuntu 24+) и стандартного сервиса
 if systemctl is-active --quiet ssh.socket 2>/dev/null; then

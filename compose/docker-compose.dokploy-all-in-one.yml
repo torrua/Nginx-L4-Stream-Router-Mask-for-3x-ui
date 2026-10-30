@@ -46,6 +46,14 @@ services:
       - "traefik.http.routers.xui-sub.tls=true"
       - "traefik.http.routers.xui-sub.tls.certresolver=letsencrypt"
       - "traefik.http.services.xui-sub.loadbalancer.server.port=2096"
+      # VLESS xHTTP поток через Traefik (h2c)
+      - "traefik.http.routers.xray-xhttp.rule=Host(`${VLESS_DOMAIN:-vless.yourdomain.online}`)"
+      - "traefik.http.routers.xray-xhttp.entrypoints=websecure"
+      - "traefik.http.routers.xray-xhttp.priority=1000"
+      - "traefik.http.routers.xray-xhttp.tls=true"
+      - "traefik.http.routers.xray-xhttp.tls.certresolver=letsencrypt"
+      - "traefik.http.services.xray-xhttp.loadbalancer.server.port=50443"
+      - "traefik.http.services.xray-xhttp.loadbalancer.server.scheme=h2c"
 
   # 1. Wstunnel over Dokploy Traefik (WebSocket / HTTP/3 over port 443)
   wstunnel-dokploy:

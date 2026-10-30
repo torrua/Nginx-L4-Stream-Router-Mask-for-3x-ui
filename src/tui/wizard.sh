@@ -81,7 +81,7 @@ else
         echo ""
         echo -e "  ${GREEN}${STAR} ${BOLD}Настройка автономного сервера AmneziaWG (awg-mgr)${NC}"
         echo -e "  ${DIM}────────────────────────────────────────────────────────────${NC}"
-        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+        if is_true "${SHOW_TIPS:-y}"; then
             echo -e "  ${CYAN}💡 Подключение клиентов (Endpoint):${NC}"
             echo -e "     Вы можете использовать как IP-адрес сервера, так и ваше доменное имя."
             echo -e "     ${GREEN}SSL-сертификаты НЕ требуются:${NC} WireGuard/AmneziaWG работает по UDP"
@@ -100,6 +100,25 @@ else
 
         ENABLE_AWG_STANDALONE=1
         ENABLE_WEB_STACK=0
+        ENABLE_AGH="${ENABLE_AGH:-n}"
+        ENABLE_AWG_V3="${ENABLE_AWG_V3:-n}"
+        ENABLE_AWG_V2="${ENABLE_AWG_V2:-n}"
+        ENABLE_HY2="${ENABLE_HY2:-n}"
+        ENABLE_STEAL="${ENABLE_STEAL:-n}"
+        ENABLE_STEAL_COMPAT="${ENABLE_STEAL_COMPAT:-n}"
+        ENABLE_CLASSIC="${ENABLE_CLASSIC:-n}"
+        ENABLE_MASQUE="${ENABLE_MASQUE:-n}"
+        ENABLE_SHADOWTLS="${ENABLE_SHADOWTLS:-n}"
+        ENABLE_NAIVE="${ENABLE_NAIVE:-n}"
+        ENABLE_DNSTT="${ENABLE_DNSTT:-n}"
+        ENABLE_MIERU="${ENABLE_MIERU:-n}"
+        ENABLE_SS2022="${ENABLE_SS2022:-n}"
+        ENABLE_TUIC="${ENABLE_TUIC:-n}"
+        ENABLE_MTPROTO="${ENABLE_MTPROTO:-n}"
+        ENABLE_WARP="${ENABLE_WARP:-n}"
+        ENABLE_NODE_TOKEN="${ENABLE_NODE_TOKEN:-n}"
+        ENABLE_ZAPRET="${ENABLE_ZAPRET:-n}"
+        AUTO_SETUP_3XUI="${AUTO_SETUP_3XUI:-n}"
 
         echo ""
         echo -e "  ${YELLOW}━━━ Подтверждение параметров AmneziaWG ━━━${NC}"
@@ -292,7 +311,7 @@ else
 
     rebuild_all_domains() {
         ALL_DOMAINS=("$PRIMARY_DOMAIN")
-        if [[ "${ADD_WWW,,}" == "y" && ! "$PRIMARY_DOMAIN" =~ ^www\. ]]; then
+        if is_true "${ADD_WWW:-n}" && [[ ! "$PRIMARY_DOMAIN" =~ ^www\. ]]; then
             ALL_DOMAINS+=("www.$PRIMARY_DOMAIN")
         fi
         if is_true "${STEAL_ENABLED:-0}"; then
@@ -390,7 +409,7 @@ EOF_REALITY_SCANNER
         ADD_WWW="${ADD_WWW:-n}"
 
         # Steal-Oneself
-        if [[ "${ENABLE_STEAL,,}" == "y" || "${ENABLE_STEAL:-}" == "1" ]]; then
+        if is_true "${ENABLE_STEAL:-n}"; then
             STEAL_ENABLED=1
             local s_port="${STEAL_PORT:-45443}"
             STEAL_PORTS_LIST+=("$s_port")
@@ -408,7 +427,7 @@ EOF_REALITY_SCANNER
         fi
 
         # Steal-Oneself Backup (отдельный резервный узел)
-        if [[ "${ENABLE_STEAL_COMPAT,,}" == "y" || "${ENABLE_STEAL_COMPAT:-}" == "1" ]]; then
+        if is_true "${ENABLE_STEAL_COMPAT:-n}"; then
             STEAL_COMPAT_ENABLED=1
             local sc_port="${STEAL_COMPAT_PORT:-47443}"
             local sc_dom="${STEAL_COMPAT_DOMAIN:-static.${PRIMARY_DOMAIN:-}}"
@@ -422,7 +441,7 @@ EOF_REALITY_SCANNER
         fi
 
         # Classic REALITY
-        if [[ "${ENABLE_CLASSIC,,}" == "y" || "${ENABLE_CLASSIC:-}" == "1" ]]; then
+        if is_true "${ENABLE_CLASSIC:-n}"; then
             CLASSIC_ENABLED=1
             local c_port="${CLASSIC_PORT:-46443}"
             CLASSIC_PORTS_LIST+=("$c_port")
@@ -472,7 +491,7 @@ EOF_REALITY_SCANNER
         ensure_diag_path || return 1
 
         # UDP Протоколы
-        if [[ "${ENABLE_HY2,,}" == "y" || "${ENABLE_HY2:-}" == "1" ]]; then
+        if is_true "${ENABLE_HY2:-n}"; then
             ENABLE_HY2=1
             HY2_PORT="${HY2_PORT:-443}"
             HY2_DOMAIN="${HY2_DOMAIN:-$PRIMARY_DOMAIN}"
@@ -482,42 +501,42 @@ EOF_REALITY_SCANNER
             ENABLE_HY2=0
         fi
 
-        if [[ "${ENABLE_AWG_V3,,}" == "y" || "${ENABLE_AWG_V3:-}" == "1" ]]; then
+        if is_true "${ENABLE_AWG_V3:-n}"; then
             ENABLE_AWG_V3=1
             AWG_V3_PORT="${AWG_V3_PORT:-8443}"
         else
             ENABLE_AWG_V3=0
         fi
 
-        if [[ "${ENABLE_AWG_V2,,}" == "y" || "${ENABLE_AWG_V2:-}" == "1" ]]; then
+        if is_true "${ENABLE_AWG_V2:-n}"; then
             ENABLE_AWG_V2=1
             AWG_V2_PORT="${AWG_V2_PORT:-8444}"
         else
             ENABLE_AWG_V2=0
         fi
 
-        if [[ "${ENABLE_AWG_STANDALONE,,}" == "y" || "${ENABLE_AWG_STANDALONE:-}" == "1" ]]; then
+        if is_true "${ENABLE_AWG_STANDALONE:-n}"; then
             ENABLE_AWG_STANDALONE=1
             AWG_STANDALONE_PORT="${AWG_STANDALONE_PORT:-8445}"
         else
             ENABLE_AWG_STANDALONE=0
         fi
 
-        if [[ "${ENABLE_SS2022,,}" == "y" || "${ENABLE_SS2022:-}" == "1" ]]; then
+        if is_true "${ENABLE_SS2022:-n}"; then
             ENABLE_SS2022=1
             SS2022_PORT="${SS2022_PORT:-8388}"
         else
             ENABLE_SS2022=0
         fi
 
-        if [[ "${ENABLE_TUIC,,}" == "y" || "${ENABLE_TUIC:-}" == "1" ]]; then
+        if is_true "${ENABLE_TUIC:-n}"; then
             ENABLE_TUIC=1
             TUIC_PORT="${TUIC_PORT:-8448}"
         else
             ENABLE_TUIC=0
         fi
 
-        if [[ "${ENABLE_MTPROTO,,}" == "y" || "${ENABLE_MTPROTO:-}" == "1" ]]; then
+        if is_true "${ENABLE_MTPROTO:-n}"; then
             ENABLE_MTPROTO=1
             MTPROTO_PORT="${MTPROTO_PORT:-8444}"
             MTPROTO_FAKETLS_DOMAIN="${MTPROTO_FAKETLS_DOMAIN:-gateway.icloud.com}"
@@ -526,14 +545,14 @@ EOF_REALITY_SCANNER
             ENABLE_MTPROTO=0
         fi
 
-        if [[ "${ENABLE_MASQUE,,}" == "y" || "${ENABLE_MASQUE:-}" == "1" ]]; then
+        if is_true "${ENABLE_MASQUE:-n}"; then
             ENABLE_MASQUE=1
             MASQUE_PORT="${MASQUE_PORT:-8449}"
         else
             ENABLE_MASQUE=0
         fi
 
-        if [[ "${ENABLE_SHADOWTLS,,}" == "y" || "${ENABLE_SHADOWTLS:-}" == "1" ]]; then
+        if is_true "${ENABLE_SHADOWTLS:-n}"; then
             ENABLE_SHADOWTLS=1
             SHADOWTLS_PORT="${SHADOWTLS_PORT:-8543}"
             SHADOWTLS_SNI="${SHADOWTLS_SNI:-gateway.icloud.com}"
@@ -542,7 +561,7 @@ EOF_REALITY_SCANNER
             ENABLE_SHADOWTLS=0
         fi
 
-        if [[ "${ENABLE_WSTUNNEL,,}" == "y" || "${ENABLE_WSTUNNEL:-}" == "1" ]]; then
+        if is_true "${ENABLE_WSTUNNEL:-n}"; then
             ENABLE_WSTUNNEL=1
             WSTUNNEL_PORT="${WSTUNNEL_PORT:-8080}"
             ensure_wstunnel_prefix || return 1
@@ -550,14 +569,14 @@ EOF_REALITY_SCANNER
             ENABLE_WSTUNNEL=0
         fi
 
-        if [[ "${ENABLE_ZAPRET,,}" == "y" || "${ENABLE_ZAPRET:-}" == "1" ]]; then
+        if is_true "${ENABLE_ZAPRET:-n}"; then
             ENABLE_ZAPRET=1
             ZAPRET_QNUM="${ZAPRET_QNUM:-200}"
         else
             ENABLE_ZAPRET=0
         fi
 
-        if [[ "${ENABLE_NAIVE,,}" == "y" || "${ENABLE_NAIVE:-}" == "1" ]]; then
+        if is_true "${ENABLE_NAIVE:-n}"; then
             ENABLE_NAIVE=1
             NAIVE_PORT="${NAIVE_PORT:-8446}"
             NAIVE_USER="${NAIVE_USER:-user}"
@@ -565,7 +584,7 @@ EOF_REALITY_SCANNER
             ENABLE_NAIVE=0
         fi
 
-        if [[ "${ENABLE_DNSTT,,}" == "y" || "${ENABLE_DNSTT:-}" == "1" ]]; then
+        if is_true "${ENABLE_DNSTT:-n}"; then
             ENABLE_DNSTT=1
             DNSTT_PORT="${DNSTT_PORT:-53053}"
             ENABLE_SS2022=1
@@ -573,7 +592,7 @@ EOF_REALITY_SCANNER
             ENABLE_DNSTT=0
         fi
 
-        if [[ "${ENABLE_MIERU,,}" == "y" || "${ENABLE_MIERU:-}" == "1" ]]; then
+        if is_true "${ENABLE_MIERU:-n}"; then
             ENABLE_MIERU=1
             MIERU_PORT_MODE="${MIERU_PORT_MODE:-single}"
             case "${MIERU_PORT_MODE,,}" in
@@ -592,14 +611,14 @@ EOF_REALITY_SCANNER
 
 
         # AdGuard Home
-        if [[ "${ENABLE_AGH,,}" == "y" || "${ENABLE_AGH:-}" == "1" ]]; then
+        if is_true "${ENABLE_AGH:-n}"; then
             ENABLE_AGH=1
             AGH_MODE="${AGH_MODE:-1}"
             [ "$AGH_MODE" = "2" ] && AGH_DOMAIN="${AGH_DOMAIN:-dns.$PRIMARY_DOMAIN}" || AGH_DOMAIN=""
             AGH_USER="${AGH_USER:-admin}"
             AGH_PASS="${AGH_PASS:-AgHome_$(head /dev/urandom 2>/dev/null | tr -dc A-Za-z0-9 | head -c 8 || echo 'Pass1234')}"
             ensure_agh_client_id || return 1
-            [[ "${AGH_XRAY_DNS,,}" == "y" || "${AGH_XRAY_DNS:-}" == "1" ]] && AGH_XRAY_DNS="y" || AGH_XRAY_DNS="n"
+            is_true "${AGH_XRAY_DNS:-n}" && AGH_XRAY_DNS="y" || AGH_XRAY_DNS="n"
         else
             ENABLE_AGH=0
             AGH_DOMAIN=""
@@ -617,7 +636,7 @@ EOF_REALITY_SCANNER
         LE_EMAIL="${LE_EMAIL:-}"
         CF_AUTH_METHOD="${CF_AUTH_METHOD:-1}"
         AUTO_SETUP_3XUI="${AUTO_SETUP_3XUI:-y}"
-        if [[ "${ENABLE_NODE_TOKEN,,}" == "y" || "${ENABLE_NODE_TOKEN:-}" == "1" ]]; then
+        if is_true "${ENABLE_NODE_TOKEN:-n}"; then
             ENABLE_NODE_TOKEN="y"
             if [ -z "${NODE_TOKEN_NAME:-}" ]; then
                 local def_token_name="${SERVER_PREFIX:+$SERVER_PREFIX-Node}"
@@ -632,7 +651,7 @@ EOF_REALITY_SCANNER
             NODE_TOKEN_NAME=""
             NODE_TOKEN_SCOPE=""
         fi
-        if [[ "${ENABLE_WARP,,}" == "y" || "${ENABLE_WARP:-}" == "1" ]]; then
+        if is_true "${ENABLE_WARP:-n}"; then
             ENABLE_WARP="y"
             WARP_LICENSE_KEY="${WARP_LICENSE_KEY:-}"
         else
@@ -664,7 +683,7 @@ EOF_REALITY_SCANNER
             echo -e "    Порты 80 и 443 остаются за Traefik. Панель и подписки будут подключены через Traefik."
             echo
         fi
-        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+        if is_true "${SHOW_TIPS:-y}"; then
             echo -e "  ${CYAN}💡 Что это:${NC} Ваш основной домен (например, ${BOLD}yourdomain.online${NC})."
             echo -e "     На нем будет работать веб-маска (декой-сайт), панель 3X-UI,"
             echo -e "     сервер подписок и протокол VLESS xHTTP (HTTP/2 Stream-One)."
@@ -1046,7 +1065,7 @@ EOF_PARSE_PROBE
     q_step_protocols() {
         echo
         echo -e "${YELLOW}━━━ Шаг 2/11: Выбор протоколов и транспортов (VPN / Прокси) ━━━${NC}"
-        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+        if is_true "${SHOW_TIPS:-y}"; then
             echo -e "  ${CYAN}💡 Что это:${NC} Выберите протоколы подключения, которые будут развернуты на сервере."
             echo -e "     ${BOLD}Базовые протоколы (включены по умолчанию):${NC}"
             echo -e "     • ${GREEN}VLESS REALITY (свой сайт)${NC}: маскировка под свой домен (cdn.${PRIMARY_DOMAIN:-домен})."
@@ -1430,7 +1449,7 @@ EOF_PARSE_PROBE
     q_step_ports() {
         echo
         echo -e "${YELLOW}━━━ Шаг 3/11: Настройка внутренних портов, секретных путей и учетных данных ━━━${NC}"
-        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+        if is_true "${SHOW_TIPS:-y}"; then
             echo -e "  ${CYAN}💡 Что это:${NC} Внутренние порты, секретные URI-пути для веб-панели управления,"
             echo -e "     сервера подписок, а также логины и пароли всех активных служб и протоколов."
             echo
@@ -1684,7 +1703,7 @@ EOF_PARSE_PROBE
     q_step_agh() {
         echo
         echo -e "${YELLOW}━━━ Шаг 4/11: Настройка приватного AdGuard Home DoH + Split-DNS ━━━${NC}"
-        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+        if is_true "${SHOW_TIPS:-y}"; then
             echo -e "  ${CYAN}💡 Что это:${NC} Приватный шифрованный DNS (DNS-over-HTTPS) с защитой от рекламы и трекеров."
             echo -e "     ${GREEN}Split-DNS:${NC} Запросы к российским сайтам (.ru, банки, Госуслуги) направляются"
             echo -e "     через надежные локальные DNS, предотвращая ошибки доступа и сбои авторизации."
@@ -1737,7 +1756,7 @@ EOF_PARSE_PROBE
     q_step_decoy() {
         echo
         echo -e "${YELLOW}━━━ Шаг 5/11: Выбор темы для сайта-маскировки (Decoy Site) ━━━${NC}"
-        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+        if is_true "${SHOW_TIPS:-y}"; then
             echo -e "  ${CYAN}💡 Что это:${NC} Веб-сайт, который отображается в браузере при обращении к вашему домену."
             echo -e "     Защищает сервер от выявления цензорами, активными сканерами и сетевыми ботами."
             echo
@@ -1770,7 +1789,7 @@ EOF_PARSE_PROBE
     q_step_ssl_domains() {
         echo
         echo -e "${YELLOW}━━━ Шаг 6/11: Реестр SSL-сертификатов и дополнительные домены ━━━${NC}"
-        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+        if is_true "${SHOW_TIPS:-y}"; then
             echo -e "  ${CYAN}💡 Что это:${NC} Список доменов, для которых будут автоматически получены SSL-сертификаты."
             echo -e "  ${DIM}Следующие домены уже включены автоматически из предыдущих шагов:${NC}"
         fi
@@ -1808,7 +1827,7 @@ EOF_PARSE_PROBE
     q_step_ssl_engine() {
         echo
         echo -e "${YELLOW}━━━ Шаг 7/11: Выбор метода выпуска SSL-сертификатов ━━━${NC}"
-        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+        if is_true "${SHOW_TIPS:-y}"; then
             echo -e "  ${CYAN}💡 Что это:${NC} Способ валидации владения доменом для Let's Encrypt."
             echo -e "    ${GREEN}[1] Классический Certbot (HTTP-01, Рекомендуется)${NC}"
             echo -e "        ${DIM}• Простая валидация через порт 80 Nginx. Не требует API-ключей.${NC}"
@@ -1850,7 +1869,7 @@ EOF_PARSE_PROBE
     q_step_3xui_auto() {
         echo
         echo -e "${YELLOW}━━━ Шаг 8/11: Автоматическая настройка базы данных панели 3X-UI ━━━${NC}"
-        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+        if is_true "${SHOW_TIPS:-y}"; then
             echo -e "  ${CYAN}💡 Что это:${NC} Автоматическое создание подключений (REALITY со своим сайтом, внешними сервисами, xHTTP)"
             echo -e "     в базе данных панели 3X-UI, а также настройка секретных путей и подписок."
             echo -e "     Вам не придется добавлять подключения вручную через браузер."
@@ -1860,7 +1879,7 @@ EOF_PARSE_PROBE
         prompt_yes_no "Автоматически настроить инбаунды и пути в панели 3X-UI?" "${AUTO_SETUP_3XUI:-y}" AUTO_SETUP_3XUI || return $?
         if [[ "${AUTO_SETUP_3XUI,,}" == "y" || "${AUTO_SETUP_3XUI:-}" == "1" ]]; then
             AUTO_SETUP_3XUI="y"
-            if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+            if is_true "${SHOW_TIPS:-y}"; then
                 echo
                 echo -e "  ${CYAN}💡 3X-UI Node:${NC} Генерация API-токена позволяет подключить этот сервер"
                 echo -e "     как ведомый узел (Node) к другой мастер-панели 3X-UI или внешней системе управления."
@@ -1907,7 +1926,7 @@ EOF_PARSE_PROBE
     q_step_warp() {
         echo
         echo -e "${YELLOW}━━━ Шаг 9/11: Исходящий туннель Cloudflare WARP ━━━${NC}"
-        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+        if is_true "${SHOW_TIPS:-y}"; then
             echo -e "  ${CYAN}💡 Что это:${NC} Исходящий WireGuard туннель от вашего VPS в сеть Cloudflare."
             echo -e "     ${GREEN}Преимущество:${NC} Полностью избавляет от капч Google/Cloudflare и разблокирует"
             echo -e "     доступ к зарубежным AI-сервисам (ChatGPT, Claude, Gemini). Видео YouTube и"
@@ -1931,7 +1950,7 @@ EOF_PARSE_PROBE
     q_step_security() {
         echo
         echo -e "${YELLOW}━━━ Шаг 10/11: Безопасность сервера (SSH и Fail2ban) ━━━${NC}"
-        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+        if is_true "${SHOW_TIPS:-y}"; then
             echo -e "  ${CYAN}💡 Что это:${NC} Базовая защита операционной системы хоста."
             echo -e "     ${GREEN}Преимущество:${NC} Перенос порта SSH со стандартного 22 скрывает сервер"
             echo -e "     от автоматических сканеров портов, а Fail2ban автоматически блокирует IP-адреса"
@@ -2280,7 +2299,7 @@ EOF_PARSE_PROBE
         else
             echo
             prompt_yes_no "Показывать подробные пояснения и подсказки к каждому шагу?" "${SHOW_TIPS:-y}" SHOW_TIPS
-            if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+            if is_true "${SHOW_TIPS:-y}"; then
                 ok "Включен подробный режим: для каждого протокола будут выводиться подсказки и пояснения."
             else
                 ok "Включен экспертный режим: вопросы выводятся коротко и по делу."
@@ -2327,7 +2346,7 @@ EOF_PARSE_PROBE
                         WIZARD_ALLOW_BACK=0
                         prompt_yes_no "Показывать подробные пояснения и подсказки к каждому шагу?" "${SHOW_TIPS:-y}" SHOW_TIPS
                         WIZARD_ALLOW_BACK="$old_back"
-                        if [[ "${SHOW_TIPS,,}" == "y" || "${SHOW_TIPS:-}" == "1" ]]; then
+                        if is_true "${SHOW_TIPS:-y}"; then
                             ok "Включен подробный режим: для каждого протокола будут выводиться подсказки и пояснения."
                         else
                             ok "Включен экспертный режим: вопросы выводятся коротко и по делу."

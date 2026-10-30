@@ -119,7 +119,7 @@ EOF_GOMEM
         svc_restart AdGuardHome 2>/dev/null || systemctl restart AdGuardHome 2>/dev/null || rc-service AdGuardHome restart 2>/dev/null || true
 
         # 7. Интеграция с Xray DNS (если выбрано AGH_XRAY_DNS=y)
-        if [[ "${AGH_XRAY_DNS,,}" == "y" || "${AGH_XRAY_DNS:-}" == "1" ]]; then
+        if is_true "${AGH_XRAY_DNS:-n}"; then
             xui_db="/etc/x-ui/x-ui.db"
             [ -f "$xui_db" ] || xui_db="/usr/local/x-ui/bin/x-ui.db"
             if [ -f "$xui_db" ]; then

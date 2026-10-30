@@ -186,7 +186,7 @@ inspect_port_conflicts() {
     PORT_AGH_WEB="${PORT_AGH_WEB:-3000}"
 
     # 1. Проверка настраиваемого веб-порта AdGuard Home (по умолчанию 3000)
-    if [[ "${ENABLE_AGH:-0}" == "1" || "${ENABLE_AGH,,}" == "y" ]]; then
+    if is_true "${ENABLE_AGH:-0}"; then
         if is_port_in_use "tcp" "$PORT_AGH_WEB"; then
             local listener
             listener=$(get_port_listener_info "tcp" "$PORT_AGH_WEB")
@@ -219,7 +219,7 @@ inspect_port_conflicts() {
     fi
 
     # 2. Проверка изоляции DNS (systemd-resolved DoT на 53 / AdGuard Home на PORT_AGH_DNS)
-    if [[ "${ENABLE_AGH:-0}" == "1" || "${ENABLE_AGH,,}" == "y" ]]; then
+    if is_true "${ENABLE_AGH:-0}"; then
         local agh_dns_port="${PORT_AGH_DNS:-10053}"
         if is_port_in_use "udp" "$agh_dns_port" || is_port_in_use "tcp" "$agh_dns_port"; then
             warn "Порт $agh_dns_port (AdGuard Home DNS) уже используется. Рекомендуется освободить порт."

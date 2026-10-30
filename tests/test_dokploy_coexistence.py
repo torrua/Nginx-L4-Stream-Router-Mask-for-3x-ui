@@ -120,6 +120,10 @@ echo "VALIDATION:SUCCESS"
         self.assertIn("Host(`sub.example.com`)", config)
         self.assertIn("http://host.docker.internal:55443", config)
         self.assertIn("h2c://host.docker.internal:50443", config)
+        self.assertIn("reality-steal:", config)
+        self.assertIn("HostSNI(`cdn.example.com`)", config)
+        self.assertIn("reality-classic:", config)
+        self.assertIn("host.docker.internal:45443", config)
 
     def test_cli_dokploy_flags(self):
         """Verify that --dokploy and --no-dokploy flags are parsed correctly."""

@@ -192,13 +192,13 @@ Traefik самостоятельно выпускает SSL для `wstunnel.you
 * Dokploy Traefik перехватывает веб-трафик и автоматически выпускает SSL:
   1. На сервере выполните установку:
      ```bash
-     sudo bash setup.sh --dokploy
+     sudo bash setup.sh --dokploy --panel-path / --domain yourdomain.online
      ```
-  2. Подключите панель и подписки к Dokploy Traefik:
+  2. Подключите панель, подписки, xHTTP и REALITY к Dokploy Traefik:
      ```bash
      ./manage-services.sh dokploy-traefik > /etc/dokploy/traefik/dynamic/vpn.yml
      ```
-  3. Traefik моментально привяжет `panel.yourdomain.online` и `sub.yourdomain.online` с авто-SSL.
+  3. Traefik моментально применит маршруты для `panel.yourdomain.online`, `sub.yourdomain.online`, `vless.yourdomain.online` и TCP Passthrough для `cdn.yourdomain.online` / `reality.yourdomain.online`.
 
 ---
 
@@ -208,7 +208,7 @@ Traefik самостоятельно выпускает SSL для `wstunnel.you
   1. Откройте панель **Dokploy** (`https://your-dokploy-ip:3000`).
   2. Перейдите в **Compose** → **Create Compose** (например, `vpn-stack`).
   3. Вставьте содержимое [`compose/docker-compose.dokploy-all-in-one.yml`](../compose/docker-compose.dokploy-all-in-one.yml) (или скопируйте вывод команды `./manage-services.sh dokploy-all-in-one`).
-  4. Заполните переменные окружения (`PRIMARY_DOMAIN`, `PANEL_DOMAIN`, `SUB_DOMAIN`, `WSTUNNEL_DOMAIN`, `AWG_PORT`).
+  4. Заполните переменные окружения (`PRIMARY_DOMAIN`, `PANEL_DOMAIN`, `SUB_DOMAIN`, `VLESS_DOMAIN`, `WSTUNNEL_DOMAIN`, `AWG_PORT`).
   5. Нажмите **Deploy**. Traefik автоматически создаст маршруты с авто-SSL.
 
 ---

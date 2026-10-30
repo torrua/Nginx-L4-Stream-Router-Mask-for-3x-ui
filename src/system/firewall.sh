@@ -1,8 +1,8 @@
 # =============================================================
 #  PORT HOPPING ДЛЯ HYSTERIA 2 (UDP → NAT REDIRECT)
 # =============================================================
-if [[ "${ENABLE_HY2:-0}" == "1" || "${ENABLE_HY2,,}" == "y" ]] && \
-   [[ "${HY2_PORT_HOPPING,,}" == "y" || "${HY2_PORT_HOPPING:-}" == "1" ]] && \
+if is_true "${ENABLE_HY2:-0}" && \
+   is_true "${HY2_PORT_HOPPING:-0}" && \
    [ -n "${HY2_PORT:-}" ] && [ -n "${HY2_PORT_HOPPING_RANGE:-}" ]; then
 
     PH_RANGE="${HY2_PORT_HOPPING_RANGE}"

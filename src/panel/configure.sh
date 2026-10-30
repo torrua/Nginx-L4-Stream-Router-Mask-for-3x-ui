@@ -175,6 +175,10 @@ EOF_HELP
                 CLI_NODE_TOKEN_SCOPE="$2"
                 shift 2
                 ;;
+            --deduplicate-classic-snis)
+                CLI_DEDUPLICATE_CLASSIC_SNIS="1"
+                shift
+                ;;
             -y|--yes)
                 NON_INTERACTIVE=1
                 shift
@@ -306,6 +310,7 @@ EOF_HELP
     ENABLE_STEAL_COMPAT="${ENABLE_STEAL_COMPAT:-n}"
     ENABLE_XHTTP="${ENABLE_XHTTP:-y}"
     ENABLE_CLASSIC="${ENABLE_CLASSIC:-y}"
+    DEDUPLICATE_CLASSIC_SNIS="${CLI_DEDUPLICATE_CLASSIC_SNIS:-${DEDUPLICATE_CLASSIC_SNIS:-0}}"
     ENABLE_HY2="${ENABLE_HY2:-y}"
     ENABLE_AWG_V3="${ENABLE_AWG_V3:-y}"
     ENABLE_AWG_V2="${ENABLE_AWG_V2:-n}"
@@ -476,6 +481,7 @@ EOF_HELP
     export ENABLE_CLASSIC
     export CLASSIC_PORT
     export CLASSIC_SNI
+    export DEDUPLICATE_CLASSIC_SNIS
     export REALITY_FINGERPRINT
     export ENABLE_HY2
     export HY2_PORT

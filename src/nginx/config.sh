@@ -808,20 +808,23 @@ server {
         proxy_set_header Connection \$connection_upgrade;
     }
 
-    # --- ЛОКАЦИЯ 3: VLESS xHTTP (Native gRPC / H2 Stream-One) ---
+    # --- ЛОКАЦИЯ 3: VLESS xHTTP (Native H2C Stream-One) ---
     location ^~ ${XHTTP_STREAM_PATH} {
         client_max_body_size 0;
         client_body_timeout 1h;
-        grpc_read_timeout 1h;
-        grpc_send_timeout 1h;
-        grpc_socket_keepalive on;
+        send_timeout 1h;
+        proxy_read_timeout 1h;
+        proxy_send_timeout 1h;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_http_version 1.1;
 
-        grpc_set_header Host \$http_host;
-        grpc_set_header X-Real-IP \$ak_real_ip;
-        grpc_set_header X-Forwarded-For \$ak_real_ip;
-        grpc_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Real-IP \$ak_real_ip;
+        proxy_set_header X-Forwarded-For \$ak_real_ip;
+        proxy_set_header X-Forwarded-Proto \$scheme;
 
-        grpc_pass grpc://xray_xhttp_stream;
+        proxy_pass http://xray_xhttp_stream;
     }
 
     $WSTUNNEL_LOCATION_BLOCK
@@ -1098,20 +1101,23 @@ server {
         proxy_set_header Connection \$connection_upgrade;
     }
 
-    # --- ЛОКАЦИЯ: VLESS xHTTP (Native gRPC / H2 Stream-One) ---
+    # --- ЛОКАЦИЯ: VLESS xHTTP (Native H2C Stream-One) ---
     location ^~ ${XHTTP_STREAM_PATH} {
         client_max_body_size 0;
         client_body_timeout 1h;
-        grpc_read_timeout 1h;
-        grpc_send_timeout 1h;
-        grpc_socket_keepalive on;
+        send_timeout 1h;
+        proxy_read_timeout 1h;
+        proxy_send_timeout 1h;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_http_version 1.1;
 
-        grpc_set_header Host \$http_host;
-        grpc_set_header X-Real-IP \$ak_real_ip;
-        grpc_set_header X-Forwarded-For \$ak_real_ip;
-        grpc_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Host \$http_host;
+        proxy_set_header X-Real-IP \$ak_real_ip;
+        proxy_set_header X-Forwarded-For \$ak_real_ip;
+        proxy_set_header X-Forwarded-Proto \$scheme;
 
-        grpc_pass grpc://xray_xhttp_stream;
+        proxy_pass http://xray_xhttp_stream;
     }
 
     location ~ ^/debug-[a-z0-9]+\.log\$ {

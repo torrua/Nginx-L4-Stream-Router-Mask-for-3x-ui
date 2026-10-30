@@ -272,13 +272,112 @@ cmd_dokploy_traefik() {
         [ -n "${PANEL_DOMAIN:-}" ] && extra_args+=(--panel-domain "$PANEL_DOMAIN")
         [ -n "${SUB_DOMAIN:-}" ] && extra_args+=(--sub-domain "$SUB_DOMAIN")
         [ -n "${VLESS_DOMAIN:-}" ] && extra_args+=(--vless-domain "$VLESS_DOMAIN")
+        [ -n "${STEAL_DOMAINS:-}" ] && extra_args+=(--steal-domain "${STEAL_DOMAINS%% *}")
         "$py_bin" "$py_script" --domain "${PRIMARY_DOMAIN:-example.com}" \
             "${extra_args[@]}" \
             --panel-port "${PANEL_PORT:-10443}" \
             --sub-port "${SUB_PORT:-55443}" \
             --xhttp-port "${XHTTP_STREAM_PORT:-50443}"
     else
-        die "Скрипт генератора Traefik не найден: $py_script"
+        "$py_bin" - << 'EOF_TRAEFIK_INLINE'
+import os
+domain = os.environ.get("PRIMARY_DOMAIN", "example.com").strip().lower()
+p_host = (os.environ.get("PANEL_DOMAIN") or f"panel.{domain}").strip()
+s_host = (os.environ.get("SUB_DOMAIN") or f"sub.{domain}").strip()
+v_host = (os.environ.get("VLESS_DOMAIN") or f"vless.{domain}").strip()
+steal_raw = os.environ.get("STEAL_DOMAINS", "").strip()
+steal_dom = steal_raw.split()[0] if steal_raw else f"cdn.{domain}"
+panel_port = int(os.environ.get("PANEL_PORT") or "10443")
+sub_port = int(os.environ.get("SUB_PORT") or "55443")
+xhttp_port = int(os.environ.get("XHTTP_STREAM_PORT") or "50443")
+steal_port = int(os.environ.get("STEAL_PORT") or "45443")
+classic_port = int(os.environ.get("CLASSIC_PORT") or "46443")
+
+steal_rules = [f"HostSNI(`{steal_dom}`)"]
+if steal_dom != f"reality.{domain}":
+    steal_rules.append(f"HostSNI(`reality.{domain}`)")
+steal_cond = " || ".join(steal_rules)
+
+classic_snis = ["www.uni-frankfurt.de", "www.sap.com", "download.videolan.org", "www.siemens.com", "mirror.leaseweb.com"]
+classic_cond = " || ".join([f"HostSNI(`{s}`)" for s in classic_snis])
+
+print(f"""# ==============================================================================
+# DOKPLOY TRAEFIK DYNAMIC CONFIGURATION FOR 3X-UI & VPN SERVICES
+# Place this file in /etc/dokploy/traefik/dynamic/vpn.yml
+# ==============================================================================
+http:
+  routers:
+    xui-panel:
+      rule: "Host(`{p_host}`)"
+      entryPoints:
+        - "websecure"
+      service: "xui-panel-service"
+      tls:
+        certResolver: "letsencrypt"
+
+    xui-sub:
+      rule: "Host(`{s_host}`)"
+      entryPoints:
+        - "websecure"
+      service: "xui-sub-service"
+      tls:
+        certResolver: "letsencrypt"
+
+    xray-xhttp:
+      rule: "Host(`{v_host}`)"
+      entryPoints:
+        - "websecure"
+      priority: 1000
+      service: "xray-xhttp-service"
+      tls:
+        certResolver: "letsencrypt"
+
+  services:
+    xui-panel-service:
+      loadBalancer:
+        servers:
+          - url: "http://host.docker.internal:{panel_port}"
+
+    xui-sub-service:
+      loadBalancer:
+        servers:
+          - url: "http://host.docker.internal:{sub_port}"
+
+    xray-xhttp-service:
+      loadBalancer:
+        servers:
+          - url: "h2c://host.docker.internal:{xhttp_port}"
+
+tcp:
+  routers:
+    reality-steal:
+      entryPoints:
+        - "websecure"
+      rule: "{steal_cond}"
+      service: "reality-steal-service"
+      tls:
+        passthrough: true
+
+    reality-classic:
+      entryPoints:
+        - "websecure"
+      rule: "{classic_cond}"
+      service: "reality-classic-service"
+      tls:
+        passthrough: true
+
+  services:
+    reality-steal-service:
+      loadBalancer:
+        servers:
+          - address: "host.docker.internal:{steal_port}"
+
+    reality-classic-service:
+      loadBalancer:
+        servers:
+          - address: "host.docker.internal:{classic_port}"
+""")
+EOF_TRAEFIK_INLINE
     fi
 }
 

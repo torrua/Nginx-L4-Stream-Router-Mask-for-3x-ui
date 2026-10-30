@@ -56,9 +56,18 @@ def generate_traefik_dynamic_yaml(
     panel_subdomain: str | None = None,
     sub_subdomain: str | None = None,
     vless_subdomain: str | None = None,
+    steal_subdomain: str | None = None,
+    steal_compat_subdomain: str | None = None,
     panel_port: int = 10443,
     sub_port: int = 55443,
     xhttp_port: int = 50443,
+    steal_port: int = 45443,
+    steal_compat_port: int = 47443,
+    classic_port: int = 46443,
+    enable_steal: bool = True,
+    enable_steal_compat: bool = False,
+    enable_classic: bool = True,
+    classic_snis: list[str] | None = None,
     cert_resolver: str = "letsencrypt",
     backend_host: str = "host.docker.internal",
 ) -> str:
@@ -119,6 +128,83 @@ def generate_traefik_dynamic_yaml(
         "        servers:",
         f"          - url: \"h2c://{backend_host}:{xhttp_port}\"",
     ]
+
+    if enable_steal or enable_steal_compat or enable_classic:
+        yaml_lines.extend([
+            "",
+            "tcp:",
+            "  routers:",
+        ])
+        if enable_steal:
+            steal_h = steal_subdomain or f"cdn.{clean_domain}"
+            steal_rules = [f"HostSNI(`{steal_h}`)"]
+            if steal_h != f"reality.{clean_domain}":
+                steal_rules.append(f"HostSNI(`reality.{clean_domain}`)")
+            steal_cond = " || ".join(steal_rules)
+            yaml_lines.extend([
+                "    reality-steal:",
+                "      entryPoints:",
+                "        - \"websecure\"",
+                f"      rule: \"{steal_cond}\"",
+                "      service: \"reality-steal-service\"",
+                "      tls:",
+                "        passthrough: true",
+                "",
+            ])
+        if enable_steal_compat:
+            compat_h = steal_compat_subdomain or f"static.{clean_domain}"
+            yaml_lines.extend([
+                "    reality-steal-backup:",
+                "      entryPoints:",
+                "        - \"websecure\"",
+                f"      rule: \"HostSNI(`{compat_h}`)\"",
+                "      service: \"reality-steal-backup-service\"",
+                "      tls:",
+                "        passthrough: true",
+                "",
+            ])
+        if enable_classic:
+            default_snis = ["www.uni-frankfurt.de", "www.sap.com", "download.videolan.org", "www.siemens.com", "mirror.leaseweb.com"]
+            snis = classic_snis or default_snis
+            classic_cond = " || ".join([f"HostSNI(`{s}`)" for s in snis])
+            yaml_lines.extend([
+                "    reality-classic:",
+                "      entryPoints:",
+                "        - \"websecure\"",
+                f"      rule: \"{classic_cond}\"",
+                "      service: \"reality-classic-service\"",
+                "      tls:",
+                "        passthrough: true",
+                "",
+            ])
+        yaml_lines.extend([
+            "  services:",
+        ])
+        if enable_steal:
+            yaml_lines.extend([
+                "    reality-steal-service:",
+                "      loadBalancer:",
+                "        servers:",
+                f"          - address: \"{backend_host}:{steal_port}\"",
+                "",
+            ])
+        if enable_steal_compat:
+            yaml_lines.extend([
+                "    reality-steal-backup-service:",
+                "      loadBalancer:",
+                "        servers:",
+                f"          - address: \"{backend_host}:{steal_compat_port}\"",
+                "",
+            ])
+        if enable_classic:
+            yaml_lines.extend([
+                "    reality-classic-service:",
+                "      loadBalancer:",
+                "        servers:",
+                f"          - address: \"{backend_host}:{classic_port}\"",
+                "",
+            ])
+
     return "\n".join(yaml_lines) + "\n"
 
 
@@ -128,22 +214,41 @@ def main():
     parser.add_argument("--panel-domain", default=None, help="Domain for 3X-UI Panel")
     parser.add_argument("--sub-domain", default=None, help="Domain for Subscriptions")
     parser.add_argument("--vless-domain", default=None, help="Domain for VLESS xHTTP")
+    parser.add_argument("--steal-domain", default=None, help="Domain for REALITY Steal-Oneself (default: cdn.<domain>)")
+    parser.add_argument("--steal-compat-domain", default=None, help="Domain for REALITY Steal Backup (default: static.<domain>)")
     parser.add_argument("--panel-port", type=int, default=10443, help="Internal 3X-UI Web Port")
     parser.add_argument("--sub-port", type=int, default=55443, help="Internal 3X-UI Sub Port")
     parser.add_argument("--xhttp-port", type=int, default=50443, help="Internal Xray xHTTP Port")
+    parser.add_argument("--steal-port", type=int, default=45443, help="Internal REALITY Steal Port")
+    parser.add_argument("--steal-compat-port", type=int, default=47443, help="Internal REALITY Steal Backup Port")
+    parser.add_argument("--classic-port", type=int, default=46443, help="Internal REALITY Classic Port")
+    parser.add_argument("--no-steal", action="store_true", help="Disable REALITY Steal router")
+    parser.add_argument("--enable-steal-compat", action="store_true", help="Enable REALITY Steal Backup router")
+    parser.add_argument("--no-classic", action="store_true", help="Disable REALITY Classic router")
+    parser.add_argument("--classic-snis", default=None, help="Comma-separated SNIs for REALITY Classic")
     parser.add_argument("--cert-resolver", default="letsencrypt", help="Traefik certResolver name")
     parser.add_argument("--backend-host", default=None, help="Backend host or container name (default: auto)")
     parser.add_argument("--output", "-o", default=None, help="Output file path (default stdout)")
 
     args = parser.parse_args()
+    parsed_snis = [s.strip() for s in args.classic_snis.split(",") if s.strip()] if args.classic_snis else None
     config_yaml = generate_traefik_dynamic_yaml(
         domain=args.domain,
         panel_subdomain=args.panel_domain,
         sub_subdomain=args.sub_domain,
         vless_subdomain=args.vless_domain,
+        steal_subdomain=args.steal_domain,
+        steal_compat_subdomain=args.steal_compat_domain,
         panel_port=args.panel_port,
         sub_port=args.sub_port,
         xhttp_port=args.xhttp_port,
+        steal_port=args.steal_port,
+        steal_compat_port=args.steal_compat_port,
+        classic_port=args.classic_port,
+        enable_steal=not args.no_steal,
+        enable_steal_compat=args.enable_steal_compat,
+        enable_classic=not args.no_classic,
+        classic_snis=parsed_snis,
         cert_resolver=args.cert_resolver,
         backend_host=args.backend_host or "auto",
     )

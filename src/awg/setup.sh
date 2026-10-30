@@ -203,7 +203,7 @@ EOF_AWG_CRYPTO
     # Настройка порта и хоста
     local awg_port="${AWG_SERVER_PORT:-${AWG_STANDALONE_PORT:-}}"
     if [ -z "$awg_port" ]; then
-        if [ "${AWG_V3_PORT:-}" = "8443" ] && [[ "${ENABLE_AWG_V3:-}" == "1" || "${ENABLE_AWG_V3,,}" == "y" ]]; then
+        if [ "${AWG_V3_PORT:-}" = "8443" ] && is_true "${ENABLE_AWG_V3:-0}"; then
             awg_port="8445"
         else
             awg_port="8443"
@@ -258,7 +258,7 @@ EOF_PERIODIC
 deploy_amneziawg_backend() {
     local awg_port="${AWG_SERVER_PORT:-${AWG_STANDALONE_PORT:-}}"
     if [ -z "$awg_port" ]; then
-        if [ "${AWG_V3_PORT:-}" = "8443" ] && [[ "${ENABLE_AWG_V3:-}" == "1" || "${ENABLE_AWG_V3,,}" == "y" ]]; then
+        if [ "${AWG_V3_PORT:-}" = "8443" ] && is_true "${ENABLE_AWG_V3:-0}"; then
             awg_port="8445"
         else
             awg_port="8443"

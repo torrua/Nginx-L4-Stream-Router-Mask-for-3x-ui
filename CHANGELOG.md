@@ -7,6 +7,26 @@
 
 ---
 
+## [9.7.1] - 2026-10-29
+
+### Исправлено и улучшено
+- **Безопасная обработка переменных в preflight (AmneziaWG Standalone):**
+  - Устранена фатальная ошибка `bash: line 6288: ENABLE_AGH: unbound variable` при автономной установке AmneziaWG (`awg-mgr`). В `src/common/preflight.sh`, `src/awg/setup.sh`, `src/system/firewall.sh`, `src/adguard/setup.sh` и `src/tui/wizard.sh` проверки протокольных флагов переведены на безопасный хелпер `is_true "${VAR:-0}"`, а в мастере автономного режима добавлены значения по умолчанию.
+- **VLESS xHTTP H2C Stream-One в Nginx L7 Router:**
+  - В `src/nginx/config.sh` директива `grpc_pass grpc://xray_xhttp_stream;` заменена на нативный HTTP/2 Cleartext (`proxy_pass http://xray_xhttp_stream;`) с отключенной буферизацией запросов (`proxy_buffering off;`, `proxy_request_buffering off;`).
+  - Устранена критическая ошибка `HTTP 405 Method Not Allowed`, возникавшая при попытке Nginx обработать стандартный HTTP/2 stream xHTTP через gRPC-шлюз.
+- **Дедупликация подписок при пулах SNI (Multi-SNI Deduplication):**
+  - В `src/panel/reconcile.py` разделены роли пула SNI: полный список доменов маскировки (`classic_snis`) сохраняется в `realitySettings.serverNames` ядра Xray для верификации серверного TLS handshake, а в клиентскую выдачу (массив `externalProxy` и таблицу `hosts`) по умолчанию включается ровно **один** приоритетный узел.
+  - Устранено дублирование серверов (когда вместо одной строчки в клиентах AmneziaVPN / Happ / Streisand появлялось 5–8 идентичных записей `NO Oslo • VLESS Classic`).
+  - Добавлена опция `EXPORT_ALL_CLASSIC_SNIS=y` для пользователей, явно желающих экспортировать все SNI из пула в подписку.
+- **Интеллектуальная самоисцеляющаяся реконсиляция Nginx:**
+  - В `src/panel/reconcile.py` внедрена автоматическая синхронизация Nginx при согласовании панели: скрипт динамически проверяет актуальный путь xHTTP из базы 3X-UI, добавляет `location ^~ {norm_path}` в `/etc/nginx/conf.d/01-main.conf`, заменяет устаревший `grpc_pass` на H2C `proxy_pass` и вносит путь в белый список карты `$badbot` в `/etc/nginx/nginx.conf`.
+- **Актуализация руководств и документации:**
+  - `docs/AI_AGENT_RUNBOOK.md`: добавлен Раздел 6 с политикой дедупликации Multi-SNI и новые строки в матрицу поиска и устранения неисправностей (HTTP 405 xHTTP и дубликаты подписок).
+  - `docs/TIERHIVE_MASTER_NODE_GUIDE.md`: добавлен Раздел 8 с архитектурными правилами разделения `serverNames` и таблицы `hosts`.
+
+---
+
 ## [9.7.0] - 2026-10-29
 
 ### Добавлено

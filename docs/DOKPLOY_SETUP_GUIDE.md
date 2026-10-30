@@ -90,27 +90,35 @@ flowchart TD
 | :--- | :--- | :---: | :--- |
 | **`@`** *(корень)* | `yourdomain.online` ➜ `IP_ВАШЕГО_VPS` | `80/443` | Основной сайт-маскировка или ваши веб-приложения в Dokploy. |
 | **`www`** | `www.yourdomain.online` ➜ `IP_ВАШЕГО_VPS` | `80/443` | Алиас основного сайта для корректного выпуска SSL. |
-| **`panel`** | `panel.yourdomain.online` ➜ `IP_ВАШЕГО_VPS` | `10443` ➜ Traefik | Веб-интерфейс панели управления 3X-UI с валидным Let's Encrypt SSL. |
-| **`sub`** | `sub.yourdomain.online` ➜ `IP_ВАШЕГО_VPS` | `55443` ➜ Traefik | Сервер подписок (ссылки для v2rayN, Happ, Clash, Sing-box). |
+| **`panel`** | `panel.yourdomain.online` ➜ `IP_ВАШЕГО_VPS` | `10443` *(Hybrid)* / `2053` *(Compose)* ➜ Traefik | Веб-интерфейс панели 3X-UI с Let's Encrypt SSL. Поддерживает корень `/` (`--panel-path /`). |
+| **`sub`** | `sub.yourdomain.online` ➜ `IP_ВАШЕГО_VPS` | `55443` *(Hybrid)* / `2096` *(Compose)* ➜ Traefik | Сервер подписок (чистые ссылки для v2rayN, Happ, Clash, Sing-box). |
 
-#### 2. Туннели и прокси через Traefik (порт 443)
+#### 2. Туннели и прокси через Traefik (порт 443 TCP)
 | Поддомен | Пример записи | Порт / Маршрут | Назначение |
 | :--- | :--- | :---: | :--- |
-| **`vless`** | `vless.yourdomain.online` ➜ `IP_ВАШЕГО_VPS` | `50443` ➜ Traefik | VLESS xHTTP / gRPC поток через Dokploy Traefik без конфликта портов. |
+| **`vless`** | `vless.yourdomain.online` ➜ `IP_ВАШЕГО_VPS` | `50443` (h2c) ➜ Traefik | VLESS xHTTP поток через Dokploy Traefik с валидным SSL без конфликта портов. |
+| **`wstunnel`** | `wstunnel.yourdomain.online` ➜ `IP_ВАШЕГО_VPS` | `443` (WS) ➜ `8080` | **Wstunnel:** туннелирование AmneziaWG / WireGuard UDP внутри WebSocket over TLS 443. |
 
-#### 3. REALITY Маскировка (Steal-Oneself / Fallback)
+#### 3. REALITY Маскировка (Traefik TCP Passthrough на порту 443)
 | Поддомен | Пример записи | Порт / Маршрут | Назначение |
 | :--- | :--- | :---: | :--- |
-| **`cdn`** | `cdn.yourdomain.online` ➜ `IP_ВАШЕГО_VPS` | `45443` | Основной SNI-камуфляж для режима REALITY Steal-Oneself. |
-| **`static`** | `static.yourdomain.online` ➜ `IP_ВАШЕГО_VPS` | `47443` | Резервный SNI-камуфляж для статических ресурсов REALITY. |
+| **`cdn`** / **`reality`** | `cdn.yourdomain.online` ➜ `IP_ВАШЕГО_VPS` | `45443` (TCP Passthrough) | Основной SNI-камуфляж для режима REALITY Steal-Oneself (маршрутизируется Traefik по SNI без расшифровки TLS). |
+| **`static`** | `static.yourdomain.online` ➜ `IP_ВАШЕГО_VPS` | `47443` (TCP Passthrough) | Резервный SNI-камуфляж для статических ресурсов REALITY (Steal Backup). |
 
-#### 4. Специализированные протоколы следующего поколения (Next-Gen Protocols)
-| Поддомен | Пример записи | Порт / Транспорт | Назначение |
-| :--- | :--- | :---: | :--- |
-| **`wstunnel`** | `wstunnel.yourdomain.online` ➜ `IP_ВАШЕГО_VPS` | `443` (WS) ➜ `8080` | **Wstunnel:** туннелирование AmneziaWG / WireGuard UDP внутри WebSocket over TLS 443 для обхода жестких блокировок UDP мобильными операторами. |
-| **`naive`** | `naive.yourdomain.online` ➜ `IP_ВАШЕГО_VPS` | `8446` (TCP/UDP) | **NaïveProxy (Caddy):** маскировка сетевого стека под Google Chrome с защитой `probe_resistance`. |
-| **`dns`** | `dns.yourdomain.online` ➜ `IP_ВАШЕГО_VPS` | `3000/10053` | **AdGuard Home DoH:** шифрованный DNS-over-HTTPS (при выборе Режима 2 в мастере). |
-| **`t`** | `t.yourdomain.online` ➜ `IP_ВАШЕГО_VPS` | `53053` (DoH/UDP) | **DNSTT Tunnel:** инкапсуляция трафика внутри DNS-запросов (пробивает глубокие белые списки). |
+#### 4. Специализированные протоколы следующего поколения (Выделенные порты)
+| Поддомен / Хост | Порт и протокол | Транспорт / Механизм | Назначение |
+| :--- | :---: | :--- | :--- |
+| **`@` / IP** | `8443/UDP` (или `51820`) | Ядро Linux DKMS (AmneziaWG 3.1) | **AmneziaWG:** Wire-speed VPN с обфускацией заголовков `HeaderProtectionKey`. |
+| **`@` / IP** | `8444/UDP` | Ядро Linux DKMS (AmneziaWG 2.0) | **AmneziaWG v2.0:** совместимость с legacy-клиентами. |
+| **`@` / IP** | `8448/UDP` | QUIC 0-RTT BBR | **TUIC v5:** сверхбыстрый протокол с миграцией соединений при смене сотовых вышек. |
+| **`@` / IP** | `8449/UDP` | HTTP/3 Datagrams (RFC 9484) | **MASQUE:** туннелирование UDP/IP с нативной поддержкой в iOS 17+ и macOS 14+. |
+| **`@` / IP** | `8388/TCP,UDP` | Shadowsocks-2022 AEAD | **Shadowsocks-2022:** `2022-blake3-aes-256-gcm` с защитой от replay-атак. |
+| **`@` / IP** | `8543/TCP` | ShadowTLS v4 -> SS-2022 | **ShadowTLS v4:** подлинный TLS Apple (`gateway.icloud.com`) с защитой от активных зондов. |
+| **`@` / IP** | `8444/TCP` | FakeTLS | **Telegram MTProxy:** прокси для прямого подключения в Telegram. |
+| **`naive`** | `8446/TCP,UDP` | Chromium Network Stack | **NaïveProxy (Caddy):** маскировка под Google Chrome с выпуском SSL через Cloudflare DNS-01. |
+| **`@` / IP** | `8450/TCP,UDP` | XChaCha20-Poly1305 | **Mieru Proxy:** криптографически стойкий прокси, устойчивый к TLS JA3/JA4 блокировкам. |
+| **`t`** | `53053/UDP,DoH` | Noise Protocol | **DNSTT Tunnel:** туннелирование трафика внутри DNS-запросов (пробивает белые списки). |
+| **`dns`** | `3000/TCP` (или `3001..3053`) / `10053/UDP` | AdGuard Home DNS / DoH | **AdGuard Home:** блокировка рекламы и локальный DNS-фильтр (порт изолирован от Dokploy). |
 
 > [!TIP]
 > **Как настроить все поддомены за 30 секунд:**  
@@ -131,15 +139,32 @@ flowchart TD
 Подключитесь к VPS по SSH под пользователем `root` и запустите установку:
 
 ```bash
-curl -sSL "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/setup.sh?v=$(date +%s)" | sudo bash -s -- --dokploy
+curl -sSL "https://raw.githubusercontent.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/main/setup.sh?v=$(date +%s)" | sudo bash -s -- \
+  --dokploy \
+  --panel-path / \
+  --domain yourdomain.online \
+  --panel-domain panel.yourdomain.online \
+  --sub-domain sub.yourdomain.online \
+  --vless-domain vless.yourdomain.online
 ```
 
-* Установщик автоматически обнаружит Dokploy, применит системные оптимизации ядра (BBR, conntrack), установит DKMS-модуль ядра AmneziaWG и панель 3X-UI на изолированный порт `10443`.
+> [!TIP]
+> **Параметры командной строки для Dokploy:**
+> * `--dokploy`: активирует режим бесконфликтного сосуществования. Установщик оставляет порты `80` и `443` за Dokploy Traefik и не устанавливает локальный Certbot/Nginx.
+> * `--panel-path /`: настраивает открытие панели прямо в корне поддомена `https://panel.yourdomain.online/` без добавления длинного случайного пути вроде `/panel-1a2b3c/`.
+> * `--panel-domain`: указывает поддомен панели управления (по умолчанию `panel.<domain>`).
+> * `--sub-domain`: указывает поддомен сервера подписок (по умолчанию `sub.<domain>`).
+> * `--vless-domain`: поддомен для VLESS xHTTP потока (по умолчанию `vless.<domain>` или `sub.<domain>`).
+> * `--no-hy2`: опционально, если UDP-порт 443 занят HTTP/3 сервисами в Traefik.
+
+* Установщик автоматически обнаружит Dokploy, применит системные оптимизации ядра (BBR, conntrack), установит DKMS-модуль ядра AmneziaWG и панель 3X-UI на изолированный порт `10443` (подписки — на `55443`, xHTTP — на `50443`).
 * Порты `80` и `443` **не будут затронуты** — они останутся за Dokploy Traefik.
 
 ### Шаг 2. Подключение панели к Dokploy Traefik
 
-После завершения работы установщика сгенерируйте динамическую конфигурацию для Traefik:
+Установщик **автоматически создаёт** файл `/etc/dokploy/traefik/dynamic/vpn.yml` со всеми HTTP и TCP маршрутами, если директория `/etc/dokploy` существует.
+
+При необходимости перегенерировать конфигурацию вручную выполните:
 
 ```bash
 cd /root/vpn-setup 2>/dev/null || cd /root
@@ -148,6 +173,9 @@ cd /root/vpn-setup 2>/dev/null || cd /root
 
 > [!NOTE]
 > Traefik в Dokploy отслеживает папку `/etc/dokploy/traefik/dynamic/` и применяет конфигурацию **мгновенно без перезагрузки**.
+> Файл `vpn.yml` автоматически настраивает:
+> * **HTTP Роутеры:** `panel.yourdomain.online` ➜ `10443`, `sub.yourdomain.online` ➜ `55443`, `vless.yourdomain.online` ➜ `h2c://...:50443`.
+> * **TCP Passthrough Роутеры:** `cdn.yourdomain.online` / `reality.yourdomain.online` ➜ `45443` (REALITY Steal-Oneself без расшифровки TLS), `static.yourdomain.online` ➜ `47443` (Steal Backup) и `reality-classic` ➜ `46443`.
 > Теперь по адресам `https://panel.yourdomain.online` и `https://sub.yourdomain.online` откроются панель 3X-UI и сервер подписок с валидным SSL!
 
 ### Шаг 3. (Опционально) Запуск Wstunnel и вспомогательных протоколов
@@ -209,16 +237,26 @@ services:
       - dokploy-network
     labels:
       - "traefik.enable=true"
+      # Веб-панель управления 3X-UI (в контейнере порт 2053)
       - "traefik.http.routers.xui-panel.rule=Host(`${PANEL_DOMAIN}`)"
       - "traefik.http.routers.xui-panel.entrypoints=websecure"
       - "traefik.http.routers.xui-panel.tls=true"
       - "traefik.http.routers.xui-panel.tls.certresolver=letsencrypt"
       - "traefik.http.services.xui-panel.loadbalancer.server.port=2053"
+      # Сервер подписок 3X-UI (в контейнере порт 2096)
       - "traefik.http.routers.xui-sub.rule=Host(`${SUB_DOMAIN}`)"
       - "traefik.http.routers.xui-sub.entrypoints=websecure"
       - "traefik.http.routers.xui-sub.tls=true"
       - "traefik.http.routers.xui-sub.tls.certresolver=letsencrypt"
       - "traefik.http.services.xui-sub.loadbalancer.server.port=2096"
+      # VLESS xHTTP поток через Traefik (h2c, порт 50443)
+      - "traefik.http.routers.xray-xhttp.rule=Host(`${VLESS_DOMAIN}`)"
+      - "traefik.http.routers.xray-xhttp.entrypoints=websecure"
+      - "traefik.http.routers.xray-xhttp.priority=1000"
+      - "traefik.http.routers.xray-xhttp.tls=true"
+      - "traefik.http.routers.xray-xhttp.tls.certresolver=letsencrypt"
+      - "traefik.http.services.xray-xhttp.loadbalancer.server.port=50443"
+      - "traefik.http.services.xray-xhttp.loadbalancer.server.scheme=h2c"
 
   wstunnel-dokploy:
     image: ghcr.io/erebe/wstunnel:latest
@@ -252,9 +290,16 @@ networks:
 Перейдите во вкладку **Environment** сервиса и добавьте переменные:
 
 ```env
+PRIMARY_DOMAIN=yourdomain.online
 PANEL_DOMAIN=panel.yourdomain.online
 SUB_DOMAIN=sub.yourdomain.online
+VLESS_DOMAIN=vless.yourdomain.online
 WSTUNNEL_DOMAIN=wstunnel.yourdomain.online
+AWG_PORT=8443
+TUIC_PORT=8448
+SS2022_PORT=8388
+MTPROTO_PORT=8444
+```
 AWG_PORT=8443
 TUIC_PORT=8448
 SS2022_PORT=8388
@@ -310,31 +355,64 @@ MTPROTO_PORT=8444
 
 ### 3. Подключение через сервер подписок
 1. Откройте панель 3X-UI (`https://panel.yourdomain.online`) и скопируйте персональную ссылку подписки.
-2. Ссылка имеет вид: `https://sub.yourdomain.online/sub-xxxx/xxxx`.
+2. Ссылка имеет вид: `https://sub.yourdomain.online/sub-xxxx/xxxx` (или `https://sub.yourdomain.online/clash-xxxx/xxxx` для Clash/Mihomo).
 3. Вставьте ссылку в любое приложение: **v2rayN** (Windows), **Happ Proxy** (iOS/Android), **v2rayNG** (Android), **FoXray** (macOS/iOS) или **Clash/Mihomo**.
 4. Все доступные протоколы (VLESS xHTTP, Hysteria 2, TUIC, Shadowsocks, MASQUE) загрузятся и будут автоматически обновляться.
+
+### 4. Подключение VLESS xHTTP (Порт 443 с валидным SSL)
+* **Хост подключения:** `vless.yourdomain.online`
+* **Порт:** `443`
+* **Транспорт:** `xHTTP` (`mode: auto`), путь: `/xhttp/` (или ваш `XHTTP_STREAM_PATH`)
+* **Безопасность:** `TLS` (валидный сертификат Let's Encrypt от Traefik), `ALPN: h2`
+* **Преимущество:** трафик идет через стандартный веб-порт `443` Dokploy Traefik. Полная неотличимость от легитимного HTTP/2 веб-трафика для любых DPI-фильтров.
+
+### 5. Подключение VLESS REALITY (Порт 443 через Traefik TCP Passthrough)
+* **Хост:** `yourdomain.online` (или IP VPS)
+* **Порт:** `443`
+* **SNI:** `cdn.yourdomain.online` (или `reality.yourdomain.online`) для Steal-Oneself, либо внешние домены (`www.uni-frankfurt.de`, `www.sap.com`) для Classic
+* **Механизм:** Traefik маршрутизирует TCP-соединение по SNI напрямую в Xray (порты `45443` и `46443`) без терминации TLS (`tls.passthrough=true`), что сохраняет целостность ключей REALITY.
 
 ---
 
 ## 7. Диагностика и решение проблем (FAQ)
 
+### ❓ Как открывать панель 3X-UI: в корне `/` или по секретному пути?
+* **В корне:** При установке с флагом `--panel-path /` панель открывается прямо по адресу: `https://panel.yourdomain.online/`.
+* **По секретному пути:** Если путь не был сброшен в корень, в целях безопасности панель доступна по случайно сгенерированному пути: `https://panel.yourdomain.online/panel-xxxxxxxx/`.
+* Полный адрес панели и реквизиты администратора всегда сохраняются в файле `/root/vpn_credentials.txt`.
+* Сбросить путь панели в корень можно в любой момент командой:
+  ```bash
+  ./maintain.sh --panel-path /
+  ```
+
 ### ❓ Что делать при ошибке 404 / 502 Bad Gateway в Traefik?
-1. Убедитесь, что DNS A-записи доменов указывают прямо на IP вашего сервера (без Cloudflare Proxy).
+1. Убедитесь, что DNS A-записи доменов указывают прямо на IP вашего сервера (в Cloudflare режим **DNS Only**, серое облако).
 2. Проверьте логи Traefik:
    ```bash
    docker logs dokploy-traefik --tail 50
    ```
-3. Для Варианта А (Гибридного): убедитесь, что в файле `/etc/dokploy/traefik/dynamic/vpn.yml` в поле `servers.url` указан адрес `http://host.docker.internal:10443`.
+3. Для Варианта А (Гибридного): убедитесь, что в файле `/etc/dokploy/traefik/dynamic/vpn.yml` в блоке `services` указаны корректные порты:
+   * `xui-panel-service`: `http://host.docker.internal:10443`
+   * `xui-sub-service`: `http://host.docker.internal:55443`
+   * `xray-xhttp-service`: `h2c://host.docker.internal:50443`
+   * `reality-steal-service`: `host.docker.internal:45443`
 4. Для Варианта Б (All-in-One): убедитесь, что контейнер `3x-ui-dokploy` находится в сети `dokploy-network`.
 
 ### ❓ Конфликтует ли порт 3000 (Dokploy vs AdGuard Home)?
 * Панель Dokploy по умолчанию работает на порту `3000`.
 * Наш установщик автоматически проверяет занятость порта `3000`. Если порт занят Dokploy, веб-интерфейс AdGuard Home автоматически переносится на свободный порт из диапазона `3001..3053`, исключая любые сбои.
 
-### ❓ Нужно ли открывать порты в файрволе облачного провайдера?
-Да, в панели управления вашего облачного провайдера (Hetzner Firewall, Selectel, Beget, VK Cloud) должны быть открыты:
-* **`80/TCP`** и **`443/TCP`** — для Dokploy Traefik и выпуска SSL.
-* **`8443/UDP`** (или ваш порт) — для AmneziaWG.
+### ❓ Какие порты нужно открыть в файрволе облачного провайдера?
+В панели управления вашего облачного провайдера (Hetzner Firewall, Selectel, Beget, VK Cloud) должны быть открыты:
+* **`80/TCP`** и **`443/TCP`** — для Dokploy Traefik, выпуска SSL и всех прокси/туннелей (Wstunnel, VLESS xHTTP, REALITY TCP Passthrough).
+* **`8443/UDP`** (или `51820/UDP`) — для AmneziaWG v3.1.
+* **`8444/UDP`** — для AmneziaWG v2.0 (если включен).
 * **`8448/UDP`** — для TUIC v5 (если используется).
 * **`8449/UDP`** — для MASQUE (если используется).
-* **`8388/TCP,UDP`** — для Shadowsocks 2022 (если используется).
+* **`8388/TCP,UDP`** — для Shadowsocks-2022 (если используется).
+* **`8543/TCP`** — для ShadowTLS v4 (если используется).
+* **`8444/TCP`** — для Telegram MTProxy (если используется).
+* **`8446/TCP,UDP`** — для NaïveProxy Caddy (если используется).
+* **`8450/TCP,UDP`** — для Mieru Proxy (если используется).
+* **`53053/UDP`** — для DNSTT Tunnel (если используется).
+*(Внутренние порты `10443`, `55443`, `50443`, `45443`, `46443`, `47443` и `8080` наружу открывать не нужно — они доступны только локально через Traefik).*

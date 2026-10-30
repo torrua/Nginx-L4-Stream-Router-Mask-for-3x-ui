@@ -520,6 +520,15 @@ printf '\nCREDS_CONTENT_START\n%s\nCREDS_CONTENT_END\n' "$(cat "$TEST_WORK/crede
         self.assertNotIn("САМОПОДПИСАННЫЙ", creds_ok)
         self.assertIn("TLS сертификат:        Действительный (Let's Encrypt / acme.sh)", creds_ok)
 
+    def test_inspect_port_conflicts_standalone_with_unbound_variables(self):
+        result = self.shell(r'''
+is_port_in_use() { return 1; }
+inspect_port_conflicts
+echo PREFLIGHT_SUCCESS
+''', "common/preflight.sh")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("PREFLIGHT_SUCCESS", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

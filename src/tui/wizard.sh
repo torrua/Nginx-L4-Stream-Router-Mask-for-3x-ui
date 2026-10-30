@@ -119,6 +119,8 @@ else
         ENABLE_NODE_TOKEN="${ENABLE_NODE_TOKEN:-n}"
         ENABLE_ZAPRET="${ENABLE_ZAPRET:-n}"
         AUTO_SETUP_3XUI="${AUTO_SETUP_3XUI:-n}"
+        SERVER_PREFIX="${SERVER_PREFIX:-Server}"
+        SUB_TITLE="${SUB_TITLE:-$SERVER_PREFIX}"
 
         echo ""
         echo -e "  ${YELLOW}━━━ Подтверждение параметров AmneziaWG ━━━${NC}"

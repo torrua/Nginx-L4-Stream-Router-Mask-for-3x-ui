@@ -12,6 +12,7 @@
 ### Исправлено и улучшено
 - **Безопасная обработка переменных в preflight (AmneziaWG Standalone):**
   - Устранена фатальная ошибка `bash: line 6288: ENABLE_AGH: unbound variable` при автономной установке AmneziaWG (`awg-mgr`). В `src/common/preflight.sh`, `src/awg/setup.sh`, `src/system/firewall.sh`, `src/adguard/setup.sh` и `src/tui/wizard.sh` проверки протокольных флагов переведены на безопасный хелпер `is_true "${VAR:-0}"`, а в мастере автономного режима добавлены значения по умолчанию.
+  - Добавлена безопасная подстановка `${SUB_TITLE:-}` и `${SERVER_PREFIX:-}` в `src/awg/setup.sh` и `src/tui/wizard.sh` для предотвращения ошибок `unbound variable` при формировании `.env`.
 - **VLESS xHTTP H2C Stream-One в Nginx L7 Router:**
   - В `src/nginx/config.sh` директива `grpc_pass grpc://xray_xhttp_stream;` заменена на нативный HTTP/2 Cleartext (`proxy_pass http://xray_xhttp_stream;`) с отключенной буферизацией запросов (`proxy_buffering off;`, `proxy_request_buffering off;`).
   - Устранена критическая ошибка `HTTP 405 Method Not Allowed`, возникавшая при попытке Nginx обработать стандартный HTTP/2 stream xHTTP через gRPC-шлюз.

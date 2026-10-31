@@ -271,8 +271,8 @@ EOF_HELP
     AWG_V2_PORT="${AWG_V2_PORT:-8444}"
     AWG_PRIMARY_DNS="${AWG_PRIMARY_DNS:-9.9.9.9}"
     AWG_SECONDARY_DNS="${AWG_SECONDARY_DNS:-76.76.2.0}"
-    AWG_SUBNET_IP="${AWG_SUBNET_IP:-10.8.0.0}"
-    AWG_SUBNET_CIDR="${AWG_SUBNET_CIDR:-22}"
+    AWG_SUBNET_IP="${AWG_SUBNET_IP:-10.8.1.0}"
+    AWG_SUBNET_CIDR="${AWG_SUBNET_CIDR:-24}"
     AWG_HEADER_PROTECTION_KEY="${AWG_HEADER_PROTECTION_KEY:-}"
     AWG_RANDOM_TRAILERS="${AWG_RANDOM_TRAILERS:-false}"
     AWG_I1="${AWG_I1:-}"
@@ -891,6 +891,9 @@ EOF_CLEAN_JSON
 Файл обновлен: $(date '+%Y-%m-%d %H:%M:%S')
 =====================================================================
 Панель управления:     https://${PRIMARY_DOMAIN}${PANEL_PATH}
+Публичный порт панели: 443 (HTTPS)
+PANEL_PUBLIC_URL="https://${PRIMARY_DOMAIN}${PANEL_PATH%/}/"
+PANEL_EXTERNAL_PORT=443
 $([ -n "${DIAG_TOKEN:-}" ] && echo "Веб-диагностика (SSO): https://${PRIMARY_DOMAIN}${PANEL_PATH}diag")
 $([ -n "${DIAG_TOKEN:-}" ] && echo "Токен диагностики:     ${DIAG_TOKEN}")
 Логин администратора:   ${ADMIN_USERNAME:-admin}

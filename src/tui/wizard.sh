@@ -126,7 +126,7 @@ else
         echo -e "  ${YELLOW}━━━ Подтверждение параметров AmneziaWG ━━━${NC}"
         echo -e "    ${DIM}• Хост / Домен (Endpoint):${NC} ${GREEN}${BOLD}${AWG_SERVER_HOST}${NC}"
         echo -e "    ${DIM}• Внешний UDP-порт:${NC}        ${WHITE}${BOLD}${AWG_STANDALONE_PORT}/udp${NC}"
-        echo -e "    ${DIM}• Клиентская подсеть:${NC}      ${WHITE}10.8.0.0/22 (до 1022 клиентов)${NC}"
+        echo -e "    ${DIM}• Клиентская подсеть:${NC}      ${WHITE}${AWG_STANDALONE_SUBNET_IP:-10.8.0.0}/${AWG_STANDALONE_SUBNET_CIDR:-24} (до 253 клиентов)${NC}"
         echo -e "    ${DIM}• DNS-серверы:${NC}             ${WHITE}${AWG_PRIMARY_DNS}, ${AWG_SECONDARY_DNS}${NC}"
         echo -e "    ${DIM}• Профиль обфускации:${NC}      ${WHITE}AmneziaWG 3.1 (Jc=4, Jmin=40, Jmax=70, S1-S4=16, H1-H4)${NC}"
         echo -e "    ${DIM}• Служба на хосте:${NC}         ${GREEN}awg-quick@awg0${NC}"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # ==============================================================================
-# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v9.7.1 Universal
+# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v9.7.2 Universal
 # Nginx L4 Stream + 3X-UI + Unix Sockets + Native proxy_http_version 2 + 3 Decoys
 # ==============================================================================
 # Архитектура:
@@ -27,7 +27,7 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="v9.7.1"
+SCRIPT_VERSION="v9.7.2"
 
 
 # Checkpoints use stable step IDs and input signatures, independent of UI numbering.
@@ -1024,7 +1024,7 @@ generate_config_template() {
     local target_file="${1:-server-setup.env.example}"
     cat << 'EOF_CONF' > "$target_file"
 # ==============================================================================
-# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP.SH (v9.7.1 Universal)
+# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP.SH (v9.7.2 Universal)
 # ==============================================================================
 # Данный файл позволяет выполнять полностью автоматическую установку:
 # ./setup.sh --config server-setup.env --non-interactive --force
@@ -1080,6 +1080,9 @@ CLASSIC_SNI="dl.google.com"
 PANEL_PORT="10443"
 # Секретный URI-путь к веб-панели 3X-UI (если пусто, генерируется автоматически: panel-<32 hex>)
 PANEL_PATH=""
+# Публичный URL и внешний порт панели через Nginx Reverse Proxy:
+# PANEL_PUBLIC_URL="https://${PRIMARY_DOMAIN}/${PANEL_PATH}/"
+# PANEL_EXTERNAL_PORT="443"
 # Учетные данные администратора панели 3X-UI
 ADMIN_USERNAME="admin"
 ADMIN_PASSWORD=""
@@ -1139,9 +1142,11 @@ AWG_SERVER_HOST=""
 # Quad9 (9.9.9.9) и Control D Anycast (76.76.2.0) для защиты от DNS-спуфинга и высокой скорости в РФ
 AWG_PRIMARY_DNS="9.9.9.9"
 AWG_SECONDARY_DNS="76.76.2.0"
-# Подсеть /22 (10.8.0.0/22) с емкостью до 1022 клиентов
-AWG_SUBNET_IP="10.8.0.0"
-AWG_SUBNET_CIDR="22"
+# Изолированные подсети для предотвращения коллизий в гибридном режиме (3X-UI AWG и Standalone AWG):
+AWG_SUBNET_IP="10.8.1.0"
+AWG_SUBNET_CIDR="24"
+AWG_STANDALONE_SUBNET_IP="10.8.0.0"
+AWG_STANDALONE_SUBNET_CIDR="24"
 
 # --- 4.1. ПРОТОКОЛЫ 3X-UI (Shadowsocks 2022 / TUIC v5 / MTProxy) ---
 # Shadowsocks 2022 (L4 TCP/UDP, 2022-blake3-aes-256-gcm, инбаунд 3X-UI) [y/n]
@@ -1571,6 +1576,13 @@ if [ -f /etc/os-release ]; then
     fi
 else
     die "Не удалось определить параметры текущего дистрибутива ОС."
+fi
+
+# Обеспечение совместимости со средой Alpine Linux (bash, python3, iproute2, iptables)
+if [ -f /etc/alpine-release ] || [ "${ID:-}" = "alpine" ]; then
+    if ! command -v bash >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1 || ! command -v ip >/dev/null 2>&1 || ! command -v iptables >/dev/null 2>&1; then
+        apk update && apk add --no-cache bash python3 iproute2 iptables
+    fi
 fi
 
 # Унифицированные обертки для работы с пакетными менеджерами
@@ -2704,6 +2716,8 @@ REALITY_FALLBACK_PORT="${REALITY_FALLBACK_PORT:-9443}"
 
 PANEL_PORT="${PANEL_PORT:-10443}"
 PANEL_PATH="${_save_panel_path}"
+PANEL_PUBLIC_URL="https://${PRIMARY_DOMAIN:-}/${_save_panel_path}/"
+PANEL_EXTERNAL_PORT="443"
 ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
 SERVER_PREFIX="${SERVER_PREFIX:-Server}"
@@ -2745,8 +2759,10 @@ MTPROTO_ADTAG="${MTPROTO_ADTAG:-}"
 
 AWG_PRIMARY_DNS="${AWG_PRIMARY_DNS:-9.9.9.9}"
 AWG_SECONDARY_DNS="${AWG_SECONDARY_DNS:-76.76.2.0}"
-AWG_SUBNET_IP="${AWG_SUBNET_IP:-10.8.0.0}"
-AWG_SUBNET_CIDR="${AWG_SUBNET_CIDR:-22}"
+AWG_SUBNET_IP="${AWG_SUBNET_IP:-10.8.1.0}"
+AWG_SUBNET_CIDR="${AWG_SUBNET_CIDR:-24}"
+AWG_STANDALONE_SUBNET_IP="${AWG_STANDALONE_SUBNET_IP:-10.8.0.0}"
+AWG_STANDALONE_SUBNET_CIDR="${AWG_STANDALONE_SUBNET_CIDR:-24}"
 
 DECOY_MODE="${DECOY_MODE:-1}"
 AUTO_SETUP_3XUI="$auto_setup_3xui_save"
@@ -11463,13 +11479,13 @@ def find_next_ip():
             pass
 
     if not network:
-        subnet_ip = os.environ.get("AWG_SUBNET_IP", "10.8.0.0")
-        subnet_cidr = os.environ.get("AWG_SUBNET_CIDR", "22")
+        subnet_ip = os.environ.get("AWG_STANDALONE_SUBNET_IP") or os.environ.get("AWG_SUBNET_IP") or "10.8.0.0"
+        subnet_cidr = os.environ.get("AWG_STANDALONE_SUBNET_CIDR") or os.environ.get("AWG_SUBNET_CIDR") or "24"
         try:
             network = ipaddress.ip_network(f"{subnet_ip}/{subnet_cidr}", strict=False)
             server_ip = network.network_address + 1
         except Exception:
-            network = ipaddress.ip_network("10.8.0.0/22")
+            network = ipaddress.ip_network("10.8.0.0/24")
             server_ip = ipaddress.ip_address("10.8.0.1")
 
     used = set()
@@ -12210,6 +12226,75 @@ def get_client_uri(client_name: str):
 
     return {"ok": False, "mode": EXEC_MODE, "error": f"Client '{client_name}' configuration not found in {AWG_DIR}."}
 
+def update_firewall_port(new_port, old_port=None):
+    """
+    Updates firewall rules when AmneziaWG port is changed.
+    Uses persistent UFW rules if UFW is active, otherwise falls back to iptables.
+    """
+    new_p = int(new_port)
+    old_p = int(old_port) if (old_port and str(old_port).isdigit()) else None
+    ufw_active = False
+    try:
+        res = subprocess.run(["ufw", "status"], capture_output=True, text=True, timeout=5)
+        if "Status: active" in res.stdout:
+            ufw_active = True
+    except Exception:
+        pass
+
+    if ufw_active:
+        subprocess.run(["ufw", "allow", f"{new_p}/udp", "comment", "AmneziaWG UDP Port"], check=False)
+        if old_p and old_p != new_p:
+            subprocess.run(["ufw", "delete", "allow", f"{old_p}/udp"], check=False)
+        return {"method": "ufw", "port": new_p, "old_port": old_p}
+    else:
+        subprocess.run(["iptables", "-I", "INPUT", "-p", "udp", "--dport", str(new_p), "-j", "ACCEPT"], check=False)
+        return {"method": "iptables", "port": new_p, "old_port": old_p}
+
+def set_server_port(new_port_val):
+    if not new_port_val:
+        return {"ok": False, "error": "New port value is required"}
+    try:
+        new_p = int(new_port_val)
+        if not (1 <= new_p <= 65535):
+            return {"ok": False, "error": f"Invalid port: {new_port_val}"}
+    except ValueError:
+        return {"ok": False, "error": f"Invalid port: {new_port_val}"}
+
+    conf_path = Path("/etc/amnezia/amneziawg/awg0.conf")
+    old_port = None
+    if safe_exists(conf_path):
+        lines = conf_path.read_text(encoding="utf-8").splitlines()
+        new_lines = []
+        found = False
+        for line in lines:
+            if re.match(r"^\s*ListenPort\s*=", line, re.IGNORECASE):
+                old_port = line.split("=")[1].strip()
+                new_lines.append(f"ListenPort = {new_p}")
+                found = True
+            else:
+                new_lines.append(line)
+        if not found:
+            out = []
+            for line in new_lines:
+                out.append(line)
+                if line.strip().lower() == "[interface]":
+                    out.append(f"ListenPort = {new_p}")
+            new_lines = out
+        conf_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+
+    fw_res = update_firewall_port(new_p, old_port)
+    if EXEC_MODE == "container" and CONTAINER:
+        run_cmd(f"docker restart {CONTAINER}")
+    else:
+        run_cmd("systemctl restart awg-quick@awg0 2>/dev/null || true")
+
+    return {
+        "ok": True,
+        "old_port": old_port,
+        "new_port": new_p,
+        "firewall": fw_res
+    }
+
 # --- Main Entry Point with Universal JSON Exception Guard ---
 def main():
     action = sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith("-") else "status"
@@ -12352,6 +12437,14 @@ def main():
             res = check_status()
         elif action in ("set-preset", "preset"):
             res = {"ok": True, "mode": EXEC_MODE, "status": "preset_applied"}
+        elif action in ("set-port", "change-port"):
+            target_port = client_name
+            if not target_port:
+                for arg in args[1:]:
+                    if not arg.startswith("-"):
+                        target_port = arg
+                        break
+            res = set_server_port(target_port)
         else:
             res = get_stats()
 
@@ -12548,14 +12641,20 @@ EOF_AWG_CRYPTO
 
     # Запись скрипта-лаунчера
     cat << EOF_AWG_SH > "$awg_dir/manage-clients.sh"
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 AWG_DIR="\${AWG_DIR:-/root/awg}"
 PYTHON_BIN="\$(command -v python3 2>/dev/null || echo /usr/bin/python3)"
 [ -n "${awg_host}" ] && export SERVER_PUBLIC_HOST="\${SERVER_PUBLIC_HOST:-${awg_host}}"
 [ -n "${awg_port}" ] && export SERVER_PORT="\${SERVER_PORT:-${awg_port}}"
 [ -n "${SUB_TITLE:-}" ] && export SUB_TITLE="\${SUB_TITLE:-${SUB_TITLE:-}}"
 [ -n "${SERVER_PREFIX:-}" ] && export SERVER_PREFIX="\${SERVER_PREFIX:-${SERVER_PREFIX:-}}"
+
+# Прямой запуск при наличии скомпилированного бинарника (Point 6)
+if [ -x "\$AWG_DIR/awg-mgr" ] && [ ! -L "\$AWG_DIR/awg-mgr" ]; then
+    exec "\$AWG_DIR/awg-mgr" "\$@"
+fi
+
 exec "\$PYTHON_BIN" "\$AWG_DIR/manage_clients.py" "\$@"
 EOF_AWG_SH
     chmod 755 "$awg_dir/manage-clients.sh"
@@ -12567,10 +12666,16 @@ EOF_AWG_SH
     # Создание глобальных симлинков для удобного управления из консоли
     ln -sf "$awg_dir/manage-clients.sh" /usr/local/bin/awg-mgr 2>/dev/null || true
     ln -sf "$awg_dir/manage-clients.sh" /usr/local/bin/awg-cli 2>/dev/null || true
+    chmod 755 /usr/local/bin/awg-mgr /usr/local/bin/awg-cli 2>/dev/null || true
 
     # Настройка правил файрвола UFW
-    if command -v ufw >/dev/null 2>&1; then
-        ufw allow "${awg_port}/udp" comment "[vpn-stack] AmneziaWG Server Engine" >/dev/null 2>&1 || true
+    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+        ufw allow "${awg_port}/udp" comment "AmneziaWG UDP Port" >/dev/null 2>&1 || true
+        if [ -n "${OLD_AWG_PORT:-}" ] && [ "${OLD_AWG_PORT}" != "${awg_port}" ]; then
+            ufw delete allow "${OLD_AWG_PORT}/udp" >/dev/null 2>&1 || true
+        fi
+    else
+        command -v iptables >/dev/null 2>&1 && iptables -I INPUT -p udp --dport "${awg_port}" -j ACCEPT >/dev/null 2>&1 || true
     fi
 
     # Настройка периодической очистки просроченных клиентов (cron)
@@ -12837,7 +12942,7 @@ EOF_CRYPTO_PUB
             mkdir -p /etc/amnezia/amneziawg
             cat << EOF_AWG0 > /etc/amnezia/amneziawg/awg0.conf
 [Interface]
-Address = 10.8.0.1/22
+Address = 10.8.0.1/24
 ListenPort = ${awg_port}
 PrivateKey = ${srv_priv}
 MTU = 1280
@@ -13448,7 +13553,7 @@ setup_naive_service() {
         local caddy_tmp="/tmp/caddy_naive_$$"
         mkdir -p "$caddy_tmp"
         local rel_ver="${SCRIPT_VERSION:-v9.1.0}"
-        [[ "$rel_ver" == "v9.7.1" ]] && rel_ver="v9.1.0"
+        [[ "$rel_ver" == "v9.7.2" ]] && rel_ver="v9.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/caddy-naive-linux-${caddy_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
@@ -13618,7 +13723,7 @@ setup_dnstt_service() {
         local dnstt_tmp="/tmp/dnstt_$$"
         mkdir -p "$dnstt_tmp"
         local rel_ver="${SCRIPT_VERSION:-v9.1.0}"
-        [[ "$rel_ver" == "v9.7.1" ]] && rel_ver="v9.1.0"
+        [[ "$rel_ver" == "v9.7.2" ]] && rel_ver="v9.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/dnstt-server-linux-${dnstt_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
@@ -16591,9 +16696,11 @@ server {
         limit_req zone=panel burst=40 delay=20;
         proxy_pass http://127.0.0.1:$PANEL_PORT;
         proxy_set_header Host \$http_host;
+        proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Host \$http_host;
-        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Port 443;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection \$connection_upgrade;
@@ -16885,9 +16992,11 @@ server {
 
         proxy_pass http://127.0.0.1:$PANEL_PORT;
         proxy_set_header Host \$http_host;
+        proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Host \$http_host;
-        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Forwarded-Port 443;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection \$connection_upgrade;
@@ -18080,7 +18189,7 @@ def create_manifest(staging_dir: Union[str, Path], output_path: Optional[Union[s
     created_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     data = {
         "format_version": "2.0",
-        "project_version": os.environ.get("SCRIPT_VERSION", "v9.7.1"),
+        "project_version": os.environ.get("SCRIPT_VERSION", "v9.7.2"),
         "created_at": created_iso,
         "db_path": os.environ.get("DB_PATH", "/etc/x-ui/x-ui.db"),
         "files": files_map,
@@ -19322,8 +19431,8 @@ EOF_HELP
     AWG_V2_PORT="${AWG_V2_PORT:-8444}"
     AWG_PRIMARY_DNS="${AWG_PRIMARY_DNS:-9.9.9.9}"
     AWG_SECONDARY_DNS="${AWG_SECONDARY_DNS:-76.76.2.0}"
-    AWG_SUBNET_IP="${AWG_SUBNET_IP:-10.8.0.0}"
-    AWG_SUBNET_CIDR="${AWG_SUBNET_CIDR:-22}"
+    AWG_SUBNET_IP="${AWG_SUBNET_IP:-10.8.1.0}"
+    AWG_SUBNET_CIDR="${AWG_SUBNET_CIDR:-24}"
     AWG_HEADER_PROTECTION_KEY="${AWG_HEADER_PROTECTION_KEY:-}"
     AWG_RANDOM_TRAILERS="${AWG_RANDOM_TRAILERS:-false}"
     AWG_I1="${AWG_I1:-}"
@@ -19903,8 +20012,8 @@ enable_awg_v2 = os.environ.get("ENABLE_AWG_V2", "n").lower() in ("1", "y", "true
 awg_v2_port = int(os.environ.get("AWG_V2_PORT") or "8444")
 awg_primary_dns = os.environ.get("AWG_PRIMARY_DNS") or "9.9.9.9"
 awg_secondary_dns = os.environ.get("AWG_SECONDARY_DNS") or "76.76.2.0"
-awg_subnet_ip = os.environ.get("AWG_SUBNET_IP") or "10.8.0.0"
-awg_subnet_cidr = int(os.environ.get("AWG_SUBNET_CIDR") or "22")
+awg_subnet_ip = os.environ.get("AWG_SUBNET_IP") or "10.8.1.0"
+awg_subnet_cidr = int(os.environ.get("AWG_SUBNET_CIDR") or "24")
 awg_hpk_env = os.environ.get("AWG_HEADER_PROTECTION_KEY", "").strip()
 awg_random_trailers_env = os.environ.get("AWG_RANDOM_TRAILERS", "false").strip().lower() in ("1", "y", "true")
 
@@ -21483,7 +21592,7 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             target_settings["preferIp"] = "prefer-ipv4"
         if "externalProxy" in target_stream and isinstance(target_stream["externalProxy"], list) and len(target_stream["externalProxy"]) > 0:
             for ep in target_stream["externalProxy"]:
-                if protocol in ("shadowsocks", "mtproto", "amneziawg"):
+                if protocol in ("shadowsocks", "mtproto", "amneziawg", "wireguard"):
                     ep["forceTls"] = "none"
                 elif protocol == "vless" and "realitySettings" in target_stream:
                     ep["forceTls"] = "same"
@@ -21491,6 +21600,26 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
                     ep["forceTls"] = "tls"
                 if "alpn" in ep and isinstance(ep["alpn"], str):
                     ep["alpn"] = [ep["alpn"]] if ep["alpn"] else []
+
+        if protocol in ("amneziawg", "wireguard"):
+            if "externalProxy" in target_settings and isinstance(target_settings["externalProxy"], list) and len(target_settings["externalProxy"]) > 0:
+                pass
+            elif "externalProxy" in default_settings and isinstance(default_settings["externalProxy"], list) and len(default_settings["externalProxy"]) > 0:
+                target_settings["externalProxy"] = json.loads(json.dumps(default_settings["externalProxy"]))
+            elif "externalProxy" in target_stream and isinstance(target_stream["externalProxy"], list) and len(target_stream["externalProxy"]) > 0:
+                target_settings["externalProxy"] = [
+                    {
+                        "dest": ep.get("dest") or globals().get("domain", ""),
+                        "port": ep.get("port") or port,
+                        "forceTls": "same",
+                        "remark": ep.get("remark") or remark
+                    }
+                    for ep in target_stream["externalProxy"]
+                ]
+            else:
+                cur_dom = globals().get("domain", "")
+                if cur_dom:
+                    target_settings["externalProxy"] = [{"dest": cur_dom, "port": port, "forceTls": "same", "remark": remark}]
 
         settings_json = json.dumps(target_settings, ensure_ascii=False)
         stream_json = json.dumps(target_stream, ensure_ascii=False)
@@ -22055,7 +22184,7 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
                 if ext_dest != cur_domain and ext_dest != def_dest:
                     preserved.append(f"кастомный хост узла ({ext_dest})")
 
-    if protocol in ("shadowsocks", "mtproto", "amneziawg"):
+    if protocol in ("shadowsocks", "mtproto", "amneziawg", "wireguard"):
         force_tls_val = "none"
     elif protocol == "vless" and "realitySettings" in target_stream:
         force_tls_val = "same"
@@ -22154,6 +22283,34 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
         for ep in target_stream["externalProxy"]:
             if isinstance(ep, dict) and "alpn" in ep and isinstance(ep["alpn"], str):
                 ep["alpn"] = [ep["alpn"]] if ep["alpn"] else []
+
+    # Для AmneziaWG/WireGuard в 3X-UI externalProxy сохраняется в settings для генерации клиентских Endpoint
+    if protocol in ("amneziawg", "wireguard"):
+        cur_s_ext = cur_settings.get("externalProxy")
+        if not cur_s_ext or not isinstance(cur_s_ext, list) or len(cur_s_ext) == 0:
+            target_settings["externalProxy"] = [{
+                "dest": target_dest,
+                "port": expected_ext_port,
+                "forceTls": "same",
+                "remark": final_remark
+            }]
+            repairs.append(f"настроен externalProxy в settings инбаунда {final_remark} -> {target_dest}:{expected_ext_port}")
+        else:
+            first_ep = cur_s_ext[0] if isinstance(cur_s_ext[0], dict) else {}
+            if (
+                first_ep.get("dest") in ("127.0.0.1", "localhost", "0.0.0.0", "")
+                or first_ep.get("port") != expected_ext_port
+                or (target_dest and first_ep.get("dest") != target_dest and first_ep.get("dest") != cur_domain)
+            ):
+                target_settings["externalProxy"] = [{
+                    "dest": target_dest or first_ep.get("dest") or cur_domain,
+                    "port": expected_ext_port,
+                    "forceTls": first_ep.get("forceTls") or "same",
+                    "remark": final_remark
+                }]
+                repairs.append(f"исправлен externalProxy в settings инбаунда {final_remark} -> {target_dest}:{expected_ext_port}")
+            else:
+                target_settings["externalProxy"] = cur_s_ext
 
     # Синхронизация клиентов в реестре (client_traffics, clients, client_inbounds)
     if "sync_inbound_clients" in globals():
@@ -22369,9 +22526,17 @@ if enable_awg_v3:
             "maxHandshakeAttempts": "20-25",
             "subnetCidr": awg_subnet_cidr, "subnetIp": awg_subnet_ip,
             "i1": awg_i1_env
-        }
+        },
+        "externalProxy": [
+            {
+                "dest": domain,
+                "port": awg_v3_port,
+                "forceTls": "same",
+                "remark": make_remark("AmneziaWG v3")
+            }
+        ]
     }
-    a3_str = {"externalProxy": [{"dest": domain, "port": awg_v3_port, "remark": make_remark("AmneziaWG v3")}]}
+    a3_str = {"externalProxy": [{"dest": domain, "port": awg_v3_port, "forceTls": "same", "remark": make_remark("AmneziaWG v3")}]}
     awg_v3_remark = make_remark("AmneziaWG v3")
     smart_reconcile_inbound(awg_v3_port, "amneziawg", "in-8443-udp", awg_v3_remark, a3_set, a3_str, listen="0.0.0.0")
 
@@ -22390,9 +22555,17 @@ if enable_awg_v2:
             "privateKey": def_wg_s_priv, "publicKey": def_wg_s_pub,
             "s1": 16, "s2": 20, "s3": 24, "s4": 16,
             "subnetCidr": 24, "subnetIp": "10.8.2.0"
-        }
+        },
+        "externalProxy": [
+            {
+                "dest": domain,
+                "port": awg_v2_port,
+                "forceTls": "same",
+                "remark": make_remark("AmneziaWG v2")
+            }
+        ]
     }
-    a2_str = {"externalProxy": [{"dest": domain, "port": awg_v2_port, "remark": make_remark("AmneziaWG v2")}]}
+    a2_str = {"externalProxy": [{"dest": domain, "port": awg_v2_port, "forceTls": "same", "remark": make_remark("AmneziaWG v2")}]}
     awg_v2_remark = make_remark("AmneziaWG v2")
     smart_reconcile_inbound(awg_v2_port, "amneziawg", "in-awg-v2", awg_v2_remark, a2_set, a2_str, listen="0.0.0.0")
 
@@ -23338,6 +23511,9 @@ EOF_CLEAN_JSON
 Файл обновлен: $(date '+%Y-%m-%d %H:%M:%S')
 =====================================================================
 Панель управления:     https://${PRIMARY_DOMAIN}${PANEL_PATH}
+Публичный порт панели: 443 (HTTPS)
+PANEL_PUBLIC_URL="https://${PRIMARY_DOMAIN}${PANEL_PATH%/}/"
+PANEL_EXTERNAL_PORT=443
 $([ -n "${DIAG_TOKEN:-}" ] && echo "Веб-диагностика (SSO): https://${PRIMARY_DOMAIN}${PANEL_PATH}diag")
 $([ -n "${DIAG_TOKEN:-}" ] && echo "Токен диагностики:     ${DIAG_TOKEN}")
 Логин администратора:   ${ADMIN_USERNAME:-admin}
@@ -23801,10 +23977,16 @@ install_step_awg() {
         ensure_amneziawg_installed
         setup_amneziawg_controller
         deploy_amneziawg_backend
-        if command -v ufw >/dev/null 2>&1; then
-            awg_p="${AWG_STANDALONE_PORT:-8445}"
-            ufw allow "${awg_p}/udp" comment "[vpn-stack] AmneziaWG Standalone Server" >/dev/null 2>&1 || true
-            ok "Правило файрвола: разрешен порт ${awg_p}/udp (AmneziaWG)"
+        awg_p="${AWG_STANDALONE_PORT:-8445}"
+        if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+            ufw allow "${awg_p}/udp" comment "AmneziaWG UDP Port" >/dev/null 2>&1 || true
+            if [ -n "${OLD_AWG_PORT:-}" ] && [ "${OLD_AWG_PORT}" != "${awg_p}" ]; then
+                ufw delete allow "${OLD_AWG_PORT}/udp" >/dev/null 2>&1 || true
+            fi
+            ok "Правило файрвола UFW: разрешен порт ${awg_p}/udp (AmneziaWG)"
+        else
+            command -v iptables >/dev/null 2>&1 && iptables -I INPUT -p udp --dport "${awg_p}" -j ACCEPT >/dev/null 2>&1 || true
+            ok "Правило файрвола iptables: разрешен порт ${awg_p}/udp (AmneziaWG)"
         fi
 }
 install_step_verify() {
@@ -24124,7 +24306,7 @@ echo -e "    * Порядок в подписке: ${GREEN}1${NC} | Порт: ${
 echo -e "    * Общий расход: ${GREEN}0${NC} | Сброс трафика: ${GREEN}Никогда${NC}"
 echo -e "  - ${YELLOW}Вкладка «Протокол»:${NC}"
 echo -e "    * Ключи: нажать ${CYAN}«Сгенерировать»${NC} (иконка обновления рядом с приватным ключом)"
-echo -e "    * Сеть: Подсеть: ${GREEN}10.8.0.0${NC} | Маска подсети (CIDR): ${GREEN}22${NC} | MTU: ${GREEN}1280${NC}"
+echo -e "    * Сеть: Подсеть: ${GREEN}${AWG_SUBNET_IP:-10.8.1.0}${NC} | Маска подсети (CIDR): ${GREEN}${AWG_SUBNET_CIDR:-24}${NC} | MTU: ${GREEN}1280${NC}"
 echo -e "    * DNS: Основной DNS: ${GREEN}9.9.9.9${NC} | Резервный DNS: ${GREEN}76.76.2.0${NC}"
 echo -e "    * Внешний интерфейс: ${GREEN}eth0${NC} (или оставить пустым) | Включить IPv6: ${RED}Выключить${NC}"
 echo -e "  - ${YELLOW}Параметры обфускации:${NC}"
@@ -24506,7 +24688,7 @@ else
         echo -e "  ${YELLOW}━━━ Подтверждение параметров AmneziaWG ━━━${NC}"
         echo -e "    ${DIM}• Хост / Домен (Endpoint):${NC} ${GREEN}${BOLD}${AWG_SERVER_HOST}${NC}"
         echo -e "    ${DIM}• Внешний UDP-порт:${NC}        ${WHITE}${BOLD}${AWG_STANDALONE_PORT}/udp${NC}"
-        echo -e "    ${DIM}• Клиентская подсеть:${NC}      ${WHITE}10.8.0.0/22 (до 1022 клиентов)${NC}"
+        echo -e "    ${DIM}• Клиентская подсеть:${NC}      ${WHITE}${AWG_STANDALONE_SUBNET_IP:-10.8.0.0}/${AWG_STANDALONE_SUBNET_CIDR:-24} (до 253 клиентов)${NC}"
         echo -e "    ${DIM}• DNS-серверы:${NC}             ${WHITE}${AWG_PRIMARY_DNS}, ${AWG_SECONDARY_DNS}${NC}"
         echo -e "    ${DIM}• Профиль обфускации:${NC}      ${WHITE}AmneziaWG 3.1 (Jc=4, Jmin=40, Jmax=70, S1-S4=16, H1-H4)${NC}"
         echo -e "    ${DIM}• Служба на хосте:${NC}         ${GREEN}awg-quick@awg0${NC}"

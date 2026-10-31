@@ -25,7 +25,7 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             target_settings["preferIp"] = "prefer-ipv4"
         if "externalProxy" in target_stream and isinstance(target_stream["externalProxy"], list) and len(target_stream["externalProxy"]) > 0:
             for ep in target_stream["externalProxy"]:
-                if protocol in ("shadowsocks", "mtproto", "amneziawg"):
+                if protocol in ("shadowsocks", "mtproto", "amneziawg", "wireguard"):
                     ep["forceTls"] = "none"
                 elif protocol == "vless" and "realitySettings" in target_stream:
                     ep["forceTls"] = "same"
@@ -33,6 +33,26 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
                     ep["forceTls"] = "tls"
                 if "alpn" in ep and isinstance(ep["alpn"], str):
                     ep["alpn"] = [ep["alpn"]] if ep["alpn"] else []
+
+        if protocol in ("amneziawg", "wireguard"):
+            if "externalProxy" in target_settings and isinstance(target_settings["externalProxy"], list) and len(target_settings["externalProxy"]) > 0:
+                pass
+            elif "externalProxy" in default_settings and isinstance(default_settings["externalProxy"], list) and len(default_settings["externalProxy"]) > 0:
+                target_settings["externalProxy"] = json.loads(json.dumps(default_settings["externalProxy"]))
+            elif "externalProxy" in target_stream and isinstance(target_stream["externalProxy"], list) and len(target_stream["externalProxy"]) > 0:
+                target_settings["externalProxy"] = [
+                    {
+                        "dest": ep.get("dest") or globals().get("domain", ""),
+                        "port": ep.get("port") or port,
+                        "forceTls": "same",
+                        "remark": ep.get("remark") or remark
+                    }
+                    for ep in target_stream["externalProxy"]
+                ]
+            else:
+                cur_dom = globals().get("domain", "")
+                if cur_dom:
+                    target_settings["externalProxy"] = [{"dest": cur_dom, "port": port, "forceTls": "same", "remark": remark}]
 
         settings_json = json.dumps(target_settings, ensure_ascii=False)
         stream_json = json.dumps(target_stream, ensure_ascii=False)
@@ -597,7 +617,7 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
                 if ext_dest != cur_domain and ext_dest != def_dest:
                     preserved.append(f"кастомный хост узла ({ext_dest})")
 
-    if protocol in ("shadowsocks", "mtproto", "amneziawg"):
+    if protocol in ("shadowsocks", "mtproto", "amneziawg", "wireguard"):
         force_tls_val = "none"
     elif protocol == "vless" and "realitySettings" in target_stream:
         force_tls_val = "same"
@@ -696,6 +716,34 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
         for ep in target_stream["externalProxy"]:
             if isinstance(ep, dict) and "alpn" in ep and isinstance(ep["alpn"], str):
                 ep["alpn"] = [ep["alpn"]] if ep["alpn"] else []
+
+    # Для AmneziaWG/WireGuard в 3X-UI externalProxy сохраняется в settings для генерации клиентских Endpoint
+    if protocol in ("amneziawg", "wireguard"):
+        cur_s_ext = cur_settings.get("externalProxy")
+        if not cur_s_ext or not isinstance(cur_s_ext, list) or len(cur_s_ext) == 0:
+            target_settings["externalProxy"] = [{
+                "dest": target_dest,
+                "port": expected_ext_port,
+                "forceTls": "same",
+                "remark": final_remark
+            }]
+            repairs.append(f"настроен externalProxy в settings инбаунда {final_remark} -> {target_dest}:{expected_ext_port}")
+        else:
+            first_ep = cur_s_ext[0] if isinstance(cur_s_ext[0], dict) else {}
+            if (
+                first_ep.get("dest") in ("127.0.0.1", "localhost", "0.0.0.0", "")
+                or first_ep.get("port") != expected_ext_port
+                or (target_dest and first_ep.get("dest") != target_dest and first_ep.get("dest") != cur_domain)
+            ):
+                target_settings["externalProxy"] = [{
+                    "dest": target_dest or first_ep.get("dest") or cur_domain,
+                    "port": expected_ext_port,
+                    "forceTls": first_ep.get("forceTls") or "same",
+                    "remark": final_remark
+                }]
+                repairs.append(f"исправлен externalProxy в settings инбаунда {final_remark} -> {target_dest}:{expected_ext_port}")
+            else:
+                target_settings["externalProxy"] = cur_s_ext
 
     # Синхронизация клиентов в реестре (client_traffics, clients, client_inbounds)
     if "sync_inbound_clients" in globals():

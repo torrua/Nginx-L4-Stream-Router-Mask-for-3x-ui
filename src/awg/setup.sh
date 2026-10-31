@@ -213,14 +213,20 @@ EOF_AWG_CRYPTO
 
     # Запись скрипта-лаунчера
     cat << EOF_AWG_SH > "$awg_dir/manage-clients.sh"
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 AWG_DIR="\${AWG_DIR:-/root/awg}"
 PYTHON_BIN="\$(command -v python3 2>/dev/null || echo /usr/bin/python3)"
 [ -n "${awg_host}" ] && export SERVER_PUBLIC_HOST="\${SERVER_PUBLIC_HOST:-${awg_host}}"
 [ -n "${awg_port}" ] && export SERVER_PORT="\${SERVER_PORT:-${awg_port}}"
 [ -n "${SUB_TITLE:-}" ] && export SUB_TITLE="\${SUB_TITLE:-${SUB_TITLE:-}}"
 [ -n "${SERVER_PREFIX:-}" ] && export SERVER_PREFIX="\${SERVER_PREFIX:-${SERVER_PREFIX:-}}"
+
+# Прямой запуск при наличии скомпилированного бинарника (Point 6)
+if [ -x "\$AWG_DIR/awg-mgr" ] && [ ! -L "\$AWG_DIR/awg-mgr" ]; then
+    exec "\$AWG_DIR/awg-mgr" "\$@"
+fi
+
 exec "\$PYTHON_BIN" "\$AWG_DIR/manage_clients.py" "\$@"
 EOF_AWG_SH
     chmod 755 "$awg_dir/manage-clients.sh"
@@ -232,10 +238,16 @@ EOF_AWG_SH
     # Создание глобальных симлинков для удобного управления из консоли
     ln -sf "$awg_dir/manage-clients.sh" /usr/local/bin/awg-mgr 2>/dev/null || true
     ln -sf "$awg_dir/manage-clients.sh" /usr/local/bin/awg-cli 2>/dev/null || true
+    chmod 755 /usr/local/bin/awg-mgr /usr/local/bin/awg-cli 2>/dev/null || true
 
     # Настройка правил файрвола UFW
-    if command -v ufw >/dev/null 2>&1; then
-        ufw allow "${awg_port}/udp" comment "[vpn-stack] AmneziaWG Server Engine" >/dev/null 2>&1 || true
+    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
+        ufw allow "${awg_port}/udp" comment "AmneziaWG UDP Port" >/dev/null 2>&1 || true
+        if [ -n "${OLD_AWG_PORT:-}" ] && [ "${OLD_AWG_PORT}" != "${awg_port}" ]; then
+            ufw delete allow "${OLD_AWG_PORT}/udp" >/dev/null 2>&1 || true
+        fi
+    else
+        command -v iptables >/dev/null 2>&1 && iptables -I INPUT -p udp --dport "${awg_port}" -j ACCEPT >/dev/null 2>&1 || true
     fi
 
     # Настройка периодической очистки просроченных клиентов (cron)
@@ -348,7 +360,7 @@ EOF_CRYPTO_PUB
             mkdir -p /etc/amnezia/amneziawg
             cat << EOF_AWG0 > /etc/amnezia/amneziawg/awg0.conf
 [Interface]
-Address = 10.8.0.1/22
+Address = 10.8.0.1/24
 ListenPort = ${awg_port}
 PrivateKey = ${srv_priv}
 MTU = 1280

@@ -23,6 +23,13 @@ else
     die "Не удалось определить параметры текущего дистрибутива ОС."
 fi
 
+# Обеспечение совместимости со средой Alpine Linux (bash, python3, iproute2, iptables)
+if [ -f /etc/alpine-release ] || [ "${ID:-}" = "alpine" ]; then
+    if ! command -v bash >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1 || ! command -v ip >/dev/null 2>&1 || ! command -v iptables >/dev/null 2>&1; then
+        apk update && apk add --no-cache bash python3 iproute2 iptables
+    fi
+fi
+
 # Унифицированные обертки для работы с пакетными менеджерами
 pkg_update() {
     if command -v apk >/dev/null 2>&1; then

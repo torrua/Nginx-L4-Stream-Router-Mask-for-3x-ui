@@ -779,13 +779,13 @@ def find_next_ip():
             pass
 
     if not network:
-        subnet_ip = os.environ.get("AWG_SUBNET_IP", "10.8.0.0")
-        subnet_cidr = os.environ.get("AWG_SUBNET_CIDR", "22")
+        subnet_ip = os.environ.get("AWG_STANDALONE_SUBNET_IP") or os.environ.get("AWG_SUBNET_IP") or "10.8.0.0"
+        subnet_cidr = os.environ.get("AWG_STANDALONE_SUBNET_CIDR") or os.environ.get("AWG_SUBNET_CIDR") or "24"
         try:
             network = ipaddress.ip_network(f"{subnet_ip}/{subnet_cidr}", strict=False)
             server_ip = network.network_address + 1
         except Exception:
-            network = ipaddress.ip_network("10.8.0.0/22")
+            network = ipaddress.ip_network("10.8.0.0/24")
             server_ip = ipaddress.ip_address("10.8.0.1")
 
     used = set()
@@ -1526,6 +1526,75 @@ def get_client_uri(client_name: str):
 
     return {"ok": False, "mode": EXEC_MODE, "error": f"Client '{client_name}' configuration not found in {AWG_DIR}."}
 
+def update_firewall_port(new_port, old_port=None):
+    """
+    Updates firewall rules when AmneziaWG port is changed.
+    Uses persistent UFW rules if UFW is active, otherwise falls back to iptables.
+    """
+    new_p = int(new_port)
+    old_p = int(old_port) if (old_port and str(old_port).isdigit()) else None
+    ufw_active = False
+    try:
+        res = subprocess.run(["ufw", "status"], capture_output=True, text=True, timeout=5)
+        if "Status: active" in res.stdout:
+            ufw_active = True
+    except Exception:
+        pass
+
+    if ufw_active:
+        subprocess.run(["ufw", "allow", f"{new_p}/udp", "comment", "AmneziaWG UDP Port"], check=False)
+        if old_p and old_p != new_p:
+            subprocess.run(["ufw", "delete", "allow", f"{old_p}/udp"], check=False)
+        return {"method": "ufw", "port": new_p, "old_port": old_p}
+    else:
+        subprocess.run(["iptables", "-I", "INPUT", "-p", "udp", "--dport", str(new_p), "-j", "ACCEPT"], check=False)
+        return {"method": "iptables", "port": new_p, "old_port": old_p}
+
+def set_server_port(new_port_val):
+    if not new_port_val:
+        return {"ok": False, "error": "New port value is required"}
+    try:
+        new_p = int(new_port_val)
+        if not (1 <= new_p <= 65535):
+            return {"ok": False, "error": f"Invalid port: {new_port_val}"}
+    except ValueError:
+        return {"ok": False, "error": f"Invalid port: {new_port_val}"}
+
+    conf_path = Path("/etc/amnezia/amneziawg/awg0.conf")
+    old_port = None
+    if safe_exists(conf_path):
+        lines = conf_path.read_text(encoding="utf-8").splitlines()
+        new_lines = []
+        found = False
+        for line in lines:
+            if re.match(r"^\s*ListenPort\s*=", line, re.IGNORECASE):
+                old_port = line.split("=")[1].strip()
+                new_lines.append(f"ListenPort = {new_p}")
+                found = True
+            else:
+                new_lines.append(line)
+        if not found:
+            out = []
+            for line in new_lines:
+                out.append(line)
+                if line.strip().lower() == "[interface]":
+                    out.append(f"ListenPort = {new_p}")
+            new_lines = out
+        conf_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+
+    fw_res = update_firewall_port(new_p, old_port)
+    if EXEC_MODE == "container" and CONTAINER:
+        run_cmd(f"docker restart {CONTAINER}")
+    else:
+        run_cmd("systemctl restart awg-quick@awg0 2>/dev/null || true")
+
+    return {
+        "ok": True,
+        "old_port": old_port,
+        "new_port": new_p,
+        "firewall": fw_res
+    }
+
 # --- Main Entry Point with Universal JSON Exception Guard ---
 def main():
     action = sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith("-") else "status"
@@ -1668,6 +1737,14 @@ def main():
             res = check_status()
         elif action in ("set-preset", "preset"):
             res = {"ok": True, "mode": EXEC_MODE, "status": "preset_applied"}
+        elif action in ("set-port", "change-port"):
+            target_port = client_name
+            if not target_port:
+                for arg in args[1:]:
+                    if not arg.startswith("-"):
+                        target_port = arg
+                        break
+            res = set_server_port(target_port)
         else:
             res = get_stats()
 

@@ -218,8 +218,8 @@ enable_awg_v2 = os.environ.get("ENABLE_AWG_V2", "n").lower() in ("1", "y", "true
 awg_v2_port = int(os.environ.get("AWG_V2_PORT") or "8444")
 awg_primary_dns = os.environ.get("AWG_PRIMARY_DNS") or "9.9.9.9"
 awg_secondary_dns = os.environ.get("AWG_SECONDARY_DNS") or "76.76.2.0"
-awg_subnet_ip = os.environ.get("AWG_SUBNET_IP") or "10.8.0.0"
-awg_subnet_cidr = int(os.environ.get("AWG_SUBNET_CIDR") or "22")
+awg_subnet_ip = os.environ.get("AWG_SUBNET_IP") or "10.8.1.0"
+awg_subnet_cidr = int(os.environ.get("AWG_SUBNET_CIDR") or "24")
 awg_hpk_env = os.environ.get("AWG_HEADER_PROTECTION_KEY", "").strip()
 awg_random_trailers_env = os.environ.get("AWG_RANDOM_TRAILERS", "false").strip().lower() in ("1", "y", "true")
 
@@ -1404,9 +1404,17 @@ if enable_awg_v3:
             "maxHandshakeAttempts": "20-25",
             "subnetCidr": awg_subnet_cidr, "subnetIp": awg_subnet_ip,
             "i1": awg_i1_env
-        }
+        },
+        "externalProxy": [
+            {
+                "dest": domain,
+                "port": awg_v3_port,
+                "forceTls": "same",
+                "remark": make_remark("AmneziaWG v3")
+            }
+        ]
     }
-    a3_str = {"externalProxy": [{"dest": domain, "port": awg_v3_port, "remark": make_remark("AmneziaWG v3")}]}
+    a3_str = {"externalProxy": [{"dest": domain, "port": awg_v3_port, "forceTls": "same", "remark": make_remark("AmneziaWG v3")}]}
     awg_v3_remark = make_remark("AmneziaWG v3")
     smart_reconcile_inbound(awg_v3_port, "amneziawg", "in-8443-udp", awg_v3_remark, a3_set, a3_str, listen="0.0.0.0")
 
@@ -1425,9 +1433,17 @@ if enable_awg_v2:
             "privateKey": def_wg_s_priv, "publicKey": def_wg_s_pub,
             "s1": 16, "s2": 20, "s3": 24, "s4": 16,
             "subnetCidr": 24, "subnetIp": "10.8.2.0"
-        }
+        },
+        "externalProxy": [
+            {
+                "dest": domain,
+                "port": awg_v2_port,
+                "forceTls": "same",
+                "remark": make_remark("AmneziaWG v2")
+            }
+        ]
     }
-    a2_str = {"externalProxy": [{"dest": domain, "port": awg_v2_port, "remark": make_remark("AmneziaWG v2")}]}
+    a2_str = {"externalProxy": [{"dest": domain, "port": awg_v2_port, "forceTls": "same", "remark": make_remark("AmneziaWG v2")}]}
     awg_v2_remark = make_remark("AmneziaWG v2")
     smart_reconcile_inbound(awg_v2_port, "amneziawg", "in-awg-v2", awg_v2_remark, a2_set, a2_str, listen="0.0.0.0")
 

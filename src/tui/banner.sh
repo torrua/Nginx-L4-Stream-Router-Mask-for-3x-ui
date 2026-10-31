@@ -145,6 +145,9 @@ CLASSIC_SNI="dl.google.com"
 PANEL_PORT="10443"
 # Секретный URI-путь к веб-панели 3X-UI (если пусто, генерируется автоматически: panel-<32 hex>)
 PANEL_PATH=""
+# Публичный URL и внешний порт панели через Nginx Reverse Proxy:
+# PANEL_PUBLIC_URL="https://${PRIMARY_DOMAIN}/${PANEL_PATH}/"
+# PANEL_EXTERNAL_PORT="443"
 # Учетные данные администратора панели 3X-UI
 ADMIN_USERNAME="admin"
 ADMIN_PASSWORD=""
@@ -204,9 +207,11 @@ AWG_SERVER_HOST=""
 # Quad9 (9.9.9.9) и Control D Anycast (76.76.2.0) для защиты от DNS-спуфинга и высокой скорости в РФ
 AWG_PRIMARY_DNS="9.9.9.9"
 AWG_SECONDARY_DNS="76.76.2.0"
-# Подсеть /22 (10.8.0.0/22) с емкостью до 1022 клиентов
-AWG_SUBNET_IP="10.8.0.0"
-AWG_SUBNET_CIDR="22"
+# Изолированные подсети для предотвращения коллизий в гибридном режиме (3X-UI AWG и Standalone AWG):
+AWG_SUBNET_IP="10.8.1.0"
+AWG_SUBNET_CIDR="24"
+AWG_STANDALONE_SUBNET_IP="10.8.0.0"
+AWG_STANDALONE_SUBNET_CIDR="24"
 
 # --- 4.1. ПРОТОКОЛЫ 3X-UI (Shadowsocks 2022 / TUIC v5 / MTProxy) ---
 # Shadowsocks 2022 (L4 TCP/UDP, 2022-blake3-aes-256-gcm, инбаунд 3X-UI) [y/n]

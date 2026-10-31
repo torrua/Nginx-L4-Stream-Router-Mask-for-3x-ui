@@ -7,6 +7,33 @@
 
 ---
 
+## [9.7.2] - 2026-10-31
+
+### Исправлено и улучшено
+- **Публичный адрес и порт 443 для веб-панели 3X-UI через Nginx Reverse Proxy:**
+  - В конфигурации Nginx (`location ^~ ${PANEL_PATH}`) добавлены обязательные прокси-заголовки `proxy_set_header X-Real-IP $remote_addr;`, `proxy_set_header X-Forwarded-Proto https;` и `proxy_set_header X-Forwarded-Port 443;` для корректного определения протокола и порта внешними клиентами и веб-интерфейсом 3X-UI.
+  - В файлы артефактов (`/root/vpn_credentials.txt` и `server-setup.env`) добавлен явный экспорт публичного адреса панели и внешнего порта: `PANEL_PUBLIC_URL="https://${PRIMARY_DOMAIN}/${PANEL_PATH}/"` и `PANEL_EXTERNAL_PORT=443`.
+- **Полная совместимость со средой Alpine Linux (BusyBox ash и отсутствие /bin/bash):**
+  - В bootstrap-скриптах и preflight (`src/system/packages.sh`) добавлена гарантированная установка необходимых базовых пакетов: `apk update && apk add --no-cache bash python3 iproute2 iptables`.
+  - Скрипт запуска контроллера AmneziaWG (`src/awg/manage-clients.sh` и шаблон в `src/awg/setup.sh`) переписан на чистый POSIX `/bin/sh` с `set -eu` без башизмов, предотвращая падение с кодом rc=127 (`ash: /bin/bash: not found`).
+- **Маскировка Endpoint для инбаунда AmneziaWG в 3X-UI (`externalProxy` в `settings`):**
+  - При создании и реконсиляции инбаунда AmneziaWG/WireGuard в `x-ui.db` в JSON-поле `settings` теперь гарантированно прописывается массив `externalProxy` с публичным доменом сервера: `[{"dest": "${DOMAIN}", "port": 8443, "forceTls": "same"}]`.
+  - Предотвращено раскрытие прямого IP VPS или 127.0.0.1 в клиентских строках `Endpoint = ...` и QR-кодах, генерируемых панелью 3X-UI.
+- **Изоляция подсетей в гибридном режиме (Standalone AWG + 3X-UI AWG):**
+  - Устранена коллизия сетевых подсетей при одновременном запуске автономного AmneziaWG (UDP 8445) и AmneziaWG в 3X-UI (UDP 8443).
+  - Выделены независимые адресные пространства `/24`:
+    - Standalone AmneziaWG (`awg-mgr`): `10.8.0.0/24` (шлюз `10.8.0.1`, клиенты `10.8.0.2`–`10.8.0.254`).
+    - 3X-UI AmneziaWG v3.1: `10.8.1.0/24` (шлюз `10.8.1.1`, клиенты `10.8.1.2`–`10.8.1.254`).
+    - 3X-UI AmneziaWG v2.0: `10.8.2.0/24` (шлюз `10.8.2.1`).
+- **Персистентность правил файрвола UFW при смене портов AmneziaWG:**
+  - В модуль контроллера (`src/awg/manage_clients.py`) добавлена поддержка команды `set-port` / `change-port` с вызовом функции `update_firewall_port()`.
+  - Реализована проверка статуса `ufw status | grep -q "Status: active"`: при активном UFW правила сохраняются через `ufw allow ${NEW_PORT}/udp` с автоматическим удалением старого порта `ufw delete allow ${OLD_PORT}/udp`, что гарантирует сохранение доступности после перезагрузки сервера. При отсутствии UFW выполняется fallback на `iptables`.
+- **Исполняемые права и запуск скомпилированных бинарных контроллеров (`awg-mgr`):**
+  - В `src/awg/setup.sh` гарантировано выставление прав `chmod 755 /usr/local/bin/awg-mgr /usr/local/bin/awg-cli`.
+  - В `manage-clients.sh` поддержан прямой запуск бинарника (`exec "$AWG_DIR/awg-mgr" "$@"`) без передачи скриптов интерпретаторам `bash` или `sh`, что предотвращает ошибку `Exec format error` при использовании ELF-бинарников.
+
+---
+
 ## [9.7.1] - 2026-10-29
 
 ### Исправлено и улучшено

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  CONFIGURE 3X-UI INBOUNDS & SETTINGS (v9.7.1 Universal Companion & Smart Reconcile)
+#  CONFIGURE 3X-UI INBOUNDS & SETTINGS (v9.7.2 Universal Companion & Smart Reconcile)
 # ==============================================================================
 #  Скрипт автоматического конфигурирования и самовосстановления базы 3X-UI.
 #  Безопасен для повторного запуска:
@@ -1058,7 +1058,7 @@ def create_manifest(staging_dir: Union[str, Path], output_path: Optional[Union[s
     created_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     data = {
         "format_version": "2.0",
-        "project_version": os.environ.get("SCRIPT_VERSION", "v9.7.1"),
+        "project_version": os.environ.get("SCRIPT_VERSION", "v9.7.2"),
         "created_at": created_iso,
         "db_path": os.environ.get("DB_PATH", "/etc/x-ui/x-ui.db"),
         "files": files_map,
@@ -2720,7 +2720,7 @@ def create_manifest(staging_dir: Union[str, Path], output_path: Optional[Union[s
     created_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     data = {
         "format_version": "2.0",
-        "project_version": os.environ.get("SCRIPT_VERSION", "v9.7.1"),
+        "project_version": os.environ.get("SCRIPT_VERSION", "v9.7.2"),
         "created_at": created_iso,
         "db_path": os.environ.get("DB_PATH", "/etc/x-ui/x-ui.db"),
         "files": files_map,
@@ -3962,8 +3962,8 @@ EOF_HELP
     AWG_V2_PORT="${AWG_V2_PORT:-8444}"
     AWG_PRIMARY_DNS="${AWG_PRIMARY_DNS:-9.9.9.9}"
     AWG_SECONDARY_DNS="${AWG_SECONDARY_DNS:-76.76.2.0}"
-    AWG_SUBNET_IP="${AWG_SUBNET_IP:-10.8.0.0}"
-    AWG_SUBNET_CIDR="${AWG_SUBNET_CIDR:-22}"
+    AWG_SUBNET_IP="${AWG_SUBNET_IP:-10.8.1.0}"
+    AWG_SUBNET_CIDR="${AWG_SUBNET_CIDR:-24}"
     AWG_HEADER_PROTECTION_KEY="${AWG_HEADER_PROTECTION_KEY:-}"
     AWG_RANDOM_TRAILERS="${AWG_RANDOM_TRAILERS:-false}"
     AWG_I1="${AWG_I1:-}"
@@ -4543,8 +4543,8 @@ enable_awg_v2 = os.environ.get("ENABLE_AWG_V2", "n").lower() in ("1", "y", "true
 awg_v2_port = int(os.environ.get("AWG_V2_PORT") or "8444")
 awg_primary_dns = os.environ.get("AWG_PRIMARY_DNS") or "9.9.9.9"
 awg_secondary_dns = os.environ.get("AWG_SECONDARY_DNS") or "76.76.2.0"
-awg_subnet_ip = os.environ.get("AWG_SUBNET_IP") or "10.8.0.0"
-awg_subnet_cidr = int(os.environ.get("AWG_SUBNET_CIDR") or "22")
+awg_subnet_ip = os.environ.get("AWG_SUBNET_IP") or "10.8.1.0"
+awg_subnet_cidr = int(os.environ.get("AWG_SUBNET_CIDR") or "24")
 awg_hpk_env = os.environ.get("AWG_HEADER_PROTECTION_KEY", "").strip()
 awg_random_trailers_env = os.environ.get("AWG_RANDOM_TRAILERS", "false").strip().lower() in ("1", "y", "true")
 
@@ -6123,7 +6123,7 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             target_settings["preferIp"] = "prefer-ipv4"
         if "externalProxy" in target_stream and isinstance(target_stream["externalProxy"], list) and len(target_stream["externalProxy"]) > 0:
             for ep in target_stream["externalProxy"]:
-                if protocol in ("shadowsocks", "mtproto", "amneziawg"):
+                if protocol in ("shadowsocks", "mtproto", "amneziawg", "wireguard"):
                     ep["forceTls"] = "none"
                 elif protocol == "vless" and "realitySettings" in target_stream:
                     ep["forceTls"] = "same"
@@ -6131,6 +6131,26 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
                     ep["forceTls"] = "tls"
                 if "alpn" in ep and isinstance(ep["alpn"], str):
                     ep["alpn"] = [ep["alpn"]] if ep["alpn"] else []
+
+        if protocol in ("amneziawg", "wireguard"):
+            if "externalProxy" in target_settings and isinstance(target_settings["externalProxy"], list) and len(target_settings["externalProxy"]) > 0:
+                pass
+            elif "externalProxy" in default_settings and isinstance(default_settings["externalProxy"], list) and len(default_settings["externalProxy"]) > 0:
+                target_settings["externalProxy"] = json.loads(json.dumps(default_settings["externalProxy"]))
+            elif "externalProxy" in target_stream and isinstance(target_stream["externalProxy"], list) and len(target_stream["externalProxy"]) > 0:
+                target_settings["externalProxy"] = [
+                    {
+                        "dest": ep.get("dest") or globals().get("domain", ""),
+                        "port": ep.get("port") or port,
+                        "forceTls": "same",
+                        "remark": ep.get("remark") or remark
+                    }
+                    for ep in target_stream["externalProxy"]
+                ]
+            else:
+                cur_dom = globals().get("domain", "")
+                if cur_dom:
+                    target_settings["externalProxy"] = [{"dest": cur_dom, "port": port, "forceTls": "same", "remark": remark}]
 
         settings_json = json.dumps(target_settings, ensure_ascii=False)
         stream_json = json.dumps(target_stream, ensure_ascii=False)
@@ -6695,7 +6715,7 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
                 if ext_dest != cur_domain and ext_dest != def_dest:
                     preserved.append(f"кастомный хост узла ({ext_dest})")
 
-    if protocol in ("shadowsocks", "mtproto", "amneziawg"):
+    if protocol in ("shadowsocks", "mtproto", "amneziawg", "wireguard"):
         force_tls_val = "none"
     elif protocol == "vless" and "realitySettings" in target_stream:
         force_tls_val = "same"
@@ -6794,6 +6814,34 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
         for ep in target_stream["externalProxy"]:
             if isinstance(ep, dict) and "alpn" in ep and isinstance(ep["alpn"], str):
                 ep["alpn"] = [ep["alpn"]] if ep["alpn"] else []
+
+    # Для AmneziaWG/WireGuard в 3X-UI externalProxy сохраняется в settings для генерации клиентских Endpoint
+    if protocol in ("amneziawg", "wireguard"):
+        cur_s_ext = cur_settings.get("externalProxy")
+        if not cur_s_ext or not isinstance(cur_s_ext, list) or len(cur_s_ext) == 0:
+            target_settings["externalProxy"] = [{
+                "dest": target_dest,
+                "port": expected_ext_port,
+                "forceTls": "same",
+                "remark": final_remark
+            }]
+            repairs.append(f"настроен externalProxy в settings инбаунда {final_remark} -> {target_dest}:{expected_ext_port}")
+        else:
+            first_ep = cur_s_ext[0] if isinstance(cur_s_ext[0], dict) else {}
+            if (
+                first_ep.get("dest") in ("127.0.0.1", "localhost", "0.0.0.0", "")
+                or first_ep.get("port") != expected_ext_port
+                or (target_dest and first_ep.get("dest") != target_dest and first_ep.get("dest") != cur_domain)
+            ):
+                target_settings["externalProxy"] = [{
+                    "dest": target_dest or first_ep.get("dest") or cur_domain,
+                    "port": expected_ext_port,
+                    "forceTls": first_ep.get("forceTls") or "same",
+                    "remark": final_remark
+                }]
+                repairs.append(f"исправлен externalProxy в settings инбаунда {final_remark} -> {target_dest}:{expected_ext_port}")
+            else:
+                target_settings["externalProxy"] = cur_s_ext
 
     # Синхронизация клиентов в реестре (client_traffics, clients, client_inbounds)
     if "sync_inbound_clients" in globals():
@@ -7009,9 +7057,17 @@ if enable_awg_v3:
             "maxHandshakeAttempts": "20-25",
             "subnetCidr": awg_subnet_cidr, "subnetIp": awg_subnet_ip,
             "i1": awg_i1_env
-        }
+        },
+        "externalProxy": [
+            {
+                "dest": domain,
+                "port": awg_v3_port,
+                "forceTls": "same",
+                "remark": make_remark("AmneziaWG v3")
+            }
+        ]
     }
-    a3_str = {"externalProxy": [{"dest": domain, "port": awg_v3_port, "remark": make_remark("AmneziaWG v3")}]}
+    a3_str = {"externalProxy": [{"dest": domain, "port": awg_v3_port, "forceTls": "same", "remark": make_remark("AmneziaWG v3")}]}
     awg_v3_remark = make_remark("AmneziaWG v3")
     smart_reconcile_inbound(awg_v3_port, "amneziawg", "in-8443-udp", awg_v3_remark, a3_set, a3_str, listen="0.0.0.0")
 
@@ -7030,9 +7086,17 @@ if enable_awg_v2:
             "privateKey": def_wg_s_priv, "publicKey": def_wg_s_pub,
             "s1": 16, "s2": 20, "s3": 24, "s4": 16,
             "subnetCidr": 24, "subnetIp": "10.8.2.0"
-        }
+        },
+        "externalProxy": [
+            {
+                "dest": domain,
+                "port": awg_v2_port,
+                "forceTls": "same",
+                "remark": make_remark("AmneziaWG v2")
+            }
+        ]
     }
-    a2_str = {"externalProxy": [{"dest": domain, "port": awg_v2_port, "remark": make_remark("AmneziaWG v2")}]}
+    a2_str = {"externalProxy": [{"dest": domain, "port": awg_v2_port, "forceTls": "same", "remark": make_remark("AmneziaWG v2")}]}
     awg_v2_remark = make_remark("AmneziaWG v2")
     smart_reconcile_inbound(awg_v2_port, "amneziawg", "in-awg-v2", awg_v2_remark, a2_set, a2_str, listen="0.0.0.0")
 
@@ -7978,6 +8042,9 @@ EOF_CLEAN_JSON
 Файл обновлен: $(date '+%Y-%m-%d %H:%M:%S')
 =====================================================================
 Панель управления:     https://${PRIMARY_DOMAIN}${PANEL_PATH}
+Публичный порт панели: 443 (HTTPS)
+PANEL_PUBLIC_URL="https://${PRIMARY_DOMAIN}${PANEL_PATH%/}/"
+PANEL_EXTERNAL_PORT=443
 $([ -n "${DIAG_TOKEN:-}" ] && echo "Веб-диагностика (SSO): https://${PRIMARY_DOMAIN}${PANEL_PATH}diag")
 $([ -n "${DIAG_TOKEN:-}" ] && echo "Токен диагностики:     ${DIAG_TOKEN}")
 Логин администратора:   ${ADMIN_USERNAME:-admin}

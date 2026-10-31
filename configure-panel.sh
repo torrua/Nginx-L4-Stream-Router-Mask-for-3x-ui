@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  CONFIGURE 3X-UI INBOUNDS & SETTINGS (v9.7.2 Universal Companion & Smart Reconcile)
+#  CONFIGURE 3X-UI INBOUNDS & SETTINGS (v9.7.3 Universal Companion & Smart Reconcile)
 # ==============================================================================
 #  Скрипт автоматического конфигурирования и самовосстановления базы 3X-UI.
 #  Безопасен для повторного запуска:
@@ -1058,7 +1058,7 @@ def create_manifest(staging_dir: Union[str, Path], output_path: Optional[Union[s
     created_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     data = {
         "format_version": "2.0",
-        "project_version": os.environ.get("SCRIPT_VERSION", "v9.7.2"),
+        "project_version": os.environ.get("SCRIPT_VERSION", "v9.7.3"),
         "created_at": created_iso,
         "db_path": os.environ.get("DB_PATH", "/etc/x-ui/x-ui.db"),
         "files": files_map,
@@ -2720,7 +2720,7 @@ def create_manifest(staging_dir: Union[str, Path], output_path: Optional[Union[s
     created_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     data = {
         "format_version": "2.0",
-        "project_version": os.environ.get("SCRIPT_VERSION", "v9.7.2"),
+        "project_version": os.environ.get("SCRIPT_VERSION", "v9.7.3"),
         "created_at": created_iso,
         "db_path": os.environ.get("DB_PATH", "/etc/x-ui/x-ui.db"),
         "files": files_map,
@@ -4001,7 +4001,7 @@ EOF_HELP
     ENABLE_STEAL_COMPAT="${ENABLE_STEAL_COMPAT:-n}"
     ENABLE_XHTTP="${ENABLE_XHTTP:-y}"
     ENABLE_CLASSIC="${ENABLE_CLASSIC:-y}"
-    DEDUPLICATE_CLASSIC_SNIS="${CLI_DEDUPLICATE_CLASSIC_SNIS:-${DEDUPLICATE_CLASSIC_SNIS:-0}}"
+    DEDUPLICATE_CLASSIC_SNIS="${CLI_DEDUPLICATE_CLASSIC_SNIS:-${DEDUPLICATE_CLASSIC_SNIS:-1}}"
     ENABLE_HY2="${ENABLE_HY2:-y}"
     ENABLE_AWG_V3="${ENABLE_AWG_V3:-y}"
     ENABLE_AWG_V2="${ENABLE_AWG_V2:-n}"
@@ -6788,6 +6788,7 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
 
         needs_ext_repair = (
             not cur_ext
+            or len(cur_ext) != len(def_ext)
             or cur_ext[0].get("port") != expected_ext_port
             or cur_ext[0].get("dest") != target_dest
             or cur_ext[0].get("remark") != final_remark
@@ -6918,8 +6919,9 @@ if enable_steal_compat:
 # 2. Classic REALITY (46443)
 if enable_classic:
     c_set = {"clients": [{"id": unified_uuid, "flow": "xtls-rprx-vision", "email": unified_email, "subId": unified_sub_id, "enable": True}], "decryption": "none", "testseed": [900, 500, 900, 256]}
-    _dedup = os.environ.get("DEDUPLICATE_CLASSIC_SNIS", "0").lower() in ("1", "true", "yes", "y")
-    target_ext_snis = [classic_sni] if _dedup else classic_snis
+    _export_all = os.environ.get("EXPORT_ALL_CLASSIC_SNIS", "0").lower() in ("1", "true", "yes", "y") or \
+                  os.environ.get("DEDUPLICATE_CLASSIC_SNIS", "1").lower() in ("0", "false", "no", "n")
+    target_ext_snis = classic_snis if _export_all else [classic_sni]
     c_str = {
         "network": "tcp",
         "tcpSettings": {"acceptProxyProtocol": True, "header": {"type": "none"}},
@@ -7307,10 +7309,11 @@ if enable_classic:
         c_rem = r_rem[0] if r_rem and r_rem[0] else classic_remark
         if not dry_run:
             cur.execute(f"DELETE FROM hosts WHERE {inbound_col} = ?", (c_iid,))
-        _dedup = False
+        _export_all = False
         if "os" in globals() and hasattr(globals()["os"], "environ"):
-            _dedup = globals()["os"].environ.get("DEDUPLICATE_CLASSIC_SNIS", "0").lower() in ("1", "true", "yes", "y")
-        target_hosts_snis = [classic_snis[0]] if (_dedup and classic_snis) else classic_snis
+            _export_all = globals()["os"].environ.get("EXPORT_ALL_CLASSIC_SNIS", "0").lower() in ("1", "true", "yes", "y") or \
+                          globals()["os"].environ.get("DEDUPLICATE_CLASSIC_SNIS", "1").lower() in ("0", "false", "no", "n")
+        target_hosts_snis = classic_snis if _export_all else [classic_snis[0]]
         for idx, csni in enumerate(target_hosts_snis, start=1):
             h_remark = f"{c_rem} ({csni})" if len(target_hosts_snis) > 1 else c_rem
             insert_host_entry(c_iid, h_remark, domain, 443, "same", host_sni=csni, host_fp=reality_fp, sort_order=idx, shuffle_host=1, mihomo_x25519=1)

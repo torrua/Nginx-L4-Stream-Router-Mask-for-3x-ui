@@ -690,6 +690,7 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
 
         needs_ext_repair = (
             not cur_ext
+            or len(cur_ext) != len(def_ext)
             or cur_ext[0].get("port") != expected_ext_port
             or cur_ext[0].get("dest") != target_dest
             or cur_ext[0].get("remark") != final_remark

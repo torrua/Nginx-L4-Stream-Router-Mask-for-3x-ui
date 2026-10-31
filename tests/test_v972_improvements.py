@@ -145,3 +145,60 @@ class TestV972Improvements(TestCase):
 
         launcher = (ROOT / "src/awg/manage-clients.sh").read_text(encoding="utf-8")
         self.assertIn('exec "$AWG_DIR/awg-mgr" "$@"', launcher)
+
+    def test_classic_sni_deduplication_repairs_multiline_to_single(self):
+        """Verify that an inbound with 8 externalProxy entries is automatically pruned to 1 entry by default."""
+        db = sqlite3.connect(":memory:")
+        cur = db.cursor()
+        cur.execute("""
+            CREATE TABLE inbounds (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                up INTEGER,
+                down INTEGER,
+                total INTEGER,
+                remark TEXT,
+                enable INTEGER,
+                expiry_time INTEGER,
+                listen TEXT,
+                port INTEGER,
+                protocol TEXT,
+                settings TEXT,
+                stream_settings TEXT,
+                tag TEXT,
+                sniffing TEXT
+            )
+        """)
+
+        inbounds_code = (ROOT / "src/xray/inbounds.py").read_text(encoding="utf-8")
+        ns = {
+            "cur": cur,
+            "admin_id": 1,
+            "dry_run": False,
+            "domain": "mask.example.com",
+            "inbounds_cols": {"id", "user_id", "up", "down", "total", "remark", "enable", "expiry_time", "listen", "port", "protocol", "settings", "stream_settings", "tag", "sniffing"},
+            "json": json
+        }
+        exec(inbounds_code, ns)
+        reconcile = ns["smart_reconcile_inbound"]
+
+        c_set = {"clients": [{"id": "uuid", "email": "Client"}]}
+        # Simulate 8 existing entries in database
+        old_8_ext = [
+            {"dest": "mask.example.com", "port": 443, "forceTls": "same", "sni": f"sni{i}.example.com", "remark": "VLESS Classic"}
+            for i in range(1, 9)
+        ]
+        cur.execute("""
+            INSERT INTO inbounds (user_id, up, down, total, remark, enable, expiry_time, listen, port, protocol, settings, stream_settings, tag, sniffing)
+            VALUES (1, 0, 0, 0, 'VLESS Classic', 1, 0, '127.0.0.1', 46443, 'vless', ?, ?, 'in-classic-reality', '{}')
+        """, (json.dumps(c_set), json.dumps({"network": "tcp", "security": "reality", "externalProxy": old_8_ext})))
+        db.commit()
+
+        # Reconcile with 1 target entry (default deduplication)
+        new_1_ext = [{"dest": "mask.example.com", "port": 443, "forceTls": "same", "sni": "sni1.example.com", "remark": "VLESS Classic"}]
+        reconcile(46443, "vless", "in-classic-reality", "VLESS Classic", c_set, {"network": "tcp", "security": "reality", "externalProxy": new_1_ext}, listen="127.0.0.1")
+
+        cur.execute("SELECT stream_settings FROM inbounds WHERE port = 46443")
+        res_st = json.loads(cur.fetchone()[0])
+        # Assert pruned from 8 to exactly 1
+        self.assertEqual(len(res_st["externalProxy"]), 1, f"Expected 1 externalProxy item, got {len(res_st['externalProxy'])}")

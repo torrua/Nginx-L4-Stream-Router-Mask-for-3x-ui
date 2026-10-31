@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # ==============================================================================
-# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v9.7.2 Universal
+# Production AutoSetup: Nginx Stream L4 Router & 3X-UI Companion v9.7.3 Universal
 # Nginx L4 Stream + 3X-UI + Unix Sockets + Native proxy_http_version 2 + 3 Decoys
 # ==============================================================================
 # Архитектура:
@@ -27,7 +27,7 @@
 
 set -euo pipefail
 
-SCRIPT_VERSION="v9.7.2"
+SCRIPT_VERSION="v9.7.3"
 
 
 # Checkpoints use stable step IDs and input signatures, independent of UI numbering.
@@ -1024,7 +1024,7 @@ generate_config_template() {
     local target_file="${1:-server-setup.env.example}"
     cat << 'EOF_CONF' > "$target_file"
 # ==============================================================================
-# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP.SH (v9.7.2 Universal)
+# КОНФИГУРАЦИЯ NGINX L4 ROUTER + 3X-UI ДЛЯ SETUP.SH (v9.7.3 Universal)
 # ==============================================================================
 # Данный файл позволяет выполнять полностью автоматическую установку:
 # ./setup.sh --config server-setup.env --non-interactive --force
@@ -13553,7 +13553,7 @@ setup_naive_service() {
         local caddy_tmp="/tmp/caddy_naive_$$"
         mkdir -p "$caddy_tmp"
         local rel_ver="${SCRIPT_VERSION:-v9.1.0}"
-        [[ "$rel_ver" == "v9.7.2" ]] && rel_ver="v9.1.0"
+        [[ "$rel_ver" == "v9.7.3" ]] && rel_ver="v9.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/caddy-naive-linux-${caddy_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
@@ -13723,7 +13723,7 @@ setup_dnstt_service() {
         local dnstt_tmp="/tmp/dnstt_$$"
         mkdir -p "$dnstt_tmp"
         local rel_ver="${SCRIPT_VERSION:-v9.1.0}"
-        [[ "$rel_ver" == "v9.7.2" ]] && rel_ver="v9.1.0"
+        [[ "$rel_ver" == "v9.7.3" ]] && rel_ver="v9.1.0"
         [[ "$rel_ver" != v* ]] && rel_ver="v${rel_ver}"
         local dl_url="https://github.com/torrua/Nginx-L4-Stream-Router-Mask-for-3x-ui/releases/download/${rel_ver}/dnstt-server-linux-${dnstt_arch}.tar.gz"
         local dl_mirror="https://ghfast.top/${dl_url}"
@@ -18189,7 +18189,7 @@ def create_manifest(staging_dir: Union[str, Path], output_path: Optional[Union[s
     created_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     data = {
         "format_version": "2.0",
-        "project_version": os.environ.get("SCRIPT_VERSION", "v9.7.2"),
+        "project_version": os.environ.get("SCRIPT_VERSION", "v9.7.3"),
         "created_at": created_iso,
         "db_path": os.environ.get("DB_PATH", "/etc/x-ui/x-ui.db"),
         "files": files_map,
@@ -19470,7 +19470,7 @@ EOF_HELP
     ENABLE_STEAL_COMPAT="${ENABLE_STEAL_COMPAT:-n}"
     ENABLE_XHTTP="${ENABLE_XHTTP:-y}"
     ENABLE_CLASSIC="${ENABLE_CLASSIC:-y}"
-    DEDUPLICATE_CLASSIC_SNIS="${CLI_DEDUPLICATE_CLASSIC_SNIS:-${DEDUPLICATE_CLASSIC_SNIS:-0}}"
+    DEDUPLICATE_CLASSIC_SNIS="${CLI_DEDUPLICATE_CLASSIC_SNIS:-${DEDUPLICATE_CLASSIC_SNIS:-1}}"
     ENABLE_HY2="${ENABLE_HY2:-y}"
     ENABLE_AWG_V3="${ENABLE_AWG_V3:-y}"
     ENABLE_AWG_V2="${ENABLE_AWG_V2:-n}"
@@ -22257,6 +22257,7 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
 
         needs_ext_repair = (
             not cur_ext
+            or len(cur_ext) != len(def_ext)
             or cur_ext[0].get("port") != expected_ext_port
             or cur_ext[0].get("dest") != target_dest
             or cur_ext[0].get("remark") != final_remark
@@ -22387,8 +22388,9 @@ if enable_steal_compat:
 # 2. Classic REALITY (46443)
 if enable_classic:
     c_set = {"clients": [{"id": unified_uuid, "flow": "xtls-rprx-vision", "email": unified_email, "subId": unified_sub_id, "enable": True}], "decryption": "none", "testseed": [900, 500, 900, 256]}
-    _dedup = os.environ.get("DEDUPLICATE_CLASSIC_SNIS", "0").lower() in ("1", "true", "yes", "y")
-    target_ext_snis = [classic_sni] if _dedup else classic_snis
+    _export_all = os.environ.get("EXPORT_ALL_CLASSIC_SNIS", "0").lower() in ("1", "true", "yes", "y") or \
+                  os.environ.get("DEDUPLICATE_CLASSIC_SNIS", "1").lower() in ("0", "false", "no", "n")
+    target_ext_snis = classic_snis if _export_all else [classic_sni]
     c_str = {
         "network": "tcp",
         "tcpSettings": {"acceptProxyProtocol": True, "header": {"type": "none"}},
@@ -22776,10 +22778,11 @@ if enable_classic:
         c_rem = r_rem[0] if r_rem and r_rem[0] else classic_remark
         if not dry_run:
             cur.execute(f"DELETE FROM hosts WHERE {inbound_col} = ?", (c_iid,))
-        _dedup = False
+        _export_all = False
         if "os" in globals() and hasattr(globals()["os"], "environ"):
-            _dedup = globals()["os"].environ.get("DEDUPLICATE_CLASSIC_SNIS", "0").lower() in ("1", "true", "yes", "y")
-        target_hosts_snis = [classic_snis[0]] if (_dedup and classic_snis) else classic_snis
+            _export_all = globals()["os"].environ.get("EXPORT_ALL_CLASSIC_SNIS", "0").lower() in ("1", "true", "yes", "y") or \
+                          globals()["os"].environ.get("DEDUPLICATE_CLASSIC_SNIS", "1").lower() in ("0", "false", "no", "n")
+        target_hosts_snis = classic_snis if _export_all else [classic_snis[0]]
         for idx, csni in enumerate(target_hosts_snis, start=1):
             h_remark = f"{c_rem} ({csni})" if len(target_hosts_snis) > 1 else c_rem
             insert_host_entry(c_iid, h_remark, domain, 443, "same", host_sni=csni, host_fp=reality_fp, sort_order=idx, shuffle_host=1, mihomo_x25519=1)

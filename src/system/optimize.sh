@@ -290,6 +290,71 @@ EOF
     echo "  ✔ MOTD-баннер обновлен."
 }
 
+setup_network_rps() {
+    # Guard: контейнеры имеют виртуальные интерфейсы veth и read-only /sys
+    if [ -f /.dockerenv ] || [ -f /run/.containerenv ]; then
+        return 0
+    fi
+
+    local iface="${1:-${DEFAULT_IF:-}}"
+    if [ -z "$iface" ]; then
+        iface=$(ip route show default 2>/dev/null | awk '/default/ {print $5}' | head -n1 || echo "")
+    fi
+    [ -n "$iface" ] || return 0
+
+    # Проверка доступности записи в очереди сетевой карты
+    local test_rx="/sys/class/net/${iface}/queues/rx-0/rps_cpus"
+    [ -w "$test_rx" ] 2>/dev/null || return 0
+
+    local cpu_cores
+    cpu_cores=$(nproc 2>/dev/null || echo "1")
+    [ "$cpu_cores" -ge 2 ] 2>/dev/null || return 0
+
+    local cpu_mask
+    if [ "$cpu_cores" -le 64 ]; then
+        cpu_mask=$(printf '%x' "$(( (1 << cpu_cores) - 1 ))")
+    else
+        cpu_mask="ffffffff"
+    fi
+
+    echo "  Настройка балансировки сетевых прерываний RPS/XPS ($iface, маска: 0x$cpu_mask)..."
+    for f in /sys/class/net/"$iface"/queues/rx-*/rps_cpus /sys/class/net/"$iface"/queues/tx-*/xps_cpus; do
+        if [ -w "$f" ]; then
+            echo "$cpu_mask" > "$f" 2>/dev/null || true
+        fi
+    done
+
+    if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+        mkdir -p /etc/systemd/system 2>/dev/null || true
+        cat << EOF > /etc/systemd/system/network-rps.service
+[Unit]
+Description=Network RPS/XPS Multi-Core Scaling on $iface
+After=network.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash -c 'for f in /sys/class/net/$iface/queues/rx-*/rps_cpus /sys/class/net/$iface/queues/tx-*/xps_cpus; do [ -w "\$f" ] && echo "$cpu_mask" > "\$f" || true; done'
+
+[Install]
+WantedBy=multi-user.target
+EOF
+        chmod 0644 /etc/systemd/system/network-rps.service 2>/dev/null || true
+        systemctl daemon-reload >/dev/null 2>&1 || true
+        systemctl enable --now network-rps.service >/dev/null 2>&1 || true
+        echo "  ✔ Служба network-rps.service активирована (systemd)."
+    elif [ -d /etc/local.d ]; then
+        cat << EOF > /etc/local.d/network-rps.start
+#!/bin/sh
+for f in /sys/class/net/$iface/queues/rx-*/rps_cpus /sys/class/net/$iface/queues/tx-*/xps_cpus; do
+    [ -w "\$f" ] && echo "$cpu_mask" > "\$f" || true
+done
+EOF
+        chmod 0755 /etc/local.d/network-rps.start 2>/dev/null || true
+        echo "  ✔ Скрипт network-rps.start активирован (/etc/local.d)."
+    fi
+}
+
 run_full_vps_optimization() {
     echo "==========================================================="
     echo "Запуск комплексной оптимизации VPS (Диск, Память, Службы)..."
@@ -298,6 +363,7 @@ run_full_vps_optimization() {
     optimize_vps_storage
     optimize_vps_logs
     optimize_vps_memory
+    setup_network_rps
     setup_clean_motd
     echo "==========================================================="
     echo "✔ Оптимизация VPS успешно завершена!"

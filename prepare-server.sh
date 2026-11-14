@@ -601,6 +601,200 @@ svc_create_daemon() {
         fi
     fi
 }
+
+
+get_hardware_memory_limits() {
+    local total_ram_mb
+    total_ram_mb=$(free -m 2>/dev/null | awk '/Mem:/ {print $2}' || echo "1024")
+    [ -n "$total_ram_mb" ] && [ "$total_ram_mb" -gt 0 ] 2>/dev/null || total_ram_mb=1024
+
+    if [ "$total_ram_mb" -lt 1500 ]; then
+        XUI_GOMEMLIMIT="90MiB"
+        XUI_GOGC="50"
+        XUI_MEM_HIGH="110M"
+        XUI_MEM_MAX="140M"
+        AGH_GOMEMLIMIT="40MiB"
+        AGH_MEM_HIGH="55M"
+        AGH_MEM_MAX="70M"
+    elif [ "$total_ram_mb" -lt 3500 ]; then
+        XUI_GOMEMLIMIT="350MiB"
+        XUI_GOGC="80"
+        XUI_MEM_HIGH="450M"
+        XUI_MEM_MAX="600M"
+        AGH_GOMEMLIMIT="100MiB"
+        AGH_MEM_HIGH="150M"
+        AGH_MEM_MAX="200M"
+    elif [ "$total_ram_mb" -lt 7500 ]; then
+        XUI_GOMEMLIMIT="1024MiB"
+        XUI_GOGC="100"
+        XUI_MEM_HIGH="1400M"
+        XUI_MEM_MAX="1800M"
+        AGH_GOMEMLIMIT="250MiB"
+        AGH_MEM_HIGH="350M"
+        AGH_MEM_MAX="450M"
+    else
+        XUI_GOMEMLIMIT="2048MiB"
+        XUI_GOGC="100"
+        XUI_MEM_HIGH="2800M"
+        XUI_MEM_MAX="3500M"
+        AGH_GOMEMLIMIT="500MiB"
+        AGH_MEM_HIGH="700M"
+        AGH_MEM_MAX="900M"
+    fi
+}
+
+apply_xui_memory_limits() {
+    # Guard: skip if running in container without host systemd
+    if [ -f /.dockerenv ] || [ -f /run/.containerenv ]; then
+        return 0
+    fi
+
+    get_hardware_memory_limits
+
+    if is_systemd; then
+        mkdir -p /etc/systemd/system/x-ui.service.d 2>/dev/null || true
+        cat << EOF > /etc/systemd/system/x-ui.service.d/10-memory-limit.conf
+[Service]
+Environment="GOMEMLIMIT=${XUI_GOMEMLIMIT:-350MiB}"
+Environment="GOGC=${XUI_GOGC:-80}"
+Environment="GODEBUG=madvdontneed=1"
+MemoryHigh=${XUI_MEM_HIGH:-450M}
+MemoryMax=${XUI_MEM_MAX:-600M}
+EOF
+        chmod 0644 /etc/systemd/system/x-ui.service.d/10-memory-limit.conf 2>/dev/null || true
+        svc_daemon_reload
+    elif is_openrc; then
+        mkdir -p /etc/conf.d 2>/dev/null || true
+        if [ -f /etc/conf.d/x-ui ]; then
+            sed -i '/GOMEMLIMIT/d;/GODEBUG/d;/GOGC/d' /etc/conf.d/x-ui 2>/dev/null || true
+        fi
+        cat << EOF >> /etc/conf.d/x-ui
+export GOMEMLIMIT="${XUI_GOMEMLIMIT:-350MiB}"
+export GOGC="${XUI_GOGC:-80}"
+export GODEBUG="madvdontneed=1"
+EOF
+    fi
+}
+
+setup_system_autoupdate() {
+    # Guard: strictly only for bare-metal systemd Linux (Ubuntu/Debian host)
+    if is_openrc || [ -f /.dockerenv ] || [ -f /run/.containerenv ] || [ "${DOKPLOY_COEXISTENCE:-n}" = "y" ]; then
+        return 0
+    fi
+    command -v systemctl >/dev/null 2>&1 || return 0
+
+    mkdir -p /usr/local/bin /var/backups/vpn-autoupdate 2>/dev/null || true
+
+    cat << 'EOF_AUTO_MAINT' > /usr/local/bin/system-autoupdate.sh
+#!/usr/bin/env bash
+set -Eeuo pipefail
+IFS=$'
+	'
+umask 077
+
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+
+LOCK_FILE="/var/run/system-autoupdate.lock"
+exec 201>"$LOCK_FILE"
+if ! flock -n 201; then
+    echo "[!] Процесс регламентного автообновления уже выполняется."
+    exit 0
+fi
+
+log()  { echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] [+] $*"; }
+warn() { echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] [!] $*" >&2; }
+
+BACKUP_DIR="/var/backups/vpn-autoupdate"
+mkdir -p "$BACKUP_DIR"
+TS=$(date +%F_%H%M%S)
+
+if [ -d /etc/amnezia/amneziawg ]; then
+    tar -czf "$BACKUP_DIR/awg_backup_${TS}.tar.gz" -C /etc/amnezia amneziawg 2>/dev/null || true
+fi
+if [ -f /etc/x-ui/x-ui.db ]; then
+    sqlite3 /etc/x-ui/x-ui.db "PRAGMA wal_checkpoint(FULL);" 2>/dev/null || true
+    cp -a /etc/x-ui/x-ui.db "$BACKUP_DIR/x-ui_backup_${TS}.db" 2>/dev/null || true
+fi
+find "$BACKUP_DIR" -type f -mtime +28 -delete 2>/dev/null || true
+
+# Безопасное ожидание блокировки APT
+count=0
+while command -v fuser >/dev/null 2>&1 && fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock >/dev/null 2>&1; do
+    sleep 2
+    count=$((count + 2))
+    [ "$count" -ge 120 ] && { warn "APT заблокирован более 120 с. Отмена итерации."; exit 1; }
+done
+
+apt-get update -q || true
+if dpkg -l linux-image-generic >/dev/null 2>&1; then
+    apt-get install -y -q linux-headers-generic 2>/dev/null || true
+elif dpkg -l linux-image-amd64 >/dev/null 2>&1; then
+    apt-get install -y -q linux-headers-amd64 2>/dev/null || true
+fi
+
+apt-get upgrade -y -q -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" || true
+apt-get autoremove -y -q || true
+
+REBOOT_NEEDED=0
+[ -f /var/run/reboot-required ] && REBOOT_NEEDED=1
+
+NEW_KERNEL=$(ls -1 /lib/modules 2>/dev/null | sort -V | tail -n1 || echo "")
+RUNNING_KERNEL=$(uname -r)
+
+if [ -n "$NEW_KERNEL" ] && { [ "$REBOOT_NEEDED" -eq 1 ] || [ "$NEW_KERNEL" != "$RUNNING_KERNEL" ]; }; then
+    if command -v dkms >/dev/null 2>&1 && dkms status 2>/dev/null | grep -q "amneziawg"; then
+        log "Проверка компиляции модуля AmneziaWG для нового ядра $NEW_KERNEL..."
+        if ! dkms status -m amneziawg -k "$NEW_KERNEL" 2>/dev/null | grep -q "installed"; then
+            dkms build -m amneziawg -k "$NEW_KERNEL" 2>/dev/null || true
+            dkms install -m amneziawg -k "$NEW_KERNEL" 2>/dev/null || true
+        fi
+
+        if dkms status -m amneziawg -k "$NEW_KERNEL" 2>/dev/null | grep -q "installed"; then
+            log "Модуль amneziawg успешно верифицирован для ядра $NEW_KERNEL. Перезагрузка сервера..."
+            systemctl reboot
+        else
+            warn "ВНИМАНИЕ (CIRCUIT BREAKER): amneziawg НЕ скомпилировался под ядро $NEW_KERNEL!"
+            warn "Перезагрузка заблокирована для защиты работы туннелей. Сервер остаётся на стабильном ядре $RUNNING_KERNEL."
+            exit 0
+        fi
+    else
+        systemctl reboot
+    fi
+fi
+EOF_AUTO_MAINT
+    chmod 0700 /usr/local/bin/system-autoupdate.sh 2>/dev/null || true
+
+    cat << 'EOF_SERVICE' > /etc/systemd/system/system-autoupdate.service
+[Unit]
+Description=Weekly System and AmneziaWG Kernel Maintenance
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/system-autoupdate.sh
+TimeoutStartSec=1800
+EOF_SERVICE
+    chmod 0644 /etc/systemd/system/system-autoupdate.service 2>/dev/null || true
+
+    cat << 'EOF_TIMER' > /etc/systemd/system/system-autoupdate.timer
+[Unit]
+Description=Weekly System and AmneziaWG Kernel Maintenance Timer
+
+[Timer]
+OnCalendar=Sun *-*-* 04:00:00 UTC
+Persistent=true
+RandomizedDelaySec=1800
+
+[Install]
+WantedBy=timers.target
+EOF_TIMER
+    chmod 0644 /etc/systemd/system/system-autoupdate.timer 2>/dev/null || true
+
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable --now system-autoupdate.timer >/dev/null 2>&1 || true
+}
 #!/usr/bin/env bash
 # ==============================================================================
 # src/system/optimize.sh — Модуль оптимизации ресурсов VPS и очистки балласта
@@ -893,6 +1087,71 @@ EOF
     echo "  ✔ MOTD-баннер обновлен."
 }
 
+setup_network_rps() {
+    # Guard: контейнеры имеют виртуальные интерфейсы veth и read-only /sys
+    if [ -f /.dockerenv ] || [ -f /run/.containerenv ]; then
+        return 0
+    fi
+
+    local iface="${1:-${DEFAULT_IF:-}}"
+    if [ -z "$iface" ]; then
+        iface=$(ip route show default 2>/dev/null | awk '/default/ {print $5}' | head -n1 || echo "")
+    fi
+    [ -n "$iface" ] || return 0
+
+    # Проверка доступности записи в очереди сетевой карты
+    local test_rx="/sys/class/net/${iface}/queues/rx-0/rps_cpus"
+    [ -w "$test_rx" ] 2>/dev/null || return 0
+
+    local cpu_cores
+    cpu_cores=$(nproc 2>/dev/null || echo "1")
+    [ "$cpu_cores" -ge 2 ] 2>/dev/null || return 0
+
+    local cpu_mask
+    if [ "$cpu_cores" -le 64 ]; then
+        cpu_mask=$(printf '%x' "$(( (1 << cpu_cores) - 1 ))")
+    else
+        cpu_mask="ffffffff"
+    fi
+
+    echo "  Настройка балансировки сетевых прерываний RPS/XPS ($iface, маска: 0x$cpu_mask)..."
+    for f in /sys/class/net/"$iface"/queues/rx-*/rps_cpus /sys/class/net/"$iface"/queues/tx-*/xps_cpus; do
+        if [ -w "$f" ]; then
+            echo "$cpu_mask" > "$f" 2>/dev/null || true
+        fi
+    done
+
+    if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+        mkdir -p /etc/systemd/system 2>/dev/null || true
+        cat << EOF > /etc/systemd/system/network-rps.service
+[Unit]
+Description=Network RPS/XPS Multi-Core Scaling on $iface
+After=network.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash -c 'for f in /sys/class/net/$iface/queues/rx-*/rps_cpus /sys/class/net/$iface/queues/tx-*/xps_cpus; do [ -w "\$f" ] && echo "$cpu_mask" > "\$f" || true; done'
+
+[Install]
+WantedBy=multi-user.target
+EOF
+        chmod 0644 /etc/systemd/system/network-rps.service 2>/dev/null || true
+        systemctl daemon-reload >/dev/null 2>&1 || true
+        systemctl enable --now network-rps.service >/dev/null 2>&1 || true
+        echo "  ✔ Служба network-rps.service активирована (systemd)."
+    elif [ -d /etc/local.d ]; then
+        cat << EOF > /etc/local.d/network-rps.start
+#!/bin/sh
+for f in /sys/class/net/$iface/queues/rx-*/rps_cpus /sys/class/net/$iface/queues/tx-*/xps_cpus; do
+    [ -w "\$f" ] && echo "$cpu_mask" > "\$f" || true
+done
+EOF
+        chmod 0755 /etc/local.d/network-rps.start 2>/dev/null || true
+        echo "  ✔ Скрипт network-rps.start активирован (/etc/local.d)."
+    fi
+}
+
 run_full_vps_optimization() {
     echo "==========================================================="
     echo "Запуск комплексной оптимизации VPS (Диск, Память, Службы)..."
@@ -901,6 +1160,7 @@ run_full_vps_optimization() {
     optimize_vps_storage
     optimize_vps_logs
     optimize_vps_memory
+    setup_network_rps
     setup_clean_motd
     echo "==========================================================="
     echo "✔ Оптимизация VPS успешно завершена!"

@@ -61,6 +61,9 @@ install_step_adguard() {
 # @include "installer/awg.sh"
 install_step_verify() {
     setup_uninstall_command 2>/dev/null || true
+    if is_true "${ENABLE_AUTO_UPDATE:-y}"; then
+        setup_system_autoupdate 2>/dev/null || true
+    fi
     post_install_sanity_check
     if [ "${SSH_PORT:-${SSH_ACTIVE_PORT:-22}}" != "${SSH_ACTIVE_PORT:-22}" ]; then
         wait_and_finalize_ssh_transition "$SSH_PORT" "${SSH_ACTIVE_PORT:-22}"

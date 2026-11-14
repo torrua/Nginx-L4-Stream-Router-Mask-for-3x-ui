@@ -226,3 +226,10 @@ AGENTS.md
 *.env.state.tmp.*
 scripts/restore_*.sh
 data/
+
+# Local diagnostic and analysis scratch files
+analyze_subs.py
+domain_info.json
+master_clients.json
+sub_*.html
+

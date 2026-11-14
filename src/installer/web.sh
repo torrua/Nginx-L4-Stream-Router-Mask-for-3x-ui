@@ -146,6 +146,16 @@ chmod 644 /etc/letsencrypt/live/*/*.pem 2>/dev/null || true
 chmod 600 /etc/letsencrypt/live/*/privkey*.pem 2>/dev/null || true
 chmod 600 /etc/letsencrypt/archive/*/privkey*.pem 2>/dev/null || true
 svc_reload nginx 2>/dev/null || systemctl reload nginx 2>/dev/null || rc-service nginx reload 2>/dev/null || true
+# Перезапуск x-ui для применения обновленных сертификатов в инбаундах Hysteria 2 / xHTTP
+if [ -f /etc/alpine-release ] || command -v rc-service >/dev/null 2>&1; then
+    rc-service x-ui restart 2>/dev/null || true
+elif command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet x-ui 2>/dev/null; then
+    systemctl restart x-ui 2>/dev/null || true
+elif command -v docker >/dev/null 2>&1; then
+    for c in $(docker ps --format '{{.Names}}' 2>/dev/null | grep -E '3x-ui|x-ui'); do
+        docker restart "$c" 2>/dev/null || true
+    done
+fi
 EOF
             chmod +x /etc/letsencrypt/renewal-hooks/deploy/nginx-reload.sh
 

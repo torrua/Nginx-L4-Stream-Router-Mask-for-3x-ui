@@ -66,9 +66,35 @@ try:
         if isinstance(_g_ext, list) and len(_g_ext) > 0:
             _g_modified = False
             for _g_ep in _g_ext:
-                if isinstance(_g_ep, dict) and "alpn" in _g_ep and isinstance(_g_ep["alpn"], str):
-                    _g_ep["alpn"] = [_g_ep["alpn"]] if _g_ep["alpn"] else []
-                    _g_modified = True
+                if isinstance(_g_ep, dict):
+                    if "alpn" in _g_ep:
+                        if isinstance(_g_ep["alpn"], str):
+                            val = _g_ep["alpn"].strip()
+                            _g_ep["alpn"] = [x.strip() for x in val.split(",") if x.strip()] if val else []
+                            _g_modified = True
+                        elif isinstance(_g_ep["alpn"], list) and any(isinstance(x, str) and "," in x for x in _g_ep["alpn"]):
+                            flt = []
+                            for x in _g_ep["alpn"]:
+                                if isinstance(x, str):
+                                    flt.extend([i.strip() for i in x.split(",") if i.strip()])
+                                else:
+                                    flt.append(x)
+                            _g_ep["alpn"] = flt
+                            _g_modified = True
+                    if "pinnedPeerCertSha256" in _g_ep:
+                        if isinstance(_g_ep["pinnedPeerCertSha256"], str):
+                            val = _g_ep["pinnedPeerCertSha256"].strip()
+                            _g_ep["pinnedPeerCertSha256"] = [x.strip() for x in val.split(",") if x.strip()] if val else []
+                            _g_modified = True
+                        elif isinstance(_g_ep["pinnedPeerCertSha256"], list) and any(isinstance(x, str) and "," in x for x in _g_ep["pinnedPeerCertSha256"]):
+                            flt = []
+                            for x in _g_ep["pinnedPeerCertSha256"]:
+                                if isinstance(x, str):
+                                    flt.extend([i.strip() for i in x.split(",") if i.strip()])
+                                else:
+                                    flt.append(x)
+                            _g_ep["pinnedPeerCertSha256"] = flt
+                            _g_modified = True
             if _g_modified and not dry_run:
                 cur.execute("UPDATE inbounds SET stream_settings = ? WHERE id = ?", (json.dumps(_g_st, ensure_ascii=False), _g_id))
                 print(f"  [ИСПРАВЛЕНО] Инбаунд #{_g_id} ({_g_rem}): тип alpn в externalProxy исправлен со строки на массив")

@@ -311,6 +311,7 @@ EOF_HELP
     ENABLE_XHTTP="${ENABLE_XHTTP:-y}"
     ENABLE_CLASSIC="${ENABLE_CLASSIC:-y}"
     DEDUPLICATE_CLASSIC_SNIS="${CLI_DEDUPLICATE_CLASSIC_SNIS:-${DEDUPLICATE_CLASSIC_SNIS:-1}}"
+    EXPORT_ALL_CLASSIC_SNIS="${EXPORT_ALL_CLASSIC_SNIS:-0}"
     ENABLE_HY2="${ENABLE_HY2:-y}"
     ENABLE_AWG_V3="${ENABLE_AWG_V3:-y}"
     ENABLE_AWG_V2="${ENABLE_AWG_V2:-n}"
@@ -482,6 +483,7 @@ EOF_HELP
     export CLASSIC_PORT
     export CLASSIC_SNI
     export DEDUPLICATE_CLASSIC_SNIS
+    export EXPORT_ALL_CLASSIC_SNIS
     export REALITY_FINGERPRINT
     export ENABLE_HY2
     export HY2_PORT
@@ -742,6 +744,7 @@ EOF_CLEAN_JSON
             fi
         fi
 
+        apply_xui_memory_limits 2>/dev/null || true
         # Активация службы 3X-UI
         log "Активация службы 3X-UI..."
         if [ "${IS_DOCKER_XUI:-0}" -eq 1 ]; then

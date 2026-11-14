@@ -671,8 +671,13 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             if def_ext[0].get("alpn"):
                 ext_alpn = def_ext[0]["alpn"]
                 if isinstance(ext_alpn, str):
-                    ext_alpn = [ext_alpn] if ext_alpn else []
+                    ext_alpn = [x.strip() for x in ext_alpn.split(",") if x.strip()] if ext_alpn.strip() else []
                 ext_entry["alpn"] = ext_alpn
+            if def_ext[0].get("pinnedPeerCertSha256"):
+                ext_pinned = def_ext[0]["pinnedPeerCertSha256"]
+                if isinstance(ext_pinned, str):
+                    ext_pinned = [x.strip() for x in ext_pinned.split(",") if x.strip()] if ext_pinned.strip() else []
+                ext_entry["pinnedPeerCertSha256"] = ext_pinned
 
         def_fp = def_ext[0].get("fingerprint") if (def_ext and isinstance(def_ext, list) and len(def_ext) > 0) else None
         cur_fp_single = cur_ext[0].get("fingerprint") if (cur_ext and isinstance(cur_ext, list) and len(cur_ext) > 0) else None
@@ -706,17 +711,51 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             repairs.append(f"исправлен externalProxy -> {target_dest}:{expected_ext_port}{sni_desc}")
         else:
             for ep in cur_ext:
-                if isinstance(ep, dict) and "alpn" in ep and isinstance(ep["alpn"], str):
-                    ep["alpn"] = [ep["alpn"]] if ep["alpn"] else []
-                    repairs.append("исправлен тип alpn в externalProxy (string -> array)")
+                if isinstance(ep, dict) and "alpn" in ep:
+                    if isinstance(ep["alpn"], str):
+                        val = ep["alpn"].strip()
+                        ep["alpn"] = [x.strip() for x in val.split(",") if x.strip()] if val else []
+                        repairs.append("исправлен тип alpn в externalProxy (string -> array)")
+                    elif isinstance(ep["alpn"], list) and any(isinstance(x, str) and "," in x for x in ep["alpn"]):
+                        flt = []
+                        for x in ep["alpn"]:
+                            if isinstance(x, str):
+                                flt.extend([i.strip() for i in x.split(",") if i.strip()])
+                            else:
+                                flt.append(x)
+                        ep["alpn"] = flt
+                        repairs.append("исправлен тип alpn в externalProxy (список нормализован)")
             target_stream["externalProxy"] = cur_ext
             preserved.append(f"externalProxy :{expected_ext_port}")
 
-    # В 3X-UI externalProxy[].alpn обязан быть массивом (array), строка вызывает ошибку валидации формы
+    # В 3X-UI externalProxy[].alpn всегда должен быть списком (array), иначе панель не сохраняет настройки
     if "externalProxy" in target_stream and isinstance(target_stream["externalProxy"], list):
         for ep in target_stream["externalProxy"]:
-            if isinstance(ep, dict) and "alpn" in ep and isinstance(ep["alpn"], str):
-                ep["alpn"] = [ep["alpn"]] if ep["alpn"] else []
+            if isinstance(ep, dict):
+                if "alpn" in ep:
+                    if isinstance(ep["alpn"], str):
+                        val = ep["alpn"].strip()
+                        ep["alpn"] = [x.strip() for x in val.split(",") if x.strip()] if val else []
+                    elif isinstance(ep["alpn"], list) and any(isinstance(x, str) and "," in x for x in ep["alpn"]):
+                        flt = []
+                        for x in ep["alpn"]:
+                            if isinstance(x, str):
+                                flt.extend([i.strip() for i in x.split(",") if i.strip()])
+                            else:
+                                flt.append(x)
+                        ep["alpn"] = flt
+                if "pinnedPeerCertSha256" in ep:
+                    if isinstance(ep["pinnedPeerCertSha256"], str):
+                        val = ep["pinnedPeerCertSha256"].strip()
+                        ep["pinnedPeerCertSha256"] = [x.strip() for x in val.split(",") if x.strip()] if val else []
+                    elif isinstance(ep["pinnedPeerCertSha256"], list) and any(isinstance(x, str) and "," in x for x in ep["pinnedPeerCertSha256"]):
+                        flt = []
+                        for x in ep["pinnedPeerCertSha256"]:
+                            if isinstance(x, str):
+                                flt.extend([i.strip() for i in x.split(",") if i.strip()])
+                            else:
+                                flt.append(x)
+                        ep["pinnedPeerCertSha256"] = flt
 
     # Для AmneziaWG/WireGuard в 3X-UI externalProxy сохраняется в settings для генерации клиентских Endpoint
     if protocol in ("amneziawg", "wireguard"):

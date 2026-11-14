@@ -22,6 +22,53 @@ detect_alpine_kheaders() {
     echo "linux-lts-dev"
 }
 
+patch_amnezia_dkms_kernel_compat() {
+    local k_major
+    k_major=$(uname -r 2>/dev/null | cut -d. -f1)
+    if [ "${k_major:-0}" -lt 7 ]; then
+        return 0
+    fi
+
+    local target_dirs=()
+    shopt -s nullglob
+    target_dirs=(/usr/src/amneziawg-*)
+    [ -n "${1:-}" ] && target_dirs+=("$1")
+    shopt -u nullglob
+
+    [ "${#target_dirs[@]}" -gt 0 ] || return 0
+
+    local root_dir target_header
+    for root_dir in "${target_dirs[@]}"; do
+        [ -d "$root_dir" ] || continue
+        target_header=""
+        if [ -f "${root_dir}/compat/compat.h" ]; then
+            target_header="${root_dir}/compat/compat.h"
+        elif [ -f "${root_dir}/src/compat/compat.h" ]; then
+            target_header="${root_dir}/src/compat/compat.h"
+        fi
+        [ -n "$target_header" ] || continue
+
+        if grep -q "__compat_setup_udp_tunnel_sock" "$target_header" 2>/dev/null; then
+            continue
+        fi
+
+        echo "Обнаружено ядро 7.0+ ($(uname -r)). Применение патча совместимости для AmneziaWG..." >&2
+        awk '
+        index($0, "setup_udp_tunnel_sock(net, sk, sock_cfg) setup_udp_tunnel_sock(net, sk->sk_socket, sock_cfg)") > 0 {
+            print "/* Kernel 7.0+ compatibility backport */"
+            print "#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 0, 0)"
+            print "#define setup_udp_tunnel_sock(net, sk, sock_cfg) setup_udp_tunnel_sock(net, sk->sk_socket, sock_cfg)"
+            print "#elif LINUX_VERSION_CODE < KERNEL_VERSION(7, 2, 0)"
+            print "#define __compat_setup_udp_tunnel_sock 1"
+            print "#endif"
+            next
+        }
+        { print }
+        ' "$target_header" > "${target_header}.tmp" && mv -f "${target_header}.tmp" "$target_header"
+        chmod 0644 "$target_header" 2>/dev/null || true
+    done
+}
+
 install_amneziawg_packages_task() {
     export DEBIAN_FRONTEND=noninteractive
     local os_id=""
@@ -64,6 +111,7 @@ install_amneziawg_packages_task() {
         if [ -d "$kbuild_dir" ]; then
             local kmod_tmp="/tmp/amneziawg-kmod-$$"
             if git clone --depth 1 https://github.com/amnezia-vpn/amneziawg-linux-kernel-module.git "$kmod_tmp" 2>/dev/null; then
+                patch_amnezia_dkms_kernel_compat "$kmod_tmp"
                 make -C "$kmod_tmp/src" KERNELDIR="$kbuild_dir" >/dev/null 2>&1 || true
                 if [ -f "$kmod_tmp/src/amneziawg.ko" ]; then
                     local mod_dest="/lib/modules/$(uname -r)/extra"
@@ -136,6 +184,16 @@ EOF_PPA
         wireguard-tools amneziawg-tools amneziawg-dkms qrencode -q 2>/dev/null || true
 
     # 4. Проверка и загрузка модуля ядра
+        patch_amnezia_dkms_kernel_compat
+    if command -v dkms >/dev/null 2>&1 && dkms status 2>/dev/null | grep -q "amneziawg"; then
+        local curr_k
+        curr_k=$(uname -r)
+        if ! dkms status -m amneziawg -k "$curr_k" 2>/dev/null | grep -q "installed"; then
+            dkms build -m amneziawg -k "$curr_k" 2>/dev/null || true
+            dkms install -m amneziawg -k "$curr_k" 2>/dev/null || true
+        fi
+    fi
+
     modprobe amneziawg 2>/dev/null || true
 }
 

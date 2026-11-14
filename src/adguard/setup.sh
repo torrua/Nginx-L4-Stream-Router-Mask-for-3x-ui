@@ -107,14 +107,25 @@ EOF_AGH
         /opt/AdGuardHome/AdGuardHome -s install >/dev/null 2>&1 || true
 
         # 6. Ограничение памяти Go для экономии RAM на VPS
+        get_hardware_memory_limits 2>/dev/null || true
         if ! is_openrc && command -v systemctl >/dev/null 2>&1; then
-            mkdir -p /etc/systemd/system/AdGuardHome.service.d
-            cat << 'EOF_GOMEM' > /etc/systemd/system/AdGuardHome.service.d/memory.conf
+            mkdir -p /etc/systemd/system/AdGuardHome.service.d 2>/dev/null || true
+            cat << EOF_GOMEM > /etc/systemd/system/AdGuardHome.service.d/10-memory.conf
 [Service]
 Environment="GOGC=50"
-Environment="GOMEMLIMIT=100MiB"
+Environment="GOMEMLIMIT=${AGH_GOMEMLIMIT:-100MiB}"
+Environment="GODEBUG=madvdontneed=1"
+MemoryHigh=${AGH_MEM_HIGH:-150M}
+MemoryMax=${AGH_MEM_MAX:-200M}
 EOF_GOMEM
             systemctl daemon-reload 2>/dev/null || true
+        elif is_openrc; then
+            mkdir -p /etc/conf.d 2>/dev/null || true
+            cat << EOF_GOMEM >> /etc/conf.d/AdGuardHome
+export GOGC="50"
+export GOMEMLIMIT="${AGH_GOMEMLIMIT:-100MiB}"
+export GODEBUG="madvdontneed=1"
+EOF_GOMEM
         fi
         svc_restart AdGuardHome 2>/dev/null || systemctl restart AdGuardHome 2>/dev/null || rc-service AdGuardHome restart 2>/dev/null || true
 

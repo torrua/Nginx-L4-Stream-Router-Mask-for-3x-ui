@@ -1441,6 +1441,9 @@ rm -f "$cache_file"
 
         self.assertEqual(classic_snis, ["speed.cloudflare.com", "cache.cloudflare.com"], "Duplicates and case must be normalized")
 
+        class MockOS:
+            environ = {"EXPORT_ALL_CLASSIC_SNIS": "1"}
+
         ns_snake = {
             "cur": self.cur,
             "dry_run": False,
@@ -1452,6 +1455,7 @@ rm -f "$cache_file"
             "domain": "test.example.com",
             "classic_remark": "VLESS Classic",
             "uuid": uuid,
+            "os": MockOS,
         }
         exec(hosts_block, ns_snake)
         self.conn.commit()
@@ -1516,6 +1520,7 @@ rm -f "$cache_file"
             "domain": "test.example.com",
             "classic_remark": "VLESS Classic",
             "uuid": uuid,
+            "os": MockOS,
         }
         # Must execute cleanly without OperationalError
         exec(hosts_block, ns_camel)

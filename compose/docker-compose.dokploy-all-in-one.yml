@@ -30,6 +30,8 @@ services:
       - net.ipv4.ip_forward=1
     environment:
       - XRAY_VMESS_AEAD_FORCED=false
+      - GODEBUG=madvdontneed=1
+      - GOMEMLIMIT=${XUI_GOMEMLIMIT:-350MiB}
     networks:
       - dokploy-network
     labels:

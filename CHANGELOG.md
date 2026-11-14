@@ -7,6 +7,29 @@
 
 ---
 
+## [9.7.4] - 2026-11-13
+
+### Добавлено и улучшено (Синхронизация с Upstream v3.8)
+- **Нормализация списков ALPN и Pinned Cert SHA256 в веб-панели и Xray:**
+  - В `src/panel/reconcile.py` и `src/xray/inbounds.py` добавлена авто-санитизация полей `alpn` и `pinnedPeerCertSha256`: строки, разделенные запятыми (например, `"h2,http/1.1"`), автоматически преобразуются в валидные JSON-массивы списков строк `["h2", "http/1.1"]`, исключая синтаксические ошибки Xray core.
+- **Патч совместимости AmneziaWG DKMS для Linux ядер 7.0+:**
+  - В `src/awg/setup.sh` реализован автоматический бэкпорт-патч `patch_amnezia_dkms_kernel_compat()` для `compat.h` (адаптация сигнатуры `setup_udp_tunnel_sock` под ядра Linux >= 7.0), поддерживающий сборки как под Ubuntu/Debian DKMS, так и под Alpine Linux.
+- **Динамические лимиты памяти рантайма Go и cgroup v2 для 3X-UI и AdGuard Home:**
+  - В `src/system/service.sh` и `src/adguard/setup.sh` реализовано аппаратное профилирование памяти (`get_hardware_memory_limits()`) в зависимости от объема RAM (<1.5GB, <3.5GB, <7.5GB, >=7.5GB).
+  - Настроены переменные `GOMEMLIMIT`, `GOGC`, `GODEBUG=madvdontneed=1` и cgroup v2 ограничения (`MemoryHigh` / `MemoryMax`) для предотвращения OOM-killer на бюджетных VPS (512MB–1GB RAM).
+  - Для Alpine Linux параметры сохраняются в `/etc/conf.d/x-ui` и `/etc/conf.d/AdGuardHome`.
+  - В Dokploy/Docker окружении (`compose/docker-compose.dokploy-all-in-one.yml`) добавлены переменные `GODEBUG=madvdontneed=1` и `GOMEMLIMIT=${XUI_GOMEMLIMIT:-350MiB}`.
+- **Служба балансировки сетевых очередей Network RPS/XPS для многоядерных систем:**
+  - В `src/system/optimize.sh` добавлена функция `setup_network_rps()`: расчет битовой маски ядер процессора `CPU_MASK` (`(1 << cpu_cores) - 1`) и равномерное распределение `rps_cpus` / `xps_cpus` по всем аппаратным очередям сетевого интерфейса.
+  - Служба безопасно изолирована от Docker (`/.dockerenv`) и файловых систем с read-only `/sys`. На хосте сохраняется через `network-rps.service` (systemd) или `/etc/local.d/network-rps.start` (OpenRC).
+- **Еженедельное автообновление системы с Circuit Breaker (reboot blocker):**
+  - В `src/system/service.sh` реализован сервис и таймер еженедельного обновления (каждое воскресенье в 04:00 UTC).
+  - Встроен предохранитель от непреднамеренных перезагрузок (Circuit Breaker): `reboot` блокируется при наличии активных соединений, а также в окружениях Docker/Dokploy и OpenRC.
+- **Бесшовный перезапуск X-UI при автопродлении SSL-сертификатов Let's Encrypt:**
+  - В хук автопродления `/etc/letsencrypt/renewal-hooks/deploy/nginx-reload.sh` добавлен рестарт `x-ui` (или перезапуск контейнера под Docker/Dokploy), обеспечивающий обновление сертификатов в памяти для Hysteria 2 и xHTTP без простоя и ошибок рукопожатия TLS.
+
+---
+
 ## [9.7.3] - 2026-10-31
 
 ### Исправлено

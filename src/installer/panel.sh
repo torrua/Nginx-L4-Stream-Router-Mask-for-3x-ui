@@ -9,6 +9,7 @@ install_step_panel() {
             printf "n\n" | bash /tmp/install_3xui.sh
         }
         run_with_spinner "Установка официального ядра 3X-UI (mhsanaei)" install_3xui_core_task || die "Ошибка установки ядра 3X-UI."
+        apply_xui_memory_limits 2>/dev/null || true
     fi
 
     # 2. Использование локальной версии configure-panel.sh или встроенного модуля (без сети)

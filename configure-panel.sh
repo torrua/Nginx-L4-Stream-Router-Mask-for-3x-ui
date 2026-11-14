@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  CONFIGURE 3X-UI INBOUNDS & SETTINGS (v9.7.3 Universal Companion & Smart Reconcile)
+#  CONFIGURE 3X-UI INBOUNDS & SETTINGS (v9.7.4 Universal Companion & Smart Reconcile)
 # ==============================================================================
 #  Скрипт автоматического конфигурирования и самовосстановления базы 3X-UI.
 #  Безопасен для повторного запуска:
@@ -245,6 +245,200 @@ svc_create_daemon() {
             systemctl daemon-reload >/dev/null 2>&1 || true
         fi
     fi
+}
+
+
+get_hardware_memory_limits() {
+    local total_ram_mb
+    total_ram_mb=$(free -m 2>/dev/null | awk '/Mem:/ {print $2}' || echo "1024")
+    [ -n "$total_ram_mb" ] && [ "$total_ram_mb" -gt 0 ] 2>/dev/null || total_ram_mb=1024
+
+    if [ "$total_ram_mb" -lt 1500 ]; then
+        XUI_GOMEMLIMIT="90MiB"
+        XUI_GOGC="50"
+        XUI_MEM_HIGH="110M"
+        XUI_MEM_MAX="140M"
+        AGH_GOMEMLIMIT="40MiB"
+        AGH_MEM_HIGH="55M"
+        AGH_MEM_MAX="70M"
+    elif [ "$total_ram_mb" -lt 3500 ]; then
+        XUI_GOMEMLIMIT="350MiB"
+        XUI_GOGC="80"
+        XUI_MEM_HIGH="450M"
+        XUI_MEM_MAX="600M"
+        AGH_GOMEMLIMIT="100MiB"
+        AGH_MEM_HIGH="150M"
+        AGH_MEM_MAX="200M"
+    elif [ "$total_ram_mb" -lt 7500 ]; then
+        XUI_GOMEMLIMIT="1024MiB"
+        XUI_GOGC="100"
+        XUI_MEM_HIGH="1400M"
+        XUI_MEM_MAX="1800M"
+        AGH_GOMEMLIMIT="250MiB"
+        AGH_MEM_HIGH="350M"
+        AGH_MEM_MAX="450M"
+    else
+        XUI_GOMEMLIMIT="2048MiB"
+        XUI_GOGC="100"
+        XUI_MEM_HIGH="2800M"
+        XUI_MEM_MAX="3500M"
+        AGH_GOMEMLIMIT="500MiB"
+        AGH_MEM_HIGH="700M"
+        AGH_MEM_MAX="900M"
+    fi
+}
+
+apply_xui_memory_limits() {
+    # Guard: skip if running in container without host systemd
+    if [ -f /.dockerenv ] || [ -f /run/.containerenv ]; then
+        return 0
+    fi
+
+    get_hardware_memory_limits
+
+    if is_systemd; then
+        mkdir -p /etc/systemd/system/x-ui.service.d 2>/dev/null || true
+        cat << EOF > /etc/systemd/system/x-ui.service.d/10-memory-limit.conf
+[Service]
+Environment="GOMEMLIMIT=${XUI_GOMEMLIMIT:-350MiB}"
+Environment="GOGC=${XUI_GOGC:-80}"
+Environment="GODEBUG=madvdontneed=1"
+MemoryHigh=${XUI_MEM_HIGH:-450M}
+MemoryMax=${XUI_MEM_MAX:-600M}
+EOF
+        chmod 0644 /etc/systemd/system/x-ui.service.d/10-memory-limit.conf 2>/dev/null || true
+        svc_daemon_reload
+    elif is_openrc; then
+        mkdir -p /etc/conf.d 2>/dev/null || true
+        if [ -f /etc/conf.d/x-ui ]; then
+            sed -i '/GOMEMLIMIT/d;/GODEBUG/d;/GOGC/d' /etc/conf.d/x-ui 2>/dev/null || true
+        fi
+        cat << EOF >> /etc/conf.d/x-ui
+export GOMEMLIMIT="${XUI_GOMEMLIMIT:-350MiB}"
+export GOGC="${XUI_GOGC:-80}"
+export GODEBUG="madvdontneed=1"
+EOF
+    fi
+}
+
+setup_system_autoupdate() {
+    # Guard: strictly only for bare-metal systemd Linux (Ubuntu/Debian host)
+    if is_openrc || [ -f /.dockerenv ] || [ -f /run/.containerenv ] || [ "${DOKPLOY_COEXISTENCE:-n}" = "y" ]; then
+        return 0
+    fi
+    command -v systemctl >/dev/null 2>&1 || return 0
+
+    mkdir -p /usr/local/bin /var/backups/vpn-autoupdate 2>/dev/null || true
+
+    cat << 'EOF_AUTO_MAINT' > /usr/local/bin/system-autoupdate.sh
+#!/usr/bin/env bash
+set -Eeuo pipefail
+IFS=$'
+	'
+umask 077
+
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+
+LOCK_FILE="/var/run/system-autoupdate.lock"
+exec 201>"$LOCK_FILE"
+if ! flock -n 201; then
+    echo "[!] Процесс регламентного автообновления уже выполняется."
+    exit 0
+fi
+
+log()  { echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] [+] $*"; }
+warn() { echo -e "[$(date '+%Y-%m-%d %H:%M:%S')] [!] $*" >&2; }
+
+BACKUP_DIR="/var/backups/vpn-autoupdate"
+mkdir -p "$BACKUP_DIR"
+TS=$(date +%F_%H%M%S)
+
+if [ -d /etc/amnezia/amneziawg ]; then
+    tar -czf "$BACKUP_DIR/awg_backup_${TS}.tar.gz" -C /etc/amnezia amneziawg 2>/dev/null || true
+fi
+if [ -f /etc/x-ui/x-ui.db ]; then
+    sqlite3 /etc/x-ui/x-ui.db "PRAGMA wal_checkpoint(FULL);" 2>/dev/null || true
+    cp -a /etc/x-ui/x-ui.db "$BACKUP_DIR/x-ui_backup_${TS}.db" 2>/dev/null || true
+fi
+find "$BACKUP_DIR" -type f -mtime +28 -delete 2>/dev/null || true
+
+# Безопасное ожидание блокировки APT
+count=0
+while command -v fuser >/dev/null 2>&1 && fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock >/dev/null 2>&1; do
+    sleep 2
+    count=$((count + 2))
+    [ "$count" -ge 120 ] && { warn "APT заблокирован более 120 с. Отмена итерации."; exit 1; }
+done
+
+apt-get update -q || true
+if dpkg -l linux-image-generic >/dev/null 2>&1; then
+    apt-get install -y -q linux-headers-generic 2>/dev/null || true
+elif dpkg -l linux-image-amd64 >/dev/null 2>&1; then
+    apt-get install -y -q linux-headers-amd64 2>/dev/null || true
+fi
+
+apt-get upgrade -y -q -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" || true
+apt-get autoremove -y -q || true
+
+REBOOT_NEEDED=0
+[ -f /var/run/reboot-required ] && REBOOT_NEEDED=1
+
+NEW_KERNEL=$(ls -1 /lib/modules 2>/dev/null | sort -V | tail -n1 || echo "")
+RUNNING_KERNEL=$(uname -r)
+
+if [ -n "$NEW_KERNEL" ] && { [ "$REBOOT_NEEDED" -eq 1 ] || [ "$NEW_KERNEL" != "$RUNNING_KERNEL" ]; }; then
+    if command -v dkms >/dev/null 2>&1 && dkms status 2>/dev/null | grep -q "amneziawg"; then
+        log "Проверка компиляции модуля AmneziaWG для нового ядра $NEW_KERNEL..."
+        if ! dkms status -m amneziawg -k "$NEW_KERNEL" 2>/dev/null | grep -q "installed"; then
+            dkms build -m amneziawg -k "$NEW_KERNEL" 2>/dev/null || true
+            dkms install -m amneziawg -k "$NEW_KERNEL" 2>/dev/null || true
+        fi
+
+        if dkms status -m amneziawg -k "$NEW_KERNEL" 2>/dev/null | grep -q "installed"; then
+            log "Модуль amneziawg успешно верифицирован для ядра $NEW_KERNEL. Перезагрузка сервера..."
+            systemctl reboot
+        else
+            warn "ВНИМАНИЕ (CIRCUIT BREAKER): amneziawg НЕ скомпилировался под ядро $NEW_KERNEL!"
+            warn "Перезагрузка заблокирована для защиты работы туннелей. Сервер остаётся на стабильном ядре $RUNNING_KERNEL."
+            exit 0
+        fi
+    else
+        systemctl reboot
+    fi
+fi
+EOF_AUTO_MAINT
+    chmod 0700 /usr/local/bin/system-autoupdate.sh 2>/dev/null || true
+
+    cat << 'EOF_SERVICE' > /etc/systemd/system/system-autoupdate.service
+[Unit]
+Description=Weekly System and AmneziaWG Kernel Maintenance
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/system-autoupdate.sh
+TimeoutStartSec=1800
+EOF_SERVICE
+    chmod 0644 /etc/systemd/system/system-autoupdate.service 2>/dev/null || true
+
+    cat << 'EOF_TIMER' > /etc/systemd/system/system-autoupdate.timer
+[Unit]
+Description=Weekly System and AmneziaWG Kernel Maintenance Timer
+
+[Timer]
+OnCalendar=Sun *-*-* 04:00:00 UTC
+Persistent=true
+RandomizedDelaySec=1800
+
+[Install]
+WantedBy=timers.target
+EOF_TIMER
+    chmod 0644 /etc/systemd/system/system-autoupdate.timer 2>/dev/null || true
+
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable --now system-autoupdate.timer >/dev/null 2>&1 || true
 }
 # ==============================================================================
 # src/common/config.sh - Safe Configuration Loader & SSL Path Resolver (T13)
@@ -1058,7 +1252,7 @@ def create_manifest(staging_dir: Union[str, Path], output_path: Optional[Union[s
     created_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     data = {
         "format_version": "2.0",
-        "project_version": os.environ.get("SCRIPT_VERSION", "v9.7.3"),
+        "project_version": os.environ.get("SCRIPT_VERSION", "v9.7.4"),
         "created_at": created_iso,
         "db_path": os.environ.get("DB_PATH", "/etc/x-ui/x-ui.db"),
         "files": files_map,
@@ -2720,7 +2914,7 @@ def create_manifest(staging_dir: Union[str, Path], output_path: Optional[Union[s
     created_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     data = {
         "format_version": "2.0",
-        "project_version": os.environ.get("SCRIPT_VERSION", "v9.7.3"),
+        "project_version": os.environ.get("SCRIPT_VERSION", "v9.7.4"),
         "created_at": created_iso,
         "db_path": os.environ.get("DB_PATH", "/etc/x-ui/x-ui.db"),
         "files": files_map,
@@ -4002,6 +4196,7 @@ EOF_HELP
     ENABLE_XHTTP="${ENABLE_XHTTP:-y}"
     ENABLE_CLASSIC="${ENABLE_CLASSIC:-y}"
     DEDUPLICATE_CLASSIC_SNIS="${CLI_DEDUPLICATE_CLASSIC_SNIS:-${DEDUPLICATE_CLASSIC_SNIS:-1}}"
+    EXPORT_ALL_CLASSIC_SNIS="${EXPORT_ALL_CLASSIC_SNIS:-0}"
     ENABLE_HY2="${ENABLE_HY2:-y}"
     ENABLE_AWG_V3="${ENABLE_AWG_V3:-y}"
     ENABLE_AWG_V2="${ENABLE_AWG_V2:-n}"
@@ -4173,6 +4368,7 @@ EOF_HELP
     export CLASSIC_PORT
     export CLASSIC_SNI
     export DEDUPLICATE_CLASSIC_SNIS
+    export EXPORT_ALL_CLASSIC_SNIS
     export REALITY_FINGERPRINT
     export ENABLE_HY2
     export HY2_PORT
@@ -4358,9 +4554,35 @@ try:
         if isinstance(_g_ext, list) and len(_g_ext) > 0:
             _g_modified = False
             for _g_ep in _g_ext:
-                if isinstance(_g_ep, dict) and "alpn" in _g_ep and isinstance(_g_ep["alpn"], str):
-                    _g_ep["alpn"] = [_g_ep["alpn"]] if _g_ep["alpn"] else []
-                    _g_modified = True
+                if isinstance(_g_ep, dict):
+                    if "alpn" in _g_ep:
+                        if isinstance(_g_ep["alpn"], str):
+                            val = _g_ep["alpn"].strip()
+                            _g_ep["alpn"] = [x.strip() for x in val.split(",") if x.strip()] if val else []
+                            _g_modified = True
+                        elif isinstance(_g_ep["alpn"], list) and any(isinstance(x, str) and "," in x for x in _g_ep["alpn"]):
+                            flt = []
+                            for x in _g_ep["alpn"]:
+                                if isinstance(x, str):
+                                    flt.extend([i.strip() for i in x.split(",") if i.strip()])
+                                else:
+                                    flt.append(x)
+                            _g_ep["alpn"] = flt
+                            _g_modified = True
+                    if "pinnedPeerCertSha256" in _g_ep:
+                        if isinstance(_g_ep["pinnedPeerCertSha256"], str):
+                            val = _g_ep["pinnedPeerCertSha256"].strip()
+                            _g_ep["pinnedPeerCertSha256"] = [x.strip() for x in val.split(",") if x.strip()] if val else []
+                            _g_modified = True
+                        elif isinstance(_g_ep["pinnedPeerCertSha256"], list) and any(isinstance(x, str) and "," in x for x in _g_ep["pinnedPeerCertSha256"]):
+                            flt = []
+                            for x in _g_ep["pinnedPeerCertSha256"]:
+                                if isinstance(x, str):
+                                    flt.extend([i.strip() for i in x.split(",") if i.strip()])
+                                else:
+                                    flt.append(x)
+                            _g_ep["pinnedPeerCertSha256"] = flt
+                            _g_modified = True
             if _g_modified and not dry_run:
                 cur.execute("UPDATE inbounds SET stream_settings = ? WHERE id = ?", (json.dumps(_g_st, ensure_ascii=False), _g_id))
                 print(f"  [ИСПРАВЛЕНО] Инбаунд #{_g_id} ({_g_rem}): тип alpn в externalProxy исправлен со строки на массив")
@@ -6769,8 +6991,13 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             if def_ext[0].get("alpn"):
                 ext_alpn = def_ext[0]["alpn"]
                 if isinstance(ext_alpn, str):
-                    ext_alpn = [ext_alpn] if ext_alpn else []
+                    ext_alpn = [x.strip() for x in ext_alpn.split(",") if x.strip()] if ext_alpn.strip() else []
                 ext_entry["alpn"] = ext_alpn
+            if def_ext[0].get("pinnedPeerCertSha256"):
+                ext_pinned = def_ext[0]["pinnedPeerCertSha256"]
+                if isinstance(ext_pinned, str):
+                    ext_pinned = [x.strip() for x in ext_pinned.split(",") if x.strip()] if ext_pinned.strip() else []
+                ext_entry["pinnedPeerCertSha256"] = ext_pinned
 
         def_fp = def_ext[0].get("fingerprint") if (def_ext and isinstance(def_ext, list) and len(def_ext) > 0) else None
         cur_fp_single = cur_ext[0].get("fingerprint") if (cur_ext and isinstance(cur_ext, list) and len(cur_ext) > 0) else None
@@ -6804,17 +7031,51 @@ def smart_reconcile_inbound(port, protocol, tag, remark, default_settings, defau
             repairs.append(f"исправлен externalProxy -> {target_dest}:{expected_ext_port}{sni_desc}")
         else:
             for ep in cur_ext:
-                if isinstance(ep, dict) and "alpn" in ep and isinstance(ep["alpn"], str):
-                    ep["alpn"] = [ep["alpn"]] if ep["alpn"] else []
-                    repairs.append("исправлен тип alpn в externalProxy (string -> array)")
+                if isinstance(ep, dict) and "alpn" in ep:
+                    if isinstance(ep["alpn"], str):
+                        val = ep["alpn"].strip()
+                        ep["alpn"] = [x.strip() for x in val.split(",") if x.strip()] if val else []
+                        repairs.append("исправлен тип alpn в externalProxy (string -> array)")
+                    elif isinstance(ep["alpn"], list) and any(isinstance(x, str) and "," in x for x in ep["alpn"]):
+                        flt = []
+                        for x in ep["alpn"]:
+                            if isinstance(x, str):
+                                flt.extend([i.strip() for i in x.split(",") if i.strip()])
+                            else:
+                                flt.append(x)
+                        ep["alpn"] = flt
+                        repairs.append("исправлен тип alpn в externalProxy (список нормализован)")
             target_stream["externalProxy"] = cur_ext
             preserved.append(f"externalProxy :{expected_ext_port}")
 
-    # В 3X-UI externalProxy[].alpn обязан быть массивом (array), строка вызывает ошибку валидации формы
+    # В 3X-UI externalProxy[].alpn всегда должен быть списком (array), иначе панель не сохраняет настройки
     if "externalProxy" in target_stream and isinstance(target_stream["externalProxy"], list):
         for ep in target_stream["externalProxy"]:
-            if isinstance(ep, dict) and "alpn" in ep and isinstance(ep["alpn"], str):
-                ep["alpn"] = [ep["alpn"]] if ep["alpn"] else []
+            if isinstance(ep, dict):
+                if "alpn" in ep:
+                    if isinstance(ep["alpn"], str):
+                        val = ep["alpn"].strip()
+                        ep["alpn"] = [x.strip() for x in val.split(",") if x.strip()] if val else []
+                    elif isinstance(ep["alpn"], list) and any(isinstance(x, str) and "," in x for x in ep["alpn"]):
+                        flt = []
+                        for x in ep["alpn"]:
+                            if isinstance(x, str):
+                                flt.extend([i.strip() for i in x.split(",") if i.strip()])
+                            else:
+                                flt.append(x)
+                        ep["alpn"] = flt
+                if "pinnedPeerCertSha256" in ep:
+                    if isinstance(ep["pinnedPeerCertSha256"], str):
+                        val = ep["pinnedPeerCertSha256"].strip()
+                        ep["pinnedPeerCertSha256"] = [x.strip() for x in val.split(",") if x.strip()] if val else []
+                    elif isinstance(ep["pinnedPeerCertSha256"], list) and any(isinstance(x, str) and "," in x for x in ep["pinnedPeerCertSha256"]):
+                        flt = []
+                        for x in ep["pinnedPeerCertSha256"]:
+                            if isinstance(x, str):
+                                flt.extend([i.strip() for i in x.split(",") if i.strip()])
+                            else:
+                                flt.append(x)
+                        ep["pinnedPeerCertSha256"] = flt
 
     # Для AmneziaWG/WireGuard в 3X-UI externalProxy сохраняется в settings для генерации клиентских Endpoint
     if protocol in ("amneziawg", "wireguard"):
@@ -7896,6 +8157,7 @@ EOF_CLEAN_JSON
             fi
         fi
 
+        apply_xui_memory_limits 2>/dev/null || true
         # Активация службы 3X-UI
         log "Активация службы 3X-UI..."
         if [ "${IS_DOCKER_XUI:-0}" -eq 1 ]; then
